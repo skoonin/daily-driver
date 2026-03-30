@@ -1,0 +1,75 @@
+---
+name: setup
+description: One-time setup - verify tool auth and configure workspace
+---
+
+Verify all integrations are working and configure the daily-driver workspace.
+
+## 1. Check Tool Installation
+
+Verify each tool is installed:
+```bash
+echo "=== Tool Check ===" && for cmd in acli gh icalBuddy jq; do printf "%-12s %s\n" "$cmd:" "$(command -v $cmd 2>/dev/null || echo 'NOT FOUND')"; done
+```
+
+## 2. Check Authentication
+
+### Jira (acli)
+```bash
+acli jira auth status 2>&1
+```
+If not authenticated, tell the user to run `! acli jira auth login` for each Jira instance (corescientific.com and core-hpc).
+
+### GitHub (gh)
+```bash
+gh auth status 2>&1
+```
+If not authenticated, tell the user to run `! gh auth login`.
+
+### Calendar (icalBuddy)
+```bash
+icalBuddy calendars 2>&1
+```
+Show available calendars. Ask user if any should be excluded.
+
+## 3. Verify Sync Repos
+
+Check that the sync target repos exist:
+```bash
+echo "=== Sync Repos ===" && for repo in "$HOME/.claude" "$HOME/git/code-workspaces"; do printf "%-40s %s\n" "$repo:" "$([ -d "$repo/.git" ] && echo 'OK (git repo)' || echo 'NOT FOUND or not a git repo')"; done
+```
+
+## 4. Verify Output Directory
+
+```bash
+ls -la "$HOME/git/daily-notes/" 2>/dev/null || echo "daily-notes dir not found"
+```
+
+If `~/git/daily-notes/` doesn't exist, create it:
+```bash
+mkdir -p "$HOME/git/daily-notes" && git -C "$HOME/git/daily-notes" init 2>/dev/null
+```
+
+## 5. Review Context
+
+Show the current context.md:
+```bash
+cat context.md
+```
+
+Ask the user if anything needs updating (timezone, work hours, Jira projects, GitHub orgs, calendar exclusions).
+
+## 6. Test Data Gathering
+
+Run a quick test of each gather script:
+```bash
+bash scripts/gather-calendar.sh 2>&1 | head -10
+```
+```bash
+bash scripts/gather-jira.sh 2>&1 | head -10
+```
+```bash
+bash scripts/gather-prs.sh 2>&1 | head -10
+```
+
+Report which integrations are working and which need attention.

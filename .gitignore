@@ -1,8 +1,4 @@
 *.log
 *.tmp
-.claude/*
-!.claude/CLAUDE.md
-!.claude/commands/
-!.claude/commands/**
-!.claude/agents/
-!.claude/agents/**
+.claude/
+!CLAUDE.md
