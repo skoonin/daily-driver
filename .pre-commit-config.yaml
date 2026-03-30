@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: sync-claude-files
+        name: Sync commands and agents into .claude/
+        entry: make install
+        language: system
+        always_run: true
+        pass_filenames: false
