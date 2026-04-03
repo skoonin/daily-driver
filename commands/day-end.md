@@ -23,7 +23,7 @@ bash scripts/gather-git-activity.sh
 
 Extract Jira ticket references from today's work and check their current status:
 ```bash
-PROJECTS=$(yq '.jira[].project' config.yaml 2>/dev/null | tr '\n' ','); RFC_PROJECTS=$(yq '.jira[].rfc_projects[]' config.yaml 2>/dev/null | tr '\n' ','); ALL_PROJECTS=$(echo "${PROJECTS}${RFC_PROJECTS}" | sed 's/,$//'); { bash scripts/gather-git-activity.sh 2>/dev/null; bash scripts/gather-sessions.sh 2>/dev/null; } | bash scripts/extract-jira-refs.sh --projects "$ALL_PROJECTS" | bash scripts/gather-ticket-status.sh
+bash scripts/ticket-status-sweep.sh
 ```
 
 If any scripts are not yet available, this step will show an error. Continue regardless.
@@ -39,7 +39,7 @@ bash scripts/gather-rfcs.sh
 
 Load this morning's plan for comparison:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); YEAR=$(date +%Y); MONTH=$(date +%m); cat "${OUTPUT_DIR}/${YEAR}/${MONTH}/${TODAY}-plan.md" 2>/dev/null || echo "(no plan found for today)"
+bash scripts/read-plan.sh
 ```
 
 ## 6. Read Context
@@ -93,7 +93,7 @@ If no: skip this step.
 After the user confirms, save to the daily-notes output directory:
 
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); YEAR=$(date +%Y); MONTH=$(date +%m); mkdir -p "${OUTPUT_DIR}/${YEAR}/${MONTH}"
+bash scripts/ensure-daily-dir.sh
 ```
 
 Write the notes to `{output_dir}/YYYY/MM/YYYY-MM-DD-notes.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:
@@ -107,7 +107,7 @@ See the work-planner agent's "Plan File Frontmatter" and "Day-end Status Rules" 
 
 Auto-commit the day's files in daily-notes:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); git -C "$OUTPUT_DIR" add -A && git -C "$OUTPUT_DIR" commit -m "daily notes: ${TODAY}" 2>/dev/null || echo "(nothing to commit)"
+bash scripts/commit-daily-notes.sh
 ```
 
 ## 11. Learn

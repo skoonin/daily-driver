@@ -9,12 +9,12 @@ Generate a weekly summary from this week's daily notes and plans. Follow these s
 
 Calculate ISO week Monday-Friday:
 ```bash
-DAYS_SINCE_MON=$(($(date +%u) - 1)); WEEK_MON=$(date -j -v-${DAYS_SINCE_MON}d +%Y-%m-%d); WEEK_FRI=$(date -j -v-${DAYS_SINCE_MON}d -v+4d +%Y-%m-%d); DOW=$(date +%u); WEEK_NUM=$(date +%V); YEAR=$(date +%Y); echo "week=W${WEEK_NUM} monday=${WEEK_MON} friday=${WEEK_FRI} dow=${DOW}"
+bash scripts/week-range.sh
 ```
 
 If today is Monday and no notes exist for the current week yet, look back to last week instead:
 ```bash
-DAYS_SINCE_MON=$(($(date +%u) - 1)); LAST_MON=$(date -j -v-${DAYS_SINCE_MON}d -v-7d +%Y-%m-%d); LAST_FRI=$(date -j -v-${DAYS_SINCE_MON}d -v-3d +%Y-%m-%d); echo "last_week_monday=${LAST_MON} last_week_friday=${LAST_FRI}"
+bash scripts/week-range.sh --last
 ```
 
 ## 2. Read All Notes and Plans
@@ -52,7 +52,7 @@ If today is not Friday, label the report "Week in Progress" and note which days 
 
 Compute the save path and create the directory:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; SAVE_DIR=$(yq '.reporting.week.save_dir // "weekly"' config.yaml); YEAR=$(date +%Y); WEEK_NUM=$(date +%V); mkdir -p "${OUTPUT_DIR}/${SAVE_DIR}/${YEAR}"; echo "${OUTPUT_DIR}/${SAVE_DIR}/${YEAR}/${YEAR}-W${WEEK_NUM}-week.md"
+bash scripts/weekly-save-path.sh
 ```
 
 Write the weekly summary to the computed path `{output_dir}/{save_dir}/YYYY/YYYY-WNN-week.md`.
@@ -61,5 +61,5 @@ Write the weekly summary to the computed path `{output_dir}/{save_dir}/YYYY/YYYY
 
 Auto-commit the weekly summary in the output directory:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; YEAR=$(date +%Y); WEEK_NUM=$(date +%V); git -C "$OUTPUT_DIR" add -A && git -C "$OUTPUT_DIR" commit -m "weekly summary: ${YEAR}-W${WEEK_NUM}" 2>/dev/null || echo "(nothing to commit)"
+bash scripts/commit-weekly.sh
 ```

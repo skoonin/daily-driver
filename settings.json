@@ -3,7 +3,8 @@
   "permissions": {
     "additionalDirectories": [
       "/Users/shawnk/git",
-      "/Users/shawnk/.claude"
+      "/Users/shawnk/.claude",
+      "/tmp"
     ],
     "allow": [
       "Bash(mkdir -p /Users/shawnk/git/docs-local/daily-driver*)",

@@ -22,7 +22,7 @@ bash scripts/checkin-state.sh init
 
 Read today's plan file frontmatter for plan items:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); YEAR=$(date +%Y); MONTH=$(date +%m); PLAN="${OUTPUT_DIR}/${YEAR}/${MONTH}/${TODAY}-plan.md"; if [[ -f "$PLAN" ]]; then awk '/^---$/{c++;next}c==1' "$PLAN"; else echo "(no plan found for today -- run /day-start first)"; fi
+bash scripts/read-plan-frontmatter.sh
 ```
 
 Read current state for prior check-ins:

@@ -98,7 +98,7 @@ Then ask the user:
 For each PR the user selects for review, open a new iTerm2 window with claude in review mode:
 
 ```bash
-bash scripts/open-iterm-window.sh "cd ~/git/reviews && claude --model sonnet --effort high '/sk-review PR_URL'"
+bash scripts/open-iterm-window.sh --dir ~/git/reviews "claude --model sonnet --effort high '/sk-review PR_URL'"
 ```
 
 Replace `PR_URL` with the actual GitHub PR URL. Each review runs in its own session.
@@ -110,7 +110,7 @@ If no PRs selected, skip this step.
 After the user confirms, save the plan to the daily-notes output directory:
 
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); YEAR=$(date +%Y); MONTH=$(date +%m); mkdir -p "${OUTPUT_DIR}/${YEAR}/${MONTH}"
+bash scripts/ensure-daily-dir.sh
 ```
 
 Write the plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:

@@ -9,7 +9,7 @@ Generate an async standup update. Follow these steps in order:
 
 Calculate yesterday (skipping weekends) and determine lookback range based on day of week:
 ```bash
-TODAY=$(date +%Y-%m-%d); DOW=$(date +%u); case "$DOW" in 1) YESTERDAY=$(date -v-3d +%Y-%m-%d); LOOKBACK_START=$(date -v-3d +%Y-%m-%d);; 2) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-1d +%Y-%m-%d);; 3) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-2d +%Y-%m-%d);; 4) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-1d +%Y-%m-%d);; 5) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-2d +%Y-%m-%d);; esac; echo "today=${TODAY} dow=${DOW} yesterday=${YESTERDAY} lookback_start=${LOOKBACK_START}"
+bash scripts/standup-dates.sh
 ```
 
 Lookback logic:
@@ -67,7 +67,7 @@ Pipe the generated standup text into `pbcopy`, then print the full standup text 
 
 If save is enabled, also write to the output directory:
 ```bash
-SAVE=$(yq '.reporting.standup.save // false' config.yaml); OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; TODAY=$(date +%Y-%m-%d); YEAR=$(date +%Y); MONTH=$(date +%m); echo "save=${SAVE} path=${OUTPUT_DIR}/${YEAR}/${MONTH}/${TODAY}-standup.md"
+bash scripts/standup-save-path.sh
 ```
 
 If `save` is `true`, write the standup to `{output_dir}/YYYY/MM/YYYY-MM-DD-standup.md`.

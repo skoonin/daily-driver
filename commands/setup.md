@@ -40,7 +40,7 @@ Show available calendars. Ask user if any should be excluded.
 
 ### Calendar Sync Setup
 ```bash
-CALENDAR_NAME=$(yq '.calendar.plan_calendar_name // "Daily Plan"' config.yaml); bash scripts/calendar-check.sh "$CALENDAR_NAME"
+bash scripts/check-calendar-sync.sh
 ```
 
 ## 3. Verify Sync Repos
@@ -53,12 +53,12 @@ echo "=== Sync Repos ===" && while IFS= read -r repo; do repo="${repo/#\~/$HOME}
 ## 4. Verify Output Directory
 
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; ls -la "$OUTPUT_DIR/" 2>/dev/null || echo "output dir not found: $OUTPUT_DIR"
+bash scripts/check-output-dir.sh
 ```
 
 If the output directory doesn't exist, create it:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; mkdir -p "$OUTPUT_DIR" && git -C "$OUTPUT_DIR" init 2>/dev/null
+bash scripts/init-output-dir.sh
 ```
 
 ## 5. Check Automation
@@ -70,7 +70,7 @@ launchctl list 2>/dev/null | grep -q "com.daily-driver.checkin" && echo "launchd
 
 ### Runtime State Directory
 ```bash
-STATE_DIR="$HOME/.local/share/daily-driver"; [ -d "$STATE_DIR" ] && echo "State dir: OK ($STATE_DIR)" || echo "State dir: will be created on first /check-in"
+bash scripts/check-state-dir.sh
 ```
 
 ## 6. Review Context
