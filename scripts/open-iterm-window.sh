@@ -18,7 +18,7 @@ fi
 cmd="${1:?Usage: open-iterm-window.sh [--dir PATH] 'command to run'}"
 
 if [[ -n "$workdir" ]]; then
-  cmd="cd ${workdir} && ${cmd}"
+  cmd="cd '${workdir}' && ${cmd}"
 fi
 
 # Escape double quotes for AppleScript string embedding

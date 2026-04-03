@@ -14,7 +14,7 @@ if [[ "$LAST" == "true" ]]; then
   MONTH=$(date -v-1m +%m)
   MONTH_NAME=$(date -v-1m +%B)
   FIRST_DAY="${YEAR}-${MONTH}-01"
-  LAST_DAY=$(date -v-1d +%Y-%m-%d)
+  LAST_DAY=$(date -j -v1d -v-1d +%Y-%m-%d)
   echo "last_month: year=${YEAR} month=${MONTH} name=${MONTH_NAME} first=${FIRST_DAY} last=${LAST_DAY}"
 else
   YEAR=$(date +%Y)

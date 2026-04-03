@@ -85,4 +85,4 @@ if [[ -f "$LOCK_FILE" ]]; then
 fi
 
 # All gates passed -- open iTerm2 with /check-in
-open_checkin
+open_checkin || echo "$(date): open_checkin failed (exit $?)" >> "${STATE_DIR}/check-in-notify.log"

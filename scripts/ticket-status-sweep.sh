@@ -9,7 +9,7 @@ CONFIG="${SCRIPT_DIR}/../config.yaml"
 
 PROJECTS=$(yq '.jira[].project' "$CONFIG" 2>/dev/null | tr '\n' ',')
 RFC_PROJECTS=$(yq '.jira[].rfc_projects[]' "$CONFIG" 2>/dev/null | tr '\n' ',')
-ALL_PROJECTS=$(echo "${PROJECTS}${RFC_PROJECTS}" | sed 's/,$//')
+ALL_PROJECTS=$(echo "${PROJECTS}${RFC_PROJECTS}" | sed 's/^,//;s/,$//')
 
 {
   bash "${SCRIPT_DIR}/gather-git-activity.sh" 2>/dev/null
