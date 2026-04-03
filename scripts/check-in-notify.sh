@@ -2,8 +2,7 @@
 set -euo pipefail
 
 # Check-in trigger called by launchd every 30 minutes
-# Runs gate checks and opens iTerm2 with claude /check-in if due
-# Designed for speed: exits within 100ms on gate failures
+# Gates: weekends, work hours, focus lock. Opens iTerm2 in background.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${SCRIPT_DIR}/../config.yaml"
@@ -24,7 +23,6 @@ open_checkin() {
   if [ -d /Applications/iTerm.app ]; then
     osascript <<EOF
 tell application "iTerm"
-  activate
   set newWindow to (create window with default profile)
   tell current session of newWindow
     write text "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n 'check-in-$(date +%Y-%m-%d-%H%M)' '/check-in'"
@@ -34,20 +32,9 @@ EOF
   else
     osascript <<EOF
 tell application "Terminal"
-  activate
   do script "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n 'check-in-$(date +%Y-%m-%d-%H%M)' '/check-in'"
 end tell
 EOF
-  fi
-}
-
-# Simple notification for non-interactive messages (no plan found, etc.)
-notify() {
-  local title="$1" message="$2"
-  if command -v terminal-notifier &>/dev/null; then
-    terminal-notifier -title "$title" -message "$message" -group "daily-driver" -sound default &>/dev/null || true
-  else
-    osascript -e "display notification \"${message}\" with title \"${title}\"" 2>/dev/null || true
   fi
 }
 
@@ -95,51 +82,6 @@ if [[ -f "$LOCK_FILE" ]]; then
   fi
   # Expired lock, remove it
   rm -f "$LOCK_FILE"
-fi
-
-# Gate 4: Active meeting
-if command -v icalBuddy &>/dev/null; then
-  meeting=$(icalBuddy -b "" eventsNow 2>/dev/null) || meeting=""
-  if [[ -n "$meeting" ]]; then
-    exit 0
-  fi
-fi
-
-# Gate 5: Recent check-in
-if command -v jq &>/dev/null; then
-  if [[ -f "$CONFIG" ]] && command -v yq &>/dev/null; then
-    gap_minutes=$(yq '.checkin.notify_min_gap_minutes // 30' "$CONFIG")
-  else
-    gap_minutes=30
-  fi
-
-  last_ts=$("${SCRIPT_DIR}/checkin-state.sh" get-last-checkin 2>/dev/null) || last_ts="none"
-  if [[ "$last_ts" != "none" ]]; then
-    last_epoch=$(date -j -u -f "%Y-%m-%dT%H:%M:%S" "$last_ts" +%s 2>/dev/null) || last_epoch=0
-    now_epoch=$(date +%s)
-    elapsed_min=$(( (now_epoch - last_epoch) / 60 ))
-    if [[ "$elapsed_min" -lt "$gap_minutes" ]]; then
-      exit 0
-    fi
-  fi
-fi
-
-# Gate 6: Plan exists
-if command -v yq &>/dev/null && [[ -f "$CONFIG" ]]; then
-  output_dir=$(yq '.output_dir' "$CONFIG")
-  output_dir="${output_dir/#\~/$HOME}"
-else
-  output_dir="$HOME/git/daily-notes"
-fi
-
-today=$(date +%Y-%m-%d)
-year=$(date +%Y)
-month=$(date +%m)
-plan_file="${output_dir}/${year}/${month}/${today}-plan.md"
-
-if [[ ! -f "$plan_file" ]]; then
-  notify "Daily Driver" "No plan found -- run /day-start"
-  exit 0
 fi
 
 # All gates passed -- open iTerm2 with /check-in

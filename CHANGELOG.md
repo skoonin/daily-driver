@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `calendar-sync.sh`: restore defensive `exit 0` with warning on stale-event deletion failure (reverts silent `|| true`)
 - `checkin-state.sh`: atomic writes via temp-file-then-rename at all 3 state mutation points
 - `check-in-notify.sh` Gate 3: treat missing `jq` as focus lock active (prevents interrupting focus when jq absent)
+- `check-in-notify.sh`: remove meeting, recency, and plan-exists gates that silently suppressed all check-ins
+- `check-in-notify.sh`: open iTerm2 in background instead of stealing focus
 
 ### Removed -- Dead Code
 - `scripts/launch-day-end.sh`: no callers, no plist, hard-coded path; deleted
@@ -37,7 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added -- Check-in System
 - `/check-in` command for mid-day plan review, progress capture, and overrun detection
 - `/focus` command to toggle focus mode (suppresses check-in notifications)
-- `scripts/check-in-notify.sh` launchd notification wrapper with 6 gates (work hours, weekend, focus lock, active meeting, recency, plan existence)
+- `scripts/check-in-notify.sh` launchd notification wrapper with 3 gates (weekend, work hours, focus lock)
 - `scripts/checkin-state.sh` for runtime state management (check-in history, overruns, focus sessions)
 - `scripts/focus-mode.sh` for focus lock file management with osascript notifications
 - `launchd/com.daily-driver.checkin.plist` LaunchAgent template for automated 30-minute check-in reminders
@@ -95,7 +97,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed -- Notifications to iTerm2
 - Check-in triggers now open an iTerm2 window with `claude /check-in` instead of sending macOS notifications
 - Focus mode disable opens iTerm2 with `/check-in` instead of sending a notification
-- `notify()` retained only for "no plan found" edge case in check-in-notify.sh
+- `notify()` removed from check-in-notify.sh (no remaining callers)
 - Falls back to Terminal.app if iTerm2 is not installed
 
 ### Fixed
