@@ -1,18 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Queries core-hpc Jira instance for assigned tickets
-# Setup: acli jira auth login --site core-hpc.atlassian.net --email <email> --web
+# Queries configured Jira instances for assigned tickets
+# Reads instances from config.yaml, switches between them via acli auth switch
 
-if ! command -v acli &>/dev/null; then
-  echo "ERROR: acli not installed"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${SCRIPT_DIR}/../config.yaml"
+
+for cmd in acli yq; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "ERROR: ${cmd} not installed"
+    exit 1
+  fi
+done
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "ERROR: config.yaml not found at ${CONFIG}"
   exit 1
 fi
 
-JQL="assignee = currentUser() AND status NOT IN (Done, Closed) ORDER BY priority DESC, updated DESC"
+BASE_JQL="assignee = currentUser() AND status NOT IN (Done, Closed)"
 
-echo "=== Jira: core-hpc (SRE) ==="
-acli jira workitem search \
-  --jql "${JQL}" \
-  --fields "key,summary,status,priority" \
-  --limit 20 2>&1 || echo "(not authenticated - run: acli jira auth login --site core-hpc.atlassian.net --email <email> --web)"
+site_count=$(yq '.jira | length' "$CONFIG")
+for i in $(seq 0 $((site_count - 1))); do
+  site=$(yq ".jira[$i].site" "$CONFIG")
+  label=$(yq ".jira[$i].label" "$CONFIG")
+  project=$(yq ".jira[$i].project" "$CONFIG")
+
+  JQL="${BASE_JQL}"
+  if [[ "$project" != "null" && -n "$project" ]]; then
+    JQL="project = ${project} AND ${BASE_JQL}"
+  fi
+  JQL="${JQL} ORDER BY priority DESC, updated DESC"
+
+  echo "=== Jira: ${label} ==="
+  if ! acli jira auth switch --site "$site" &>/dev/null; then
+    echo "(skipping ${label}: could not switch to ${site})"
+    echo ""
+    continue
+  fi
+  acli jira workitem search \
+    --jql "${JQL}" \
+    --fields "key,summary,status,priority" \
+    --limit 20 2>&1 || echo "(not authenticated for ${site} - run: acli jira auth login --site ${site})"
+  echo ""
+done

@@ -1,4 +1,6 @@
 *.log
 *.tmp
-.claude/
-!CLAUDE.md
+.claude/*.md
+.claude/settings.local.json
+.claude/commands/
+.claude/agents/

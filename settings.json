@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "additionalDirectories": [
+      "/Users/shawnk/git",
+      "/Users/shawnk/.claude"
+    ],
+    "allow": [
+      "Bash(mkdir -p /Users/shawnk/git/docs-local/daily-driver*)",
+      "Bash(ls /Users/shawnk/git/docs-local/daily-driver*)",
+      "Bash(git -C /Users/shawnk/git/docs-local/daily-driver*)",
+      "Bash(bash scripts/*)",
+      "Bash(echo \"current_time=*)",
+      "Bash(echo '{\"completed_tickets*)",
+      "Bash(OUTPUT_DIR=*)",
+      "Bash(TODAY=*)",
+      "Bash(DAYS_SINCE_MON=*)",
+      "Bash(YEAR=*)",
+      "Bash(PROJECTS=*)",
+      "Bash(SEARCH_START=*)",
+      "Bash(SAVE=*)",
+      "Bash(yq *)",
+      "Bash(cat context.md)",
+      "Bash(cat ~/.local/share/daily-driver/*)",
+      "Bash(date *)",
+      "Bash(pbcopy)"
+    ]
+  },
+  "sandbox": {
+    "enabled": false
+  }
+}

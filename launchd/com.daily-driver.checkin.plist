@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.daily-driver.checkin</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>PLACEHOLDER_REPO/scripts/check-in-notify.sh</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/daily-driver-checkin.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/daily-driver-checkin.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>PLACEHOLDER_BREW/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>PLACEHOLDER_HOME</string>
+  </dict>
+</dict>
+</plist>

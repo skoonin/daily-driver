@@ -12,8 +12,7 @@
 | Instance | URL Pattern | Project Key | Typical Work |
 |----------|-------------|-------------|--------------|
 | Core HPC | core-hpc.atlassian.net | SRE | SRE/HPC infrastructure |
-
-Note: corescientific.com (IM) is not accessible via acli currently.
+| Core Scientific | corescientific.atlassian.net | IM | Incident management |
 
 ## GitHub Organizations
 

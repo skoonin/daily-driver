@@ -1,0 +1,61 @@
+# Daily Driver Configuration
+# Central config for all scripts and commands
+
+# Where daily plans and notes are saved
+output_dir: ~/git/docs-local/daily-driver
+
+# Git repos to sync at day-start (skipped if dirty)
+sync_repos:
+  - ~/.claude
+  - ~/git/code-workspaces
+
+# Directory to scan for git activity at day-end
+git_scan_dir: ~/git
+
+# Jira instances to query via acli
+jira:
+  - site: core-hpc.atlassian.net
+    label: "core-hpc (SRE)"
+    project: SRE
+    rfc_projects:
+      - HPCRFC
+    ticket_pattern: "SRE-[0-9]+"
+  - site: corescientific.atlassian.net
+    label: "corescientific (IM)"
+    project: IM
+    rfc_projects:
+      - RFC
+    ticket_pattern: "IM-[0-9]+"
+
+# GitHub organizations to check for PRs
+github_orgs:
+  - corescientific
+  - core-hpc
+
+# macOS Calendar integration for plan time blocks
+calendar:
+  plan_calendar_name: "Daily Plan"
+  sync_enabled: true
+
+# Check-in system (automated reminders via launchd)
+checkin:
+  work_hours:
+    start: "09:00"
+    end: "17:00"
+  notify_min_gap_minutes: 30
+  default_focus_minutes: 90
+
+# Planning and carry-forward
+planning:
+  stale_threshold_days: 3
+
+# Reporting commands configuration
+reporting:
+  standup:
+    format: slack
+    save: true
+    time: "11:00"
+  week:
+    save_dir: weekly
+  month:
+    save_dir: monthly

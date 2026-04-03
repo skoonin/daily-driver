@@ -1,9 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Collects today's git commits across all repos in ~/git/
+# Collects today's git commits across all repos in the configured scan directory
+# Reads scan dir from config.yaml
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${SCRIPT_DIR}/../config.yaml"
+
+if ! command -v yq &>/dev/null; then
+  echo "ERROR: yq not installed"
+  exit 1
+fi
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "ERROR: config.yaml not found at ${CONFIG}"
+  exit 1
+fi
+
 TODAY=$(date +%Y-%m-%d)
-GIT_DIR="$HOME/git"
+GIT_DIR=$(yq '.git_scan_dir' "$CONFIG")
+GIT_DIR="${GIT_DIR/#\~/$HOME}"
 
 echo "=== Git Activity: ${TODAY} ==="
 
@@ -12,7 +28,8 @@ for repo in "$GIT_DIR"/*/; do
   [[ -d "$repo/.git" ]] || continue
   repo_name=$(basename "$repo")
 
-  commits=$(git -C "$repo" log --oneline --after="${TODAY}T00:00:00" --all 2>/dev/null) || continue
+  author=$(git -C "$repo" config user.email 2>/dev/null || echo "")
+  commits=$(git -C "$repo" log --oneline --after="${TODAY}T00:00:00" --all ${author:+--author="$author"} 2>/dev/null) || continue
 
   if [[ -n "$commits" ]]; then
     echo "### ${repo_name}"

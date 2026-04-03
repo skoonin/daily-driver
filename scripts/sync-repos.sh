@@ -2,9 +2,25 @@
 set -euo pipefail
 
 # Sync tracked repos, skipping any with uncommitted changes or conflicts
-REPOS=("$HOME/.claude" "$HOME/git/code-workspaces")
+# Reads repo list from config.yaml
 
-for repo in "${REPOS[@]}"; do
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG="${SCRIPT_DIR}/../config.yaml"
+
+for cmd in yq; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "ERROR: ${cmd} not installed"
+    exit 1
+  fi
+done
+
+if [[ ! -f "$CONFIG" ]]; then
+  echo "ERROR: config.yaml not found at ${CONFIG}"
+  exit 1
+fi
+
+while IFS= read -r repo; do
+  repo="${repo/#\~/$HOME}"
   [[ -d "$repo/.git" ]] || continue
   repo_name=$(basename "$repo")
 
@@ -13,10 +29,10 @@ for repo in "${REPOS[@]}"; do
     continue
   fi
 
-  if git -C "$repo" pull --rebase --quiet 2>/dev/null; then
+  if git -C "$repo" pull --rebase --quiet; then
     echo "[OK] ${repo_name}: synced"
   else
     echo "[WARN] ${repo_name}: pull failed, aborting rebase"
     git -C "$repo" rebase --abort 2>/dev/null || true
   fi
-done
+done < <(yq '.sync_repos[]' "$CONFIG")
