@@ -1,35 +1,36 @@
 # Daily Driver
 
-Work planning and reporting system for SRE daily workflow.
+Job search planning and daily accountability system.
 
 ## Purpose
 
-This repo is the **engine** that powers daily work planning and end-of-day reporting. Configuration lives in `config.yaml`. Output (daily notes, plans) goes to the configured `output_dir`.
+This repo is the **engine** that powers daily job search planning and end-of-day reporting. Configuration lives in `config.yaml`. Output (daily notes, plans) goes to the configured `output_dir`. Applications are tracked in `{output_dir}/tracker.yaml`.
 
 ## Commands
 
 ### Daily Workflow
-- `/day-start` - Morning planning: gathers calendar, Jira, RFCs, PRs, carry-forward, and helps plan the day
-- `/day-end` - End of day: collects session data, compares plan vs actual, ticket sweep, writes daily notes
-- `/check-in` - Mid-day review: re-reads plan, captures progress, flags overruns, reminds about ticket updates
+- `/day-start` - Morning planning: gathers calendar, applications, carry-forward, and helps plan the day
+- `/day-end` - End of day: collects session data, compares plan vs actual, application follow-ups, writes daily notes
+- `/check-in` - Mid-day review: re-reads plan, captures progress, flags overruns, reminds about follow-ups
 - `/focus` - Toggle focus mode: suppresses check-in notifications for a set duration
 
 ### Reporting
 - `/standup` - Generate async standup summary (Yesterday/Today/Blockers) to clipboard
-- `/week-end` - Weekly rollup: aggregates daily notes into manager-friendly summary
-- `/prep` - Meeting prep: pulls Jira/PR context relevant to an upcoming calendar meeting
+- `/week-end` - Weekly rollup: aggregates daily notes into weekly summary
+- `/prep` - Meeting prep: pulls application context relevant to an upcoming calendar meeting (interviews, networking)
 
 ### Setup
-- `/setup` - One-time: verifies tool auth, configures workspace, checks automation status
+- `/setup` - One-time: verifies tool installation, configures workspace, initializes tracker
 
 ## Architecture
 
-- `config.yaml` - Central configuration (paths, repos, Jira instances, GitHub orgs, check-in settings, calendar sync)
-- `scripts/` - Shell scripts for data gathering (calendar, Jira, RFCs, PRs, Claude sessions, git activity, carry-forward, ticket status)
+- `config.yaml` - Central configuration (paths, repos, tracker settings, check-in times, calendar sync)
+- `scripts/` - Shell scripts for data gathering (calendar, applications, Claude sessions, git activity, carry-forward)
+- `scripts/tracker.sh` - Application tracker CRUD (add, update, list, stats, follow-ups)
 - `agents/work-planner.md` - Planning intelligence agent (symlinked to `.claude/agents/`)
 - `commands/` - Slash command definitions (symlinked to `.claude/commands/`)
-- `context.md` - User work profile and preferences
-- `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in when a check-in is due
+- `context.md` - User profile and preferences
+- `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in at fixed times
 
 ## Makefile
 
@@ -56,8 +57,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 ## Integrations
 
-- **Jira**: Configured instances via `acli` (see `config.yaml`), including RFC project tracking
-- **GitHub**: Configured orgs via `gh` (see `config.yaml`)
+- **Application Tracker**: Local YAML file managed by `scripts/tracker.sh` using `yq`
 - **Calendar**: macOS Calendar via `icalBuddy` (read) and AppleScript (write plan time blocks)
 - **Claude Sessions**: `~/.claude/history.jsonl` and `sessions-index.json`
 - **launchd**: Automated check-in triggers via macOS LaunchAgent (opens iTerm2 window)
@@ -66,4 +66,38 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 - Daily plans and notes: `{output_dir}/YYYY/MM/YYYY-MM-DD-{plan,notes}.md`
 - Weekly summaries: `{output_dir}/weekly/YYYY/YYYY-WNN-week.md`
+- Application tracker: `{output_dir}/tracker.yaml`
+- Jobs discovered: `{output_dir}/jobs.md`
+- Contacts log: `{output_dir}/contacts.md`
+- Location preferences: `{output_dir}/location-preferences.md`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)
+
+## Jobs Table (`jobs.md`)
+
+Tracks every role discovered during the search -- applied, skipped, or still evaluating. This is the top of the funnel. Active application pipeline details (stages, follow-ups, dates) live in `tracker.yaml`.
+
+**Columns**: #, Company, Product/Purpose, Role, Comp, Location, Fit (1-10), Source, Date Found, Status, Date Applied, Link, Notes
+
+**Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `interviewing`, `offer`, `withdrawn`
+
+**Maintenance rules**:
+- Add every role discovered during research, even if immediately skipped (builds pattern data on what's out there)
+- Always include company product/purpose -- never leave blank
+- When applying, update Status to `applied`, set Date Applied, and ensure the role also exists in `tracker.yaml`
+- Increment the `#` column sequentially; never reuse numbers
+- Source tracks where the role was found (HN Who's Hiring, LinkedIn, referral, company careers page, etc.)
+
+## Contacts Log (`contacts.md`)
+
+Tracks people met during the search: recruiters, hiring managers, referrals, networking contacts.
+
+**Columns**: #, Name, Company, Role/Title, How Met, Date, Last Contact, Next Action, Notes
+
+**Maintenance rules**:
+- Add anyone worth remembering after a meaningful interaction (not every LinkedIn connection)
+- Update Last Contact and Next Action after each interaction
+- Include context in Notes that future-you needs (what you discussed, what they offered to help with)
+
+## Location Preferences (`location-preferences.md`)
+
+Ranked location tiers that drive job filtering. Read this file before assessing new roles to apply location fit correctly. Update when preferences change or new locations are evaluated.

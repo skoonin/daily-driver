@@ -68,7 +68,7 @@ max_days=0
 
 for i in $(seq 0 $((item_count - 1))); do
   text=$(echo "$frontmatter" | yq ".carry_forward[$i].text")
-  jira=$(echo "$frontmatter" | yq ".carry_forward[$i].jira")
+  app_id=$(echo "$frontmatter" | yq ".carry_forward[$i].app_id")
   blocked=$(echo "$frontmatter" | yq ".carry_forward[$i].blocked")
   carried_days=$(echo "$frontmatter" | yq ".carry_forward[$i].carried_days // 1")
 
@@ -77,8 +77,8 @@ for i in $(seq 0 $((item_count - 1))); do
   fi
 
   # Build the reference tag
-  if [[ "$jira" != "null" && -n "$jira" ]]; then
-    ref="[${jira}]"
+  if [[ "$app_id" != "null" && -n "$app_id" ]]; then
+    ref="[${app_id}]"
   else
     ref="[work]"
   fi
@@ -102,4 +102,30 @@ echo "${item_count} items carried forward (${blocked_count} blocked, ${stale_cou
 
 if [[ "$max_days" -ge "$STALE_THRESHOLD" ]]; then
   echo "WARNING: oldest item is ${max_days} days old -- consider escalating or dropping"
+fi
+
+# Extract personal tasks from previous day's notes
+personal_count=$(echo "$frontmatter" | yq '.personal_tasks | length // 0')
+
+if [[ "$personal_count" -gt 0 ]]; then
+  echo ""
+  echo "=== Personal Tasks (carried from ${PREV_DATE}) ==="
+  for i in $(seq 0 $((personal_count - 1))); do
+    pt_text=$(echo "$frontmatter" | yq ".personal_tasks[$i].text")
+    pt_time=$(echo "$frontmatter" | yq ".personal_tasks[$i].time")
+    pt_dur=$(echo "$frontmatter" | yq ".personal_tasks[$i].duration_minutes")
+    pt_notes=$(echo "$frontmatter" | yq ".personal_tasks[$i].notes")
+
+    line="- ${pt_text}"
+    if [[ "$pt_time" != "null" && -n "$pt_time" ]]; then
+      line="${line} @ ${pt_time}"
+    fi
+    if [[ "$pt_dur" != "null" && -n "$pt_dur" ]]; then
+      line="${line} (~${pt_dur}min)"
+    fi
+    if [[ "$pt_notes" != "null" && -n "$pt_notes" ]]; then
+      line="${line} — ${pt_notes}"
+    fi
+    echo "$line"
+  done
 fi

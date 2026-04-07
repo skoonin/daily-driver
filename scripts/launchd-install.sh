@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install or uninstall the daily-driver check-in LaunchAgent
-# Substitutes placeholders in the plist template and registers with launchd
+# Install or uninstall all daily-driver LaunchAgents.
+# Substitutes placeholders in plist templates and registers with launchd.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLIST_TEMPLATE="${SCRIPT_DIR}/../launchd/com.daily-driver.checkin.plist"
-PLIST_NAME="com.daily-driver.checkin"
-PLIST_DEST="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
+LAUNCHD_DIR="${SCRIPT_DIR}/../launchd"
+AGENTS_DIR="$HOME/Library/LaunchAgents"
 DOMAIN="gui/$(id -u)"
 
-# Detect Homebrew prefix
+PLISTS=(
+  "com.daily-driver.day-start"
+  "com.daily-driver.checkin"
+  "com.daily-driver.day-end"
+)
+
 detect_brew_prefix() {
   if [[ -d /opt/homebrew ]]; then
     echo "/opt/homebrew"
@@ -23,42 +27,50 @@ detect_brew_prefix() {
 }
 
 cmd_install() {
-  if [[ ! -f "$PLIST_TEMPLATE" ]]; then
-    echo "ERROR: plist template not found at ${PLIST_TEMPLATE}"
-    exit 1
-  fi
-
   local brew_prefix
   brew_prefix=$(detect_brew_prefix)
-
-  mkdir -p "$HOME/Library/LaunchAgents"
-
   local repo_dir
   repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-  sed -e "s|PLACEHOLDER_HOME|${HOME}|g" \
-      -e "s|PLACEHOLDER_BREW|${brew_prefix}|g" \
-      -e "s|PLACEHOLDER_REPO|${repo_dir}|g" \
-      "$PLIST_TEMPLATE" > "$PLIST_DEST"
+  mkdir -p "$AGENTS_DIR"
+  chmod +x "${repo_dir}/scripts/open-session.sh"
 
-  # Unload existing agent if present
-  launchctl bootout "$DOMAIN" "$PLIST_DEST" 2>/dev/null || true
+  for plist_name in "${PLISTS[@]}"; do
+    local template="${LAUNCHD_DIR}/${plist_name}.plist"
+    local dest="${AGENTS_DIR}/${plist_name}.plist"
 
-  launchctl bootstrap "$DOMAIN" "$PLIST_DEST"
-  echo "LaunchAgent installed and loaded: ${PLIST_DEST}"
-  echo "Homebrew prefix: ${brew_prefix}"
-  echo "Check-in notifications will run every 30 minutes"
+    if [[ ! -f "$template" ]]; then
+      echo "ERROR: plist template not found: ${template}"
+      exit 1
+    fi
+
+    sed -e "s|PLACEHOLDER_HOME|${HOME}|g" \
+        -e "s|PLACEHOLDER_BREW|${brew_prefix}|g" \
+        -e "s|PLACEHOLDER_REPO|${repo_dir}|g" \
+        "$template" > "$dest"
+
+    launchctl bootout "$DOMAIN" "$dest" 2>/dev/null || true
+    launchctl bootstrap "$DOMAIN" "$dest"
+    echo "Installed: ${plist_name}"
+  done
+
+  echo ""
+  echo "Schedule:"
+  echo "  09:00 -> /day-start"
+  echo "  11:00 -> /check-in"
+  echo "  15:00 -> /check-in"
+  echo "  17:00 -> /day-end"
 }
 
 cmd_uninstall() {
-  launchctl bootout "${DOMAIN}/${PLIST_NAME}" 2>/dev/null || true
-
-  if [[ -f "$PLIST_DEST" ]]; then
-    rm -f "$PLIST_DEST"
-    echo "LaunchAgent removed: ${PLIST_DEST}"
-  else
-    echo "LaunchAgent plist not found at ${PLIST_DEST}"
-  fi
+  for plist_name in "${PLISTS[@]}"; do
+    local dest="${AGENTS_DIR}/${plist_name}.plist"
+    launchctl bootout "${DOMAIN}/${plist_name}" 2>/dev/null || true
+    if [[ -f "$dest" ]]; then
+      rm -f "$dest"
+      echo "Removed: ${plist_name}"
+    fi
+  done
 }
 
 usage() {
@@ -71,12 +83,8 @@ if [[ $# -lt 1 ]]; then
 fi
 
 case "$1" in
-  install)
-    cmd_install
-    ;;
-  uninstall)
-    cmd_uninstall
-    ;;
+  install)   cmd_install ;;
+  uninstall) cmd_uninstall ;;
   *)
     echo "ERROR: unknown command: $1"
     usage

@@ -51,8 +51,8 @@ Using the work-planner agent behavior, generate a standup update:
 - For `plain` format: use `## Yesterday`, `## Today`, `## Blockers` with bullet lists
 
 Content guidelines:
-- **Yesterday**: completed items from notes across the lookback range, merged PRs, key outcomes
-- **Today**: top 3-5 items from plan, important meetings. If no plan exists, note "plan pending".
+- **Yesterday**: completed items from notes across the lookback range, applications sent, follow-ups completed, key outcomes
+- **Today**: top 3-5 items from plan, important meetings/interviews. If no plan exists, note "plan pending".
 - **Blockers**: any blocked items from notes carry-forward sections. If none, omit the section entirely.
 - Keep to 10-15 lines total. Scannable in 30 seconds. No filler.
 

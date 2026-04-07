@@ -9,28 +9,10 @@ Verify all integrations are working and configure the daily-driver workspace.
 
 Verify each tool is installed:
 ```bash
-echo "=== Tool Check ===" && for cmd in acli gh icalBuddy jq yq terminal-notifier; do printf "%-12s %s\n" "$cmd:" "$(command -v $cmd 2>/dev/null || echo 'NOT FOUND (optional)' )"; done
+echo "=== Tool Check ===" && for cmd in icalBuddy jq yq terminal-notifier; do printf "%-12s %s\n" "$cmd:" "$(command -v $cmd 2>/dev/null || echo 'NOT FOUND (optional)' )"; done
 ```
 
 ## 2. Check Authentication
-
-### Jira (acli)
-```bash
-acli jira auth status 2>&1
-```
-If not authenticated, tell the user to run `! acli jira auth login --site <site>` for each site listed in `config.yaml`.
-
-### GitHub (gh)
-```bash
-gh auth status 2>&1
-```
-If not authenticated, tell the user to run `! gh auth login`.
-
-### 1Password SSH Agent
-```bash
-echo "=== 1Password SSH Agent ===" && if [[ "$SSH_AUTH_SOCK" == *".1password/agent.sock" ]]; then printf "%-12s %s\n" "socket:" "OK ($SSH_AUTH_SOCK)" && ssh-add -l 2>/dev/null | while read -r line; do printf "%-12s %s\n" "key:" "$line"; done; else echo "WARNING: SSH_AUTH_SOCK not pointing to 1Password agent ($SSH_AUTH_SOCK)"; fi
-```
-If the socket is not found, tell the user to enable the 1Password SSH agent in 1Password Settings > Developer > SSH Agent.
 
 ### Calendar (icalBuddy)
 ```bash
@@ -80,7 +62,7 @@ Show the current context.md:
 cat context.md
 ```
 
-Ask the user if anything needs updating (timezone, work hours, Jira projects, GitHub orgs, calendar exclusions).
+Ask the user if anything needs updating (timezone, target roles, job sources, calendar exclusions).
 
 ## 7. Test Data Gathering
 
@@ -89,13 +71,14 @@ Run a quick test of each gather script:
 bash scripts/gather-calendar.sh 2>&1 | head -10
 ```
 ```bash
-bash scripts/gather-jira.sh 2>&1 | head -10
-```
-```bash
-bash scripts/gather-prs.sh 2>&1 | head -10
-```
-```bash
-bash scripts/gather-rfcs.sh 2>&1 | head -10
+bash scripts/gather-applications.sh 2>&1 | head -10
 ```
 
 Report which integrations are working and which need attention.
+
+## 8. Initialize Tracker
+
+Ensure the application tracker exists:
+```bash
+bash scripts/tracker.sh init
+```

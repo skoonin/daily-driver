@@ -50,17 +50,24 @@ Using the gathered data, present:
 
 ## 4. Interactive Review
 
-For each planned ticket/item that was scheduled up to now:
-- Ask: "What is the status of TICKET-123?" (planned / in-progress / done / blocked)
+For each planned item that was scheduled up to now:
+- Ask: "What is the status of app-NNN - Company Role task?" (planned / in-progress / done / blocked)
 - If the user reports time spent, compare to the planned time block. If actual > planned * 2, flag as an overrun.
 - Note any context switches or unplanned work.
 
-## 5. Jira Status Reminders
+## 5. Application Follow-up Reminders
 
-For each ticket the user reports as in-progress or done, ask:
-"Have you updated TICKET-123 in Jira?"
+Check for overdue follow-ups:
+```bash
+bash scripts/tracker.sh follow-ups
+```
 
-This serves as a gentle nudge -- do not enforce, just remind.
+For each overdue follow-up, ask: "Follow up on app-NNN - Company | Role? It has been N days since last activity."
+
+If the user followed up, update the tracker:
+```bash
+bash scripts/tracker.sh update app-NNN follow_up_date YYYY-MM-DD
+```
 
 ## 6. Record Results
 

@@ -12,37 +12,31 @@ sync_repos:
 # Directory to scan for git activity at day-end
 git_scan_dir: ~/git
 
-# Jira instances to query via acli
-jira:
-  - site: core-hpc.atlassian.net
-    label: "core-hpc (SRE)"
-    project: SRE
-    rfc_projects:
-      - HPCRFC
-    ticket_pattern: "SRE-[0-9]+"
-  - site: corescientific.atlassian.net
-    label: "corescientific (IM)"
-    project: IM
-    rfc_projects:
-      - RFC
-    ticket_pattern: "IM-[0-9]+"
-
-# GitHub organizations to check for PRs
-github_orgs:
-  - corescientific
-  - core-hpc
+# Job application tracker
+tracker:
+  follow_up_days: 7
+  stale_days: 14
+  active_statuses:
+    - researching
+    - applied
+    - screening
+    - interviewing
+    - offer
 
 # macOS Calendar integration for plan time blocks
 calendar:
   plan_calendar_name: "Daily Plan"
   sync_enabled: true
 
-# Check-in system (automated reminders via launchd)
+# Automated session schedule (managed by launchd)
+# 09:00 -> /day-start  (separate day-start plist)
+# 11:00 -> /check-in
+# 15:00 -> /check-in
+# 17:00 -> /day-end    (separate day-end plist)
 checkin:
-  work_hours:
-    start: "09:00"
-    end: "17:00"
-  notify_min_gap_minutes: 30
+  times:
+    - "11:00"
+    - "15:00"
   default_focus_minutes: 90
 
 # Planning and carry-forward
@@ -52,9 +46,8 @@ planning:
 # Reporting commands configuration
 reporting:
   standup:
-    format: slack
+    format: plain
     save: true
-    time: "11:00"
   week:
     save_dir: weekly
   month:

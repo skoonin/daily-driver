@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .ONESHELL:
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
-       day-start day-end check-in standup week-end month-end prep focus review-prs
+       day-start day-end check-in standup week-end month-end prep focus interview-prep
 
 PROJ_DIR := $(shell pwd)
 
@@ -16,10 +16,10 @@ CLAUDE_DIR := $(PROJ_DIR)/.claude
 
 help:  ## Display this help
 	@echo ""
-	@printf "\033[1mDaily Driver\033[0m - Work planning and reporting for SRE daily workflow\n"
+	@printf "\033[1mDaily Driver\033[0m - Job search planning and daily accountability\n"
 	@echo ""
-	@echo "Powered by Claude Code. Gathers context from Jira, GitHub, Calendar,"
-	@echo "and git to help you plan your day, track progress, and report work."
+	@echo "Powered by Claude Code. Tracks applications, follow-ups, and calendar"
+	@echo "to help you plan your day, stay on track, and report progress."
 	@echo ""
 	@printf "\033[1mQuick Start\033[0m\n"
 	@echo "  1. make setup          Install deps, link commands, verify auth"
@@ -29,28 +29,27 @@ help:  ## Display this help
 	@echo ""
 	@printf "\033[1mTypical Day\033[0m\n"
 	@echo "  09:00  make day-start     Gather context, build plan, block calendar"
-	@echo "  11:00  make check-in      Review progress, update ticket statuses"
+	@echo "  11:00  make check-in      Review progress, check follow-ups"
 	@echo "  13:00  make focus ARGS=90 Suppress check-ins for 90 min deep work"
 	@echo "  14:30  (auto check-in)    iTerm2 opens with /check-in after focus ends"
 	@echo "  16:30  make day-end       Compare plan vs actual, write daily notes"
-	@echo "  Fri    make week-end      Weekly rollup for manager summary"
+	@echo "  Fri    make week-end      Weekly rollup summary"
 	@echo ""
 	@printf "\033[1mNotes\033[0m\n"
 	@echo "  - All commands also work as /slash-commands inside Claude Code"
 	@echo "  - Sessions are named for easy /resume (e.g. day-start-2026-04-02)"
 	@echo "  - make standup and make focus run headless (sonnet, low effort)"
-	@echo "  - make review-prs opens iTerm2 sessions for each selected PR"
 	@echo ""
-	@printf "\033[1mConfiguration\033[0m: config.yaml  (Jira sites, GitHub orgs, work hours, etc.)\n"
+	@printf "\033[1mConfiguration\033[0m: config.yaml  (tracker settings, calendar, check-in times)\n"
 	@printf "\033[1mOutput\033[0m:        %s\n" "$$(yq '.output_dir // "~/git/daily-notes"' config.yaml 2>/dev/null)"
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "\033[1mTargets\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-BREW_DEPS := jq yq ical-buddy terminal-notifier gh
+BREW_DEPS := jq yq ical-buddy terminal-notifier
 
 status:  ## Check installation status of all dependencies and services
 	@echo "=== Dependencies ==="
-	@for pkg in jq yq gh; do \
+	@for pkg in jq yq; do \
 		if command -v "$$pkg" &>/dev/null; then \
 			printf "  \033[32m%-20s\033[0m %s\n" "$$pkg" "$$($$pkg --version 2>&1 | head -1)"; \
 		else \
@@ -67,11 +66,6 @@ status:  ## Check installation status of all dependencies and services
 	else \
 		printf "  \033[33m%-20s\033[0m %s\n" "terminal-notifier" "not installed (optional)"; \
 	fi
-	@if command -v acli &>/dev/null; then \
-		printf "  \033[32m%-20s\033[0m %s\n" "acli" "$$(acli --version 2>&1 | head -1)"; \
-	else \
-		printf "  \033[31m%-20s\033[0m %s\n" "acli" "not installed"; \
-	fi
 	@if command -v claude &>/dev/null; then \
 		printf "  \033[32m%-20s\033[0m %s\n" "claude" "$$(claude --version 2>&1 | head -1)"; \
 	else \
@@ -82,18 +76,22 @@ status:  ## Check installation status of all dependencies and services
 	@if [ -L "$(CLAUDE_DIR)/CLAUDE.md" ]; then echo "  commands: linked"; else echo "  commands: not linked (run make install)"; fi
 	@if [ -L "$(CLAUDE_DIR)/settings.local.json" ]; then echo "  settings.local.json: linked"; else echo "  settings.local.json: not linked (run make install)"; fi
 	@echo ""
-	@echo "=== LaunchAgent ==="
-	@if [ -f "$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist" ]; then \
-		if launchctl list com.daily-driver.checkin &>/dev/null; then \
-			printf "  \033[32m%-20s\033[0m %s\n" "check-in" "installed and running"; \
+	@echo "=== LaunchAgents ==="
+	@for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if [ -f "$$plist_file" ]; then \
+			if launchctl list "$${plist_name}" &>/dev/null; then \
+				printf "  \033[32m%-24s\033[0m %s\n" "$$agent" "installed and running"; \
+			else \
+				printf "  \033[33m%-24s\033[0m %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
+			fi; \
 		else \
-			printf "  \033[33m%-20s\033[0m %s\n" "check-in" "installed but not loaded (run make launchd-start)"; \
+			printf "  \033[31m%-24s\033[0m %s\n" "$$agent" "not installed (run make launchd-install)"; \
 		fi; \
-	else \
-		printf "  \033[31m%-20s\033[0m %s\n" "check-in" "not installed (run make launchd-install)"; \
-	fi
+	done
 
-deps:  ## Install all dependencies (Homebrew + acli + claude)
+deps:  ## Install all dependencies (Homebrew + claude)
 	@echo "=== Homebrew packages ==="
 	@for pkg in $(BREW_DEPS); do \
 		if brew list "$$pkg" &>/dev/null; then \
@@ -103,15 +101,6 @@ deps:  ## Install all dependencies (Homebrew + acli + claude)
 			brew install "$$pkg"; \
 		fi; \
 	done
-	@echo ""
-	@echo "=== Atlassian CLI (acli) ==="
-	@if command -v acli &>/dev/null; then \
-		echo "  acli: already installed ($$(acli --version 2>&1 | head -1))"; \
-	else \
-		echo "  acli: installing via Homebrew tap..."; \
-		brew tap atlassian/acli; \
-		brew install acli; \
-	fi
 	@echo ""
 	@echo "=== Claude Code ==="
 	@if command -v claude &>/dev/null; then \
@@ -123,23 +112,7 @@ deps:  ## Install all dependencies (Homebrew + acli + claude)
 
 setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 	@echo ""
-	@echo "=== Authentication ==="
-	@echo "-- Jira (acli) --"
-	@acli jira auth status 2>&1 || echo "  NOT AUTHENTICATED: run 'acli jira auth login --site <site>'"
-	@echo ""
-	@echo "-- GitHub (gh) --"
-	@gh auth status 2>&1 || echo "  NOT AUTHENTICATED: run 'gh auth login'"
-	@echo ""
-	@echo "-- 1Password SSH Agent --"
-	@if echo "$$SSH_AUTH_SOCK" | grep -q '.1password/agent.sock'; then \
-		echo "  socket: OK ($$SSH_AUTH_SOCK)"; \
-		ssh-add -l 2>/dev/null | sed 's/^/  key: /' || true; \
-	else \
-		echo "  WARNING: SSH_AUTH_SOCK not pointing to 1Password agent ($$SSH_AUTH_SOCK)"; \
-		echo "  Enable in: 1Password > Settings > Developer > SSH Agent"; \
-	fi
-	@echo ""
-	@echo "-- Calendar (icalBuddy) --"
+	@echo "=== Calendar (icalBuddy) ==="
 	@if command -v icalBuddy &>/dev/null; then \
 		icalBuddy calendars 2>&1 | head -20 || echo "  calendar access failed"; \
 	else \
@@ -167,14 +140,18 @@ setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 		fi; \
 	done
 	@echo ""
-	@echo "=== LaunchAgent ==="
-	@if launchctl list com.daily-driver.checkin &>/dev/null 2>&1; then \
-		echo "  check-in: running"; \
-	elif [ -f "$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist" ]; then \
-		echo "  check-in: installed but not loaded (run make launchd-start)"; \
-	else \
-		echo "  check-in: not installed (run make launchd-install)"; \
-	fi
+	@echo "=== LaunchAgents ==="
+	@for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if launchctl list "$${plist_name}" &>/dev/null 2>&1; then \
+			printf "  %-24s %s\n" "$$agent" "running"; \
+		elif [ -f "$$plist_file" ]; then \
+			printf "  %-24s %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
+		else \
+			printf "  %-24s %s\n" "$$agent" "not installed (run make launchd-install)"; \
+		fi; \
+	done
 	@echo ""
 	@echo "Setup complete. Run 'make day-start' to begin."
 
@@ -208,23 +185,27 @@ uninstall:  ## Remove symlinks from .claude/
 
 ##@ Automation
 
-launchd-install:  ## Install check-in notification LaunchAgent
+launchd-install:  ## Install all LaunchAgents (day-start, check-in, day-end)
 	@bash scripts/launchd-install.sh install
 
-launchd-start:  ## Load LaunchAgent if installed but not running
-	@PLIST="$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist"; \
-	if [ ! -f "$$PLIST" ]; then \
-		echo "LaunchAgent not installed. Run: make launchd-install"; \
-		exit 1; \
-	fi; \
-	if launchctl list com.daily-driver.checkin &>/dev/null; then \
-		echo "LaunchAgent already running"; \
-	else \
-		launchctl load "$$PLIST"; \
-		echo "LaunchAgent loaded"; \
-	fi
+launchd-start:  ## Load all LaunchAgents if installed but not running
+	@any_missing=0; \
+	for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if [ ! -f "$$plist_file" ]; then \
+			echo "  $${agent}: not installed (run make launchd-install)"; \
+			any_missing=1; \
+		elif launchctl list "$${plist_name}" &>/dev/null; then \
+			echo "  $${agent}: already running"; \
+		else \
+			launchctl bootstrap "gui/$$(id -u)" "$$plist_file"; \
+			echo "  $${agent}: loaded"; \
+		fi; \
+	done; \
+	[ "$$any_missing" -eq 0 ] || exit 1
 
-launchd-uninstall:  ## Remove check-in notification LaunchAgent
+launchd-uninstall:  ## Remove all LaunchAgents
 	@bash scripts/launchd-install.sh uninstall
 
 ##@ Workflow
@@ -251,8 +232,9 @@ month-end:  ## Monthly rollup: summarize the month into a report
 prep:  ## Meeting prep: gather context for an upcoming meeting
 	@$(CLDE) --agent work-planner -n "prep-$$(date +%Y-%m-%d-%H%M)" '/prep $(ARGS)'
 
-focus:  ## Toggle focus mode (usage: make focus ARGS="90 SRE-123")
+focus:  ## Toggle focus mode (usage: make focus ARGS="90")
 	@$(CLDELT) -p '/focus $(ARGS)'
 
-review-prs:  ## Check for pending PR reviews and open review sessions
-	@$(CLDE) --agent work-planner -n "review-prs-$$(date +%Y-%m-%d)" '/review-prs'
+interview-prep:  ## Interview prep: practice questions for a target role (usage: make interview-prep ARGS="Company")
+	@$(CLDE) --agent work-planner -n "interview-prep-$$(date +%Y-%m-%d-%H%M)" '/interview-prep $(ARGS)'
+
