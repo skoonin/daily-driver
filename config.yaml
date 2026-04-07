@@ -28,13 +28,15 @@ calendar:
   plan_calendar_name: "Daily Plan"
   sync_enabled: true
 
-# Check-in system (automated reminders via launchd at fixed times)
+# Automated session schedule (managed by launchd)
+# 09:00 -> /day-start  (separate day-start plist)
+# 11:00 -> /check-in
+# 15:00 -> /check-in
+# 17:00 -> /day-end    (separate day-end plist)
 checkin:
   times:
-    - "09:00"
     - "11:00"
     - "15:00"
-    - "17:00"
   default_focus_minutes: 90
 
 # Planning and carry-forward

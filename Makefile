@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .ONESHELL:
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
-       day-start day-end check-in standup week-end month-end prep focus
+       day-start day-end check-in standup week-end month-end prep focus interview-prep
 
 PROJ_DIR := $(shell pwd)
 
@@ -234,4 +234,7 @@ prep:  ## Meeting prep: gather context for an upcoming meeting
 
 focus:  ## Toggle focus mode (usage: make focus ARGS="90")
 	@$(CLDELT) -p '/focus $(ARGS)'
+
+interview-prep:  ## Interview prep: practice questions for a target role (usage: make interview-prep ARGS="Company")
+	@$(CLDE) --agent work-planner -n "interview-prep-$$(date +%Y-%m-%d-%H%M)" '/interview-prep $(ARGS)'
 

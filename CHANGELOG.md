@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Job Search Refactor
+- Jobs table (`jobs.md`), contacts log (`contacts.md`), location preferences (`location-preferences.md`) documentation in CLAUDE.md
+- `/interview-prep` command for structured interview practice (behavioral, technical, system design)
+- `make interview-prep` target with company/role argument support
+- Personal task carry-forward extraction in `gather-carryforward.sh`
+- Playwright MCP server allowed in settings.json
+
+### Fixed -- Job Search Refactor
+- `open-session.sh`: use `create window` instead of `create tab` (fixes blank iTerm on fresh boot)
+- `open-session.sh`: add `activate` to iTerm and Terminal branches (window surfaces on launch)
+- `config.yaml`: remove 09:00 and 17:00 from `checkin.times` (managed by separate day-start/day-end plists)
+
 ### Added -- Planning Enhancements
 - `/month-end` command for monthly rollup reports with executive summary and metrics
 - `/review-prs` command to check pending PR reviews and open iTerm2 review sessions

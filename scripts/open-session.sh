@@ -26,8 +26,9 @@ open_session() {
   if [ -d /Applications/iTerm.app ]; then
     osascript <<EOF
 tell application "iTerm"
-  set newTab to (create tab with default profile)
-  tell current session of newTab
+  activate
+  set newWindow to (create window with default profile)
+  tell current session of newWindow
     write text "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'"
   end tell
 end tell
@@ -35,6 +36,7 @@ EOF
   else
     osascript <<EOF
 tell application "Terminal"
+  activate
   do script "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'"
 end tell
 EOF

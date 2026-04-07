@@ -67,4 +67,37 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - Daily plans and notes: `{output_dir}/YYYY/MM/YYYY-MM-DD-{plan,notes}.md`
 - Weekly summaries: `{output_dir}/weekly/YYYY/YYYY-WNN-week.md`
 - Application tracker: `{output_dir}/tracker.yaml`
+- Jobs discovered: `{output_dir}/jobs.md`
+- Contacts log: `{output_dir}/contacts.md`
+- Location preferences: `{output_dir}/location-preferences.md`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)
+
+## Jobs Table (`jobs.md`)
+
+Tracks every role discovered during the search -- applied, skipped, or still evaluating. This is the top of the funnel. Active application pipeline details (stages, follow-ups, dates) live in `tracker.yaml`.
+
+**Columns**: #, Company, Product/Purpose, Role, Comp, Location, Fit (1-10), Source, Date Found, Status, Date Applied, Link, Notes
+
+**Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `interviewing`, `offer`, `withdrawn`
+
+**Maintenance rules**:
+- Add every role discovered during research, even if immediately skipped (builds pattern data on what's out there)
+- Always include company product/purpose -- never leave blank
+- When applying, update Status to `applied`, set Date Applied, and ensure the role also exists in `tracker.yaml`
+- Increment the `#` column sequentially; never reuse numbers
+- Source tracks where the role was found (HN Who's Hiring, LinkedIn, referral, company careers page, etc.)
+
+## Contacts Log (`contacts.md`)
+
+Tracks people met during the search: recruiters, hiring managers, referrals, networking contacts.
+
+**Columns**: #, Name, Company, Role/Title, How Met, Date, Last Contact, Next Action, Notes
+
+**Maintenance rules**:
+- Add anyone worth remembering after a meaningful interaction (not every LinkedIn connection)
+- Update Last Contact and Next Action after each interaction
+- Include context in Notes that future-you needs (what you discussed, what they offered to help with)
+
+## Location Preferences (`location-preferences.md`)
+
+Ranked location tiers that drive job filtering. Read this file before assessing new roles to apply location fit correctly. Update when preferences change or new locations are evaluated.
