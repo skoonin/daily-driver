@@ -1,11 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "additionalDirectories": [
-      "/Users/shawnk/git",
-      "/Users/shawnk/.claude",
-      "/tmp"
-    ],
     "allow": [
       "Bash(mkdir -p /Users/shawnk/git/docs-local/daily-driver*)",
       "Bash(ls /Users/shawnk/git/docs-local/daily-driver*)",
@@ -24,7 +19,15 @@
       "Bash(cat context.md)",
       "Bash(cat ~/.local/share/daily-driver/*)",
       "Bash(date *)",
-      "Bash(pbcopy)"
+      "Bash(pbcopy)",
+
+      "Bash(icalBuddy -f -ic \"Work\" eventsToday)",
+      "Bash(icalBuddy -f eventsToday)"
+    ],
+    "additionalDirectories": [
+      "/Users/shawnk/git",
+      "/Users/shawnk/.claude",
+      "/tmp"
     ]
   },
   "sandbox": {

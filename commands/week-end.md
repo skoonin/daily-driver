@@ -42,9 +42,10 @@ Using the work-planner agent behavior, synthesize all daily notes and plans into
 - **Key Metrics**:
   - Days with notes (e.g., 4/5)
   - Planned vs completed ratio
+  - Applications sent this week
+  - Responses received / interviews scheduled
   - Unplanned item count
-  - PRs merged/reviewed (from notes)
-- **Next Week Setup**: carry-over items, known meetings/deadlines, suggested priorities
+- **Next Week Setup**: carry-over items, known interviews/deadlines, suggested priorities
 
 If today is not Friday, label the report "Week in Progress" and note which days remain.
 

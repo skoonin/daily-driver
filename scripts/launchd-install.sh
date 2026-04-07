@@ -47,7 +47,7 @@ cmd_install() {
   launchctl bootstrap "$DOMAIN" "$PLIST_DEST"
   echo "LaunchAgent installed and loaded: ${PLIST_DEST}"
   echo "Homebrew prefix: ${brew_prefix}"
-  echo "Check-in notifications will run every 30 minutes"
+  echo "Check-in notifications will fire at 9am, 11am, 3pm, 5pm"
 }
 
 cmd_uninstall() {

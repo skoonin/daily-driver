@@ -42,17 +42,18 @@ cat context.md
 Using the work-planner agent behavior, synthesize weekly summaries and daily notes into a monthly report:
 
 - **Executive Summary**: 1 paragraph describing the month's focus areas and key outcomes
-- **Accomplishments**: major items completed, grouped by theme (infra, monitoring, automation, etc.)
-- **Ongoing Work**: items still in progress carrying into next month
+- **Accomplishments**: applications sent, interviews completed, offers/rejections, key milestones
+- **Ongoing Work**: active applications, pending follow-ups carrying into next month
 - **Key Metrics**:
   - Working days with plans/notes (e.g., 18/22)
-  - Tickets completed vs carried forward
-  - PRs merged/reviewed
+  - Total applications sent
+  - Response rate (responses / applications)
+  - Interviews scheduled / completed
   - Unplanned work percentage
-- **Themes and Patterns**: recurring topics, time sinks, productivity observations
-- **Next Month Setup**: known upcoming work, carry-over items, deadlines
+- **Themes and Patterns**: which sources yield responses, company types that ghost, productivity observations
+- **Next Month Setup**: follow-ups due, upcoming interviews, carry-over items
 
-Keep the tone manager-friendly. This is a higher-level view than the weekly -- aggregate, don't list every ticket.
+This is a higher-level view than the weekly -- aggregate, don't list every application.
 
 ## 6. Save Monthly Summary
 

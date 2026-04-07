@@ -19,23 +19,14 @@ Collect today's commits across all repos:
 bash scripts/gather-git-activity.sh
 ```
 
-## 3. Ticket Status Sweep
+## 3. Gather Application Data
 
-Extract Jira ticket references from today's work and check their current status:
+Check application pipeline status:
 ```bash
-bash scripts/ticket-status-sweep.sh
+bash scripts/gather-applications.sh
 ```
 
-If any scripts are not yet available, this step will show an error. Continue regardless.
-
-## 4. Gather RFC Status
-
-Check current RFC status:
-```bash
-bash scripts/gather-rfcs.sh
-```
-
-## 5. Read Today's Plan
+## 4. Read Today's Plan
 
 Load this morning's plan for comparison:
 ```bash
@@ -52,18 +43,17 @@ cat context.md
 
 Using the work-planner agent behavior, present:
 
-1. **Work Summary** - What was actually done today, grouped by project/repo
+1. **Work Summary** - What was actually done today (applications sent, research, follow-ups, interviews)
 2. **Plan vs Actual** - Compare morning plan items to what happened. Assign final status to each plan_item: [done], [in-progress], [blocked], [carry-over], [unplanned], [dropped]
 3. **Unplanned Work** - Things that came up that weren't in the plan
-4. **Ticket Status** - For tickets worked on today that are still Open/To Do in Jira, ask: "Did you update [TICKET]?"
-5. **RFC Updates** - Any RFC status changes today (approved, rejected, etc.)
-6. **Carry-forward** - Build the carry_forward list for tomorrow:
+4. **Application Follow-ups** - For applications with overdue follow-ups from gather-applications.sh, ask: "Follow up on app-NNN - Company | Role?" Present as a compact checklist.
+5. **Carry-forward** - Build the carry_forward list for tomorrow:
    - `done` or `dropped`: do NOT add
    - `carry-over`: add with `carried_days` incremented
    - `blocked`: add with `blocked: true` and `blocked_reason` (ask if not known)
    - `unplanned`: ask user if it should carry forward
    - Personal tasks: ask about unfinished ones (drop or carry?)
-7. **Key Outcomes** - Brief summary suitable for a status update to manager
+6. **Key Outcomes** - Applications sent, responses received, interviews scheduled, follow-ups completed
 
 Then ask the user:
 - Anything to add? Blockers, wins, context?

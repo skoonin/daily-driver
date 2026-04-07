@@ -68,7 +68,7 @@ max_days=0
 
 for i in $(seq 0 $((item_count - 1))); do
   text=$(echo "$frontmatter" | yq ".carry_forward[$i].text")
-  jira=$(echo "$frontmatter" | yq ".carry_forward[$i].jira")
+  app_id=$(echo "$frontmatter" | yq ".carry_forward[$i].app_id")
   blocked=$(echo "$frontmatter" | yq ".carry_forward[$i].blocked")
   carried_days=$(echo "$frontmatter" | yq ".carry_forward[$i].carried_days // 1")
 
@@ -77,8 +77,8 @@ for i in $(seq 0 $((item_count - 1))); do
   fi
 
   # Build the reference tag
-  if [[ "$jira" != "null" && -n "$jira" ]]; then
-    ref="[${jira}]"
+  if [[ "$app_id" != "null" && -n "$app_id" ]]; then
+    ref="[${app_id}]"
   else
     ref="[work]"
   fi

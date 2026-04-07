@@ -1,35 +1,36 @@
 # Daily Driver
 
-Work planning and reporting system for SRE daily workflow.
+Job search planning and daily accountability system.
 
 ## Purpose
 
-This repo is the **engine** that powers daily work planning and end-of-day reporting. Configuration lives in `config.yaml`. Output (daily notes, plans) goes to the configured `output_dir`.
+This repo is the **engine** that powers daily job search planning and end-of-day reporting. Configuration lives in `config.yaml`. Output (daily notes, plans) goes to the configured `output_dir`. Applications are tracked in `{output_dir}/tracker.yaml`.
 
 ## Commands
 
 ### Daily Workflow
-- `/day-start` - Morning planning: gathers calendar, Jira, RFCs, PRs, carry-forward, and helps plan the day
-- `/day-end` - End of day: collects session data, compares plan vs actual, ticket sweep, writes daily notes
-- `/check-in` - Mid-day review: re-reads plan, captures progress, flags overruns, reminds about ticket updates
+- `/day-start` - Morning planning: gathers calendar, applications, carry-forward, and helps plan the day
+- `/day-end` - End of day: collects session data, compares plan vs actual, application follow-ups, writes daily notes
+- `/check-in` - Mid-day review: re-reads plan, captures progress, flags overruns, reminds about follow-ups
 - `/focus` - Toggle focus mode: suppresses check-in notifications for a set duration
 
 ### Reporting
 - `/standup` - Generate async standup summary (Yesterday/Today/Blockers) to clipboard
-- `/week-end` - Weekly rollup: aggregates daily notes into manager-friendly summary
-- `/prep` - Meeting prep: pulls Jira/PR context relevant to an upcoming calendar meeting
+- `/week-end` - Weekly rollup: aggregates daily notes into weekly summary
+- `/prep` - Meeting prep: pulls application context relevant to an upcoming calendar meeting (interviews, networking)
 
 ### Setup
-- `/setup` - One-time: verifies tool auth, configures workspace, checks automation status
+- `/setup` - One-time: verifies tool installation, configures workspace, initializes tracker
 
 ## Architecture
 
-- `config.yaml` - Central configuration (paths, repos, Jira instances, GitHub orgs, check-in settings, calendar sync)
-- `scripts/` - Shell scripts for data gathering (calendar, Jira, RFCs, PRs, Claude sessions, git activity, carry-forward, ticket status)
+- `config.yaml` - Central configuration (paths, repos, tracker settings, check-in times, calendar sync)
+- `scripts/` - Shell scripts for data gathering (calendar, applications, Claude sessions, git activity, carry-forward)
+- `scripts/tracker.sh` - Application tracker CRUD (add, update, list, stats, follow-ups)
 - `agents/work-planner.md` - Planning intelligence agent (symlinked to `.claude/agents/`)
 - `commands/` - Slash command definitions (symlinked to `.claude/commands/`)
-- `context.md` - User work profile and preferences
-- `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in when a check-in is due
+- `context.md` - User profile and preferences
+- `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in at fixed times
 
 ## Makefile
 
@@ -56,8 +57,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 ## Integrations
 
-- **Jira**: Configured instances via `acli` (see `config.yaml`), including RFC project tracking
-- **GitHub**: Configured orgs via `gh` (see `config.yaml`)
+- **Application Tracker**: Local YAML file managed by `scripts/tracker.sh` using `yq`
 - **Calendar**: macOS Calendar via `icalBuddy` (read) and AppleScript (write plan time blocks)
 - **Claude Sessions**: `~/.claude/history.jsonl` and `sessions-index.json`
 - **launchd**: Automated check-in triggers via macOS LaunchAgent (opens iTerm2 window)
@@ -66,4 +66,5 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 - Daily plans and notes: `{output_dir}/YYYY/MM/YYYY-MM-DD-{plan,notes}.md`
 - Weekly summaries: `{output_dir}/weekly/YYYY/YYYY-WNN-week.md`
+- Application tracker: `{output_dir}/tracker.yaml`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)

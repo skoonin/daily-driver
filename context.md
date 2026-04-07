@@ -3,40 +3,37 @@
 ## Profile
 
 - **Name**: Shawn
-- **Role**: SRE Engineer
+- **Background**: SRE Engineer (experienced with Kubernetes, Terraform, AWS, Python, monitoring)
+- **Current Focus**: Job searching -- finding and applying for roles
 - **Timezone**: US Central (CT)
-- **Work hours**: Standard business hours
+- **Hours**: Flexible, but structured with check-ins at 9am, 11am, 3pm, 5pm
 
-## Jira Instances
+## Job Search
 
-| Instance | URL Pattern | Project Key | Typical Work |
-|----------|-------------|-------------|--------------|
-| Core HPC | core-hpc.atlassian.net | SRE | SRE/HPC infrastructure |
-| Core Scientific | corescientific.atlassian.net | IM | Incident management |
-
-## GitHub Organizations
-
-- `corescientific` - Main org
-- `core-hpc` - HPC-specific repos
-
-## Sync Repositories
-
-- `~/.claude` - Claude Code configs (cc-configs)
-- `~/git/code-workspaces` - VS Code workspace definitions
+- **Target Roles**: SRE, Platform Engineer, DevOps Engineer, Infrastructure Engineer
+- **Tracker**: `{output_dir}/tracker.yaml` -- local YAML file managed by `scripts/tracker.sh`
+- **Sources**: LinkedIn, Indeed, company career pages, job boards
 
 ## Calendar
 
 - Source: macOS Calendar (all calendars included by default)
-- Exclude: none configured (refine with icalBuddy -ec flag if needed)
+- Use for: Interview scheduling, networking calls, follow-up reminders
 
 ## Reporting
 
-- **Purpose**: Time management and reporting to manager
-- **Output**: `~/git/daily-notes/` (local git, not pushed)
+- **Purpose**: Personal accountability and progress tracking
+- **Output**: `~/git/docs-local/daily-driver/` (local git, not pushed)
 - **Format**: Markdown daily plans and end-of-day notes
+
+## Daily Recurring Reminders
+
+These appear as personal tasks in every day-start plan:
+
+- Take morning medication
 
 ## Preferences
 
 - Auto-sync repos at day start (skip if dirty)
 - Concise output, no filler
 - Track carryover items between days
+- Honest about progress -- no sugarcoating slow days

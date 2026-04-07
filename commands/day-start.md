@@ -28,22 +28,8 @@ Run all gather scripts and collect their output:
 bash scripts/gather-calendar.sh
 ```
 ```bash
-bash scripts/gather-jira.sh
+bash scripts/gather-applications.sh
 ```
-```bash
-bash scripts/gather-prs.sh
-```
-```bash
-bash scripts/gather-rfcs.sh
-```
-
-## 2b. Read Standup Time
-
-```bash
-yq '.reporting.standup.time // "11:00"' config.yaml
-```
-
-Treat the standup time as a fixed daily commitment (like a meeting). Block 15 minutes for it in the plan. If the standup time has already passed (compare to `current_time` from step 0), skip blocking it.
 
 ## 3. Check Carry-forward
 
@@ -78,32 +64,17 @@ If no personal tasks, proceed.
 Using the work-planner agent behavior, present:
 
 1. **Today's Schedule** - Meetings and fixed commitments with time blocks
-2. **Jira Tickets** - Assigned/in-progress from each configured instance, sorted by priority
-3. **RFCs** - Pending approval, recently approved, and assigned RFCs
-4. **PR Activity** - Your open PRs and review requests, across configured orgs
-5. **Carry-forward** - Structured items from yesterday (BLOCKED, STALE, CARRY-OVER)
-6. **Personal Tasks** - Time-bound and open-ended personal items
-7. **Proposed Plan** - Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal tasks, and buffer. Do not schedule work in time that has already passed.
+2. **Application Pipeline** - Follow-ups due, active applications by stage, new leads to research
+3. **Carry-forward** - Structured items from yesterday (BLOCKED, STALE, CARRY-OVER)
+4. **Personal Tasks** - Time-bound and open-ended personal items
+5. **Proposed Plan** - Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal tasks, and buffer. Do not schedule work in time that has already passed.
 
-Use the required time block format: `- HH:MM - HH:MM | TICKET-123 - Task summary description`
+Use the required time block format: `- HH:MM - HH:MM | app-NNN - Company Role - Task description`
 
 Then ask the user:
 - Does this look right?
 - Anything to add or reprioritize?
 - Any known interrupts or blockers today?
-- Which PRs (if any) do you want to review today? (present the review request list with numbers)
-
-## 6b. Launch PR Reviews
-
-For each PR the user selects for review, open a new iTerm2 window with claude in review mode:
-
-```bash
-bash scripts/open-iterm-window.sh --dir ~/git/reviews "claude --model sonnet --effort high '/sk-review PR_URL'"
-```
-
-Replace `PR_URL` with the actual GitHub PR URL. Each review runs in its own session.
-
-If no PRs selected, skip this step.
 
 ## 7. Save Plan
 
@@ -118,7 +89,7 @@ Write the plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatte
 - `generated_at`: current time HH:MM
 - `carry_forward`: items from gather-carryforward.sh output, with `carried_days` incremented by 1
 - `personal_tasks`: items collected in step 5
-- `plan_items`: one entry per planned item with `time_block`, `jira`, `type`, `status: planned`, and `carry_forward_id` linking to source cf-NNN where applicable
+- `plan_items`: one entry per planned item with `time_block`, `app_id`, `type`, `status: planned`, and `carry_forward_id` linking to source cf-NNN where applicable
 
 See the work-planner agent's "Plan File Frontmatter" section for the exact schema.
 

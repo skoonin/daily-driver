@@ -19,7 +19,7 @@ If focus mode is **active**, show the time remaining and ask:
 If focus mode is **not active**, ask:
 "How long do you want to focus? (default: read from config, typically 90 minutes)"
 
-Optionally ask: "Working on a specific ticket? (leave blank to skip)"
+Optionally ask: "Working on a specific task? (leave blank to skip)"
 
 ## 3. Enable or Disable
 
