@@ -19,6 +19,9 @@ This repo is the **engine** that powers daily job search planning and end-of-day
 - `/week-end` - Weekly rollup: aggregates daily notes into weekly summary
 - `/prep` - Meeting prep: pulls application context relevant to an upcoming calendar meeting (interviews, networking)
 
+### Writing
+- `/voice-update` - Update the writing voice profile from an approved sample or explicit feedback
+
 ### Setup
 - `/setup` - One-time: verifies tool installation, configures workspace, initializes tracker
 
@@ -54,6 +57,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - `make week-end` - Run /week-end rollup session
 - `make prep` - Run /prep meeting prep session
 - `make focus` - Toggle focus mode (headless)
+- `make voice-update ARGS="/path/to/file.md"` - Update voice profile from a writing sample
 
 ## Integrations
 
@@ -67,12 +71,13 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - Daily plans and notes: `{output_dir}/YYYY/MM/YYYY-MM-DD-{plan,notes}.md`
 - Weekly summaries: `{output_dir}/weekly/YYYY/YYYY-WNN-week.md`
 - Application tracker: `{output_dir}/tracker.yaml`
-- Jobs discovered: `{output_dir}/jobs.md`
-- Contacts log: `{output_dir}/contacts.md`
+- Jobs discovered: `{output_dir}/jobs.csv`
+- Contacts log: `{output_dir}/contacts.csv`
 - Location preferences: `{output_dir}/location-preferences.md`
+- Writing voice profile: `{output_dir}/voice-profile.md`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)
 
-## Jobs Table (`jobs.md`)
+## Jobs Table (`jobs.csv`)
 
 Tracks every role discovered during the search -- applied, skipped, or still evaluating. This is the top of the funnel. Active application pipeline details (stages, follow-ups, dates) live in `tracker.yaml`.
 
@@ -87,7 +92,7 @@ Tracks every role discovered during the search -- applied, skipped, or still eva
 - Increment the `#` column sequentially; never reuse numbers
 - Source tracks where the role was found (HN Who's Hiring, LinkedIn, referral, company careers page, etc.)
 
-## Contacts Log (`contacts.md`)
+## Contacts Log (`contacts.csv`)
 
 Tracks people met during the search: recruiters, hiring managers, referrals, networking contacts.
 
@@ -101,3 +106,13 @@ Tracks people met during the search: recruiters, hiring managers, referrals, net
 ## Location Preferences (`location-preferences.md`)
 
 Ranked location tiers that drive job filtering. Read this file before assessing new roles to apply location fit correctly. Update when preferences change or new locations are evaluated.
+
+## Writing Voice Profile (`voice-profile.md`)
+
+Captures Shawn's writing style for cover letters, application responses, and professional communications. The profile documents language patterns, structural conventions, things to avoid, and approved writing samples with annotations.
+
+**Before drafting any professional communication**: read `{output_dir}/voice-profile.md` and apply its patterns. The profile is the source of truth for tone and style -- do not fall back to generic professional writing conventions for dimensions the profile covers.
+
+**Keeping it current**: run `/voice-update` after any approved writing sample to extract new patterns. The command reads the current profile, analyzes the sample, proposes additions, and updates only after confirmation.
+
+**Update log**: the profile file maintains an update log table at the bottom tracking what changed, when, and from what source.

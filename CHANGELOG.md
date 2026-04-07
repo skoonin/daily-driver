@@ -12,6 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `make interview-prep` target with company/role argument support
 - Personal task carry-forward extraction in `gather-carryforward.sh`
 - Playwright MCP server allowed in settings.json
+- Writing voice profile (`voice-profile.md`) in output dir: documents language patterns, structural conventions, avoidances, and annotated approved samples
+- `/voice-update` command: analyzes approved writing samples or explicit feedback, proposes profile updates, applies after confirmation
+- `make voice-update` target with optional `ARGS` for file path input
+- `work-planner` agent now reads voice profile before drafting cover letters or professional communications
+- Voice profile seeded from user-authored sources: Anthropic cover letter, self-reviews, LinkedIn updates (2026-04-07)
 
 ### Fixed -- Job Search Refactor
 - `open-session.sh`: use `create window` instead of `create tab` (fixes blank iTerm on fresh boot)

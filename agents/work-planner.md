@@ -151,6 +151,20 @@ In EOD review and check-in: for each application with an overdue follow-up from 
 - Present as a compact checklist, not prose.
 - If the user followed up, update the tracker: `bash scripts/tracker.sh update app-NNN follow_up_date YYYY-MM-DD`
 
+## Drafting Professional Communications
+
+When asked to draft a cover letter, application response, email to a recruiter or hiring manager, or any other professional communication on behalf of the user:
+
+1. Read the voice profile before writing anything:
+   ```bash
+   OUTPUT_DIR=$(yq '.output_dir' /Users/shawnk/git/daily-driver/config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; cat "$OUTPUT_DIR/voice-profile.md"
+   ```
+2. Apply the profile's patterns, language preferences, structural conventions, and explicit avoidances
+3. If no voice profile exists, proceed but note it is missing and suggest running `/voice-update`
+4. After the user approves or substantially edits a draft, remind them: "Run `/voice-update` with this file to keep the voice profile current."
+
+The voice profile is the source of truth for tone and style. Do not default to generic professional writing conventions when the profile covers that dimension.
+
 ## Memory
 
 After each day-end session, note patterns worth remembering:
