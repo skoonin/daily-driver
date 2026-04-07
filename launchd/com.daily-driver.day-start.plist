@@ -3,34 +3,26 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.daily-driver.checkin</string>
+  <string>com.daily-driver.day-start</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>PLACEHOLDER_REPO/scripts/open-session.sh</string>
-    <string>check-in</string>
+    <string>day-start</string>
   </array>
   <key>StartCalendarInterval</key>
-  <array>
-    <dict>
-      <key>Hour</key>
-      <integer>11</integer>
-      <key>Minute</key>
-      <integer>0</integer>
-    </dict>
-    <dict>
-      <key>Hour</key>
-      <integer>15</integer>
-      <key>Minute</key>
-      <integer>0</integer>
-    </dict>
-  </array>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/tmp/daily-driver-checkin.log</string>
+  <string>/tmp/daily-driver-day-start.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/daily-driver-checkin.log</string>
+  <string>/tmp/daily-driver-day-start.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

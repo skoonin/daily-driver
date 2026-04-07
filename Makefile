@@ -76,16 +76,20 @@ status:  ## Check installation status of all dependencies and services
 	@if [ -L "$(CLAUDE_DIR)/CLAUDE.md" ]; then echo "  commands: linked"; else echo "  commands: not linked (run make install)"; fi
 	@if [ -L "$(CLAUDE_DIR)/settings.local.json" ]; then echo "  settings.local.json: linked"; else echo "  settings.local.json: not linked (run make install)"; fi
 	@echo ""
-	@echo "=== LaunchAgent ==="
-	@if [ -f "$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist" ]; then \
-		if launchctl list com.daily-driver.checkin &>/dev/null; then \
-			printf "  \033[32m%-20s\033[0m %s\n" "check-in" "installed and running"; \
+	@echo "=== LaunchAgents ==="
+	@for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if [ -f "$$plist_file" ]; then \
+			if launchctl list "$${plist_name}" &>/dev/null; then \
+				printf "  \033[32m%-24s\033[0m %s\n" "$$agent" "installed and running"; \
+			else \
+				printf "  \033[33m%-24s\033[0m %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
+			fi; \
 		else \
-			printf "  \033[33m%-20s\033[0m %s\n" "check-in" "installed but not loaded (run make launchd-start)"; \
+			printf "  \033[31m%-24s\033[0m %s\n" "$$agent" "not installed (run make launchd-install)"; \
 		fi; \
-	else \
-		printf "  \033[31m%-20s\033[0m %s\n" "check-in" "not installed (run make launchd-install)"; \
-	fi
+	done
 
 deps:  ## Install all dependencies (Homebrew + claude)
 	@echo "=== Homebrew packages ==="
@@ -136,14 +140,18 @@ setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 		fi; \
 	done
 	@echo ""
-	@echo "=== LaunchAgent ==="
-	@if launchctl list com.daily-driver.checkin &>/dev/null 2>&1; then \
-		echo "  check-in: running"; \
-	elif [ -f "$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist" ]; then \
-		echo "  check-in: installed but not loaded (run make launchd-start)"; \
-	else \
-		echo "  check-in: not installed (run make launchd-install)"; \
-	fi
+	@echo "=== LaunchAgents ==="
+	@for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if launchctl list "$${plist_name}" &>/dev/null 2>&1; then \
+			printf "  %-24s %s\n" "$$agent" "running"; \
+		elif [ -f "$$plist_file" ]; then \
+			printf "  %-24s %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
+		else \
+			printf "  %-24s %s\n" "$$agent" "not installed (run make launchd-install)"; \
+		fi; \
+	done
 	@echo ""
 	@echo "Setup complete. Run 'make day-start' to begin."
 
@@ -177,23 +185,27 @@ uninstall:  ## Remove symlinks from .claude/
 
 ##@ Automation
 
-launchd-install:  ## Install check-in notification LaunchAgent
+launchd-install:  ## Install all LaunchAgents (day-start, check-in, day-end)
 	@bash scripts/launchd-install.sh install
 
-launchd-start:  ## Load LaunchAgent if installed but not running
-	@PLIST="$$HOME/Library/LaunchAgents/com.daily-driver.checkin.plist"; \
-	if [ ! -f "$$PLIST" ]; then \
-		echo "LaunchAgent not installed. Run: make launchd-install"; \
-		exit 1; \
-	fi; \
-	if launchctl list com.daily-driver.checkin &>/dev/null; then \
-		echo "LaunchAgent already running"; \
-	else \
-		launchctl load "$$PLIST"; \
-		echo "LaunchAgent loaded"; \
-	fi
+launchd-start:  ## Load all LaunchAgents if installed but not running
+	@any_missing=0; \
+	for agent in day-start checkin day-end; do \
+		plist_name="com.daily-driver.$${agent}"; \
+		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
+		if [ ! -f "$$plist_file" ]; then \
+			echo "  $${agent}: not installed (run make launchd-install)"; \
+			any_missing=1; \
+		elif launchctl list "$${plist_name}" &>/dev/null; then \
+			echo "  $${agent}: already running"; \
+		else \
+			launchctl bootstrap "gui/$$(id -u)" "$$plist_file"; \
+			echo "  $${agent}: loaded"; \
+		fi; \
+	done; \
+	[ "$$any_missing" -eq 0 ] || exit 1
 
-launchd-uninstall:  ## Remove check-in notification LaunchAgent
+launchd-uninstall:  ## Remove all LaunchAgents
 	@bash scripts/launchd-install.sh uninstall
 
 ##@ Workflow
