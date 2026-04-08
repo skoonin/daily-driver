@@ -15,13 +15,6 @@ git_scan_dir: ~/git
 # Job application tracker
 tracker:
   follow_up_days: 7
-  stale_days: 14
-  active_statuses:
-    - researching
-    - applied
-    - screening
-    - interviewing
-    - offer
 
 # macOS Calendar integration for plan time blocks
 calendar:

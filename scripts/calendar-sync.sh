@@ -89,11 +89,7 @@ if [[ "$item_count" -eq 0 ]]; then
 fi
 
 created=0
-for i in $(seq 0 $((item_count - 1))); do
-  # Read from the filtered list of items with time_block
-  text=$(echo "$frontmatter" | yq "[.plan_items[] | select(.time_block != null)][$i].text")
-  time_block=$(echo "$frontmatter" | yq "[.plan_items[] | select(.time_block != null)][$i].time_block")
-  app_id=$(echo "$frontmatter" | yq "[.plan_items[] | select(.time_block != null)][$i].app_id")
+while IFS=$'\t' read -r text time_block app_id; do
 
   # Parse start/end from HH:MM-HH:MM
   start_time="${time_block%-*}"
@@ -138,6 +134,6 @@ EOF
   else
     echo "WARNING: failed to create event for: ${summary}"
   fi
-done
+done < <(echo "$frontmatter" | yq -o=json '[.plan_items[] | select(.time_block != null)]' | jq -r '.[] | [.text, .time_block, (.app_id // "null")] | @tsv')
 
 echo "${created} events synced to '${CALENDAR_NAME}'"

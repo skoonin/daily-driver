@@ -131,14 +131,7 @@ cmd_list() {
   printf "%-8s | %-20s | %-25s | %-14s | %s\n" "ID" "Company" "Role" "Status" "Days"
   printf "%s\n" "---------|----------------------|---------------------------|----------------|------"
 
-  for i in $(seq 0 $((count - 1))); do
-    local id company role status last_activity
-    id=$(yq ".applications[$i].id" "$TRACKER")
-    company=$(yq ".applications[$i].company" "$TRACKER")
-    role=$(yq ".applications[$i].role" "$TRACKER")
-    status=$(yq ".applications[$i].status" "$TRACKER")
-    last_activity=$(yq ".applications[$i].last_activity" "$TRACKER")
-
+  while IFS=$'\t' read -r id company role status last_activity; do
     if [[ -n "$filter_status" && "$status" != "$filter_status" ]]; then
       continue
     fi
@@ -148,34 +141,36 @@ cmd_list() {
     days_since=$(( (dt_epoch - la_epoch) / 86400 ))
 
     printf "%-8s | %-20s | %-25s | %-14s | %dd\n" "$id" "$company" "$role" "$status" "$days_since"
-  done
+  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | [.id, .company, .role, .status, .last_activity] | @tsv')
 }
 
 cmd_stats() {
   ensure_tracker
 
-  local total applied screening interviewing offer rejected ghosted researching
-  total=$(yq '.applications | length' "$TRACKER")
-  researching=$(yq '[.applications[] | select(.status == "researching")] | length' "$TRACKER")
-  applied=$(yq '[.applications[] | select(.status == "applied")] | length' "$TRACKER")
-  screening=$(yq '[.applications[] | select(.status == "screening")] | length' "$TRACKER")
-  interviewing=$(yq '[.applications[] | select(.status == "interviewing")] | length' "$TRACKER")
-  offer=$(yq '[.applications[] | select(.status == "offer")] | length' "$TRACKER")
-  rejected=$(yq '[.applications[] | select(.status == "rejected")] | length' "$TRACKER")
-  ghosted=$(yq '[.applications[] | select(.status == "ghosted")] | length' "$TRACKER")
+  local days_since_mon=$(( ($(date +%u) - 1) ))
+  local week_start
+  week_start=$(date -v-${days_since_mon}d +%Y-%m-%d)
+
+  local total researching applied screening interviewing offer rejected ghosted this_week
+  local stats_line
+  stats_line=$(yq -o=json '.applications' "$TRACKER" | jq -r --arg ws "$week_start" '[
+    length,
+    ([.[] | select(.status == "researching")] | length),
+    ([.[] | select(.status == "applied")] | length),
+    ([.[] | select(.status == "screening")] | length),
+    ([.[] | select(.status == "interviewing")] | length),
+    ([.[] | select(.status == "offer")] | length),
+    ([.[] | select(.status == "rejected")] | length),
+    ([.[] | select(.status == "ghosted")] | length),
+    ([.[] | select(.date_applied >= $ws)] | length)
+  ] | @tsv')
+  IFS=$'\t' read -r total researching applied screening interviewing offer rejected ghosted this_week <<< "$stats_line"
 
   local active=$((researching + applied + screening + interviewing + offer))
 
   echo "Total: ${total} | Active: ${active}"
   echo "Pipeline: researching=${researching} applied=${applied} screening=${screening} interviewing=${interviewing} offer=${offer}"
   echo "Closed: rejected=${rejected} ghosted=${ghosted}"
-
-  # This week's applications
-  local week_start
-  local days_since_mon=$(( ($(date +%u) - 1) ))
-  week_start=$(date -v-${days_since_mon}d +%Y-%m-%d)
-  local this_week
-  this_week=$(yq "[.applications[] | select(.date_applied >= \"${week_start}\")] | length" "$TRACKER")
   echo "Applied this week: ${this_week}"
 }
 
@@ -210,15 +205,7 @@ cmd_follow_ups() {
   local dt_epoch
   dt_epoch=$(date -j -f "%Y-%m-%d" "$dt" +%s)
 
-  for i in $(seq 0 $((count - 1))); do
-    local status follow_up
-    status=$(yq ".applications[$i].status" "$TRACKER")
-    follow_up=$(yq ".applications[$i].follow_up_date" "$TRACKER")
-
-    # Only show follow-ups for active pre-interview statuses
-    if [[ "$status" != "applied" && "$status" != "screening" ]]; then
-      continue
-    fi
+  while IFS=$'\t' read -r id company role status last_activity follow_up; do
     if [[ "$follow_up" == "null" || -z "$follow_up" ]]; then
       continue
     fi
@@ -227,12 +214,6 @@ cmd_follow_ups() {
     fu_epoch=$(date -j -f "%Y-%m-%d" "$follow_up" +%s 2>/dev/null) || continue
 
     if [[ "$fu_epoch" -le "$dt_epoch" ]]; then
-      local id company role last_activity
-      id=$(yq ".applications[$i].id" "$TRACKER")
-      company=$(yq ".applications[$i].company" "$TRACKER")
-      role=$(yq ".applications[$i].role" "$TRACKER")
-      last_activity=$(yq ".applications[$i].last_activity" "$TRACKER")
-
       local la_epoch days_since
       la_epoch=$(date -j -f "%Y-%m-%d" "$last_activity" +%s 2>/dev/null) || la_epoch=$dt_epoch
       days_since=$(( (dt_epoch - la_epoch) / 86400 ))
@@ -246,7 +227,7 @@ cmd_follow_ups() {
         "$id" "$company" "$role" "$status" "$days_since" "$follow_up" "$label"
       found=$((found + 1))
     fi
-  done
+  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | select(.status == "applied" or .status == "screening") | [.id, .company, .role, .status, .last_activity, .follow_up_date] | @tsv')
 
   if [[ "$found" -eq 0 ]]; then
     echo "(no follow-ups due)"

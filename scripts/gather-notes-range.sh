@@ -49,6 +49,9 @@ while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
   year=$(echo "$current" | cut -d- -f1)
   month=$(echo "$current" | cut -d- -f2)
 
+  local dow
+  dow=$(date -j -f "%Y-%m-%d" "$current" +%u)
+
   for t in "${types[@]}"; do
     file="${OUTPUT_DIR}/${year}/${month}/${current}-${t}.md"
     if [[ -f "$file" ]]; then
@@ -56,7 +59,7 @@ while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
       cat "$file"
       echo ""
       found=1
-    else
+    elif [[ "$dow" -lt 6 ]]; then
       echo "(no ${t} file for ${current})"
     fi
   done

@@ -17,32 +17,6 @@ done
 STATE_DIR="$HOME/.local/share/daily-driver"
 LOCK_FILE="${STATE_DIR}/focus.lock"
 
-# Opens iTerm2 window with a claude prompt, falls back to Terminal.app
-open_iterm() {
-  local prompt="$1"
-  local repo_dir
-  repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-  if [ -d /Applications/iTerm.app ]; then
-    osascript <<EOF
-tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow
-    write text "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n 'check-in-$(date +%Y-%m-%d-%H%M)' '${prompt}'"
-  end tell
-end tell
-EOF
-  else
-    osascript <<EOF
-tell application "Terminal"
-  activate
-  do script "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n 'check-in-$(date +%Y-%m-%d-%H%M)' '${prompt}'"
-end tell
-EOF
-  fi
-}
-
 ensure_state_dir() {
   mkdir -p "$STATE_DIR"
 }
@@ -82,13 +56,11 @@ cmd_enable() {
   echo "Focus mode enabled until ${end_local} (${minutes} minutes)"
 }
 
-cmd_disable() {
+_cleanup_focus() {
   if [[ ! -f "$LOCK_FILE" ]]; then
-    echo "Focus mode is not active"
-    return
+    return 1
   fi
 
-  # Record the completed focus session in state
   local start_iso ticket
   start_iso=$(jq -r '.start_iso // ""' "$LOCK_FILE")
   ticket=$(jq -r '.ticket // ""' "$LOCK_FILE")
@@ -99,11 +71,19 @@ cmd_disable() {
     session_json=$(jq -n --arg start "$start_iso" --arg end "$actual_end_iso" \
       --arg ticket "${ticket:-}" \
       '{start_iso: $start, end_iso: $end, ticket: (if $ticket == "" or $ticket == "null" then null else $ticket end)}')
-    echo "$session_json" | bash "${SCRIPT_DIR}/checkin-state.sh" record-focus-session 2>/dev/null || true
+    echo "$session_json" | bash "${SCRIPT_DIR}/checkin-state.sh" record-focus-session || true
   fi
 
   rm -f "$LOCK_FILE"
-  open_iterm "/check-in"
+}
+
+cmd_disable() {
+  if ! _cleanup_focus; then
+    echo "Focus mode is not active"
+    return
+  fi
+
+  bash "${SCRIPT_DIR}/open-session.sh" check-in
   echo "Focus mode disabled"
 }
 
@@ -118,8 +98,8 @@ cmd_status() {
   now_epoch=$(date +%s)
 
   if [[ "$now_epoch" -ge "$end_epoch" ]]; then
-    # Expired, clean up
-    cmd_disable
+    _cleanup_focus
+    echo "Focus mode expired"
     return
   fi
 

@@ -66,12 +66,7 @@ blocked_count=0
 stale_count=0
 max_days=0
 
-for i in $(seq 0 $((item_count - 1))); do
-  text=$(echo "$frontmatter" | yq ".carry_forward[$i].text")
-  app_id=$(echo "$frontmatter" | yq ".carry_forward[$i].app_id")
-  blocked=$(echo "$frontmatter" | yq ".carry_forward[$i].blocked")
-  carried_days=$(echo "$frontmatter" | yq ".carry_forward[$i].carried_days // 1")
-
+while IFS=$'\t' read -r text app_id blocked carried_days; do
   if [[ "$carried_days" -gt "$max_days" ]]; then
     max_days=$carried_days
   fi
@@ -95,7 +90,7 @@ for i in $(seq 0 $((item_count - 1))); do
   fi
 
   echo "${label} ${ref}: ${text}"
-done
+done < <(echo "$frontmatter" | yq -o=json '.carry_forward' | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 1 | tostring)] | @tsv')
 
 echo ""
 echo "${item_count} items carried forward (${blocked_count} blocked, ${stale_count} stale ${STALE_THRESHOLD}+ days)"
@@ -110,12 +105,7 @@ personal_count=$(echo "$frontmatter" | yq '.personal_tasks | length // 0')
 if [[ "$personal_count" -gt 0 ]]; then
   echo ""
   echo "=== Personal Tasks (carried from ${PREV_DATE}) ==="
-  for i in $(seq 0 $((personal_count - 1))); do
-    pt_text=$(echo "$frontmatter" | yq ".personal_tasks[$i].text")
-    pt_time=$(echo "$frontmatter" | yq ".personal_tasks[$i].time")
-    pt_dur=$(echo "$frontmatter" | yq ".personal_tasks[$i].duration_minutes")
-    pt_notes=$(echo "$frontmatter" | yq ".personal_tasks[$i].notes")
-
+  while IFS=$'\t' read -r pt_text pt_time pt_dur pt_notes; do
     line="- ${pt_text}"
     if [[ "$pt_time" != "null" && -n "$pt_time" ]]; then
       line="${line} @ ${pt_time}"
@@ -127,5 +117,5 @@ if [[ "$personal_count" -gt 0 ]]; then
       line="${line} — ${pt_notes}"
     fi
     echo "$line"
-  done
+  done < <(echo "$frontmatter" | yq -o=json '.personal_tasks' | jq -r '.[] | [.text, (.time // "null"), (.duration_minutes // "null" | tostring), (.notes // "null")] | @tsv')
 fi

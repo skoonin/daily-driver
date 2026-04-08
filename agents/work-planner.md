@@ -157,7 +157,7 @@ When asked to draft a cover letter, application response, email to a recruiter o
 
 1. Read the voice profile before writing anything:
    ```bash
-   OUTPUT_DIR=$(yq '.output_dir' /Users/shawnk/git/daily-driver/config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; cat "$OUTPUT_DIR/voice-profile.md"
+   OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; cat "$OUTPUT_DIR/voice-profile.md"
    ```
 2. Apply the profile's patterns, language preferences, structural conventions, and explicit avoidances
 3. If no voice profile exists, proceed but note it is missing and suggest running `/voice-update`

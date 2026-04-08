@@ -9,7 +9,7 @@ Update the writing voice profile. This keeps the profile current so future draft
 
 Read the current profile first:
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' /Users/shawnk/git/daily-driver/config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; cat "$OUTPUT_DIR/voice-profile.md"
+OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; cat "$OUTPUT_DIR/voice-profile.md"
 ```
 
 ## 1. Determine Input Mode
@@ -55,7 +55,7 @@ Ask: "Does this capture it? Anything to revise before I update the profile?"
 After confirmation, update the voice profile:
 
 ```bash
-OUTPUT_DIR=$(yq '.output_dir' /Users/shawnk/git/daily-driver/config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; echo "$OUTPUT_DIR/voice-profile.md"
+OUTPUT_DIR=$(yq '.output_dir' config.yaml); OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"; echo "$OUTPUT_DIR/voice-profile.md"
 ```
 
 Write the updated file to the path shown above. Apply only what was confirmed in step 3:

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- Code Review Findings
+- `open-session.sh`: close TOCTOU race with preliminary lock file before iTerm shell startup
+- `open-session.sh`: propagate `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` to launchd-launched sessions
+- `checkin-state.sh`: fix first-run crash by calling `cmd_init` (creates state file) instead of `ensure_state_dir`
+- `focus-mode.sh`: extract `_cleanup_focus()` so `cmd_status` expiry does not open iTerm
+- `focus-mode.sh`: stop suppressing stderr from `checkin-state.sh` calls
+- `gather-notes-range.sh`: suppress "(no file)" messages on weekends while still showing any weekend files
+
+### Changed -- Code Review Findings
+- Batch yq subprocess calls in `tracker.sh`, `gather-carryforward.sh`, and `calendar-sync.sh` from O(N) to O(1) via `yq -o=json | jq @tsv` pipes
+- `focus-mode.sh`: remove duplicate `open_iterm()`, delegate to `open-session.sh check-in`
+- `Makefile`: add `.SHELLFLAGS := -o pipefail -c` for pipeline failure detection
+- `commands/voice-update.md`, `agents/work-planner.md`: replace hardcoded paths with relative `config.yaml`
+
+### Removed -- Code Review Findings
+- `config.yaml`: dead keys `stale_days` and `active_statuses` (unused by any script)
+- `Makefile`: `terminal-notifier` from `BREW_DEPS` and status check (unused)
+
 ### Added -- Job Search Refactor
 - Jobs table (`jobs.md`), contacts log (`contacts.md`), location preferences (`location-preferences.md`) documentation in CLAUDE.md
 - `/interview-prep` command for structured interview practice (behavioral, technical, system design)

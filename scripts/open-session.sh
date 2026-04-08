@@ -29,7 +29,7 @@ tell application "iTerm"
   activate
   set newWindow to (create window with default profile)
   tell current session of newWindow
-    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
   end tell
 end tell
 EOF
@@ -37,7 +37,7 @@ EOF
     osascript <<EOF
 tell application "Terminal"
   activate
-  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
 end tell
 EOF
   fi
@@ -74,4 +74,6 @@ if [[ -f "$SESSION_LOCK" ]]; then
 fi
 
 mkdir -p "$STATE_DIR"
+# Preliminary lock closes TOCTOU gap between Gate 3 check and iTerm shell startup
+echo "pending" > "$SESSION_LOCK"
 open_session || echo "$(date): open_session failed for ${COMMAND} (exit $?)" >> "${STATE_DIR}/open-session.log"

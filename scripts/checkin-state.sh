@@ -45,7 +45,7 @@ cmd_init() {
 }
 
 cmd_record_checkin() {
-  ensure_state_dir
+  cmd_init
   local input
   input=$(cat)
   local timestamp
@@ -68,7 +68,7 @@ cmd_get_last_checkin() {
 
 cmd_flag_overrun() {
   local ticket="$1" planned_min="$2" actual_min="$3"
-  ensure_state_dir
+  cmd_init
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%S)
   local updated
@@ -79,7 +79,7 @@ cmd_flag_overrun() {
 }
 
 cmd_record_focus_session() {
-  ensure_state_dir
+  cmd_init
   local input
   input=$(cat)
   local updated

@@ -1,4 +1,5 @@
 SHELL := /bin/bash
+.SHELLFLAGS := -o pipefail -c
 .ONESHELL:
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
        day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update
@@ -45,7 +46,7 @@ help:  ## Display this help
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "\033[1mTargets\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-BREW_DEPS := jq yq ical-buddy terminal-notifier
+BREW_DEPS := jq yq ical-buddy
 
 status:  ## Check installation status of all dependencies and services
 	@echo "=== Dependencies ==="
@@ -60,11 +61,6 @@ status:  ## Check installation status of all dependencies and services
 		printf "  \033[32m%-20s\033[0m %s\n" "icalBuddy" "installed"; \
 	else \
 		printf "  \033[31m%-20s\033[0m %s\n" "icalBuddy" "not installed"; \
-	fi
-	@if command -v terminal-notifier &>/dev/null; then \
-		printf "  \033[32m%-20s\033[0m %s\n" "terminal-notifier" "installed (optional)"; \
-	else \
-		printf "  \033[33m%-20s\033[0m %s\n" "terminal-notifier" "not installed (optional)"; \
 	fi
 	@if command -v claude &>/dev/null; then \
 		printf "  \033[32m%-20s\033[0m %s\n" "claude" "$$(claude --version 2>&1 | head -1)"; \
