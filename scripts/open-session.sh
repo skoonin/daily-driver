@@ -29,7 +29,7 @@ tell application "iTerm"
   activate
   set newWindow to (create window with default profile)
   tell current session of newWindow
-    write text "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'"
+    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
   end tell
 end tell
 EOF
@@ -37,7 +37,7 @@ EOF
     osascript <<EOF
 tell application "Terminal"
   activate
-  do script "cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'"
+  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
 end tell
 EOF
   fi
@@ -60,6 +60,17 @@ if [[ "$COMMAND" == "check-in" && -f "$LOCK_FILE" ]]; then
     exit 0
   fi
   rm -f "$LOCK_FILE"
+fi
+
+# Gate 3: Session lock — skip if another claude session is already running
+SESSION_LOCK="${SCRIPT_DIR}/../.session.lock"
+if [[ -f "$SESSION_LOCK" ]]; then
+  locked_pid=$(cat "$SESSION_LOCK" 2>/dev/null)
+  if kill -0 "$locked_pid" 2>/dev/null; then
+    echo "$(date): skipped ${COMMAND} — session already running (PID ${locked_pid})" >> "${STATE_DIR}/open-session.log"
+    exit 0
+  fi
+  rm -f "$SESSION_LOCK"
 fi
 
 mkdir -p "$STATE_DIR"

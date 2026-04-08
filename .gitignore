@@ -6,3 +6,4 @@
 .claude/agents/
 .playwright-mcp/
 .mcp.json
+.session.lock
