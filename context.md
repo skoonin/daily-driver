@@ -30,6 +30,7 @@
 These appear as personal tasks in every day-start plan:
 
 - Take morning medication
+- Stretching
 
 ## Preferences
 
