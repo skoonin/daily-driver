@@ -32,12 +32,15 @@ cat ~/.local/share/daily-driver/state.json 2>/dev/null || echo "(no state file)"
 
 ## 2. Gather Fresh Data
 
-Collect calendar context and recent session activity:
+Collect calendar context, recent session activity, and git commits:
 ```bash
 bash scripts/gather-calendar.sh
 ```
 ```bash
 bash scripts/gather-sessions.sh
+```
+```bash
+bash scripts/gather-git.sh
 ```
 
 ## 3. Present Check-in Summary
@@ -45,7 +48,7 @@ bash scripts/gather-sessions.sh
 Using the gathered data, present:
 
 1. **Current Time vs Remaining Blocks** - Using `current_time` from step 0, show what was planned for this window, what blocks are done/past, and what remains today
-2. **Sessions Since Last Check-in** - Claude Code sessions started since the last check-in timestamp
+2. **Sessions + Commits Since Last Check-in** - Claude Code sessions and git commits since the last check-in timestamp; use these together to infer what was actually worked on
 3. **Prior Check-ins Today** - Summary of earlier check-in results if any
 
 ## 4. Interactive Review

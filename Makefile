@@ -2,7 +2,8 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 .ONESHELL:
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
-       day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update
+       day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update \
+       gather-jobs gather-jobs-install scrape-jobs
 
 PROJ_DIR := $(shell pwd)
 
@@ -46,7 +47,7 @@ help:  ## Display this help
 	@echo ""
 	@awk 'BEGIN {FS = ":.*##"; printf "\033[1mTargets\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
 
-BREW_DEPS := jq yq ical-buddy
+BREW_DEPS := jq yq ical-buddy terminal-notifier
 
 status:  ## Check installation status of all dependencies and services
 	@echo "=== Dependencies ==="
@@ -73,7 +74,7 @@ status:  ## Check installation status of all dependencies and services
 	@if [ -L "$(CLAUDE_DIR)/settings.local.json" ]; then echo "  settings.local.json: linked"; else echo "  settings.local.json: not linked (run make install)"; fi
 	@echo ""
 	@echo "=== LaunchAgents ==="
-	@for agent in day-start checkin day-end; do \
+	@for agent in day-start checkin day-end gather-jobs; do \
 		plist_name="com.daily-driver.$${agent}"; \
 		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
 		if [ -f "$$plist_file" ]; then \
@@ -137,7 +138,7 @@ setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 	done
 	@echo ""
 	@echo "=== LaunchAgents ==="
-	@for agent in day-start checkin day-end; do \
+	@for agent in day-start checkin day-end gather-jobs; do \
 		plist_name="com.daily-driver.$${agent}"; \
 		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
 		if launchctl list "$${plist_name}" &>/dev/null 2>&1; then \
@@ -186,7 +187,7 @@ launchd-install:  ## Install all LaunchAgents (day-start, check-in, day-end)
 
 launchd-start:  ## Load all LaunchAgents if installed but not running
 	@any_missing=0; \
-	for agent in day-start checkin day-end; do \
+	for agent in day-start checkin day-end gather-jobs; do \
 		plist_name="com.daily-driver.$${agent}"; \
 		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
 		if [ ! -f "$$plist_file" ]; then \
@@ -236,4 +237,13 @@ interview-prep:  ## Interview prep: practice questions for a target role (usage:
 
 voice-update:  ## Update writing voice profile from an approved sample or feedback (usage: make voice-update ARGS="/path/to/file.md")
 	@$(CLDE) -n "voice-update-$$(date +%Y-%m-%d)" '/voice-update $(ARGS)'
+
+gather-jobs:  ## Run job discovery now (manual trigger, includes Phase 2 scraper)
+	@bash scripts/gather-jobs.sh
+
+scrape-jobs:  ## Run Phase 2 scraper only (usage: make scrape-jobs ARGS="--dry-run")
+	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
+
+gather-jobs-install:  ## Install gather-jobs launchd plist (07:00 daily background run)
+	@bash scripts/launchd-install.sh install
 

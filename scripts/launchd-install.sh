@@ -13,6 +13,7 @@ PLISTS=(
   "com.daily-driver.day-start"
   "com.daily-driver.checkin"
   "com.daily-driver.day-end"
+  "com.daily-driver.gather-jobs"
 )
 
 detect_brew_prefix() {
@@ -56,6 +57,7 @@ cmd_install() {
 
   echo ""
   echo "Schedule:"
+  echo "  07:00 -> gather-jobs"
   echo "  09:00 -> /day-start"
   echo "  11:00 -> /check-in"
   echo "  15:00 -> /check-in"

@@ -45,3 +45,86 @@ reporting:
     save_dir: weekly
   month:
     save_dir: monthly
+
+job_search:
+  schedule: "07:00"
+  sources:
+    boards:
+      - id: linkedin
+        name: LinkedIn
+        type: playwright
+        search_url: "https://www.linkedin.com/jobs/search/?keywords={role}&location=Canada&f_WT=2"
+        enabled: true
+      - id: indeed
+        name: Indeed
+        type: playwright
+        search_url: "https://ca.indeed.com/jobs?q={role}&l=Remote"
+        enabled: true
+      - id: hn_who_is_hiring
+        name: HN Who's Hiring
+        type: manual
+        static_url: "https://news.ycombinator.com/submitted?id=whoishiring"
+        enabled: true
+      - id: wellfound
+        name: Wellfound
+        type: playwright
+        search_url: "https://wellfound.com/jobs?q={role}&remote=true"
+        enabled: true
+      - id: weworkremotely
+        name: We Work Remotely
+        type: playwright
+        static_url: "https://weworkremotely.com/remote-jobs/search?term={role}"
+        enabled: true
+      - id: remoteok
+        name: RemoteOK
+        type: playwright
+        static_url: "https://remoteok.com/remote-{role}-jobs"
+        enabled: true
+    companies:
+      - id: anthropic
+        name: Anthropic
+        type: playwright
+        careers_url: "https://www.anthropic.com/careers"
+        enabled: true
+      - id: apple
+        name: Apple
+        type: playwright
+        careers_url: "https://jobs.apple.com/en-us/search"
+        enabled: false
+  scraper:
+    enabled: true
+    sources:
+      remoteok: true
+      weworkremotely: true
+      hn_who_is_hiring: true
+      anthropic: true
+      linkedin: false
+      indeed: false
+      wellfound: false
+    hn_max_posts: 100
+    remoteok_max_jobs: 150
+    timeout: 15
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+  roles:
+    - "Senior SRE"
+    - "Staff SRE"
+    - "Principal SRE"
+    - "Senior Site Reliability Engineer"
+    - "Staff Site Reliability Engineer"
+    - "Senior Platform Engineer"
+    - "Staff Platform Engineer"
+    - "Senior DevOps Engineer"
+    - "Staff DevOps Engineer"
+    - "Senior Infrastructure Engineer"
+    - "Staff Infrastructure Engineer"
+    - "Senior Cloud Engineer"
+    - "Staff Cloud Engineer"
+    - "CI/CD Engineer"
+    - "Senior CI/CD Engineer"
+    - "Build Engineer"
+    - "Senior Build Engineer"
+    - "Release Engineer"
+    - "Senior Release Engineer"
+    - "Production Engineer"
+    - "Senior Production Engineer"
