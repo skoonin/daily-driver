@@ -27,7 +27,6 @@ STALE_THRESHOLD=$(yq '.planning.stale_threshold_days // 3' "$CONFIG")
 MAX_LOOKBACK=5
 days_back=0
 PREV_DATE=""
-NOTES_FILE=""
 frontmatter=""
 item_count=0
 
@@ -54,7 +53,6 @@ while [[ "$days_back" -lt "$MAX_LOOKBACK" ]]; do
         count=$(echo "$fm" | yq '.carry_forward | length // 0')
         if [[ "$count" -gt 0 ]]; then
           PREV_DATE="$candidate"
-          NOTES_FILE="$cand_file"
           frontmatter="$fm"
           item_count="$count"
           break
@@ -74,7 +72,7 @@ if [[ -z "$PREV_DATE" ]]; then
 fi
 
 if [[ "$days_back" -gt 1 ]]; then
-  echo "(skipped ${days_back} days back -- last notes with carry-forward: ${PREV_DATE})"
+  echo "(looked back ${days_back} business days -- last notes with carry-forward: ${PREV_DATE})"
 fi
 
 blocked_count=0
@@ -109,7 +107,7 @@ while IFS=$'\t' read -r text app_id blocked carried_days; do
 
   echo "${label} ${ref}: ${text}"
   echo "  carried_days: ${new_days}"
-done < <(echo "$frontmatter" | yq -o=json '.carry_forward' | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 1 | tostring)] | @tsv')
+done < <(echo "$frontmatter" | yq -o=json '.carry_forward' | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 0 | tostring)] | @tsv')
 
 echo ""
 echo "${item_count} items carried forward (${blocked_count} blocked, ${stale_count} stale ${STALE_THRESHOLD}+ days)"

@@ -31,6 +31,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `focus-mode.sh`: extract `_cleanup_focus()` so `cmd_status` expiry does not open iTerm
 - `focus-mode.sh`: stop suppressing stderr from `checkin-state.sh` calls
 - `gather-notes-range.sh`: suppress "(no file)" messages on weekends while still showing any weekend files
+- `tracker.sh` audit: proper RFC 4180 CSV parsing via awk (was fragile `IFS=','`)
+- `tracker.sh` audit: substring company matching to avoid false negatives (`Anthropic` vs `Anthropic Inc`)
+- `tracker.sh` audit: pre-build lookup structures to eliminate O(n^2) nested CSV loops
+- `tracker.sh`: use `strenv()` in yq for status interpolation (was unquoted shell variable)
+- `gather-carryforward.sh`: fix `carried_days` default from `// 1` to `// 0` (off-by-one on first carry)
+- `gather-carryforward.sh`: fix misleading "skipped N days" message (now "looked back N business days")
+- `gather-carryforward.sh`: remove dead `$NOTES_FILE` variable
+- `tracker.sh` audit: remove `exit 1` on discrepancies (diagnostic output, not a gate)
+- `tracker.sh` audit: filter tracker-side checks to active statuses only (was flagging rejected/withdrawn)
 
 ### Changed -- Code Review Findings
 - Batch yq subprocess calls in `tracker.sh`, `gather-carryforward.sh`, and `calendar-sync.sh` from O(N) to O(1) via `yq -o=json | jq @tsv` pipes

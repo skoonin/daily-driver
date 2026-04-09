@@ -47,7 +47,7 @@ follow_up_date() {
   local status="${1:-applied}"
   # Prefer status-specific interval; fall back to global follow_up_days
   local days
-  days=$(yq ".tracker.follow_up_by_status.${status} // ${FOLLOW_UP_DAYS}" "$CONFIG")
+  days=$(STATUS="$status" yq ".tracker.follow_up_by_status.[strenv(STATUS)] // ${FOLLOW_UP_DAYS}" "$CONFIG")
   date -v+"${days}"d +%Y-%m-%d
 }
 
@@ -203,42 +203,77 @@ cmd_audit() {
 
   local issues=0
 
-  # Applied statuses that should exist in both systems
-  local active_statuses=("applied" "screening" "interviewing" "offer")
+  # Pre-extract tracker data once (O(1) yq call)
+  local tracker_json
+  tracker_json=$(yq -o=json '.applications' "$TRACKER" | jq -r '[.[] | {id: .id, company: .company, company_lower: (.company | ascii_downcase), role: .role, status: .status}]')
 
-  # Build tracker company list (lowercased) for comparison
-  local tracker_companies
-  tracker_companies=$(yq -o=json '.applications' "$TRACKER" | jq -r '[.[] | {id: .id, company: (.company | ascii_downcase), role: .role, status: .status}]')
+  # Pre-extract CSV active rows using awk for proper quoted-field handling
+  # Output: company\trole\tstatus (lowercased company)
+  local csv_active
+  csv_active=$(awk -F',' '
+    NR == 1 { next }
+    {
+      # Rejoin fields split inside quotes
+      line = $0; nf = 0; delete fields
+      while (line != "") {
+        if (substr(line, 1, 1) == "\"") {
+          p = index(substr(line, 2), "\"")
+          while (p > 0 && substr(line, p+2, 1) == "\"") {
+            p = p + 1 + index(substr(line, p+2+1), "\"")
+          }
+          fields[++nf] = substr(line, 2, p-1)
+          line = substr(line, p+3)
+        } else {
+          p = index(line, ",")
+          if (p == 0) { fields[++nf] = line; line = "" }
+          else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
+        }
+      }
+      company = fields[2]; role = fields[4]; status = fields[10]
+      if (status == "applied" || status == "screening" || status == "interviewing" || status == "offer") {
+        co = tolower(company)
+        print co "\t" company "\t" role "\t" status
+      }
+    }
+  ' "$jobs_csv")
+
+  # Pre-build CSV company lookup (lowercased company -> status) for O(1) checks
+  local csv_all_companies
+  csv_all_companies=$(awk -F',' '
+    NR == 1 { next }
+    {
+      line = $0; nf = 0; delete fields
+      while (line != "") {
+        if (substr(line, 1, 1) == "\"") {
+          p = index(substr(line, 2), "\"")
+          while (p > 0 && substr(line, p+2, 1) == "\"") {
+            p = p + 1 + index(substr(line, p+2+1), "\"")
+          }
+          fields[++nf] = substr(line, 2, p-1)
+          line = substr(line, p+3)
+        } else {
+          p = index(line, ",")
+          if (p == 0) { fields[++nf] = line; line = "" }
+          else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
+        }
+      }
+      print tolower(fields[2]) "\t" fields[10]
+    }
+  ' "$jobs_csv")
 
   # Check applied jobs in jobs.csv that have no tracker entry
   echo "=== Applied jobs.csv rows with no tracker entry ==="
   local csv_issues=0
-  while IFS=',' read -r num company product role comp location fit source date_found status date_applied link notes; do
-    # Strip quotes
-    company=$(echo "$company" | tr -d '"' | xargs)
-    role=$(echo "$role" | tr -d '"' | xargs)
-    status=$(echo "$status" | tr -d '"' | xargs)
-
-    local matched=false
-    for check_status in "${active_statuses[@]}"; do
-      if [[ "$status" == "$check_status" ]]; then
-        matched=true
-        break
-      fi
-    done
-    [[ "$matched" == "false" ]] && continue
-
-    local company_lower
-    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
-    local found_in_tracker
-    found_in_tracker=$(echo "$tracker_companies" | jq -r --arg c "$company_lower" '.[] | select(.company == $c) | .id' | head -1)
-
-    if [[ -z "$found_in_tracker" ]]; then
+  while IFS=$'\t' read -r co_lower company role status; do
+    [[ -z "$co_lower" ]] && continue
+    local found
+    found=$(echo "$tracker_json" | jq -r --arg c "$co_lower" '[.[] | select(.company_lower | contains($c)) or ($c | contains(.company_lower))] | length')
+    if [[ "$found" -eq 0 ]]; then
       echo "  MISSING: ${company} / ${role} (jobs.csv status: ${status})"
       csv_issues=$((csv_issues + 1))
       issues=$((issues + 1))
     fi
-  done < <(tail -n +2 "$jobs_csv")
+  done <<< "$csv_active"
 
   [[ "$csv_issues" -eq 0 ]] && echo "  (none)"
 
@@ -247,25 +282,25 @@ cmd_audit() {
   echo "=== Tracker entries with no jobs.csv row ==="
   local tracker_issues=0
   while IFS=$'\t' read -r id company role status; do
-    local company_lower
-    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
+    local co_lower
+    co_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
     local found_in_csv=false
 
-    while IFS=',' read -r num csv_company rest; do
-      local csv_company_lower
-      csv_company_lower=$(echo "$csv_company" | tr -d '"' | tr '[:upper:]' '[:lower:]' | xargs)
-      if [[ "$csv_company_lower" == "$company_lower" ]]; then
+    while IFS=$'\t' read -r csv_co csv_status; do
+      [[ -z "$csv_co" ]] && continue
+      # Substring match in either direction
+      if [[ "$csv_co" == *"$co_lower"* || "$co_lower" == *"$csv_co"* ]]; then
         found_in_csv=true
         break
       fi
-    done < <(tail -n +2 "$jobs_csv")
+    done <<< "$csv_all_companies"
 
     if [[ "$found_in_csv" == "false" ]]; then
       echo "  MISSING: ${id} | ${company} / ${role} (tracker status: ${status})"
       tracker_issues=$((tracker_issues + 1))
       issues=$((issues + 1))
     fi
-  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | [.id, .company, .role, .status] | @tsv')
+  done < <(echo "$tracker_json" | jq -r '.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing" or .status == "offer") | [.id, .company, .role, .status] | @tsv')
 
   [[ "$tracker_issues" -eq 0 ]] && echo "  (none)"
 
@@ -274,22 +309,21 @@ cmd_audit() {
   echo "=== Status mismatches ==="
   local mismatch_issues=0
   while IFS=$'\t' read -r id company role tracker_status; do
-    local company_lower
-    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
+    local co_lower
+    co_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
 
-    while IFS=',' read -r num csv_company product csv_role comp location fit source date_found csv_status rest; do
-      local csv_company_lower
-      csv_company_lower=$(echo "$csv_company" | tr -d '"' | tr '[:upper:]' '[:lower:]' | xargs)
-      csv_status=$(echo "$csv_status" | tr -d '"' | xargs)
-
-      if [[ "$csv_company_lower" == "$company_lower" && "$csv_status" != "$tracker_status" ]]; then
-        echo "  MISMATCH: ${company} | jobs.csv=${csv_status} tracker=${tracker_status} (${id})"
-        mismatch_issues=$((mismatch_issues + 1))
-        issues=$((issues + 1))
+    while IFS=$'\t' read -r csv_co csv_status; do
+      [[ -z "$csv_co" ]] && continue
+      if [[ "$csv_co" == *"$co_lower"* || "$co_lower" == *"$csv_co"* ]]; then
+        if [[ "$csv_status" != "$tracker_status" ]]; then
+          echo "  MISMATCH: ${company} | jobs.csv=${csv_status} tracker=${tracker_status} (${id})"
+          mismatch_issues=$((mismatch_issues + 1))
+          issues=$((issues + 1))
+        fi
         break
       fi
-    done < <(tail -n +2 "$jobs_csv")
-  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | [.id, .company, .role, .status] | @tsv')
+    done <<< "$csv_all_companies"
+  done < <(echo "$tracker_json" | jq -r '.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing" or .status == "offer") | [.id, .company, .role, .status] | @tsv')
 
   [[ "$mismatch_issues" -eq 0 ]] && echo "  (none)"
 
@@ -298,7 +332,6 @@ cmd_audit() {
     echo "OK: tracker and jobs.csv are in sync"
   else
     echo "Found ${issues} discrepancy(s)"
-    exit 1
   fi
 }
 
