@@ -110,6 +110,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
 
     num_idx = col("#")
     company_idx = col("Company")
+    product_idx = col("Product/Purpose")
     role_idx = col("Role")
     location_idx = col("Location")
     source_idx = col("Source")
@@ -126,6 +127,9 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
                 row[num_idx] = str(next_num)
             if company_idx is not None:
                 row[company_idx] = job.get("company", "")
+            if product_idx is not None:
+                # Scrapers that provide product context can pass it through; default flags rows needing manual fill
+                row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
             if role_idx is not None:
                 row[role_idx] = job.get("role", "")
             if location_idx is not None:

@@ -15,11 +15,16 @@ git_scan_dir: ~/git
 # Job application tracker
 tracker:
   follow_up_days: 7
+  follow_up_by_status:
+    applied: 7
+    screening: 3
+    interviewing: 5
 
 # macOS Calendar integration for plan time blocks
 calendar:
   plan_calendar_name: "Daily Plan"
   sync_enabled: true
+  excluded_calendars: []
 
 # Automated session schedule (managed by launchd)
 # 09:00 -> /day-start  (separate day-start plist)

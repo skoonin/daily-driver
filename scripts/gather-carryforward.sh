@@ -21,45 +21,60 @@ OUTPUT_DIR=$(yq '.output_dir' "$CONFIG")
 OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
 STALE_THRESHOLD=$(yq '.planning.stale_threshold_days // 3' "$CONFIG")
 
-# Resolve previous business day (Monday -> Friday, else -> yesterday)
-dow=$(date +%u)
-if [[ "$dow" -eq 1 ]]; then
-  PREV_DATE=$(date -v-3d +%Y-%m-%d)
-else
-  PREV_DATE=$(date -v-1d +%Y-%m-%d)
-fi
+# Walk back through up to 5 business days to find the most recent notes file
+# that contains carry_forward items. Day-end is sometimes skipped, so a single
+# "previous business day" lookup silently drops all carry-forward context.
+MAX_LOOKBACK=5
+days_back=0
+PREV_DATE=""
+NOTES_FILE=""
+frontmatter=""
+item_count=0
 
-PREV_YEAR=$(date -j -f "%Y-%m-%d" "$PREV_DATE" +%Y)
-PREV_MONTH=$(date -j -f "%Y-%m-%d" "$PREV_DATE" +%m)
-NOTES_FILE="${OUTPUT_DIR}/${PREV_YEAR}/${PREV_MONTH}/${PREV_DATE}-notes.md"
+# Build candidate date by stepping back one calendar day at a time, skipping weekends
+candidate=$(date -v-1d +%Y-%m-%d)
+while [[ "$days_back" -lt "$MAX_LOOKBACK" ]]; do
+  candidate_dow=$(date -j -f "%Y-%m-%d" "$candidate" +%u)
+  # Skip Saturday (6) and Sunday (7)
+  if [[ "$candidate_dow" -eq 6 || "$candidate_dow" -eq 7 ]]; then
+    candidate=$(date -j -v-1d -f "%Y-%m-%d" "$candidate" +%Y-%m-%d)
+    continue
+  fi
+
+  days_back=$((days_back + 1))
+  cand_year=$(date -j -f "%Y-%m-%d" "$candidate" +%Y)
+  cand_month=$(date -j -f "%Y-%m-%d" "$candidate" +%m)
+  cand_file="${OUTPUT_DIR}/${cand_year}/${cand_month}/${candidate}-notes.md"
+
+  if [[ -f "$cand_file" ]]; then
+    first_line=$(head -1 "$cand_file")
+    if [[ "$first_line" == "---" ]]; then
+      fm=$(awk '/^---$/{c++;next}c==1' "$cand_file")
+      if [[ -n "$fm" ]]; then
+        count=$(echo "$fm" | yq '.carry_forward | length // 0')
+        if [[ "$count" -gt 0 ]]; then
+          PREV_DATE="$candidate"
+          NOTES_FILE="$cand_file"
+          frontmatter="$fm"
+          item_count="$count"
+          break
+        fi
+      fi
+    fi
+  fi
+
+  candidate=$(date -j -v-1d -f "%Y-%m-%d" "$candidate" +%Y-%m-%d)
+done
 
 echo "=== Carry-Forward Items ==="
 
-if [[ ! -f "$NOTES_FILE" ]]; then
-  echo "(no notes file for ${PREV_DATE})"
+if [[ -z "$PREV_DATE" ]]; then
+  echo "(no notes file with carry-forward items found in last ${MAX_LOOKBACK} business days)"
   exit 0
 fi
 
-# Verify file has YAML frontmatter
-first_line=$(head -1 "$NOTES_FILE")
-if [[ "$first_line" != "---" ]]; then
-  echo "(no frontmatter in ${PREV_DATE} notes)"
-  exit 0
-fi
-
-# Extract frontmatter between --- delimiters
-frontmatter=$(awk '/^---$/{c++;next}c==1' "$NOTES_FILE")
-
-if [[ -z "$frontmatter" ]]; then
-  echo "(empty frontmatter in ${PREV_DATE} notes)"
-  exit 0
-fi
-
-item_count=$(echo "$frontmatter" | yq '.carry_forward | length // 0')
-
-if [[ "$item_count" -eq 0 ]]; then
-  echo "(no carry-forward items from ${PREV_DATE})"
-  exit 0
+if [[ "$days_back" -gt 1 ]]; then
+  echo "(skipped ${days_back} days back -- last notes with carry-forward: ${PREV_DATE})"
 fi
 
 blocked_count=0
@@ -67,8 +82,11 @@ stale_count=0
 max_days=0
 
 while IFS=$'\t' read -r text app_id blocked carried_days; do
-  if [[ "$carried_days" -gt "$max_days" ]]; then
-    max_days=$carried_days
+  # Increment here so the LLM copies the value directly into the new plan's frontmatter
+  new_days=$((carried_days + 1))
+
+  if [[ "$new_days" -gt "$max_days" ]]; then
+    max_days=$new_days
   fi
 
   # Build the reference tag
@@ -78,18 +96,19 @@ while IFS=$'\t' read -r text app_id blocked carried_days; do
     ref="[work]"
   fi
 
-  # Determine label
+  # Determine label using the incremented count so stale warnings fire at the right time
   if [[ "$blocked" == "true" ]]; then
-    label="BLOCKED (${carried_days} days)"
+    label="BLOCKED (${new_days} days)"
     blocked_count=$((blocked_count + 1))
-  elif [[ "$carried_days" -ge "$STALE_THRESHOLD" ]]; then
-    label="STALE (${carried_days} days)"
+  elif [[ "$new_days" -ge "$STALE_THRESHOLD" ]]; then
+    label="STALE (${new_days} days)"
     stale_count=$((stale_count + 1))
   else
-    label="CARRY-OVER (${carried_days} days)"
+    label="CARRY-OVER (${new_days} days)"
   fi
 
   echo "${label} ${ref}: ${text}"
+  echo "  carried_days: ${new_days}"
 done < <(echo "$frontmatter" | yq -o=json '.carry_forward' | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 1 | tostring)] | @tsv')
 
 echo ""

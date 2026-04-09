@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- System Gaps Audit
+- `check-in.md`: correct `gather-git.sh` to `gather-git-activity.sh` (broken data gathering)
+- `gather-carryforward.sh`: walk back up to 5 business days to find carry-forward items (was single day)
+- `gather-carryforward.sh`: pre-increment `carried_days` so day-start copies values as-is
+- `gather-git-activity.sh`: scan repos up to 3 levels deep via `find` (was top-level glob only)
+- `tracker.sh` follow-ups: include `interviewing` status alongside `applied` and `screening`
+
+### Added -- System Gaps Audit
+- `day-end.md`: read check-in state.json as first step; use as ground truth for plan vs actual
+- `work-planner.md`: document check-in state as primary source of truth in day-end process
+- `checkin-state.sh read`: new subcommand to pretty-print today's state
+- `tracker.sh audit`: cross-reference tracker.yaml and jobs.csv for drift detection
+- `config.yaml`: `follow_up_by_status` intervals (applied: 7, screening: 3, interviewing: 5 days)
+- `config.yaml`: `calendar.excluded_calendars` list for icalBuddy `-ec` filtering
+- `gather-calendar.sh`: read excluded_calendars from config, pass to icalBuddy
+- `gather-sessions.sh`: document crashed-session limitation (SessionEnd hook doesn't fire on kill)
+- `scrape-jobs.py`: populate Product/Purpose column with placeholder for auto-scraped rows
+
 ### Fixed -- Code Review Findings
 - `open-session.sh`: close TOCTOU race with preliminary lock file before iTerm shell startup
 - `open-session.sh`: propagate `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` to launchd-launched sessions

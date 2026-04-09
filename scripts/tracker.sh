@@ -44,7 +44,11 @@ today() {
 }
 
 follow_up_date() {
-  date -v+"${FOLLOW_UP_DAYS}"d +%Y-%m-%d
+  local status="${1:-applied}"
+  # Prefer status-specific interval; fall back to global follow_up_days
+  local days
+  days=$(yq ".tracker.follow_up_by_status.${status} // ${FOLLOW_UP_DAYS}" "$CONFIG")
+  date -v+"${days}"d +%Y-%m-%d
 }
 
 cmd_init() {
@@ -65,7 +69,7 @@ cmd_add() {
   local dt
   dt=$(today)
   local fu
-  fu=$(follow_up_date)
+  fu=$(follow_up_date "applied")
 
   yq -i ".applications += [{
     \"id\": \"${id}\",
@@ -101,10 +105,10 @@ cmd_update() {
   yq -i "(.applications[] | select(.id == \"${app_id}\")).${field} = \"${value}\"" "$TRACKER"
   yq -i "(.applications[] | select(.id == \"${app_id}\")).last_activity = \"$(today)\"" "$TRACKER"
 
-  # Recalculate follow-up date on status change
+  # Recalculate follow-up date on status change using status-specific interval
   if [[ "$field" == "status" ]]; then
     local fu
-    fu=$(follow_up_date)
+    fu=$(follow_up_date "$value")
     yq -i "(.applications[] | select(.id == \"${app_id}\")).follow_up_date = \"${fu}\"" "$TRACKER"
   fi
 
@@ -188,6 +192,116 @@ cmd_get() {
   echo "$result"
 }
 
+cmd_audit() {
+  ensure_tracker
+
+  local jobs_csv="${OUTPUT_DIR}/jobs.csv"
+  if [[ ! -f "$jobs_csv" ]]; then
+    echo "ERROR: jobs.csv not found at ${jobs_csv}"
+    exit 1
+  fi
+
+  local issues=0
+
+  # Applied statuses that should exist in both systems
+  local active_statuses=("applied" "screening" "interviewing" "offer")
+
+  # Build tracker company list (lowercased) for comparison
+  local tracker_companies
+  tracker_companies=$(yq -o=json '.applications' "$TRACKER" | jq -r '[.[] | {id: .id, company: (.company | ascii_downcase), role: .role, status: .status}]')
+
+  # Check applied jobs in jobs.csv that have no tracker entry
+  echo "=== Applied jobs.csv rows with no tracker entry ==="
+  local csv_issues=0
+  while IFS=',' read -r num company product role comp location fit source date_found status date_applied link notes; do
+    # Strip quotes
+    company=$(echo "$company" | tr -d '"' | xargs)
+    role=$(echo "$role" | tr -d '"' | xargs)
+    status=$(echo "$status" | tr -d '"' | xargs)
+
+    local matched=false
+    for check_status in "${active_statuses[@]}"; do
+      if [[ "$status" == "$check_status" ]]; then
+        matched=true
+        break
+      fi
+    done
+    [[ "$matched" == "false" ]] && continue
+
+    local company_lower
+    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
+    local found_in_tracker
+    found_in_tracker=$(echo "$tracker_companies" | jq -r --arg c "$company_lower" '.[] | select(.company == $c) | .id' | head -1)
+
+    if [[ -z "$found_in_tracker" ]]; then
+      echo "  MISSING: ${company} / ${role} (jobs.csv status: ${status})"
+      csv_issues=$((csv_issues + 1))
+      issues=$((issues + 1))
+    fi
+  done < <(tail -n +2 "$jobs_csv")
+
+  [[ "$csv_issues" -eq 0 ]] && echo "  (none)"
+
+  # Check tracker entries with no jobs.csv row
+  echo ""
+  echo "=== Tracker entries with no jobs.csv row ==="
+  local tracker_issues=0
+  while IFS=$'\t' read -r id company role status; do
+    local company_lower
+    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
+    local found_in_csv=false
+
+    while IFS=',' read -r num csv_company rest; do
+      local csv_company_lower
+      csv_company_lower=$(echo "$csv_company" | tr -d '"' | tr '[:upper:]' '[:lower:]' | xargs)
+      if [[ "$csv_company_lower" == "$company_lower" ]]; then
+        found_in_csv=true
+        break
+      fi
+    done < <(tail -n +2 "$jobs_csv")
+
+    if [[ "$found_in_csv" == "false" ]]; then
+      echo "  MISSING: ${id} | ${company} / ${role} (tracker status: ${status})"
+      tracker_issues=$((tracker_issues + 1))
+      issues=$((issues + 1))
+    fi
+  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | [.id, .company, .role, .status] | @tsv')
+
+  [[ "$tracker_issues" -eq 0 ]] && echo "  (none)"
+
+  # Check status mismatches for companies present in both
+  echo ""
+  echo "=== Status mismatches ==="
+  local mismatch_issues=0
+  while IFS=$'\t' read -r id company role tracker_status; do
+    local company_lower
+    company_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
+
+    while IFS=',' read -r num csv_company product csv_role comp location fit source date_found csv_status rest; do
+      local csv_company_lower
+      csv_company_lower=$(echo "$csv_company" | tr -d '"' | tr '[:upper:]' '[:lower:]' | xargs)
+      csv_status=$(echo "$csv_status" | tr -d '"' | xargs)
+
+      if [[ "$csv_company_lower" == "$company_lower" && "$csv_status" != "$tracker_status" ]]; then
+        echo "  MISMATCH: ${company} | jobs.csv=${csv_status} tracker=${tracker_status} (${id})"
+        mismatch_issues=$((mismatch_issues + 1))
+        issues=$((issues + 1))
+        break
+      fi
+    done < <(tail -n +2 "$jobs_csv")
+  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | [.id, .company, .role, .status] | @tsv')
+
+  [[ "$mismatch_issues" -eq 0 ]] && echo "  (none)"
+
+  echo ""
+  if [[ "$issues" -eq 0 ]]; then
+    echo "OK: tracker and jobs.csv are in sync"
+  else
+    echo "Found ${issues} discrepancy(s)"
+    exit 1
+  fi
+}
+
 cmd_follow_ups() {
   ensure_tracker
 
@@ -227,7 +341,7 @@ cmd_follow_ups() {
         "$id" "$company" "$role" "$status" "$days_since" "$follow_up" "$label"
       found=$((found + 1))
     fi
-  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | select(.status == "applied" or .status == "screening") | [.id, .company, .role, .status, .last_activity, .follow_up_date] | @tsv')
+  done < <(yq -o=json '.applications' "$TRACKER" | jq -r '.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing") | [.id, .company, .role, .status, .last_activity, .follow_up_date] | @tsv')
 
   if [[ "$found" -eq 0 ]]; then
     echo "(no follow-ups due)"
@@ -246,6 +360,7 @@ Commands:
   stats                             Pipeline counts and weekly summary
   get APP-ID                        Show single application as YAML
   follow-ups                        List applications with overdue follow-ups
+  audit                             Cross-reference tracker.yaml and jobs.csv for discrepancies
 EOF
 }
 
@@ -262,5 +377,6 @@ case "$1" in
   stats)      cmd_stats ;;
   get)        shift; cmd_get "$@" ;;
   follow-ups) cmd_follow_ups ;;
+  audit)      cmd_audit ;;
   *)          echo "ERROR: unknown command: $1"; usage; exit 1 ;;
 esac

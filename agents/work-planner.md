@@ -37,6 +37,8 @@ When given raw data from gather scripts (calendar, applications, carry-forward):
 When given session data and git activity:
 1. Summarize what was worked on today
 2. Compare against the morning plan (what got done, what didn't, what was unplanned)
+   - Check-in state (`completed_tickets`, `blocked_tickets`, overruns) is the primary source of truth for items resolved during check-ins -- do not re-infer status for these
+   - Use session data and git activity only to infer status for the period after the last check-in timestamp
 3. Note any items to carry over to tomorrow
 4. Key outcomes: applications sent, responses received, interviews scheduled, follow-ups completed
 5. Generate the daily notes
