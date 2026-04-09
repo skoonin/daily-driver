@@ -9,6 +9,10 @@ set -euo pipefail
 #
 # Fallback: ~/.claude/history.jsonl
 #   User prompts only -- used to show what was discussed when outcomes log has no entry.
+#
+# Known limitation: if Claude is killed (terminal closed, crash), the SessionEnd hook
+# does not fire. Those sessions fall back to history.jsonl prompts only -- no duration
+# and no session name. This is inherent to hook architecture; no workaround exists.
 
 OUTCOMES_LOG="$HOME/.local/share/daily-driver/session-outcomes.log"
 TODAY=$(date +%Y-%m-%d)

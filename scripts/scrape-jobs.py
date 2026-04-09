@@ -110,6 +110,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
 
     num_idx = col("#")
     company_idx = col("Company")
+    product_idx = col("Product/Purpose")
     role_idx = col("Role")
     location_idx = col("Location")
     source_idx = col("Source")
@@ -126,6 +127,9 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
                 row[num_idx] = str(next_num)
             if company_idx is not None:
                 row[company_idx] = job.get("company", "")
+            if product_idx is not None:
+                # Scrapers that provide product context can pass it through; default flags rows needing manual fill
+                row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
             if role_idx is not None:
                 row[role_idx] = job.get("role", "")
             if location_idx is not None:
@@ -495,7 +499,7 @@ def run_all_scrapers(config: dict) -> list[dict]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser(description="Scrape job boards and append to jobs.csv")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--dry-run", action="store_true", help="Print matches without writing to CSV")
@@ -563,5 +567,5 @@ def main() -> None:
         )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

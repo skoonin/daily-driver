@@ -87,7 +87,7 @@ bash scripts/ensure-daily-dir.sh
 Write the plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:
 - `date`: today's date
 - `generated_at`: current time HH:MM
-- `carry_forward`: items from gather-carryforward.sh output, with `carried_days` incremented by 1
+- `carry_forward`: items from gather-carryforward.sh output (`carried_days` already incremented by the script -- copy values as-is)
 - `personal_tasks`: items collected in step 5
 - `plan_items`: one entry per planned item with `time_block`, `app_id`, `type`, `status: planned`, and `carry_forward_id` linking to source cf-NNN where applicable
 
