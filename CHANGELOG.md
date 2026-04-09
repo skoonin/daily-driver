@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `config.yaml`: `follow_up_by_status` intervals (applied: 7, screening: 3, interviewing: 5 days)
 - `config.yaml`: `calendar.excluded_calendars` list for icalBuddy `-ec` filtering
 - `gather-calendar.sh`: read excluded_calendars from config, pass to icalBuddy
-- `gather-sessions.sh`: document crashed-session limitation (SessionEnd hook doesn't fire on kill)
+- `gather-sessions.sh`: detect unclosed sessions via heartbeat (session_start with no matching session_end)
 - `scrape-jobs.py`: populate Product/Purpose column with placeholder for auto-scraped rows
 
 ### Fixed -- Code Review Findings
