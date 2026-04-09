@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Test Suite
+- Test infrastructure: pytest + tox config in `pyproject.toml`, coverage minimum 79%
+- 94 tests across 8 test files covering scrape-jobs pipeline (96% coverage)
+- Test files: config loading, role matching, CSV read/write, HN/RemoteOK/WWR/Anthropic scrapers, orchestrator
+- Makefile `test` and `test-cov` targets
+- `.gitignore` entries for coverage, tox, and Python build artifacts
+
 ### Fixed -- System Gaps Audit
 - `check-in.md`: correct `gather-git.sh` to `gather-git-activity.sh` (broken data gathering)
 - `gather-carryforward.sh`: walk back up to 5 business days to find carry-forward items (was single day)

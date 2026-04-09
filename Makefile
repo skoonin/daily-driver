@@ -2,6 +2,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
 .ONESHELL:
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
+       test test-cov \
        day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update \
        gather-jobs gather-jobs-install scrape-jobs
 
@@ -204,6 +205,14 @@ launchd-start:  ## Load all LaunchAgents if installed but not running
 
 launchd-uninstall:  ## Remove all LaunchAgents
 	@bash scripts/launchd-install.sh uninstall
+
+##@ Testing
+
+test:  ## Run tests (no coverage)
+	pytest
+
+test-cov:  ## Run tests with coverage report
+	pytest --cov=scripts --cov-report=term-missing
 
 ##@ Workflow
 

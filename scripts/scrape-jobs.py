@@ -499,7 +499,7 @@ def run_all_scrapers(config: dict) -> list[dict]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser(description="Scrape job boards and append to jobs.csv")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--dry-run", action="store_true", help="Print matches without writing to CSV")
@@ -567,5 +567,5 @@ def main() -> None:
         )
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
