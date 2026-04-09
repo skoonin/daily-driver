@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- System Gaps Audit
+- `check-in.md`: correct `gather-git.sh` to `gather-git-activity.sh` (broken data gathering)
+- `gather-carryforward.sh`: walk back up to 5 business days to find carry-forward items (was single day)
+- `gather-carryforward.sh`: pre-increment `carried_days` so day-start copies values as-is
+- `gather-git-activity.sh`: scan repos up to 3 levels deep via `find` (was top-level glob only)
+- `tracker.sh` follow-ups: include `interviewing` status alongside `applied` and `screening`
+
+### Added -- System Gaps Audit
+- `day-end.md`: read check-in state.json as first step; use as ground truth for plan vs actual
+- `work-planner.md`: document check-in state as primary source of truth in day-end process
+- `checkin-state.sh read`: new subcommand to pretty-print today's state
+- `tracker.sh audit`: cross-reference tracker.yaml and jobs.csv for drift detection
+- `config.yaml`: `follow_up_by_status` intervals (applied: 7, screening: 3, interviewing: 5 days)
+- `config.yaml`: `calendar.excluded_calendars` list for icalBuddy `-ec` filtering
+- `gather-calendar.sh`: read excluded_calendars from config, pass to icalBuddy
+- `gather-sessions.sh`: document crashed-session limitation (SessionEnd hook doesn't fire on kill)
+- `scrape-jobs.py`: populate Product/Purpose column with placeholder for auto-scraped rows
+
 ### Fixed -- Code Review Findings
 - `open-session.sh`: close TOCTOU race with preliminary lock file before iTerm shell startup
 - `open-session.sh`: propagate `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` to launchd-launched sessions
@@ -13,6 +31,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `focus-mode.sh`: extract `_cleanup_focus()` so `cmd_status` expiry does not open iTerm
 - `focus-mode.sh`: stop suppressing stderr from `checkin-state.sh` calls
 - `gather-notes-range.sh`: suppress "(no file)" messages on weekends while still showing any weekend files
+- `tracker.sh` audit: proper RFC 4180 CSV parsing via awk (was fragile `IFS=','`)
+- `tracker.sh` audit: substring company matching to avoid false negatives (`Anthropic` vs `Anthropic Inc`)
+- `tracker.sh` audit: pre-build lookup structures to eliminate O(n^2) nested CSV loops
+- `tracker.sh`: use `strenv()` in yq for status interpolation (was unquoted shell variable)
+- `gather-carryforward.sh`: fix `carried_days` default from `// 1` to `// 0` (off-by-one on first carry)
+- `gather-carryforward.sh`: fix misleading "skipped N days" message (now "looked back N business days")
+- `gather-carryforward.sh`: remove dead `$NOTES_FILE` variable
+- `tracker.sh` audit: remove `exit 1` on discrepancies (diagnostic output, not a gate)
+- `tracker.sh` audit: filter tracker-side checks to active statuses only (was flagging rejected/withdrawn)
 
 ### Changed -- Code Review Findings
 - Batch yq subprocess calls in `tracker.sh`, `gather-carryforward.sh`, and `calendar-sync.sh` from O(N) to O(1) via `yq -o=json | jq @tsv` pipes

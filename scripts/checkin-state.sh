@@ -88,6 +88,20 @@ cmd_record_focus_session() {
   printf '%s\n' "$updated" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
 }
 
+cmd_read() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "(no check-in state for today)"
+    return
+  fi
+  local file_date
+  file_date=$(jq -r '.date // ""' "$STATE_FILE" 2>/dev/null) || file_date=""
+  if [[ "$file_date" != "$TODAY" ]]; then
+    echo "(no check-in state for today)"
+    return
+  fi
+  jq '.' "$STATE_FILE"
+}
+
 usage() {
   echo "Usage: $(basename "$0") <command> [args]"
   echo ""
@@ -97,6 +111,7 @@ usage() {
   echo "  get-last-checkin                      Print last check-in timestamp"
   echo "  flag-overrun TICKET PLANNED ACTUAL    Record a time overrun"
   echo "  record-focus-session                  Record focus session (reads JSON from stdin)"
+  echo "  read                                  Print today's state.json (pretty-printed)"
   exit 1
 }
 
@@ -123,6 +138,9 @@ case "$1" in
     ;;
   record-focus-session)
     cmd_record_focus_session
+    ;;
+  read)
+    cmd_read
     ;;
   *)
     echo "ERROR: unknown command: $1"

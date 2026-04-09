@@ -24,9 +24,10 @@ GIT_DIR="${GIT_DIR/#\~/$HOME}"
 echo "=== Git Activity: ${TODAY} ==="
 
 found=0
-for repo in "$GIT_DIR"/*/; do
-  [[ -d "$repo/.git" ]] || continue
-  repo_name=$(basename "$repo")
+# find discovers repos at arbitrary depth; top-level-only glob misses worktrees and subdirectories
+while IFS= read -r git_dir; do
+  repo="${git_dir%/.git}"
+  repo_name="${repo#"$GIT_DIR"/}"
 
   author=$(git -C "$repo" config user.email 2>/dev/null || echo "")
   commits=$(git -C "$repo" log --oneline --after="${TODAY}T00:00:00" --all ${author:+--author="$author"} 2>/dev/null) || continue
@@ -37,7 +38,7 @@ for repo in "$GIT_DIR"/*/; do
     echo ""
     found=1
   fi
-done
+done < <(find "$GIT_DIR" -maxdepth 3 -name .git -type d 2>/dev/null)
 
 if [[ "$found" -eq 0 ]]; then
   echo "(no commits found for today)"

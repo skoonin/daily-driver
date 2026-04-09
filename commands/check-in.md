@@ -40,7 +40,7 @@ bash scripts/gather-calendar.sh
 bash scripts/gather-sessions.sh
 ```
 ```bash
-bash scripts/gather-git.sh
+bash scripts/gather-git-activity.sh
 ```
 
 ## 3. Present Check-in Summary

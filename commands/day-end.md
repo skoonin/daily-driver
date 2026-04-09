@@ -5,28 +5,35 @@ description: End of day - collect work done, compare to plan, write daily notes
 
 End-of-day review session. Follow these steps in order:
 
-## 1. Gather Session Data
+## 1. Read Check-in State
+
+Load check-in ground truth recorded during the day (completed tickets, blocked tickets, overruns):
+```bash
+bash scripts/checkin-state.sh read
+```
+
+## 2. Gather Session Data
 
 Collect today's Claude Code session summaries:
 ```bash
 bash scripts/gather-sessions.sh
 ```
 
-## 2. Gather Git Activity
+## 3. Gather Git Activity
 
 Collect today's commits across all repos:
 ```bash
 bash scripts/gather-git-activity.sh
 ```
 
-## 3. Gather Application Data
+## 4. Gather Application Data
 
 Check application pipeline status:
 ```bash
 bash scripts/gather-applications.sh
 ```
 
-## 4. Read Today's Plan
+## 5. Read Today's Plan
 
 Load this morning's plan for comparison:
 ```bash
@@ -45,6 +52,10 @@ Using the work-planner agent behavior, present:
 
 1. **Work Summary** - What was actually done today (applications sent, research, follow-ups, interviews)
 2. **Plan vs Actual** - Compare morning plan items to what happened. Assign final status to each plan_item: [done], [in-progress], [blocked], [carry-over], [unplanned], [dropped]
+   - Items recorded as `completed_tickets` in check-in state (step 1): mark `done` without re-inferring
+   - Items recorded as `blocked_tickets` in check-in state: mark `blocked` with the recorded reason
+   - Items with overruns in check-in state: note the overrun in the summary
+   - For plan items not covered by check-in state, infer status from sessions and git activity (the gap between the last check-in timestamp and end of day)
 3. **Unplanned Work** - Things that came up that weren't in the plan
 4. **Application Follow-ups** - For applications with overdue follow-ups from gather-applications.sh, ask: "Follow up on app-NNN - Company | Role?" Present as a compact checklist.
 5. **Carry-forward** - Build the carry_forward list for tomorrow:
