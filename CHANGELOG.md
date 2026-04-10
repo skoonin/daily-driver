@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Makefile `test` and `test-cov` targets
 - `.gitignore` entries for coverage, tox, and Python build artifacts
 
+### Changed -- Install
+- `Makefile` install: stop symlinking `CLAUDE.md` into `.claude/` -- Claude Code auto-loads `<project>/CLAUDE.md` and the symlink caused the same content to load twice in session context
+- `Makefile` uninstall: also remove stale `settings.local.json` symlink (was leaked by prior installs)
+
 ### Fixed -- Script Hardening
 - `open-session.sh`: capture new tab reference from AppleScript `create tab` (was writing command to the previously focused tab instead of the new one)
 - `scrape-jobs.py`: fix invalid `dict[str, callable]` type hint (builtin, not a type); use `Callable` from `collections.abc`
