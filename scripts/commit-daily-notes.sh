@@ -5,7 +5,21 @@ set -euo pipefail
 # Usage: bash scripts/commit-daily-notes.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh")
+if ! OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh" 2>&1); then
+  echo "ERROR: $(basename "$0"): could not resolve output_dir: ${OUTPUT_DIR}" >&2
+  exit 1
+fi
 TODAY=$(date +%Y-%m-%d)
 
-git -C "$OUTPUT_DIR" add -A && git -C "$OUTPUT_DIR" commit -m "daily notes: ${TODAY}" 2>/dev/null || echo "(nothing to commit)"
+if ! git -C "$OUTPUT_DIR" add -A; then
+  echo "ERROR: git add failed in ${OUTPUT_DIR}" >&2
+  exit 1
+fi
+git -C "$OUTPUT_DIR" commit -m "daily notes: ${TODAY}" || {
+  if git -C "$OUTPUT_DIR" diff --cached --quiet 2>/dev/null; then
+    echo "(nothing to commit)"
+  else
+    echo "ERROR: git commit failed in ${OUTPUT_DIR}" >&2
+    exit 1
+  fi
+}

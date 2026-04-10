@@ -17,7 +17,9 @@ This repo is the **engine** that powers daily job search planning and end-of-day
 ### Reporting
 - `/standup` - Generate async standup summary (Yesterday/Today/Blockers) to clipboard
 - `/week-end` - Weekly rollup: aggregates daily notes into weekly summary
+- `/month-end` - Monthly rollup: summarize the month's weekly summaries and daily notes into a monthly report
 - `/prep` - Meeting prep: pulls application context relevant to an upcoming calendar meeting (interviews, networking)
+- `/interview-prep` - Interview preparation: practice questions and gather role context for an upcoming interview
 
 ### Writing
 - `/voice-update` - Update the writing voice profile from an approved sample or explicit feedback
@@ -81,7 +83,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 Tracks every role discovered during the search -- applied, skipped, or still evaluating. This is the top of the funnel. Active application pipeline details (stages, follow-ups, dates) live in `tracker.yaml`.
 
-**Columns**: #, Company, Product/Purpose, Role, Comp, Location, Fit (1-10), Source, Date Found, Status, Date Applied, Link, Notes
+**Columns**: #, Company, Product/Purpose, Role, Comp, Location, Fit (1-10), GD Rating, Source, Date Found, Status, Date Applied, Link, Notes
 
 **Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `interviewing`, `offer`, `withdrawn`
 

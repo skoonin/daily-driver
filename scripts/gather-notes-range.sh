@@ -33,7 +33,19 @@ if [[ "$TYPE" != "notes" && "$TYPE" != "plan" && "$TYPE" != "all" ]]; then
   exit 1
 fi
 
-OUTPUT_DIR=$(yq '.output_dir' "$CONFIG")
+if [[ ! "$START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [[ ! "$END_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: START_DATE and END_DATE must be YYYY-MM-DD format"
+  exit 1
+fi
+
+if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
+  echo "ERROR: gather-notes-range: could not read output_dir from config: ${OUTPUT_DIR}" >&2
+  exit 1
+fi
+if [[ "$OUTPUT_DIR" == "null" || -z "$OUTPUT_DIR" ]]; then
+  echo "ERROR: output_dir not set in config.yaml"
+  exit 1
+fi
 OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
 
 if [[ "$TYPE" == "all" ]]; then
@@ -46,11 +58,13 @@ found=0
 current="$START_DATE"
 
 while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
-  year=$(echo "$current" | cut -d- -f1)
-  month=$(echo "$current" | cut -d- -f2)
+  year=$(date -j -f "%Y-%m-%d" "$current" +%Y)
+  month=$(date -j -f "%Y-%m-%d" "$current" +%m)
 
-  local dow
-  dow=$(date -j -f "%Y-%m-%d" "$current" +%u)
+  if ! dow=$(date -j -f "%Y-%m-%d" "$current" +%u 2>&1); then
+    echo "ERROR: gather-notes-range: failed to parse date '${current}': ${dow}" >&2
+    exit 1
+  fi
 
   for t in "${types[@]}"; do
     file="${OUTPUT_DIR}/${year}/${month}/${current}-${t}.md"
@@ -64,7 +78,11 @@ while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
     fi
   done
 
-  current=$(date -j -v+1d -f "%Y-%m-%d" "$current" +%Y-%m-%d)
+  if ! next_date=$(date -j -v+1d -f "%Y-%m-%d" "$current" +%Y-%m-%d 2>&1); then
+    echo "ERROR: gather-notes-range: date advance failed from '${current}': ${next_date}" >&2
+    exit 1
+  fi
+  current="$next_date"
 done
 
 if [[ "$found" -eq 0 ]]; then

@@ -11,7 +11,7 @@ case "$DOW" in
   1) YESTERDAY=$(date -v-3d +%Y-%m-%d); LOOKBACK_START=$(date -v-3d +%Y-%m-%d) ;;
   2) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-1d +%Y-%m-%d) ;;
   3) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-2d +%Y-%m-%d) ;;
-  4) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-1d +%Y-%m-%d) ;;
+  4) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-2d +%Y-%m-%d) ;;
   5) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-2d +%Y-%m-%d) ;;
   *) YESTERDAY=$(date -v-1d +%Y-%m-%d); LOOKBACK_START=$(date -v-1d +%Y-%m-%d) ;;
 esac

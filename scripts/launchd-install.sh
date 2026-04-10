@@ -51,7 +51,10 @@ cmd_install() {
         "$template" > "$dest"
 
     launchctl bootout "$DOMAIN" "$dest" 2>/dev/null || true
-    launchctl bootstrap "$DOMAIN" "$dest"
+    if ! launchctl bootstrap "$DOMAIN" "$dest" 2>&1; then
+      echo "ERROR: launchctl bootstrap failed for ${plist_name} -- check plist syntax at ${dest}" >&2
+      exit 1
+    fi
     echo "Installed: ${plist_name}"
   done
 

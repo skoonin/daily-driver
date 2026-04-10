@@ -22,6 +22,7 @@ import warnings
 from datetime import date
 from pathlib import Path
 from typing import Optional
+from collections.abc import Callable
 import requests
 import yaml
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
@@ -78,25 +79,32 @@ def load_existing_urls(csv_path: Path) -> tuple[set[str], list[str], int]:
     """Return (known_urls, header_columns, next_row_number)."""
     if not csv_path.exists():
         return set(), [], 1
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.reader(f)
-        try:
-            header = next(reader)
-        except StopIteration:
-            return set(), [], 1
-        link_idx = header.index("Link") if "Link" in header else None
-        known_urls: set[str] = set()
-        max_num = 0
-        for row in reader:
-            if not row:
-                continue
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.reader(f)
             try:
-                num = int(row[0])
-                max_num = max(max_num, num)
-            except (ValueError, IndexError):
-                pass
-            if link_idx is not None and link_idx < len(row) and row[link_idx]:
-                known_urls.add(row[link_idx].strip())
+                header = next(reader)
+            except StopIteration:
+                return set(), [], 1
+            if "Link" not in header:
+                log.error("jobs.csv is missing required 'Link' column — cannot deduplicate")
+                sys.exit(1)
+            link_idx = header.index("Link")
+            known_urls: set[str] = set()
+            max_num = 0
+            for row_num, row in enumerate(reader, start=2):
+                if not row:
+                    continue
+                try:
+                    num = int(row[0])
+                    max_num = max(max_num, num)
+                except (ValueError, IndexError):
+                    log.warning("jobs.csv row %d: cannot parse row number from %r", row_num, row[0] if row else "")
+                if link_idx < len(row) and row[link_idx]:
+                    known_urls.add(row[link_idx].strip())
+    except OSError as exc:
+        log.error("Cannot read %s: %s", csv_path, exc)
+        sys.exit(1)
     return known_urls, header, max_num + 1
 
 
@@ -119,7 +127,12 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
     link_idx = col("Link")
 
     written = 0
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+    try:
+        f = open(csv_path, "a", newline="", encoding="utf-8")
+    except OSError as exc:
+        log.error("Cannot open %s for writing: %s", csv_path, exc)
+        sys.exit(1)
+    with f:
         writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
         for job in jobs:
             row = [""] * len(header)
@@ -191,7 +204,11 @@ def scrape_remoteok(config: dict) -> list[dict]:
 
     resp = requests.get("https://remoteok.com/api", headers=headers, timeout=timeout)
     resp.raise_for_status()
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        log.error("remoteok returned non-JSON response (likely rate-limited): %s", resp.text[:200])
+        return []
 
     jobs = []
     for item in data[1:]:  # skip metadata element
@@ -402,7 +419,7 @@ def scrape_anthropic(config: dict) -> list[dict]:
     JS-rendered — requests alone won't work.
     """
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PWError
     except ImportError:
         log.warning("[anthropic] playwright not installed, skipping")
         return []
@@ -411,13 +428,19 @@ def scrape_anthropic(config: dict) -> list[dict]:
     jobs = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        try:
+            browser = p.chromium.launch(headless=True)
+        except (PWError, OSError) as exc:
+            log.error("[anthropic] browser launch failed (check Playwright install): %s", exc)
+            return []
         try:
             page = browser.new_page()
             page.goto("https://www.anthropic.com/careers/jobs", timeout=30000)
             page.wait_for_load_state("networkidle", timeout=15000)
-
             content = page.content()
+        except (PWTimeout, PWError) as exc:
+            log.warning("[anthropic] page error (%s): %s", type(exc).__name__, exc)
+            return []
         finally:
             browser.close()
 
@@ -461,7 +484,7 @@ def scrape_anthropic(config: dict) -> list[dict]:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-SCRAPERS: dict[str, callable] = {
+SCRAPERS: dict[str, Callable] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
@@ -469,11 +492,12 @@ SCRAPERS: dict[str, callable] = {
 }
 
 
-def run_all_scrapers(config: dict) -> list[dict]:
+def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
     source_cfg = scraper_cfg(config).get("sources", {})
     timeout = timeout_seconds(config)
     all_jobs: list[dict] = []
     seen_urls: set[str] = set()
+    failed_sources: list[str] = []
 
     for source_id, scraper_fn in SCRAPERS.items():
         if not source_cfg.get(source_id, False):
@@ -481,7 +505,6 @@ def run_all_scrapers(config: dict) -> list[dict]:
             continue
         try:
             jobs = scraper_fn(config)
-            # Dedup within this batch
             for job in jobs:
                 url = job.get("url", "")
                 if url and url not in seen_urls:
@@ -489,12 +512,15 @@ def run_all_scrapers(config: dict) -> list[dict]:
                     all_jobs.append(job)
         except requests.exceptions.Timeout:
             log.warning("[%s] timed out after %ds", source_id, timeout)
+            failed_sources.append(source_id)
         except requests.exceptions.RequestException as exc:
             log.warning("[%s] request failed: %s", source_id, exc)
+            failed_sources.append(source_id)
         except Exception as exc:  # noqa: BLE001
             log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
+            failed_sources.append(source_id)
 
-    return all_jobs
+    return all_jobs, failed_sources
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -520,7 +546,14 @@ def main() -> None:  # pragma: no cover
         log.error("config.yaml not found at %s", config_path)
         sys.exit(1)
 
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except yaml.YAMLError as exc:
+        log.error("config.yaml is malformed: %s", exc)
+        sys.exit(1)
+    except OSError as exc:
+        log.error("Cannot read config.yaml at %s: %s", config_path, exc)
+        sys.exit(1)
 
     if not scraper_cfg(config).get("enabled", False):
         print("Scraper disabled. Set job_search.scraper.enabled: true in config.yaml")
@@ -539,25 +572,40 @@ def main() -> None:  # pragma: no cover
             "Date Applied", "Link", "Notes",
         ]
         csv_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(csv_path, "w", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(header)
+        try:
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(header)
+        except OSError as exc:
+            log.error("Cannot initialize %s: %s", csv_path, exc)
+            sys.exit(1)
 
     log.info("Loaded %d existing URLs from %s", len(known_urls), csv_path)
 
-    all_jobs = run_all_scrapers(config)
-    new_jobs = [j for j in all_jobs if j.get("url") not in known_urls]
+    all_jobs, failed_sources = run_all_scrapers(config)
+    urlless = [j for j in all_jobs if not j.get("url")]
+    if urlless:
+        log.warning("Dropping %d jobs with no URL (dedup requires URL)", len(urlless))
+    new_jobs = [j for j in all_jobs if j.get("url") and j["url"] not in known_urls]
 
     log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
+    if failed_sources:
+        log.warning("Failed sources: %s", ", ".join(failed_sources))
 
     if args.dry_run:
         for j in new_jobs:
             print(f"  [{j['source']:22s}] {j['company']:30s} | {j['role']:45s} | {j['location']}")
             print(f"    {j['url']}")
         print(f"\n{len(new_jobs)} new jobs (dry-run, nothing written)")
+        if failed_sources:
+            sys.exit(1)
         return
 
     written = append_jobs(csv_path, new_jobs, header, next_num)
     print(f"Scraper complete: {written} new jobs appended to {csv_path}")
+
+    if failed_sources:
+        log.error("Scraper failures: %s", ", ".join(failed_sources))
+        sys.exit(1)
 
     if written > 0:
         subprocess.run(
