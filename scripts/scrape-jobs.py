@@ -792,8 +792,10 @@ def scrape_wellfound(config: dict) -> list[dict]:
                 encoded = urllib.parse.quote_plus(term)
                 url = f"https://wellfound.com/jobs?q={encoded}&remote=true"
                 try:
-                    page.goto(url, timeout=timeout_ms, wait_until="networkidle")
-                    page.wait_for_timeout(2000)
+                    # networkidle never resolves on Wellfound's SPA — use domcontentloaded
+                    # then a fixed wait for React to hydrate the job listings.
+                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                    page.wait_for_timeout(3000)
                 except Exception as exc:
                     log.warning("[wellfound] navigation failed for %r: %s", term, exc)
                     continue
