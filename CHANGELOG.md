@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Product enrichment, notification, Apple Canada
+- Claude API enrichment: `enrich_company_descriptions()` calls `claude-haiku` to fill `Product/Purpose` for each new job; one call per unique company, cached within the run; degrades gracefully if `ANTHROPIC_API_KEY` unset
+- Notification opens `jobs.csv` on click via `terminal-notifier` (falls back to plain osascript if not installed)
+- Apple scraper now targets `en-ca` (Canada) listings; switched to `domcontentloaded` wait (same SPA fix as Wellfound); enabled in `config.yaml`
+- `gather-jobs.sh` deletes previous days' `job-queue-*.md` files on each run so only today's remains
+
 ### Added -- Scraper Rewrite
 - All 8 job sources now use Playwright with `headless=False` (bot-detection avoidance): RemoteOK, WeWorkRemotely, Anthropic, LinkedIn, Indeed, Wellfound, Apple
 - `dedup_key(company, role)` — normalized cross-site dedup key prevents same job from appearing twice across boards

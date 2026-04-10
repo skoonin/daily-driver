@@ -95,6 +95,53 @@ def dedup_key(company: str, role: str) -> str:
     return f"{_norm(company)}::{_norm(role)}"
 
 
+# ── Company enrichment ───────────────────────────────────────────────────────
+
+def enrich_company_descriptions(jobs: list[dict]) -> None:
+    """Populate Product/Purpose in-place for jobs that lack it, using Claude.
+
+    One API call per unique company name; results cached within the run.
+    Silently skips enrichment if the anthropic package or API key is absent.
+    """
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        return
+
+    api_key = __import__("os").environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return
+
+    client = _anthropic.Anthropic(api_key=api_key)
+    cache: dict[str, str] = {}
+
+    for job in jobs:
+        if job.get("product"):
+            continue
+        company = job.get("company", "").strip()
+        if not company:
+            continue
+        if company not in cache:
+            try:
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=60,
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            f"In one sentence (max 12 words), what does {company} build or do? "
+                            "Answer only, no preamble."
+                        ),
+                    }],
+                )
+                cache[company] = resp.content[0].text.strip()
+            except Exception as exc:
+                log.debug("[enrich] %s lookup failed: %s", company, exc)
+                cache[company] = ""
+        if cache[company]:
+            job["product"] = cache[company]
+
+
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
 def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str], int]:
@@ -871,9 +918,10 @@ def scrape_apple(config: dict) -> list[dict]:
         with _playwright_browser(config) as page:
             for term in terms:
                 encoded = urllib.parse.quote_plus(term)
-                url = f"{base_url}/en-us/search?search={encoded}&sort=newest"
+                url = f"{base_url}/en-ca/search?search={encoded}&sort=newest"
                 try:
-                    page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+                    # domcontentloaded avoids networkidle timeout on React SPAs
+                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
                     page.wait_for_timeout(2000)
                 except Exception as exc:
                     log.warning("[apple] navigation failed for %r: %s", term, exc)
@@ -981,6 +1029,27 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
     return all_jobs, failed_sources
 
 
+# ── Notification ─────────────────────────────────────────────────────────────
+
+def _notify_new_jobs(count: int, csv_path: Path) -> None:
+    """Send a macOS notification; clicking opens jobs.csv if terminal-notifier is available."""
+    title = "Job Scraper"
+    message = f"{count} new jobs found"
+    file_url = f"file://{csv_path}"
+
+    if subprocess.run(["which", "terminal-notifier"], capture_output=True).returncode == 0:
+        subprocess.run(
+            ["terminal-notifier", "-title", title, "-message", message, "-open", file_url],
+            check=False,
+        )
+    else:
+        subprocess.run(
+            ["osascript", "-e",
+             f'display notification "{message}" with title "{title}" subtitle "{csv_path.name}"'],
+            check=False,
+        )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:  # pragma: no cover
@@ -1060,6 +1129,8 @@ def main() -> None:  # pragma: no cover
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
+    enrich_company_descriptions(new_jobs)
+
     if args.dry_run:
         for j in new_jobs:
             print(f"  [{j['source']:22s}] {j['company']:30s} | {j['role']:45s} | {j['location']}")
@@ -1077,11 +1148,7 @@ def main() -> None:  # pragma: no cover
         sys.exit(1)
 
     if written > 0:
-        subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{written} new jobs found" with title "Job Scraper"'],
-            check=False,
-        )
+        _notify_new_jobs(written, csv_path)
 
 
 if __name__ == "__main__":  # pragma: no cover

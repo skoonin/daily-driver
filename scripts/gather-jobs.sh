@@ -32,6 +32,9 @@ QUEUE_FILE="${OUTPUT_DIR}/job-queue-${TODAY}.md"
 
 mkdir -p "$OUTPUT_DIR"
 
+# Remove previous days' queue files — only today's is relevant
+find "$OUTPUT_DIR" -maxdepth 1 -name "job-queue-*.md" ! -name "job-queue-${TODAY}.md" -delete
+
 # URL-encode role for query strings: spaces become +
 encode_role() {
   printf '%s' "$1" | sed 's/ /+/g; s|/|%2F|g'
