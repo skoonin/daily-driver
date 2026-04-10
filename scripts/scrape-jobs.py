@@ -98,21 +98,15 @@ def dedup_key(company: str, role: str) -> str:
 # ── Company enrichment ───────────────────────────────────────────────────────
 
 def enrich_company_descriptions(jobs: list[dict]) -> None:
-    """Populate Product/Purpose in-place for jobs that lack it, using Claude.
+    """Populate Product/Purpose in-place for jobs that lack it, using the Claude CLI.
 
-    One API call per unique company name; results cached within the run.
-    Silently skips enrichment if the anthropic package or API key is absent.
+    One `claude -p` call per unique company name; results cached within the run.
+    Silently skips enrichment if the `claude` CLI is not on PATH.
     """
-    try:
-        import anthropic as _anthropic
-    except ImportError:
+    if subprocess.run(["which", "claude"], capture_output=True).returncode != 0:
+        log.debug("[enrich] claude CLI not found, skipping product lookup")
         return
 
-    api_key = __import__("os").environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        return
-
-    client = _anthropic.Anthropic(api_key=api_key)
     cache: dict[str, str] = {}
 
     for job in jobs:
@@ -122,19 +116,16 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
         if not company:
             continue
         if company not in cache:
+            prompt = (
+                f"In one sentence (max 12 words), what does {company} build or do? "
+                "Answer only, no preamble."
+            )
             try:
-                resp = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=60,
-                    messages=[{
-                        "role": "user",
-                        "content": (
-                            f"In one sentence (max 12 words), what does {company} build or do? "
-                            "Answer only, no preamble."
-                        ),
-                    }],
+                result = subprocess.run(
+                    ["claude", "-p", prompt],
+                    capture_output=True, text=True, timeout=30,
                 )
-                cache[company] = resp.content[0].text.strip()
+                cache[company] = result.stdout.strip() if result.returncode == 0 else ""
             except Exception as exc:
                 log.debug("[enrich] %s lookup failed: %s", company, exc)
                 cache[company] = ""
