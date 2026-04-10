@@ -10,9 +10,9 @@ set -euo pipefail
 # Fallback: ~/.claude/history.jsonl
 #   User prompts only -- used to show what was discussed when outcomes log has no entry.
 #
-# Known limitation: if Claude is killed (terminal closed, crash), the SessionEnd hook
-# does not fire. Those sessions fall back to history.jsonl prompts only -- no duration
-# and no session name. This is inherent to hook architecture; no workaround exists.
+# Crash detection: on-session-start.sh writes a session_start entry. If the SessionEnd
+# hook never fires (terminal closed, crash), the start entry has no matching end --
+# reported as an unclosed session so the gap is visible rather than silent.
 
 OUTCOMES_LOG="$HOME/.local/share/daily-driver/session-outcomes.log"
 TODAY=$(date +%Y-%m-%d)
@@ -65,6 +65,27 @@ if [[ -f "$OUTCOMES_LOG" ]]; then
             echo ""
             echo "[??:??] Commits without session record:"
             echo "$orphaned"
+        fi
+
+        # Detect unclosed sessions: session_start with no matching session_end
+        ended_sids=$(echo "$todays_entries" | jq -r 'select(.type == "session_end") | .session_id' | sort -u)
+        unclosed=$(echo "$todays_entries" | jq -r 'select(.type == "session_start") | .session_id' | while IFS= read -r sid; do
+            [[ -z "$sid" ]] && continue
+            if ! echo "$ended_sids" | grep -qxF "$sid"; then
+                echo "$sid"
+            fi
+        done)
+
+        if [[ -n "$unclosed" ]]; then
+            echo ""
+            echo "=== Unclosed Sessions (possible crash) ==="
+            while IFS= read -r sid; do
+                [[ -z "$sid" ]] && continue
+                start_meta=$(echo "$todays_entries" | jq -r --arg sid "$sid" 'select(.type == "session_start" and .session_id == $sid)')
+                start_ts=$(echo "$start_meta" | jq -r '.ts // empty' | head -1 | cut -c12-16)
+                start_project=$(echo "$start_meta" | jq -r '.project // "unknown"')
+                echo "[${start_ts}] ${start_project} — session ${sid:0:8}... (no end record)"
+            done <<< "$unclosed"
         fi
     fi
 fi
