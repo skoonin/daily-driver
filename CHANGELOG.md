@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Scraper Rewrite
+- All 8 job sources now use Playwright with `headless=False` (bot-detection avoidance): RemoteOK, WeWorkRemotely, Anthropic, LinkedIn, Indeed, Wellfound, Apple
+- `dedup_key(company, role)` — normalized cross-site dedup key prevents same job from appearing twice across boards
+- `load_existing_jobs()` — returns 4-tuple `(known_urls, known_keys, header, next_num)`; loads both URL set and company+role key set from `jobs.csv`
+- `_playwright_browser(config)` — shared context manager; non-headless Chromium with realistic Chrome 124 user-agent
+- `_compress_search_terms(roles)` — strips seniority prefixes to reduce 21 configured roles to ~10 base search terms, cutting Playwright page loads per site
+- `run_all_scrapers()` now returns `(jobs, failed)` tuple; deduplicates within-run by URL AND company+role key
+- LinkedIn, Indeed, Wellfound enabled in `config.yaml`; Apple implemented but disabled pending manual testing
+- Test suite expanded to 118 tests covering `dedup_key`, `_compress_search_terms`, and all Playwright scrapers via mock context managers
+
 ### Added -- Test Suite
 - Test infrastructure: pytest + tox config in `pyproject.toml`, coverage minimum 79%
 - 94 tests across 8 test files covering scrape-jobs pipeline (96% coverage)

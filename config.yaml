@@ -95,21 +95,22 @@ job_search:
         name: Apple
         type: playwright
         careers_url: "https://jobs.apple.com/en-us/search"
-        enabled: false
+        enabled: true
   scraper:
     enabled: true
+    headless: false
     sources:
       remoteok: true
       weworkremotely: true
       hn_who_is_hiring: true
       anthropic: true
-      linkedin: false
-      indeed: false
-      wellfound: false
+      linkedin: true
+      indeed: true
+      wellfound: true
+      apple: false
     hn_max_posts: 100
-    remoteok_max_jobs: 150
-    timeout: 15
-    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    timeout: 30
+    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
   roles:
     - "Senior SRE"

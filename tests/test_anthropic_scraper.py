@@ -1,5 +1,6 @@
 """Tests for scrape_anthropic()."""
 
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import scrape_jobs as sj
@@ -7,24 +8,21 @@ import scrape_jobs as sj
 from fixtures import SAMPLE_CONFIG
 
 
-def _make_playwright_mock(html: str):
-    """Return a context manager mock that yields a sync_playwright-like object."""
+def _playwright_ctx_mock(page):
+    """Replace _playwright_browser with a context manager yielding page."""
+    @contextmanager
+    def _impl(*args, **kwargs):
+        yield page
+    return _impl
+
+
+def _html_page(html: str) -> MagicMock:
+    """Return a mock Playwright page whose content() returns the given HTML."""
     page = MagicMock()
     page.goto.return_value = None
     page.wait_for_load_state.return_value = None
     page.content.return_value = html
-
-    browser = MagicMock()
-    browser.new_page.return_value = page
-
-    p = MagicMock()
-    p.chromium.launch.return_value = browser
-
-    ctx = MagicMock()
-    ctx.__enter__ = MagicMock(return_value=p)
-    ctx.__exit__ = MagicMock(return_value=False)
-
-    return ctx
+    return page
 
 
 _CAREERS_HTML = """<html><body>
@@ -52,10 +50,8 @@ _EMPTY_HTML = "<html><body><p>No jobs</p></body></html>"
 
 class TestScrapeAnthropic:
     def _run(self, html: str = _CAREERS_HTML):
-        ctx = _make_playwright_mock(html)
-        # Patch the source module, not scrape_jobs.sync_playwright: the import is
-        # deferred inside scrape_anthropic(), so the name is never bound at module level.
-        with patch("playwright.sync_api.sync_playwright", return_value=ctx):
+        page = _html_page(html)
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
             return sj.scrape_anthropic(SAMPLE_CONFIG)
 
     def test_returns_matching_jobs(self):
@@ -96,8 +92,6 @@ class TestScrapeAnthropic:
         assert jobs == []
 
     def test_returns_empty_when_playwright_not_installed(self):
-        # Patching sys.modules to None triggers ImportError at call time because
-        # the playwright import is deferred inside scrape_anthropic() — not at module load.
-        with patch.dict("sys.modules", {"playwright.sync_api": None}):
+        with patch("scrape_jobs._has_playwright", return_value=False):
             jobs = sj.scrape_anthropic(SAMPLE_CONFIG)
         assert jobs == []
