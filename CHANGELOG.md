@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Changed -- Parallel job scraping
+- `scrape-jobs.py`: `run_all_scrapers` now runs in two phases. Phase 1 (`remoteok`, `weworkremotely`, `hn_who_is_hiring`, `anthropic`, `apple`) runs in parallel via `ThreadPoolExecutor` with headless Chromium. Phase 2 (`linkedin`, `indeed`, `wellfound`) stays serial and non-headless as a bot-detection hedge. Cuts wall-clock on the scheduled `gather-jobs.sh` run without changing CSV output or first-scraper-wins dedup semantics.
+- New config knob: `job_search.scraper.parallel_workers` (default `4`) controls Phase 1 concurrency; set to `1` for serial Phase 1 behavior.
+- Per-scraper timing logged as `[sid] took X.Xs (N jobs)` on success.
+- New helpers: `_config_with_headless`, `_run_one`, `_merge_and_dedup`, plus `NON_HEADLESS_SOURCES` constant.
+
 ### Fixed -- Audit follow-up (reliability + simplification)
 - `tracker.sh audit`: exact company-name match replaces substring glob; "Stripe" no longer false-matches "Stripe Financial"
 - `scrape-jobs.py`: `enrich_company_descriptions` now honors `job_search.scraper.max_enrich_companies` budget (default 10) and 15s timeout; prevents runaway Claude calls

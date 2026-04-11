@@ -105,6 +105,9 @@ job_search:
   scraper:
     enabled: true
     headless: false
+    # Phase 1 (headless) scraper concurrency. Phase 2 (linkedin/indeed/wellfound)
+    # always runs serially due to bot detection + visible-browser constraints.
+    parallel_workers: 4
     sources:
       remoteok: true
       weworkremotely: true

@@ -1,6 +1,7 @@
 """Tests for Playwright-based scrapers and run_all_scrapers() orchestrator."""
 
 import copy
+import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -280,7 +281,11 @@ class TestRunAllScrapers:
         mock_wwr = MagicMock(return_value=[])
         with patch.object(sj, "SCRAPERS", {"remoteok": mock_ro, "weworkremotely": mock_wwr}):
             sj.run_all_scrapers(cfg)
-        mock_ro.assert_called_once_with(cfg)
+        # Orchestrator passes a phase-config copy (with headless overridden)
+        # rather than the original cfg, so assert on call count + sources.
+        mock_ro.assert_called_once()
+        passed_cfg = mock_ro.call_args.args[0]
+        assert passed_cfg["job_search"]["scraper"]["sources"]["remoteok"] is True
         mock_wwr.assert_not_called()
 
     def test_deduplicates_same_url_across_sources(self):
@@ -337,3 +342,136 @@ class TestRunAllScrapers:
         jobs, failed = sj.run_all_scrapers(self._base_config)
         assert jobs == []
         assert failed == []
+
+
+# ── Parallel phase split ──────────────────────────────────────────────────────
+
+class TestRunAllScrapersParallel:
+    _base_config = {
+        "job_search": {
+            "roles": ["SRE"],
+            "scraper": {
+                "enabled": True,
+                "timeout": 5,
+                "headless": False,
+                "parallel_workers": 4,
+                "sources": {
+                    "remoteok": True,
+                    "weworkremotely": True,
+                    "hn_who_is_hiring": True,
+                    "anthropic": True,
+                    "apple": True,
+                    "linkedin": True,
+                    "indeed": True,
+                    "wellfound": True,
+                },
+            },
+        },
+    }
+
+    def _config(self, *, workers: int = 4) -> dict:
+        cfg = copy.deepcopy(self._base_config)
+        cfg["job_search"]["scraper"]["parallel_workers"] = workers
+        return cfg
+
+    def test_phase_split_headless_flag_and_call_count(self):
+        """All 8 scrapers called once; headless sources see headless=True,
+        non-headless sources see headless=False."""
+        seen_modes: dict[str, bool] = {}
+
+        def _make_mock(sid: str):
+            def _fn(cfg):
+                seen_modes[sid] = sj.scraper_cfg(cfg).get("headless")
+                return [{
+                    "url": f"https://example.com/{sid}",
+                    "company": sid,
+                    "role": "SRE",
+                }]
+            return MagicMock(side_effect=_fn)
+
+        mocks = {sid: _make_mock(sid) for sid in sj.SCRAPERS}
+        with patch.object(sj, "SCRAPERS", mocks):
+            jobs, failed = sj.run_all_scrapers(self._config())
+
+        # Every scraper invoked exactly once
+        for sid, m in mocks.items():
+            assert m.call_count == 1, f"{sid} called {m.call_count} times"
+
+        # Phase 1 sources saw headless=True
+        for sid in ("remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic", "apple"):
+            assert seen_modes[sid] is True, f"{sid} should run headless"
+
+        # Phase 2 sources saw headless=False
+        for sid in ("linkedin", "indeed", "wellfound"):
+            assert seen_modes[sid] is False, f"{sid} should run non-headless"
+
+        # All jobs merged; one row per source, all unique
+        assert len(jobs) == 8
+        assert failed == []
+
+    def test_parallel_speedup(self):
+        """With parallel_workers=4 and only 4 headless-safe sources each sleeping
+        0.2s, total wall-clock should be well under the 0.8s serial equivalent."""
+        def _slow(cfg):
+            time.sleep(0.2)
+            return []
+
+        # Enable 4 headless-safe sources only
+        cfg = self._config(workers=4)
+        for sid in sj.SCRAPERS:
+            cfg["job_search"]["scraper"]["sources"][sid] = sid in {
+                "remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic"
+            }
+
+        mocks = {sid: MagicMock(side_effect=_slow) for sid in sj.SCRAPERS}
+        start = time.perf_counter()
+        with patch.object(sj, "SCRAPERS", mocks):
+            sj.run_all_scrapers(cfg)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"parallel should be <0.5s, got {elapsed:.2f}s"
+
+    def test_workers_1_is_serial(self):
+        """parallel_workers=1 forces Phase 1 to run one-at-a-time; 4 sources
+        sleeping 0.2s each should take at least 0.7s."""
+        def _slow(cfg):
+            time.sleep(0.2)
+            return []
+
+        cfg = self._config(workers=1)
+        for sid in sj.SCRAPERS:
+            cfg["job_search"]["scraper"]["sources"][sid] = sid in {
+                "remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic"
+            }
+
+        mocks = {sid: MagicMock(side_effect=_slow) for sid in sj.SCRAPERS}
+        start = time.perf_counter()
+        with patch.object(sj, "SCRAPERS", mocks):
+            sj.run_all_scrapers(cfg)
+        elapsed = time.perf_counter() - start
+        assert elapsed >= 0.7, f"serial should be >=0.7s, got {elapsed:.2f}s"
+
+    def test_exception_in_one_phase1_scraper(self):
+        """One Phase 1 scraper raising Timeout must not block the others; its
+        source id lands in failed_sources, others still produce jobs."""
+        def _ok(sid):
+            return lambda cfg: [{
+                "url": f"https://example.com/{sid}",
+                "company": sid,
+                "role": "SRE",
+            }]
+
+        cfg = self._config()
+        # Only Phase 1 sources enabled so we're exercising the parallel path
+        for sid in sj.SCRAPERS:
+            cfg["job_search"]["scraper"]["sources"][sid] = sid not in sj.NON_HEADLESS_SOURCES
+
+        mocks = {sid: MagicMock(side_effect=_ok(sid)) for sid in sj.SCRAPERS}
+        mocks["remoteok"] = MagicMock(side_effect=requests.exceptions.Timeout())
+
+        with patch.object(sj, "SCRAPERS", mocks):
+            jobs, failed = sj.run_all_scrapers(cfg)
+
+        assert "remoteok" in failed
+        returned_sources = {j["company"] for j in jobs}
+        # The four other Phase 1 sources all produced their row
+        assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "anthropic", "apple"}

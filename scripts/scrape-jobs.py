@@ -15,6 +15,7 @@ Sources:
 """
 
 import argparse
+import copy
 import csv
 import json
 import logging
@@ -25,6 +26,7 @@ import sys
 import urllib.parse
 import warnings
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -1263,47 +1265,133 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "apple": scrape_apple,
 }
 
+# Sources that must run with a visible Chromium window (bot-detection hedge).
+# These stay on a serial path; running 3 visible browsers concurrently is
+# RAM-heavy and makes detection patterns easier to spot.
+NON_HEADLESS_SOURCES = frozenset({"linkedin", "indeed", "wellfound"})
 
-def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
-    """Run all enabled scrapers and deduplicate results within this run.
 
-    Deduplicates by both URL and company+role key so the same job appearing on
-    multiple boards is only kept once (first scraper wins).
+def _config_with_headless(config: dict, headless: bool) -> dict:
+    """Return a deep copy of config with job_search.scraper.headless overridden.
+
+    Scrapers read headless via scraper_cfg(config); passing a phase-specific
+    copy lets the orchestrator force headless mode per phase without threading
+    a kwarg through every scraper function.
     """
-    source_cfg = scraper_cfg(config).get("sources", {})
-    timeout = timeout_seconds(config)
+    cfg = copy.deepcopy(config)
+    cfg.setdefault("job_search", {}).setdefault("scraper", {})["headless"] = headless
+    return cfg
+
+
+def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
+    """Invoke one scraper and map known failures to exceptions.
+
+    Returns the job list on success, or the caught exception on failure. The
+    orchestrator classifies exceptions into failed_sources during merge.
+    """
+    scraper_fn = SCRAPERS[source_id]
+    timeout = timeout_seconds(cfg)
+    start = time.perf_counter()
+    try:
+        jobs = scraper_fn(cfg)
+    except requests.exceptions.Timeout as exc:
+        log.warning("[%s] timed out after %ds", source_id, timeout)
+        return exc
+    except requests.exceptions.RequestException as exc:
+        log.warning("[%s] request failed: %s", source_id, exc)
+        return exc
+    except Exception as exc:  # noqa: BLE001
+        log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
+        return exc
+    elapsed = time.perf_counter() - start
+    log.info("[%s] took %.1fs (%d jobs)", source_id, elapsed, len(jobs))
+    return jobs
+
+
+def _merge_and_dedup(
+    results: list[tuple[str, list[dict] | Exception]],
+    config: dict,
+) -> tuple[list[dict], list[str]]:
+    """Merge per-source results, deduplicating by URL and company+role key.
+
+    First-scraper-wins: iteration order of `results` determines which job wins
+    a dedup collision. Exceptions are collected into failed_sources.
+    """
     all_jobs: list[dict] = []
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
     failed_sources: list[str] = []
 
-    for source_id, scraper_fn in SCRAPERS.items():
-        if not source_cfg.get(source_id, False):
-            log.info("[%s] disabled in config, skipping", source_id)
+    for source_id, result in results:
+        if isinstance(result, Exception):
+            failed_sources.append(source_id)
             continue
-        try:
-            jobs = scraper_fn(config)
-            for job in jobs:
-                url = job.get("url", "")
-                key = dedup_key(job.get("company", ""), job.get("role", ""))
-                if (url and url in seen_urls) or (key and key in seen_keys):
-                    continue
-                if url:
-                    seen_urls.add(url)
-                if key:
-                    seen_keys.add(key)
-                all_jobs.append(job)
-        except requests.exceptions.Timeout:
-            log.warning("[%s] timed out after %ds", source_id, timeout)
-            failed_sources.append(source_id)
-        except requests.exceptions.RequestException as exc:
-            log.warning("[%s] request failed: %s", source_id, exc)
-            failed_sources.append(source_id)
-        except Exception as exc:  # noqa: BLE001
-            log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
-            failed_sources.append(source_id)
+        for job in result:
+            url = job.get("url", "")
+            key = dedup_key(job.get("company", ""), job.get("role", ""))
+            if (url and url in seen_urls) or (key and key in seen_keys):
+                continue
+            if url:
+                seen_urls.add(url)
+            if key:
+                seen_keys.add(key)
+            all_jobs.append(job)
 
     return all_jobs, failed_sources
+
+
+def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
+    """Run all enabled scrapers and deduplicate results within this run.
+
+    Two phases:
+      Phase 1 — headless-safe sources run in parallel via ThreadPoolExecutor
+      Phase 2 — non-headless sources (linkedin/indeed/wellfound) run serially
+
+    Phase 2 stays serial by design: running 3 visible Chromium windows
+    concurrently is RAM-heavy and makes bot detection easier. Deduplicates by
+    both URL and company+role key so the same job appearing on multiple boards
+    is only kept once (first scraper wins).
+    """
+    source_cfg = scraper_cfg(config).get("sources", {})
+    workers = int(scraper_cfg(config).get("parallel_workers", 4))
+    enabled = [sid for sid in SCRAPERS if source_cfg.get(sid, False)]
+    disabled = [sid for sid in SCRAPERS if not source_cfg.get(sid, False)]
+    for sid in disabled:
+        log.info("[%s] disabled in config, skipping", sid)
+
+    headless_sources = [sid for sid in enabled if sid not in NON_HEADLESS_SOURCES]
+    visible_sources = [sid for sid in enabled if sid in NON_HEADLESS_SOURCES]
+
+    results: list[tuple[str, list[dict] | Exception]] = []
+
+    # Phase 1: headless, parallel
+    if headless_sources:
+        headless_cfg = _config_with_headless(config, True)
+        log.info(
+            "[phase1] running %d headless scrapers, %d workers",
+            len(headless_sources),
+            workers,
+        )
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futures = {
+                pool.submit(_run_one, sid, headless_cfg): sid
+                for sid in headless_sources
+            }
+            for fut in as_completed(futures):
+                sid = futures[fut]
+                results.append((sid, fut.result()))
+
+    # Phase 2: non-headless, serial (preserves pre-parallel behavior)
+    if visible_sources:
+        visible_cfg = _config_with_headless(config, False)
+        log.info(
+            "[phase2] running %d non-headless scrapers serially",
+            len(visible_sources),
+        )
+        for sid in visible_sources:
+            results.append((sid, _run_one(sid, visible_cfg)))
+
+    return _merge_and_dedup(results, config)
 
 
 # ── Notification ─────────────────────────────────────────────────────────────
