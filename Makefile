@@ -151,6 +151,7 @@ setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 		fi; \
 	done
 	@echo ""
+	@$(MAKE) launchd-start || echo "Some agents not running. Use 'make launchd-start' to load them."
 	@echo "Setup complete. Run 'make day-start' to begin."
 
 install:  ## Symlink commands and agents into .claude/ for Claude Code
