@@ -121,6 +121,11 @@ job_search:
     timeout: 30
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
+  # Role patterns. Supports fnmatch-style '*' wildcards and '!'-prefixed
+  # exclusions. Exclusions short-circuit matching and dominate over the
+  # Tier 2/2b keyword safety nets. Example: "!*Manager*" rejects any title
+  # containing "Manager". Exclusions and wildcards are not used for URL
+  # search term compression.
   roles:
     - "Senior SRE"
     - "Staff SRE"

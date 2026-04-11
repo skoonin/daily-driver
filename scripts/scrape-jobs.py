@@ -622,17 +622,58 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
 
 # ── Role matching ─────────────────────────────────────────────────────────────
 
+def _split_roles(roles: list[str]) -> tuple[list[str], list[str]]:
+    """Partition roles into (include, exclude). '!'-prefixed entries are
+    exclusions; the leading '!' is stripped before pattern compilation."""
+    include: list[str] = []
+    exclude: list[str] = []
+    for r in roles:
+        if r.startswith("!"):
+            exclude.append(r[1:])
+        else:
+            include.append(r)
+    return include, exclude
+
+
+def _role_pattern(role: str) -> re.Pattern | None:
+    """Compile a wildcarded role to a case-insensitive substring regex.
+
+    Returns None for plain literals so the caller can stay on the fast path.
+    Only '*' is treated as a wildcard; all other chars are regex-escaped so
+    entries like 'CI/CD Engineer' and 'C++ *' keep working unchanged.
+    """
+    if "*" not in role:
+        return None
+    pattern = re.escape(role).replace(r"\*", r".*")
+    return re.compile(pattern, re.IGNORECASE)
+
+
+def _role_matches(role: str, title: str, title_lower: str) -> bool:
+    """Uniform check: literal substring or compiled wildcard pattern."""
+    pat = _role_pattern(role)
+    if pat is None:
+        return role.lower() in title_lower
+    return pat.search(title) is not None
+
+
 def matches_roles(title: str, roles: list[str]) -> bool:
     """True if the job title is relevant based on configured roles.
 
-    Tier 1: exact substring match against any configured role.
-    Tier 2: domain keyword + seniority keyword both present in title.
-    Tier 2b: standalone domain keywords that don't need seniority (SRE, etc).
+    Exclusions (entries starting with '!') short-circuit and dominate over
+    every other tier — they reject titles that would otherwise pass Tier 2/2b.
+    Tier 1: literal or wildcarded include match.
+    Tier 2: domain + seniority keywords both present.
+    Tier 2b: standalone SRE / Platform Engineer keyword match.
     """
+    include, exclude = _split_roles(roles)
     title_lower = title.lower()
 
-    for role in roles:
-        if role.lower() in title_lower:
+    for role in exclude:
+        if _role_matches(role, title, title_lower):
+            return False
+
+    for role in include:
+        if _role_matches(role, title, title_lower):
             return True
 
     has_domain = any(kw in title_lower for kw in _DOMAIN_KEYWORDS)
@@ -661,6 +702,11 @@ def _compress_search_terms(roles: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for role in roles:
+        if role.startswith("!"):
+            continue  # exclusions don't drive URL searches
+        if "*" in role:
+            log.debug("[search-terms] skipping wildcard role %r", role)
+            continue
         lower = role.lower()
         base = role
         for prefix in _SENIORITY_PREFIXES:

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Wildcard and negation support in role matching
+- `scrape-jobs.py`: `matches_roles` now supports `*` wildcards (`"Senior * Engineer"` matches any middle term) and `!`-prefixed exclusions (`"!*Manager*"` rejects any title containing "Manager"). Exclusions short-circuit before Tier 2/2b safety nets, fixing IC-only filtering where titles like "Senior SRE Manager" previously passed via the standalone `sre` keyword path.
+- New helpers: `_split_roles`, `_role_pattern`, `_role_matches`.
+- `_compress_search_terms`: skips wildcarded roles and exclusions — neither translates to URL search queries.
+- `config.yaml`: `roles:` list documented with `*` and `!` syntax.
+- 16 new tests in `tests/test_matching.py` covering `TestTier1Wildcard`, `TestNegation`, and `_compress_search_terms` filtering.
+
 ### Changed -- jobs.csv column layout: Status promoted to first column, '#' removed
 - `jobs.csv` format change: `Status` is now column 0 (was column 11); the `#` row-number column is removed entirely (was column 0). New canonical header: `Status, Company, Product/Purpose, Role, Comp, Location, Fit, GD Rating, Source, Date Found, Date Applied, Link, Notes` (13 columns, down from 14).
 - Automatic migration: on first run against a legacy 14-column file, `scrape-jobs.py` rewrites `jobs.csv` in place and writes a timestamped backup (`jobs.csv.bak.<epoch>`) so the change is reversible.
