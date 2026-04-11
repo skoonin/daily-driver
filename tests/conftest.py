@@ -61,13 +61,13 @@ def populated_csv(csv_path) -> Path:
         writer = csv.writer(f)
         writer.writerow(CSV_HEADER)
         writer.writerow(_row(**{
-            "#": "1", "Company": "Acme", "Product/Purpose": "SaaS platform",
+            "Company": "Acme", "Product/Purpose": "SaaS platform",
             "Role": "Senior SRE", "Location": "Remote", "Source": "HN",
             "Date Found": "2026-04-01", "Status": "found",
             "Link": "https://example.com/job1",
         }))
         writer.writerow(_row(**{
-            "#": "2", "Company": "BetaCo", "Product/Purpose": "B2B analytics",
+            "Company": "BetaCo", "Product/Purpose": "B2B analytics",
             "Role": "DevOps Lead", "Location": "Remote", "Source": "LinkedIn",
             "Date Found": "2026-04-02", "Status": "applied",
             "Date Applied": "2026-04-02", "Link": "https://example.com/job2",

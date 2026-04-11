@@ -312,11 +312,14 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
 # real Fable posting (2026-04-10): "CA$130,000.00/yr - CA$150,000.00/yr". We
 # normalize it to match the JSON-LD formatter's output shape: drop .00, collapse
 # to an en-dash range with the unit suffix at the end.
+#
+# Primary: tidy LinkedIn format with leading prefix + explicit unit.
+# Example: "CA$130,000.00/yr - CA$150,000.00/yr"
 _LINKEDIN_RANGE_RE = re.compile(
     r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
     r"(?P<min>[\d,]+)(?:\.\d+)?"
     r"(?P<u>/\w+)"
-    r"\s*-\s*"
+    r"\s*[-\u2013\u2014]\s*"       # accept -, en-dash, em-dash
     r"(?P=p)(?P<max>[\d,]+)(?:\.\d+)?(?P=u)$"
 )
 
@@ -324,6 +327,18 @@ _LINKEDIN_SINGLE_RE = re.compile(
     r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
     r"(?P<amount>[\d,]+)(?:\.\d+)?"
     r"(?P<u>/\w+)$"
+)
+
+# Fallback: looser range with optional unit and trailing currency code.
+# Handles postings like "$144,000\u2014$200,000 CAD" where the currency code
+# is a suffix rather than a prefix and no unit is present.
+_LINKEDIN_LOOSE_RANGE_RE = re.compile(
+    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac)"
+    r"(?P<min>[\d,]+)(?:\.\d+)?"
+    r"\s*[-\u2013\u2014]\s*"
+    r"(?:CA\$|US\$|\$|\u00a3|\u20ac)?"
+    r"(?P<max>[\d,]+)(?:\.\d+)?"
+    r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?$"
 )
 
 
@@ -342,6 +357,11 @@ def _clean_linkedin_comp(raw: str) -> str:
     m = _LINKEDIN_SINGLE_RE.match(s)
     if m:
         return f"{m['p']}{m['amount']}{m['u']}"
+    m = _LINKEDIN_LOOSE_RANGE_RE.match(s)
+    if m:
+        # Default to /yr when the source omits a unit — job-board convention.
+        cur = f" {m['cur']}" if m["cur"] else ""
+        return f"{m['p']}{m['min']}\u2013{m['max']}/yr{cur}"
     return ""
 
 
@@ -373,16 +393,59 @@ def parse_linkedin_html(html: str) -> dict:
     return {"comp": comp}
 
 
+def parse_greenhouse_html(html: str) -> dict:
+    """Extract comp from a Greenhouse job-boards page.
+
+    Greenhouse pages don't emit JSON-LD. The salary, when present, lives in
+    a paragraph or list item containing a literal 'Annual Salary:' prefix on
+    Anthropic's board (as of 2026-04-11). We match on that prefix so we don't
+    accidentally grab unrelated dollar amounts elsewhere on the page.
+    """
+    if not html:
+        return {}
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return {}
+
+    text = soup.get_text(" ", strip=True)
+    m = re.search(
+        r"Annual Salary:\s*"
+        r"(?P<p>\$|US\$|CA\$|[A-Z]{3}\s?)"
+        r"(?P<min>[\d,]+)"
+        r"\s*[-\u2013\u2014]\s*"
+        r"(?P<p2>\$|US\$|CA\$|[A-Z]{3}\s?)?"
+        r"(?P<max>[\d,]+)"
+        r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?",
+        text,
+    )
+    if not m:
+        return {}
+    currency_suffix = f" {m['cur']}" if m["cur"] else ""
+    # Reuse the second-half prefix when present so cross-prefix ranges
+    # render correctly; otherwise repeat the first half's prefix.
+    max_prefix = m["p2"] or m["p"]
+    return {
+        "comp": f"{m['p']}{m['min']}\u2013{max_prefix}{m['max']}/yr{currency_suffix}".strip()
+    }
+
+
 def _parse_detail_page(html: str, url: str) -> dict:
     """Dispatch to the right detail-page parser based on URL hostname.
 
     LinkedIn requires its own HTML parser because it doesn't emit JSON-LD.
-    Everything else falls through to the JSON-LD parser, which covers
-    Greenhouse, Lever, Ashby, Workday, and most applicant-tracking systems.
+    Greenhouse job-boards pages also lack JSON-LD; we try JSON-LD first
+    (covers any Greenhouse board that does publish structured data) and fall
+    back to the text-pattern parser. Everything else uses JSON-LD only.
     """
     host = urllib.parse.urlparse(url).hostname or ""
     if "linkedin.com" in host:
         return parse_linkedin_html(html)
+    if "greenhouse.io" in host:
+        result = parse_jsonld_jobposting(html)
+        if result.get("comp"):
+            return result
+        return parse_greenhouse_html(html) or result
     return parse_jsonld_jobposting(html)
 
 
@@ -455,21 +518,55 @@ def parse_jsonld_jobposting(html: str) -> dict:
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
-def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str], int]:
-    """Return (known_urls, known_keys, header_columns, next_row_number).
+CANONICAL_HEADER = [
+    "Status", "Company", "Product/Purpose", "Role", "Comp", "Location",
+    "Fit", "GD Rating", "Source", "Date Found",
+    "Date Applied", "Link", "Notes",
+]
+
+
+def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[str]:
+    """Rewrite jobs.csv from the legacy '#'-first header to the new layout.
+
+    Creates jobs.csv.bak.<timestamp> so the migration is reversible. Idempotent:
+    if the header is already current, this is a no-op and no backup is written.
+    """
+    if current_header == CANONICAL_HEADER:
+        return CANONICAL_HEADER
+
+    backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
+    shutil.copy2(csv_path, backup)
+    log.info("[migrate] jobs.csv backed up to %s", backup.name)
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+        )
+        writer.writeheader()
+        for row in rows:
+            row.pop("#", None)
+            writer.writerow(row)
+    log.info("[migrate] jobs.csv rewritten to new column layout")
+    return CANONICAL_HEADER
+
+
+def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
+    """Return (known_urls, known_keys, header_columns).
 
     known_urls  — set of Link column values, for URL-based dedup.
     known_keys  — set of dedup_key(company, role) strings, for cross-site dedup.
     """
     if not csv_path.exists():
-        return set(), set(), [], 1
+        return set(), set(), []
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.reader(f)
             try:
                 header = next(reader)
             except StopIteration:
-                return set(), set(), [], 1
+                return set(), set(), []
             if "Link" not in header:
                 log.error("jobs.csv is missing required 'Link' column — cannot deduplicate")
                 sys.exit(1)
@@ -478,18 +575,9 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str], i
             role_idx = header.index("Role") if "Role" in header else None
             known_urls: set[str] = set()
             known_keys: set[str] = set()
-            max_num = 0
-            for row_num, row in enumerate(reader, start=2):
+            for row in reader:
                 if not row:
                     continue
-                try:
-                    num = int(row[0])
-                    max_num = max(max_num, num)
-                except (ValueError, IndexError):
-                    log.warning(
-                        "jobs.csv row %d: cannot parse row number from %r",
-                        row_num, row[0] if row else "",
-                    )
                 if link_idx < len(row) and row[link_idx]:
                     known_urls.add(row[link_idx].strip())
                 company = row[company_idx].strip() if company_idx is not None and company_idx < len(row) else ""
@@ -499,10 +587,10 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str], i
     except OSError as exc:
         log.error("Cannot read %s: %s", csv_path, exc)
         sys.exit(1)
-    return known_urls, known_keys, header, max_num + 1
+    return known_urls, known_keys, header
 
 
-def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: int) -> int:
+def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     """Append new jobs to CSV. Returns count of rows written."""
     if not jobs:
         return 0
@@ -515,7 +603,6 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
             )
             for job in jobs:
                 row = {col: "" for col in header}
-                row["#"] = str(next_num)
                 row["Company"] = job.get("company", "")
                 row["Product/Purpose"] = job.get("product", "(auto-scraped -- needs fill)")
                 row["Role"] = job.get("role", "")
@@ -526,7 +613,6 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
                 row["Status"] = "found"
                 row["Link"] = job.get("url", "")
                 writer.writerow(row)
-                next_num += 1
                 written += 1
     except OSError as exc:
         log.error("Cannot open %s for writing: %s", csv_path, exc)
@@ -1453,14 +1539,10 @@ def main() -> None:  # pragma: no cover
     output_dir = resolve_output_dir(config)
     csv_path = output_dir / "jobs.csv"
 
-    known_urls, known_keys, header, next_num = load_existing_jobs(csv_path)
+    known_urls, known_keys, header = load_existing_jobs(csv_path)
 
     if not header:
-        header = [
-            "#", "Company", "Product/Purpose", "Role", "Comp", "Location",
-            "Fit", "GD Rating", "Source", "Date Found", "Status",
-            "Date Applied", "Link", "Notes",
-        ]
+        header = CANONICAL_HEADER
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -1468,6 +1550,8 @@ def main() -> None:  # pragma: no cover
         except OSError as exc:
             log.error("Cannot initialize %s: %s", csv_path, exc)
             sys.exit(1)
+    else:
+        header = _migrate_legacy_header(csv_path, header)
 
     log.info(
         "Loaded %d existing URLs, %d existing keys from %s",
@@ -1505,7 +1589,7 @@ def main() -> None:  # pragma: no cover
             sys.exit(1)
         return
 
-    written = append_jobs(csv_path, new_jobs, header, next_num)
+    written = append_jobs(csv_path, new_jobs, header)
     print(f"Scraper complete: {written} new jobs appended to {csv_path}")
 
     if failed_sources:

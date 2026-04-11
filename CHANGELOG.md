@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Changed -- jobs.csv column layout: Status promoted to first column, '#' removed
+- `jobs.csv` format change: `Status` is now column 0 (was column 11); the `#` row-number column is removed entirely (was column 0). New canonical header: `Status, Company, Product/Purpose, Role, Comp, Location, Fit, GD Rating, Source, Date Found, Date Applied, Link, Notes` (13 columns, down from 14).
+- Automatic migration: on first run against a legacy 14-column file, `scrape-jobs.py` rewrites `jobs.csv` in place and writes a timestamped backup (`jobs.csv.bak.<epoch>`) so the change is reversible.
+- `scrape-jobs.py`: `load_existing_jobs` return type changed from `tuple[set, set, list, int]` to `tuple[set, set, list]` — `next_num` removed. `append_jobs` signature drops `next_num` parameter.
+- `tracker.sh`: audit awk script updated — Status column positional reference changed from `fields[11]` to `fields[1]`.
+
 ### Changed -- Parallel job scraping
 - `scrape-jobs.py`: `run_all_scrapers` now runs in two phases. Phase 1 (`remoteok`, `weworkremotely`, `hn_who_is_hiring`, `anthropic`, `apple`) runs in parallel via `ThreadPoolExecutor` with headless Chromium. Phase 2 (`linkedin`, `indeed`, `wellfound`) stays serial and non-headless as a bot-detection hedge. Cuts wall-clock on the scheduled `gather-jobs.sh` run without changing CSV output or first-scraper-wins dedup semantics.
 - New config knob: `job_search.scraper.parallel_workers` (default `4`) controls Phase 1 concurrency; set to `1` for serial Phase 1 behavior.
@@ -20,6 +26,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `calendar-sync.sh`: surfaces AppleScript errors with Privacy > Calendars hint instead of silently swallowing
 - `checkin-state.sh`: state writes go through `write_state` helper with `.tmp + mv` atomic pattern
 - Consolidated `commit-{daily-notes,weekly,monthly}.sh` into single `commit-notes.sh {daily|weekly|monthly}`
+
+### Fixed -- LinkedIn loose comp regex
+- `_clean_linkedin_comp()` now parses postings where the currency code is a suffix rather than a prefix and no unit is present (e.g., `$144,000\u2014$200,000 CAD`). New `_LINKEDIN_LOOSE_RANGE_RE` runs as a fallback after the strict regex; defaults to `/yr` when no unit is present, per job-board convention. Strict regex also updated to accept en-dash and em-dash separators in addition to ASCII hyphen.
+- 9 new tests covering em-dash strict path, all loose-format parametrized cases, strict-wins precedence, and unparseable-returns-empty guard.
+
+### Added -- Greenhouse HTML comp parser
+- `parse_greenhouse_html()` — extracts salary from Greenhouse job-board pages that omit JSON-LD (e.g., Anthropic's board at `job-boards.greenhouse.io`). Matches the `Annual Salary: $X - $Y USD` text pattern that Anthropic publishes in plain HTML.
+- `_parse_detail_page()` now dispatches `greenhouse.io` hosts to the new parser with JSON-LD fallthrough: JSON-LD wins if present (covers any Greenhouse board that does emit structured data), plain-HTML parser runs otherwise.
+- 4 new tests in `tests/test_enrich.py` covering labeled salary extraction, hostname dispatch fallthrough, JSON-LD preference, and no-salary case.
 
 ### Added -- Job detail enrichment
 - `enrich_job_details()` fetches each new job's detail URL once and populates the `Comp` column in `jobs.csv` (previously empty). Hostname dispatch picks a parser strategy: LinkedIn anonymous pages get an HTML parser reading `.compensation__salary`; all other hosts fall through to a JSON-LD `JobPosting` parser that handles Greenhouse/Lever/Ashby-style ATS boards.

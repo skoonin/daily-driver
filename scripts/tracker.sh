@@ -328,7 +328,7 @@ cmd_audit() {
           else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
         }
       }
-      print tolower(fields[2]) "\t" fields[2] "\t" fields[4] "\t" fields[11]
+      print tolower(fields[2]) "\t" fields[2] "\t" fields[4] "\t" fields[1]
     }
   ' "$jobs_csv" 2>/dev/null); then
     echo "ERROR: cmd_audit: awk failed parsing jobs.csv: ${csv_combined}" >&2

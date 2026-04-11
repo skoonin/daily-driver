@@ -366,6 +366,75 @@ class TestEnrichHostnameDispatch:
         assert "999,999" not in jobs[0]["comp"]
 
 
+# ── parse_greenhouse_html ────────────────────────────────────────────────────
+
+
+class TestParseGreenhouseHtml:
+    def test_greenhouse_anthropic_labeled_salary(self):
+        html = """
+        <html><body>
+        <p>Annual Salary: $350,000 - $500,000 USD</p>
+        </body></html>
+        """
+        out = sj.parse_greenhouse_html(html)
+        assert "350,000" in out["comp"]
+        assert "500,000" in out["comp"]
+        assert "USD" in out["comp"]
+
+    def test_greenhouse_dispatch_falls_through_when_no_jsonld(self):
+        html = "<p>Annual Salary: $350,000 - $500,000 USD</p>"
+        out = sj._parse_detail_page(html, "https://job-boards.greenhouse.io/anthropic/jobs/1")
+        assert "350,000" in out["comp"]
+
+    def test_greenhouse_dispatch_prefers_jsonld_when_present(self):
+        html = """
+        <script type="application/ld+json">
+        {"@type": "JobPosting", "baseSalary": {
+            "currency": "USD",
+            "value": {"minValue": 400000, "maxValue": 600000, "unitText": "YEAR"}
+        }}
+        </script>
+        <p>Annual Salary: $100 - $200 USD</p>
+        """
+        out = sj._parse_detail_page(html, "https://job-boards.greenhouse.io/x/jobs/1")
+        assert "400,000" in out["comp"]
+        assert "100" not in out["comp"]
+
+    def test_greenhouse_returns_empty_when_no_salary_text(self):
+        html = "<p>No salary disclosed.</p>"
+        assert sj.parse_greenhouse_html(html) == {}
+
+
+# ── _clean_linkedin_comp loose regex ────────────────────────────────────────
+
+
+@pytest.mark.parametrize("raw,expected_substring", [
+    ("$144,000\u2014$200,000 CAD", "144,000"),
+    ("$144,000\u2014$200,000 CAD", "200,000"),
+    ("$144,000\u2014$200,000 CAD", "CAD"),
+    ("$144,000\u2014$200,000", "144,000"),
+    ("$144,000\u2013$200,000 USD", "USD"),
+    ("$100,000 - $150,000", "100,000"),
+])
+def test_linkedin_loose_range_formats(raw, expected_substring):
+    assert expected_substring in sj._clean_linkedin_comp(raw)
+
+
+def test_linkedin_strict_format_still_wins():
+    out = sj._clean_linkedin_comp("CA$130,000.00/yr - CA$150,000.00/yr")
+    assert out == "CA$130,000\u2013150,000/yr"
+
+
+def test_linkedin_em_dash_strict_format():
+    # Strict regex now accepts em-dash separator
+    out = sj._clean_linkedin_comp("CA$130,000.00/yr\u2014CA$150,000.00/yr")
+    assert "130,000" in out and "150,000" in out
+
+
+def test_linkedin_unparseable_returns_empty():
+    assert sj._clean_linkedin_comp("Competitive salary") == ""
+
+
 # ── append_jobs CSV mapping ──────────────────────────────────────────────────
 
 
@@ -384,7 +453,7 @@ class TestAppendJobsCompColumn:
                 "comp": "CA$130,000\u2013150,000/yr",
             }
         ]
-        sj.append_jobs(empty_csv, jobs, CSV_HEADER, next_num=1)
+        sj.append_jobs(empty_csv, jobs, CSV_HEADER)
         with open(empty_csv) as f:
             rows = list(_csv.reader(f))
         comp_idx = CSV_HEADER.index("Comp")
@@ -395,7 +464,7 @@ class TestAppendJobsCompColumn:
         import csv as _csv
 
         jobs = [{"company": "X", "role": "SRE", "url": "https://x.com/a", "source": "HN"}]
-        sj.append_jobs(empty_csv, jobs, CSV_HEADER, next_num=1)
+        sj.append_jobs(empty_csv, jobs, CSV_HEADER)
         with open(empty_csv) as f:
             rows = list(_csv.reader(f))
         comp_idx = CSV_HEADER.index("Comp")
