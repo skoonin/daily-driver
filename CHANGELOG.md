@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- Post-review cleanup
+- `enrich_company_descriptions`: narrow `except Exception` to `TimeoutExpired`/`OSError`; log timeout at WARNING not DEBUG; take first non-empty line of stdout instead of raw `.strip()`
+- `shutil.which` replaces `subprocess.run(["which", ...])` in both enrichment and notification checks
+- `csv_path.as_uri()` replaces manual `f"file://{csv_path}"` in `_notify_new_jobs`
+- `append_jobs`: `col()` nested function replaced with dict comprehension; split `open()`/`with` replaced with `with open()`
+- `SCRAPERS` type annotation tightened to `Callable[[dict], list[dict]]`
+- `Optional[int]` replaced with `int | None`; `from typing import Optional` removed
+- `scrape_wellfound` and `scrape_apple` docstrings corrected to match implementation
+- Tier 2b seniority exemption comment added explaining why SRE/Platform Engineer bypass the seniority gate
+
 ### Added -- Product enrichment, notification, Apple Canada
 - Claude API enrichment: `enrich_company_descriptions()` calls `claude-haiku` to fill `Product/Purpose` for each new job; one call per unique company, cached within the run; degrades gracefully if `ANTHROPIC_API_KEY` unset
 - Notification opens `jobs.csv` on click via `terminal-notifier` (falls back to plain osascript if not installed)

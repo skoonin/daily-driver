@@ -26,7 +26,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from typing import Optional
+import shutil
 
 import requests
 import yaml
@@ -103,7 +103,7 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
     One `claude -p` call per unique company name; results cached within the run.
     Silently skips enrichment if the `claude` CLI is not on PATH.
     """
-    if subprocess.run(["which", "claude"], capture_output=True).returncode != 0:
+    if shutil.which("claude") is None:
         log.debug("[enrich] claude CLI not found, skipping product lookup")
         return
 
@@ -125,8 +125,15 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
                     ["claude", "-p", prompt],
                     capture_output=True, text=True, timeout=30,
                 )
-                cache[company] = result.stdout.strip() if result.returncode == 0 else ""
-            except Exception as exc:
+                if result.returncode == 0:
+                    lines = [l for l in result.stdout.splitlines() if l.strip()]
+                    cache[company] = lines[0] if lines else ""
+                else:
+                    cache[company] = ""
+            except subprocess.TimeoutExpired:
+                log.warning("[enrich] %s: claude CLI timed out after 30s", company)
+                cache[company] = ""
+            except OSError as exc:
                 log.debug("[enrich] %s lookup failed: %s", company, exc)
                 cache[company] = ""
         if cache[company]:
@@ -187,50 +194,48 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
     if not jobs:
         return 0
 
-    def col(name: str) -> Optional[int]:
-        return header.index(name) if name in header else None
+    col = {name: i for i, name in enumerate(header)}
 
-    num_idx = col("#")
-    company_idx = col("Company")
-    product_idx = col("Product/Purpose")
-    role_idx = col("Role")
-    location_idx = col("Location")
-    source_idx = col("Source")
-    date_idx = col("Date Found")
-    status_idx = col("Status")
-    link_idx = col("Link")
+    num_idx = col.get("#")
+    company_idx = col.get("Company")
+    product_idx = col.get("Product/Purpose")
+    role_idx = col.get("Role")
+    location_idx = col.get("Location")
+    source_idx = col.get("Source")
+    date_idx = col.get("Date Found")
+    status_idx = col.get("Status")
+    link_idx = col.get("Link")
 
     written = 0
     try:
-        f = open(csv_path, "a", newline="", encoding="utf-8")
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+            for job in jobs:
+                row = [""] * len(header)
+                if num_idx is not None:
+                    row[num_idx] = str(next_num)
+                if company_idx is not None:
+                    row[company_idx] = job.get("company", "")
+                if product_idx is not None:
+                    row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
+                if role_idx is not None:
+                    row[role_idx] = job.get("role", "")
+                if location_idx is not None:
+                    row[location_idx] = job.get("location", "")
+                if source_idx is not None:
+                    row[source_idx] = job.get("source", "")
+                if date_idx is not None:
+                    row[date_idx] = job.get("date_found", date.today().isoformat())
+                if status_idx is not None:
+                    row[status_idx] = "found"
+                if link_idx is not None:
+                    row[link_idx] = job.get("url", "")
+                writer.writerow(row)
+                next_num += 1
+                written += 1
     except OSError as exc:
         log.error("Cannot open %s for writing: %s", csv_path, exc)
         sys.exit(1)
-    with f:
-        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
-        for job in jobs:
-            row = [""] * len(header)
-            if num_idx is not None:
-                row[num_idx] = str(next_num)
-            if company_idx is not None:
-                row[company_idx] = job.get("company", "")
-            if product_idx is not None:
-                row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
-            if role_idx is not None:
-                row[role_idx] = job.get("role", "")
-            if location_idx is not None:
-                row[location_idx] = job.get("location", "")
-            if source_idx is not None:
-                row[source_idx] = job.get("source", "")
-            if date_idx is not None:
-                row[date_idx] = job.get("date_found", date.today().isoformat())
-            if status_idx is not None:
-                row[status_idx] = "found"
-            if link_idx is not None:
-                row[link_idx] = job.get("url", "")
-            writer.writerow(row)
-            next_num += 1
-            written += 1
     return written
 
 
@@ -254,6 +259,9 @@ def matches_roles(title: str, roles: list[str]) -> bool:
     if has_domain and has_seniority:
         return True
 
+    # SRE and Platform Engineer match without seniority — they're precise enough
+    # to be unambiguous IC roles. Broader terms (DevOps, Infrastructure) require
+    # a seniority qualifier to avoid matching junior/intern postings.
     if any(kw in title_lower for kw in {"sre", "platform engineer"}):
         return True
 
@@ -810,9 +818,9 @@ def scrape_indeed(config: dict) -> list[dict]:
 def scrape_wellfound(config: dict) -> list[dict]:
     """Playwright scraper for Wellfound (formerly AngelList Talent) job search.
 
-    Public search results visible without login are limited. Uses networkidle
-    wait to allow React rendering to complete. CSS class names are hashed so
-    multiple selectors are tried.
+    Public search results visible without login are limited. Uses domcontentloaded
+    plus a fixed wait for React hydration — networkidle never resolves on this SPA.
+    CSS class names are hashed so multiple selectors are tried.
     """
     if not _has_playwright():
         log.warning("[wellfound] playwright not installed, skipping")
@@ -889,10 +897,10 @@ def scrape_wellfound(config: dict) -> list[dict]:
 
 
 def scrape_apple(config: dict) -> list[dict]:
-    """Playwright scraper for Apple's careers search page (React SPA).
+    """Playwright scraper for Apple's Canada careers search page (React SPA).
 
     Searches each compressed role term. Job rows render after React hydrates;
-    title links follow the pattern /en-us/details/{id}.
+    title links follow the pattern /en-ca/details/{id}.
     """
     if not _has_playwright():
         log.warning("[apple] playwright not installed, skipping")
@@ -966,7 +974,7 @@ def scrape_apple(config: dict) -> list[dict]:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-SCRAPERS: dict[str, Callable] = {
+SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
@@ -1023,12 +1031,11 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
 # ── Notification ─────────────────────────────────────────────────────────────
 
 def _notify_new_jobs(count: int, csv_path: Path) -> None:
-    """Send a macOS notification; clicking opens jobs.csv if terminal-notifier is available."""
     title = "Job Scraper"
     message = f"{count} new jobs found"
-    file_url = f"file://{csv_path}"
+    file_url = csv_path.as_uri()
 
-    if subprocess.run(["which", "terminal-notifier"], capture_output=True).returncode == 0:
+    if shutil.which("terminal-notifier"):
         subprocess.run(
             ["terminal-notifier", "-title", title, "-message", message, "-open", file_url],
             check=False,
