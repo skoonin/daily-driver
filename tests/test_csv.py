@@ -1,4 +1,4 @@
-"""Tests for CSV helpers: load_existing_urls() and append_jobs()."""
+"""Tests for CSV helpers: load_existing_jobs() and append_jobs()."""
 
 import csv
 from pathlib import Path
@@ -9,38 +9,47 @@ import scrape_jobs as sj
 from fixtures import CSV_HEADER
 
 
-class TestLoadExistingUrls:
+class TestLoadExistingJobs:
     def test_missing_file_returns_empty_state(self, csv_path):
-        urls, header, next_num = sj.load_existing_urls(csv_path)
+        urls, keys, header, next_num = sj.load_existing_jobs(csv_path)
         assert urls == set()
+        assert keys == set()
         assert header == []
         assert next_num == 1
 
     def test_empty_file_returns_empty_state(self, csv_path):
         csv_path.write_text("")
-        urls, header, next_num = sj.load_existing_urls(csv_path)
+        urls, keys, header, next_num = sj.load_existing_jobs(csv_path)
         assert urls == set()
+        assert keys == set()
         assert header == []
         assert next_num == 1
 
     def test_header_only_file_returns_zero_urls(self, empty_csv):
-        urls, header, next_num = sj.load_existing_urls(empty_csv)
+        urls, keys, header, next_num = sj.load_existing_jobs(empty_csv)
         assert urls == set()
+        assert keys == set()
         assert header == CSV_HEADER
         assert next_num == 1
 
     def test_populated_csv_returns_known_urls(self, populated_csv):
-        urls, _, _ = sj.load_existing_urls(populated_csv)
+        urls, _, _, _ = sj.load_existing_jobs(populated_csv)
         assert "https://example.com/job1" in urls
         assert "https://example.com/job2" in urls
         assert len(urls) == 2
 
+    def test_populated_csv_returns_known_keys(self, populated_csv):
+        _, keys, _, _ = sj.load_existing_jobs(populated_csv)
+        assert sj.dedup_key("Acme", "Senior SRE") in keys
+        assert sj.dedup_key("BetaCo", "DevOps Lead") in keys
+        assert len(keys) == 2
+
     def test_populated_csv_next_num_after_last_row(self, populated_csv):
-        _, _, next_num = sj.load_existing_urls(populated_csv)
+        _, _, _, next_num = sj.load_existing_jobs(populated_csv)
         assert next_num == 3
 
     def test_populated_csv_returns_header(self, populated_csv):
-        _, header, _ = sj.load_existing_urls(populated_csv)
+        _, _, header, _ = sj.load_existing_jobs(populated_csv)
         assert "Link" in header
         assert "#" in header
 
@@ -51,15 +60,20 @@ class TestLoadExistingUrls:
             row = [""] * len(CSV_HEADER)
             row[0] = "1"
             row[CSV_HEADER.index("Link")] = "https://example.com/1"
+            row[CSV_HEADER.index("Company")] = "Acme"
+            row[CSV_HEADER.index("Role")] = "SRE"
             writer.writerow(row)
             f.write("\n")  # blank line between data rows
             row2 = [""] * len(CSV_HEADER)
             row2[0] = "2"
             row2[CSV_HEADER.index("Link")] = "https://example.com/2"
+            row2[CSV_HEADER.index("Company")] = "BetaCo"
+            row2[CSV_HEADER.index("Role")] = "DevOps"
             writer.writerow(row2)
-        urls, _, next_num = sj.load_existing_urls(csv_path)
+        urls, keys, _, next_num = sj.load_existing_jobs(csv_path)
         assert len(urls) == 2
         assert next_num == 3
+        assert len(keys) == 2
 
     def test_non_integer_row_number_skipped(self, csv_path):
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -69,7 +83,7 @@ class TestLoadExistingUrls:
             row[0] = "N/A"
             row[CSV_HEADER.index("Link")] = "https://example.com/x"
             writer.writerow(row)
-        urls, _, next_num = sj.load_existing_urls(csv_path)
+        urls, _, _, next_num = sj.load_existing_jobs(csv_path)
         assert "https://example.com/x" in urls
         assert next_num == 1  # max_num stays 0, so next is 1
 
@@ -82,9 +96,23 @@ class TestLoadExistingUrls:
             row[CSV_HEADER.index("Company")] = "Acme"
             # Link column intentionally blank
             writer.writerow(row)
-        urls, _, next_num = sj.load_existing_urls(csv_path)
+        urls, _, _, next_num = sj.load_existing_jobs(csv_path)
         assert urls == set()
         assert next_num == 2
+
+    def test_dedup_key_normalizes_case_and_whitespace(self, csv_path):
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(CSV_HEADER)
+            row = [""] * len(CSV_HEADER)
+            row[0] = "1"
+            row[CSV_HEADER.index("Company")] = "  ACME Corp  "
+            row[CSV_HEADER.index("Role")] = "  Senior  SRE  "
+            row[CSV_HEADER.index("Link")] = "https://example.com/1"
+            writer.writerow(row)
+        _, keys, _, _ = sj.load_existing_jobs(csv_path)
+        # Key should match normalized version
+        assert sj.dedup_key("ACME Corp", "Senior  SRE") in keys
 
 
 class TestAppendJobs:
@@ -164,10 +192,16 @@ class TestAppendJobs:
         assert len(data) == len(partial_header)
 
     def test_roundtrip_load_then_append(self, empty_csv):
-        """Rows written by append_jobs are picked up by load_existing_urls."""
-        job = {"company": "Acme", "url": "https://roundtrip.com", "source": "HN"}
+        """Rows written by append_jobs are picked up by load_existing_jobs."""
+        job = {
+            "company": "Acme",
+            "role": "Senior SRE",
+            "url": "https://roundtrip.com",
+            "source": "HN",
+        }
         sj.append_jobs(empty_csv, [job], CSV_HEADER, 1)
 
-        urls, _, next_num = sj.load_existing_urls(empty_csv)
+        urls, keys, _, next_num = sj.load_existing_jobs(empty_csv)
         assert "https://roundtrip.com" in urls
+        assert sj.dedup_key("Acme", "Senior SRE") in keys
         assert next_num == 2

@@ -17,14 +17,27 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-SYNC_ENABLED=$(yq '.calendar.sync_enabled // false' "$CONFIG")
+if ! SYNC_ENABLED=$(yq '.calendar.sync_enabled // false' "$CONFIG" 2>&1); then
+  echo "ERROR: calendar-sync: could not read sync_enabled from config: ${SYNC_ENABLED}" >&2
+  exit 1
+fi
 if [[ "$SYNC_ENABLED" != "true" ]]; then
   echo "Calendar sync disabled in config (calendar.sync_enabled)"
   exit 0
 fi
 
-CALENDAR_NAME=$(yq '.calendar.plan_calendar_name // "Daily Plan"' "$CONFIG")
-OUTPUT_DIR=$(yq '.output_dir' "$CONFIG")
+if ! CALENDAR_NAME=$(yq '.calendar.plan_calendar_name // "Daily Plan"' "$CONFIG" 2>&1); then
+  echo "ERROR: calendar-sync: could not read plan_calendar_name from config: ${CALENDAR_NAME}" >&2
+  exit 1
+fi
+if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
+  echo "ERROR: calendar-sync: could not read output_dir from config: ${OUTPUT_DIR}" >&2
+  exit 1
+fi
+if [[ "$OUTPUT_DIR" == "null" || -z "$OUTPUT_DIR" ]]; then
+  echo "ERROR: output_dir not set in config.yaml"
+  exit 1
+fi
 OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
 
 TODAY=$(date +%Y-%m-%d)
@@ -67,7 +80,7 @@ fi
 
 # Delete stale events for today from this calendar
 tag="daily-plan:${TODAY}"
-osascript <<EOF 2>/dev/null || true
+if ! osascript <<EOF 2>&1
 tell application "Calendar"
   tell calendar "${cal_escaped}"
     set matchingEvents to (every event whose description contains "${tag}")
@@ -79,17 +92,43 @@ tell application "Calendar"
   end tell
 end tell
 EOF
+then
+  echo "WARNING: failed to delete stale calendar events for ${TODAY} -- duplicates may appear" >&2
+fi
 
 # Count plan items with time_block set
-item_count=$(echo "$frontmatter" | yq '[.plan_items[] | select(.time_block != null)] | length // 0')
+if ! item_count=$(echo "$frontmatter" | yq '[.plan_items[] | select(.time_block != null)] | length // 0' 2>&1); then
+  echo "WARNING: could not count time-blocked plan items: ${item_count}" >&2
+  exit 0
+fi
+if [[ ! "$item_count" =~ ^[0-9]+$ ]]; then
+  echo "WARNING: unexpected item_count value '${item_count}' -- skipping calendar sync" >&2
+  exit 0
+fi
 
 if [[ "$item_count" -eq 0 ]]; then
   echo "(no time-blocked plan items to sync)"
   exit 0
 fi
 
+if ! plan_items_json=$(echo "$frontmatter" | yq -o=json '[.plan_items[] | select(.time_block != null)]' 2>&1); then
+  echo "ERROR: could not parse plan_items from frontmatter (yq failed): ${plan_items_json} -- cannot sync calendar" >&2
+  exit 1
+fi
+if ! plan_items_tsv=$(echo "$plan_items_json" | jq -r '.[] | [.text, .time_block, (.app_id // "null")] | @tsv' 2>&1); then
+  echo "ERROR: could not parse plan_items from frontmatter (jq failed): ${plan_items_tsv} -- cannot sync calendar" >&2
+  exit 1
+fi
+
 created=0
 while IFS=$'\t' read -r text time_block app_id; do
+  [[ -z "$text" ]] && continue
+
+  # Validate time_block format before arithmetic
+  if [[ ! "$time_block" =~ ^[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}$ ]]; then
+    echo "WARNING: skipping malformed time_block '${time_block}' for: ${text}" >&2
+    continue
+  fi
 
   # Parse start/end from HH:MM-HH:MM
   start_time="${time_block%-*}"
@@ -117,8 +156,13 @@ while IFS=$'\t' read -r text time_block app_id; do
   end_m="${end_time##*:}"
   end_secs=$(( 10#$end_h * 3600 + 10#$end_m * 60 ))
 
+  if [[ "$end_secs" -le "$start_secs" ]]; then
+    echo "WARNING: calendar-sync: skipping midnight-crossing or zero-duration block '${time_block}'" >&2
+    continue
+  fi
+
   # Create event via AppleScript using time-of-day seconds (avoids locale-dependent date coercion)
-  if osascript <<EOF 2>/dev/null
+  if err=$(osascript <<EOF 2>&1
 tell application "Calendar"
   tell calendar "${cal_escaped}"
     set startDate to current date
@@ -129,11 +173,11 @@ tell application "Calendar"
   end tell
 end tell
 EOF
-  then
+  ); then
     created=$((created + 1))
   else
-    echo "WARNING: failed to create event for: ${summary}"
+    echo "WARNING: failed to create event for '${summary}': ${err}" >&2
   fi
-done < <(echo "$frontmatter" | yq -o=json '[.plan_items[] | select(.time_block != null)]' | jq -r '.[] | [.text, .time_block, (.app_id // "null")] | @tsv')
+done <<< "$plan_items_tsv"
 
 echo "${created} events synced to '${CALENDAR_NAME}'"

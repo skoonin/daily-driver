@@ -28,7 +28,10 @@ archive_and_reset() {
       mv "$STATE_FILE" "${STATE_DIR}/${old_date}-state.json"
     fi
   fi
-  jq -n --arg date "$TODAY" '{date: $date, checkins: [], overruns: [], focus_sessions: []}' > "$STATE_FILE"
+  if ! jq -n --arg date "$TODAY" '{date: $date, checkins: [], overruns: [], focus_sessions: []}' > "$STATE_FILE"; then
+    echo "ERROR: checkin-state: failed to initialize state file at ${STATE_FILE}" >&2
+    exit 1
+  fi
 }
 
 cmd_init() {
@@ -51,9 +54,20 @@ cmd_record_checkin() {
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%S)
   local updated
-  updated=$(jq --arg ts "$timestamp" --argjson data "$input" \
-    '.checkins += [$data + {timestamp: $ts}]' "$STATE_FILE")
-  printf '%s\n' "$updated" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+  if ! updated=$(jq --arg ts "$timestamp" --argjson data "$input" \
+    '.checkins += [$data + {timestamp: $ts}]' "$STATE_FILE" 2>&1); then
+    echo "ERROR: checkin-state record-checkin: jq failed: ${updated}" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
+    echo "ERROR: checkin-state: failed to write tmp state file" >&2
+    return 1
+  fi
+  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
+    echo "ERROR: checkin-state: failed to replace state file" >&2
+    rm -f "${STATE_FILE}.tmp"
+    return 1
+  fi
 }
 
 cmd_get_last_checkin() {
@@ -68,14 +82,29 @@ cmd_get_last_checkin() {
 
 cmd_flag_overrun() {
   local ticket="$1" planned_min="$2" actual_min="$3"
+  if [[ ! "$planned_min" =~ ^[0-9]+$ ]] || [[ ! "$actual_min" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: flag-overrun requires numeric PLANNED_MIN and ACTUAL_MIN (got: '${planned_min}', '${actual_min}')" >&2
+    exit 1
+  fi
   cmd_init
   local timestamp
   timestamp=$(date -u +%Y-%m-%dT%H:%M:%S)
   local updated
-  updated=$(jq --arg ticket "$ticket" --argjson planned "$planned_min" \
+  if ! updated=$(jq --arg ticket "$ticket" --argjson planned "$planned_min" \
     --argjson actual "$actual_min" --arg ts "$timestamp" \
-    '.overruns += [{ticket: $ticket, planned_minutes: $planned, actual_minutes: $actual, timestamp: $ts}]' "$STATE_FILE")
-  printf '%s\n' "$updated" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+    '.overruns += [{ticket: $ticket, planned_minutes: $planned, actual_minutes: $actual, timestamp: $ts}]' "$STATE_FILE" 2>&1); then
+    echo "ERROR: checkin-state flag-overrun: jq failed: ${updated}" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
+    echo "ERROR: checkin-state: failed to write tmp state file" >&2
+    return 1
+  fi
+  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
+    echo "ERROR: checkin-state: failed to replace state file" >&2
+    rm -f "${STATE_FILE}.tmp"
+    return 1
+  fi
 }
 
 cmd_record_focus_session() {
@@ -83,9 +112,20 @@ cmd_record_focus_session() {
   local input
   input=$(cat)
   local updated
-  updated=$(jq --argjson session "$input" \
-    '.focus_sessions += [$session]' "$STATE_FILE")
-  printf '%s\n' "$updated" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
+  if ! updated=$(jq --argjson session "$input" \
+    '.focus_sessions += [$session]' "$STATE_FILE" 2>&1); then
+    echo "ERROR: checkin-state record-focus-session: jq failed: ${updated}" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
+    echo "ERROR: checkin-state: failed to write tmp state file" >&2
+    return 1
+  fi
+  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
+    echo "ERROR: checkin-state: failed to replace state file" >&2
+    rm -f "${STATE_FILE}.tmp"
+    return 1
+  fi
 }
 
 cmd_read() {
@@ -99,7 +139,10 @@ cmd_read() {
     echo "(no check-in state for today)"
     return
   fi
-  jq '.' "$STATE_FILE"
+  if ! jq '.' "$STATE_FILE"; then
+    echo "ERROR: checkin-state read: state file is corrupt at ${STATE_FILE}" >&2
+    return 1
+  fi
 }
 
 usage() {

@@ -6,10 +6,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${SCRIPT_DIR}/../config.yaml"
-OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh")
+if ! OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh" 2>&1); then
+  echo "ERROR: $(basename "$0"): could not resolve output_dir: ${OUTPUT_DIR}" >&2
+  exit 1
+fi
 TODAY=$(date +%Y-%m-%d)
 YEAR=$(date +%Y)
 MONTH=$(date +%m)
 
-SAVE=$(yq '.reporting.standup.save // false' "$CONFIG")
+if ! SAVE=$(yq '.reporting.standup.save // false' "$CONFIG" 2>&1); then
+  echo "ERROR: standup-save-path: could not read standup.save from config: ${SAVE}" >&2
+  exit 1
+fi
 echo "save=${SAVE} path=${OUTPUT_DIR}/${YEAR}/${MONTH}/${TODAY}-standup.md"

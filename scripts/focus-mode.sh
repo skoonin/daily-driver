@@ -27,10 +27,18 @@ cmd_enable() {
 
   if [[ -z "$minutes" ]]; then
     if [[ -f "$CONFIG" ]]; then
-      minutes=$(yq '.checkin.default_focus_minutes // 90' "$CONFIG")
+      if ! minutes=$(yq '.checkin.default_focus_minutes // 90' "$CONFIG" 2>&1); then
+        echo "WARNING: could not read default_focus_minutes from config, using 90: ${minutes}" >&2
+        minutes=90
+      fi
     else
       minutes=90
     fi
+  fi
+
+  if [[ ! "$minutes" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: focus minutes is not numeric ('${minutes}'), using 90" >&2
+    minutes=90
   fi
 
   ensure_state_dir
@@ -62,8 +70,14 @@ _cleanup_focus() {
   fi
 
   local start_iso ticket
-  start_iso=$(jq -r '.start_iso // ""' "$LOCK_FILE")
-  ticket=$(jq -r '.ticket // ""' "$LOCK_FILE")
+  if ! start_iso=$(jq -r '.start_iso // ""' "$LOCK_FILE" 2>/dev/null); then
+    echo "WARNING: focus-mode: could not read start_iso from lock file -- session will not be recorded" >&2
+    start_iso=""
+  fi
+  if ! ticket=$(jq -r '.ticket // ""' "$LOCK_FILE" 2>/dev/null); then
+    echo "WARNING: focus-mode: could not read ticket from lock file" >&2
+    ticket=""
+  fi
 
   if [[ -n "$start_iso" ]]; then
     local actual_end_iso session_json
@@ -71,7 +85,9 @@ _cleanup_focus() {
     session_json=$(jq -n --arg start "$start_iso" --arg end "$actual_end_iso" \
       --arg ticket "${ticket:-}" \
       '{start_iso: $start, end_iso: $end, ticket: (if $ticket == "" or $ticket == "null" then null else $ticket end)}')
-    echo "$session_json" | bash "${SCRIPT_DIR}/checkin-state.sh" record-focus-session || true
+    if ! echo "$session_json" | bash "${SCRIPT_DIR}/checkin-state.sh" record-focus-session 2>&1; then
+      echo "WARNING: focus-mode: failed to record focus session to state" >&2
+    fi
   fi
 
   rm -f "$LOCK_FILE"
@@ -83,7 +99,8 @@ cmd_disable() {
     return
   fi
 
-  bash "${SCRIPT_DIR}/open-session.sh" check-in
+  bash "${SCRIPT_DIR}/open-session.sh" check-in \
+    || echo "WARNING: check-in session may not have opened" >&2
   echo "Focus mode disabled"
 }
 
@@ -94,18 +111,30 @@ cmd_status() {
   fi
 
   local end_epoch now_epoch
-  end_epoch=$(jq -r '.end_epoch // 0' "$LOCK_FILE")
+  if ! end_epoch=$(jq -r '.end_epoch // 0' "$LOCK_FILE" 2>/dev/null); then
+    echo "WARNING: focus-mode: could not read end_epoch from lock file" >&2
+    end_epoch=0
+  fi
+  if [[ ! "$end_epoch" =~ ^[0-9]+$ ]]; then
+    echo "WARNING: malformed end_epoch in lock file ('${end_epoch}'), treating as expired" >&2
+    end_epoch=0
+  fi
   now_epoch=$(date +%s)
 
   if [[ "$now_epoch" -ge "$end_epoch" ]]; then
-    _cleanup_focus
+    if ! _cleanup_focus; then
+      echo "WARNING: focus-mode: cleanup failed during status check -- lock may persist" >&2
+    fi
     echo "Focus mode expired"
     return
   fi
 
   local remaining=$(( (end_epoch - now_epoch) / 60 ))
   local ticket
-  ticket=$(jq -r '.ticket // ""' "$LOCK_FILE")
+  if ! ticket=$(jq -r '.ticket // ""' "$LOCK_FILE" 2>/dev/null); then
+    echo "WARNING: focus-mode: could not read ticket from lock file" >&2
+    ticket=""
+  fi
   local end_local
   end_local=$(date -r "$end_epoch" +%H:%M)
 

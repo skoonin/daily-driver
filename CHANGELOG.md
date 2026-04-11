@@ -6,12 +6,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- Post-review cleanup
+- `enrich_company_descriptions`: narrow `except Exception` to `TimeoutExpired`/`OSError`; log timeout at WARNING not DEBUG; take first non-empty line of stdout instead of raw `.strip()`
+- `shutil.which` replaces `subprocess.run(["which", ...])` in both enrichment and notification checks
+- `csv_path.as_uri()` replaces manual `f"file://{csv_path}"` in `_notify_new_jobs`
+- `append_jobs`: `col()` nested function replaced with dict comprehension; split `open()`/`with` replaced with `with open()`
+- `SCRAPERS` type annotation tightened to `Callable[[dict], list[dict]]`
+- `Optional[int]` replaced with `int | None`; `from typing import Optional` removed
+- `scrape_wellfound` and `scrape_apple` docstrings corrected to match implementation
+- Tier 2b seniority exemption comment added explaining why SRE/Platform Engineer bypass the seniority gate
+
+### Added -- Product enrichment, notification, Apple Canada
+- Claude API enrichment: `enrich_company_descriptions()` calls `claude-haiku` to fill `Product/Purpose` for each new job; one call per unique company, cached within the run; degrades gracefully if `ANTHROPIC_API_KEY` unset
+- Notification opens `jobs.csv` on click via `terminal-notifier` (falls back to plain osascript if not installed)
+- Apple scraper now targets `en-ca` (Canada) listings; switched to `domcontentloaded` wait (same SPA fix as Wellfound); enabled in `config.yaml`
+- `gather-jobs.sh` deletes previous days' `job-queue-*.md` files on each run so only today's remains
+
+### Added -- Scraper Rewrite
+- All 8 job sources now use Playwright with `headless=False` (bot-detection avoidance): RemoteOK, WeWorkRemotely, Anthropic, LinkedIn, Indeed, Wellfound, Apple
+- `dedup_key(company, role)` — normalized cross-site dedup key prevents same job from appearing twice across boards
+- `load_existing_jobs()` — returns 4-tuple `(known_urls, known_keys, header, next_num)`; loads both URL set and company+role key set from `jobs.csv`
+- `_playwright_browser(config)` — shared context manager; non-headless Chromium with realistic Chrome 124 user-agent
+- `_compress_search_terms(roles)` — strips seniority prefixes to reduce 21 configured roles to ~10 base search terms, cutting Playwright page loads per site
+- `run_all_scrapers()` now returns `(jobs, failed)` tuple; deduplicates within-run by URL AND company+role key
+- LinkedIn, Indeed, Wellfound enabled in `config.yaml`; Apple implemented but disabled pending manual testing
+- Test suite expanded to 118 tests covering `dedup_key`, `_compress_search_terms`, and all Playwright scrapers via mock context managers
+
 ### Added -- Test Suite
 - Test infrastructure: pytest + tox config in `pyproject.toml`, coverage minimum 79%
 - 94 tests across 8 test files covering scrape-jobs pipeline (96% coverage)
 - Test files: config loading, role matching, CSV read/write, HN/RemoteOK/WWR/Anthropic scrapers, orchestrator
 - Makefile `test` and `test-cov` targets
 - `.gitignore` entries for coverage, tox, and Python build artifacts
+
+### Changed -- Install
+- `Makefile` install: stop symlinking `CLAUDE.md` into `.claude/` -- Claude Code auto-loads `<project>/CLAUDE.md` and the symlink caused the same content to load twice in session context
+- `Makefile` uninstall: also remove stale `settings.local.json` symlink (was leaked by prior installs)
+
+### Fixed -- Script Hardening
+- `open-session.sh`: capture new tab reference from AppleScript `create tab` (was writing command to the previously focused tab instead of the new one)
+- `scrape-jobs.py`: fix invalid `dict[str, callable]` type hint (builtin, not a type); use `Callable` from `collections.abc`
+- `gather-carryforward.sh`: soft-fail on TSV parsing errors for `carry_forward` and `personal_tasks` (was killing entire day-start workflow)
+- `tracker.sh` audit: fix awk field indexes after `GD Rating` column added (was miscounting jobs)
+- `tracker.sh` audit: fix jq `contains()` direction for substring company matching via `.as $obj`
+- `tracker.sh` next_id: force base-10 arithmetic with `10#$max` (was breaking on `app-010` after `app-009`)
+- `tracker.sh` next_id: filter malformed IDs before computing max
+- `tracker.sh` update: whitelist updatable fields to prevent arbitrary yq key injection
+- `tracker.sh`: use `strenv()` everywhere for yq variable interpolation (injection safety)
+- `open-session.sh`: reuse iTerm window via `/tmp/iterm-daily-driver-wid` so repeat launches open tabs, not new windows
+- `open-session.sh`: close TOCTOU race with `pending:<epoch>` sentinel and 60s expiry
+- `open-session.sh`: never `activate` iTerm (keeps new tabs in the background)
+- `gather-sessions.sh`: write jq input to temp file to catch parse failures (was masked by `${PIPESTATUS[0]}` in command substitution)
+- `gather-git-activity.sh`: treat `.git` files as repos so worktrees are scanned
+- `gather-git-activity.sh`: guard against missing `GIT_DIR` before `git log`
+- `standup-dates.sh`: Thursday lookback now `-2d` to include Tuesday activity
+- `gather-calendar.sh`: stop suppressing icalBuddy stderr
+- `gather-carryforward.sh`: validate carry-forward JSON is an array before iterating
+- `gather-notes-range.sh`: validate date inputs against `YYYY-MM-DD` regex before `date -j -f`
+- `calendar-sync.sh`: enforce `HH:MM-HH:MM` time-block regex and detect midnight-crossing blocks
+- `calendar-sync.sh`: capture osascript errors instead of silently dropping events
+- `calendar-check.sh`: match calendar names with `grep -qxF` against trimmed list (avoids partial-match false positives)
+- `checkin-state.sh`: clean up temp file on atomic-write failure; validate numeric minute fields
+- `focus-mode.sh`: treat malformed `end_epoch` as expired; validate numeric inputs
+- `monthly-save-path.sh`: validate `YEAR`, `MONTH`, `MONTH_NAME` shapes before use
+- `sync-repos.sh`: warn on non-git directories instead of silent skip; capture `rebase --abort` failures
+- `launchd-install.sh`: capture `launchctl bootstrap` errors with actionable messaging
+- `scrape-jobs.py` remoteok: handle non-JSON responses (rate-limit returns HTML) instead of crashing
+- `scrape-jobs.py` anthropic: wrap Playwright `PWError`/`PWTimeout` around browser launch and navigation
+- `scrape-jobs.py`: exit non-zero when any source fails, even in dry-run
+- Uniform defensive stderr capture across `calendar-check.sh`, `check-calendar-sync.sh`, `check-output-dir.sh`, `commit-daily-notes.sh`, `commit-monthly.sh`, `commit-weekly.sh`, `ensure-daily-dir.sh`, `gather-applications.sh`, `get-output-dir.sh`, `init-output-dir.sh`, `list-weekly-summaries.sh`, `read-plan.sh`, `read-plan-frontmatter.sh`, `standup-save-path.sh`, `weekly-save-path.sh` (replace `2>/dev/null || true` with explicit errors)
+
+### Changed -- Script Hardening
+- `CLAUDE.md`: document `/month-end` and `/interview-prep` commands; add `GD Rating` column to jobs.csv schema
+
 ### Fixed -- System Gaps Audit
 - `check-in.md`: correct `gather-git.sh` to `gather-git-activity.sh` (broken data gathering)
 - `gather-carryforward.sh`: walk back up to 5 business days to find carry-forward items (was single day)

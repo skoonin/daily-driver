@@ -165,8 +165,6 @@ install:  ## Symlink commands and agents into .claude/ for Claude Code
 		ln -sf "$$f" "$(CLAUDE_DIR)/agents/$$name"; \
 		echo "  linked agents/$$name"; \
 	done
-	@ln -sf $(PROJ_DIR)/CLAUDE.md $(CLAUDE_DIR)/CLAUDE.md
-	@echo "  linked CLAUDE.md"
 	@ln -sf $(PROJ_DIR)/settings.json $(CLAUDE_DIR)/settings.local.json
 	@echo "  linked settings.local.json"
 	@echo "Install complete. Commands and agents are now available in Claude Code."
@@ -178,7 +176,7 @@ uninstall:  ## Remove symlinks from .claude/
 	@for f in $(PROJ_DIR)/agents/*.md; do \
 		rm -f "$(CLAUDE_DIR)/agents/$$(basename $$f)"; \
 	done
-	@rm -f $(CLAUDE_DIR)/CLAUDE.md
+	@rm -f $(CLAUDE_DIR)/CLAUDE.md $(CLAUDE_DIR)/settings.local.json
 	@echo "Uninstalled. Symlinks removed from .claude/"
 
 ##@ Automation
