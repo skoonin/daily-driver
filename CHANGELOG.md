@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Job detail enrichment
+- `enrich_job_details()` fetches each new job's detail URL once and populates the `Comp` column in `jobs.csv` (previously empty). Hostname dispatch picks a parser strategy: LinkedIn anonymous pages get an HTML parser reading `.compensation__salary`; all other hosts fall through to a JSON-LD `JobPosting` parser that handles Greenhouse/Lever/Ashby-style ATS boards.
+- `parse_jsonld_jobposting()` — pure helper; reads `<script type="application/ld+json">` blocks and extracts comp + `datePosted` from `JobPosting` schema with currency-aware formatting (`CA$130,000–150,000/yr`).
+- `parse_linkedin_html()` — pure helper; tolerates `.compensation__salary` variants with single or range values.
+- Config: `job_search.scraper.detail_delay_seconds` (default 0.5s) throttles detail-page fetches; URL-level cache prevents refetching within a run.
+- 30 new tests in `tests/test_enrich.py` covering the parser strategies, hostname dispatch, cache/delay behavior, and the CSV `Comp` column write path.
+
 ### Fixed -- Post-review cleanup
 - `enrich_company_descriptions`: narrow `except Exception` to `TimeoutExpired`/`OSError`; log timeout at WARNING not DEBUG; take first non-empty line of stdout instead of raw `.strip()`
 - `shutil.which` replaces `subprocess.run(["which", ...])` in both enrichment and notification checks

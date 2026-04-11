@@ -16,7 +16,9 @@ Sources:
 
 import argparse
 import csv
+import json
 import logging
+import time
 import re
 import subprocess
 import sys
@@ -140,6 +142,296 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
             job["product"] = cache[company]
 
 
+# ── Job detail enrichment ────────────────────────────────────────────────────
+
+# Currency code → display prefix. Anything not listed falls through to the
+# raw code prefixed with a space (e.g. "EUR 100,000/yr").
+_COMP_CURRENCY_PREFIX = {
+    "USD": "$",
+    "CAD": "CA$",
+    "GBP": "\u00a3",
+    "EUR": "\u20ac",
+}
+
+# Schema.org unitText → suffix. JobPosting commonly uses YEAR/MONTH/HOUR.
+_COMP_UNIT_SUFFIX = {
+    "YEAR": "/yr",
+    "MONTH": "/mo",
+    "WEEK": "/wk",
+    "DAY": "/day",
+    "HOUR": "/hr",
+}
+
+
+def _format_comp(base_salary: dict) -> str:
+    """Render a JSON-LD MonetaryAmount into a short human string.
+
+    Returns "" for any shape that doesn't yield at least one numeric value —
+    callers treat empty as "no comp data" and leave the CSV column blank.
+    """
+    if not isinstance(base_salary, dict):
+        return ""
+    currency = (base_salary.get("currency") or "").strip().upper()
+    value = base_salary.get("value")
+
+    # value can be a QuantitativeValue dict or a bare number/string
+    if isinstance(value, dict):
+        min_v = value.get("minValue")
+        max_v = value.get("maxValue")
+        single = value.get("value")
+        unit = (value.get("unitText") or "").strip().upper()
+    else:
+        min_v = max_v = None
+        single = value
+        unit = (base_salary.get("unitText") or "").strip().upper()
+
+    def _num(x) -> int | None:
+        try:
+            return int(float(x))
+        except (TypeError, ValueError):
+            return None
+
+    lo, hi, mid = _num(min_v), _num(max_v), _num(single)
+    if lo is not None and hi is not None and lo != hi:
+        amount = f"{lo:,}\u2013{hi:,}"
+    elif mid is not None:
+        amount = f"{mid:,}"
+    elif lo is not None:
+        amount = f"{lo:,}"
+    else:
+        return ""
+
+    prefix = _COMP_CURRENCY_PREFIX.get(currency)
+    if prefix is None:
+        # Unknown currency: keep the code so the user can see what it is.
+        prefix = f"{currency} " if currency else ""
+    suffix = _COMP_UNIT_SUFFIX.get(unit, "")
+    return f"{prefix}{amount}{suffix}"
+
+
+def _find_jobposting(node) -> dict | None:
+    """Walk a parsed JSON-LD payload and return the first JobPosting dict."""
+    if isinstance(node, dict):
+        node_type = node.get("@type")
+        if node_type == "JobPosting" or (
+            isinstance(node_type, list) and "JobPosting" in node_type
+        ):
+            return node
+        # @graph wraps a list of nodes in some payloads
+        graph = node.get("@graph")
+        if isinstance(graph, list):
+            for child in graph:
+                found = _find_jobposting(child)
+                if found is not None:
+                    return found
+    elif isinstance(node, list):
+        for child in node:
+            found = _find_jobposting(child)
+            if found is not None:
+                return found
+    return None
+
+
+def enrich_job_details(jobs: list[dict], config: dict) -> None:
+    """Fetch each job's detail page and populate comp/posted_date in place.
+
+    Caches by URL within the run so jobs that share a detail URL only generate
+    one HTTP request. Skips jobs that already have `comp` set so listing-card
+    sources that already provide salary aren't clobbered. Network/parse errors
+    are swallowed — missing data is the expected outcome for boards that don't
+    expose JSON-LD, not an error worth aborting the run for.
+    """
+    cache: dict[str, dict] = {}
+    cfg = scraper_cfg(config)
+    delay = float(cfg.get("detail_delay_seconds", 0.5))
+    timeout_s = timeout_seconds(config)
+    headers = {"User-Agent": user_agent(config)}
+
+    fetched_count = 0
+    enriched_count = 0
+    for job in jobs:
+        if job.get("comp"):
+            continue
+        url = (job.get("url") or "").strip()
+        if not url:
+            continue
+
+        if url in cache:
+            details = cache[url]
+        else:
+            if fetched_count > 0 and delay > 0:
+                time.sleep(delay)
+            fetched_count += 1
+            try:
+                resp = requests.get(url, headers=headers, timeout=timeout_s)
+                resp.raise_for_status()
+                details = _parse_detail_page(resp.text, url)
+            except requests.RequestException as exc:
+                # Network flakes are expected and non-fatal — missing comp just
+                # means the CSV column stays blank. Programmer errors from the
+                # parser path (AttributeError, TypeError, etc.) are deliberately
+                # NOT caught here; we want them visible, not silently swallowed.
+                log.debug("[detail] %s: fetch failed: %s", url, exc)
+                details = {}
+            cache[url] = details
+
+        if details.get("comp"):
+            job["comp"] = details["comp"]
+            enriched_count += 1
+        if details.get("posted_date") and not job.get("posted_date"):
+            job["posted_date"] = details["posted_date"]
+
+    log.info(
+        "[detail] fetched %d pages, enriched %d of %d jobs",
+        fetched_count, enriched_count, len(jobs),
+    )
+
+
+# LinkedIn renders an already-human-readable range. Example text found on the
+# real Fable posting (2026-04-10): "CA$130,000.00/yr - CA$150,000.00/yr". We
+# normalize it to match the JSON-LD formatter's output shape: drop .00, collapse
+# to an en-dash range with the unit suffix at the end.
+_LINKEDIN_RANGE_RE = re.compile(
+    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
+    r"(?P<min>[\d,]+)(?:\.\d+)?"
+    r"(?P<u>/\w+)"
+    r"\s*-\s*"
+    r"(?P=p)(?P<max>[\d,]+)(?:\.\d+)?(?P=u)$"
+)
+
+_LINKEDIN_SINGLE_RE = re.compile(
+    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
+    r"(?P<amount>[\d,]+)(?:\.\d+)?"
+    r"(?P<u>/\w+)$"
+)
+
+
+def _clean_linkedin_comp(raw: str) -> str:
+    """Normalize LinkedIn's comp text into the shape used by the JSON-LD path.
+
+    Returns "" if the text doesn't match a recognized pattern — callers treat
+    empty as "could not parse", not an error. We deliberately don't try to
+    salvage partial matches: a weird format is better left blank than filled
+    with a half-guess.
+    """
+    s = " ".join((raw or "").split())
+    m = _LINKEDIN_RANGE_RE.match(s)
+    if m:
+        return f"{m['p']}{m['min']}\u2013{m['max']}{m['u']}"
+    m = _LINKEDIN_SINGLE_RE.match(s)
+    if m:
+        return f"{m['p']}{m['amount']}{m['u']}"
+    return ""
+
+
+def parse_linkedin_html(html: str) -> dict:
+    """Extract job details from LinkedIn's anonymous /jobs/view/ HTML.
+
+    LinkedIn does not expose JSON-LD on unauthenticated detail pages as of
+    2026-04-10 — comp lives in a plain `<div class="compensation__salary">`.
+    Returns {"comp": ...} when found, {} otherwise.
+    """
+    if not html:
+        return {}
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as exc:  # pragma: no cover - defensive only
+        log.debug("[enrich] BeautifulSoup failed: %s", exc)
+        return {}
+
+    # compensation__salary is LinkedIn's stable class for the disclosed-range div.
+    # Similar-jobs sidebars use .salary-info instead, so this class is precise.
+    salary_div = soup.find("div", class_="compensation__salary")
+    if salary_div is None:
+        return {}
+
+    raw = salary_div.get_text(strip=True)
+    comp = _clean_linkedin_comp(raw)
+    if not comp:
+        return {}
+    return {"comp": comp}
+
+
+def _parse_detail_page(html: str, url: str) -> dict:
+    """Dispatch to the right detail-page parser based on URL hostname.
+
+    LinkedIn requires its own HTML parser because it doesn't emit JSON-LD.
+    Everything else falls through to the JSON-LD parser, which covers
+    Greenhouse, Lever, Ashby, Workday, and most applicant-tracking systems.
+    """
+    host = urllib.parse.urlparse(url).hostname or ""
+    if "linkedin.com" in host:
+        return parse_linkedin_html(html)
+    return parse_jsonld_jobposting(html)
+
+
+def parse_jsonld_jobposting(html: str) -> dict:
+    """Extract job details from JSON-LD JobPosting blocks in an HTML page.
+
+    Returns a dict with any of: comp, posted_date, employment_type. Returns an
+    empty dict if no JobPosting block is present or all blocks fail to parse —
+    callers must treat missing keys as "data not available", not as errors.
+    """
+    if not html:
+        return {}
+
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as exc:  # pragma: no cover - defensive only
+        log.debug("[enrich] BeautifulSoup failed: %s", exc)
+        return {}
+
+    posting: dict | None = None
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text() or ""
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            # Leave a breadcrumb: if a site's JSON-LD is consistently truncated
+            # or malformed we want some trace of it in debug logs rather than
+            # silent data loss across every run.
+            log.debug("[enrich] skipping malformed JSON-LD block: %s", exc)
+            continue
+        posting = _find_jobposting(payload)
+        if posting is not None:
+            break
+
+    if posting is None:
+        return {}
+
+    out: dict = {}
+    base_salary = posting.get("baseSalary")
+    if base_salary is not None:
+        comp = _format_comp(base_salary if isinstance(base_salary, dict) else {})
+        if comp:
+            out["comp"] = comp
+        elif isinstance(base_salary, (dict, str)):
+            # baseSalary is present but didn't yield a number (e.g. a bare
+            # "Competitive" string, or a MonetaryAmount we don't understand).
+            # Log so a future site format change is diagnosable — callers
+            # treat a missing "comp" key as "no data".
+            log.debug(
+                "[enrich] baseSalary present but unparseable: %r", base_salary
+            )
+
+    posted = posting.get("datePosted")
+    if isinstance(posted, str) and posted:
+        # Take the date portion of an ISO-8601 timestamp; tolerate "YYYY-MM-DD"
+        # already-stripped values.
+        out["posted_date"] = posted[:10]
+
+    employment = posting.get("employmentType")
+    if isinstance(employment, str):
+        out["employment_type"] = employment
+    elif isinstance(employment, list) and employment:
+        out["employment_type"] = str(employment[0])
+
+    return out
+
+
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
 def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str], int]:
@@ -200,6 +492,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
     company_idx = col.get("Company")
     product_idx = col.get("Product/Purpose")
     role_idx = col.get("Role")
+    comp_idx = col.get("Comp")
     location_idx = col.get("Location")
     source_idx = col.get("Source")
     date_idx = col.get("Date Found")
@@ -220,6 +513,8 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
                     row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
                 if role_idx is not None:
                     row[role_idx] = job.get("role", "")
+                if comp_idx is not None:
+                    row[comp_idx] = job.get("comp", "")
                 if location_idx is not None:
                     row[location_idx] = job.get("location", "")
                 if source_idx is not None:
@@ -1127,6 +1422,7 @@ def main() -> None:  # pragma: no cover
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
+    enrich_job_details(new_jobs, config)
     enrich_company_descriptions(new_jobs)
 
     if args.dry_run:
