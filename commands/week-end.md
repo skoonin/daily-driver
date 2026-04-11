@@ -62,5 +62,5 @@ Write the weekly summary to the computed path `{output_dir}/{save_dir}/YYYY/YYYY
 
 Auto-commit the weekly summary in the output directory:
 ```bash
-bash scripts/commit-weekly.sh
+bash scripts/commit-notes.sh weekly
 ```

@@ -18,15 +18,7 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
-  echo "ERROR: gather-jobs: could not read output_dir from config: ${OUTPUT_DIR}" >&2
-  exit 1
-fi
-if [[ "$OUTPUT_DIR" == "null" || -z "$OUTPUT_DIR" ]]; then
-  echo "ERROR: output_dir not set in config.yaml"
-  exit 1
-fi
-OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
+OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh") || exit 1
 TODAY=$(date +%Y-%m-%d)
 QUEUE_FILE="${OUTPUT_DIR}/job-queue-${TODAY}.md"
 
@@ -46,8 +38,8 @@ encode_role_slug() {
 }
 
 # Count enabled sources for the summary line
-if ! board_count=$(yq '[.job_search.sources.boards[] | select(.enabled == true)] | length' "$CONFIG" 2>&1); then
-  echo "ERROR: could not read boards from config: ${board_count}" >&2
+if ! board_count=$(yq '[.job_search.sources.boards[] | select(.enabled == true)] | length' "$CONFIG" 2>/dev/null); then
+  echo "ERROR: could not read boards from config" >&2
   exit 1
 fi
 if [[ "$board_count" == "null" || -z "$board_count" ]]; then
@@ -59,8 +51,8 @@ if [[ ! "$board_count" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-if ! company_count=$(yq '[.job_search.sources.companies[] | select(.enabled == true)] | length' "$CONFIG" 2>&1); then
-  echo "ERROR: could not read companies from config: ${company_count}" >&2
+if ! company_count=$(yq '[.job_search.sources.companies[] | select(.enabled == true)] | length' "$CONFIG" 2>/dev/null); then
+  echo "ERROR: could not read companies from config" >&2
   exit 1
 fi
 company_count="${company_count:-0}"
@@ -73,8 +65,8 @@ fi
 source_count=$((board_count + company_count))
 
 # Collect roles into a bash array
-if ! roles_raw=$(yq '.job_search.roles[]' "$CONFIG" 2>&1); then
-  echo "ERROR: could not read job_search.roles from config: ${roles_raw}" >&2
+if ! roles_raw=$(yq '.job_search.roles[]' "$CONFIG" 2>/dev/null); then
+  echo "ERROR: could not read job_search.roles from config" >&2
   exit 1
 fi
 mapfile -t roles <<< "$roles_raw"
@@ -98,8 +90,8 @@ link_count=0
   echo ""
 } >> "$QUEUE_FILE"
 
-if ! board_ids_enabled=$(yq '[.job_search.sources.boards[] | select(.enabled == true) | .id] | .[]' "$CONFIG" 2>&1); then
-  echo "ERROR: could not list enabled board IDs from config: ${board_ids_enabled}" >&2
+if ! board_ids_enabled=$(yq '[.job_search.sources.boards[] | select(.enabled == true) | .id] | .[]' "$CONFIG" 2>/dev/null); then
+  echo "ERROR: could not list enabled board IDs from config" >&2
   exit 1
 fi
 
@@ -109,16 +101,16 @@ fi
 
 while IFS= read -r board_id; do
   [[ -z "$board_id" ]] && continue
-  if ! board_name=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .name" "$CONFIG" 2>&1); then
-    echo "WARNING: skipping board '${board_id}': yq failed: ${board_name}" >&2
+  if ! board_name=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .name" "$CONFIG" 2>/dev/null); then
+    echo "WARNING: skipping board '${board_id}': yq failed" >&2
     continue
   fi
-  if ! search_url=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .search_url // \"\"" "$CONFIG" 2>&1); then
-    echo "WARNING: gather-jobs: could not read search_url for board '${board_id}': ${search_url}" >&2
+  if ! search_url=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .search_url // \"\"" "$CONFIG" 2>/dev/null); then
+    echo "WARNING: gather-jobs: could not read search_url for board '${board_id}'" >&2
     search_url=""
   fi
-  if ! static_url=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .static_url // \"\"" "$CONFIG" 2>&1); then
-    echo "WARNING: gather-jobs: could not read static_url for board '${board_id}': ${static_url}" >&2
+  if ! static_url=$(yq ".job_search.sources.boards[] | select(.id == \"${board_id}\") | .static_url // \"\"" "$CONFIG" 2>/dev/null); then
+    echo "WARNING: gather-jobs: could not read static_url for board '${board_id}'" >&2
     static_url=""
   fi
 
@@ -158,8 +150,8 @@ while IFS= read -r board_id; do
 done <<< "$board_ids_enabled"
 
 # --- Companies ---
-if ! company_ids_enabled=$(yq '[.job_search.sources.companies[] | select(.enabled == true) | .id] | .[]' "$CONFIG" 2>&1); then
-  echo "ERROR: could not list enabled company IDs from config: ${company_ids_enabled}" >&2
+if ! company_ids_enabled=$(yq '[.job_search.sources.companies[] | select(.enabled == true) | .id] | .[]' "$CONFIG" 2>/dev/null); then
+  echo "ERROR: could not list enabled company IDs from config" >&2
   exit 1
 fi
 enabled_company_count="$company_count"
@@ -172,12 +164,12 @@ if [[ "$enabled_company_count" -gt 0 ]]; then
 
   while IFS= read -r company_id; do
     [[ -z "$company_id" ]] && continue
-    if ! company_name=$(yq ".job_search.sources.companies[] | select(.id == \"${company_id}\") | .name" "$CONFIG" 2>&1); then
-      echo "WARNING: skipping company '${company_id}': yq failed: ${company_name}" >&2
+    if ! company_name=$(yq ".job_search.sources.companies[] | select(.id == \"${company_id}\") | .name" "$CONFIG" 2>/dev/null); then
+      echo "WARNING: skipping company '${company_id}': yq failed" >&2
       continue
     fi
-    if ! careers_url=$(yq ".job_search.sources.companies[] | select(.id == \"${company_id}\") | .careers_url" "$CONFIG" 2>&1); then
-      echo "WARNING: gather-jobs: could not read careers_url for company '${company_id}': ${careers_url}" >&2
+    if ! careers_url=$(yq ".job_search.sources.companies[] | select(.id == \"${company_id}\") | .careers_url" "$CONFIG" 2>/dev/null); then
+      echo "WARNING: gather-jobs: could not read careers_url for company '${company_id}'" >&2
       careers_url=""
     fi
 

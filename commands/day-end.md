@@ -108,7 +108,7 @@ See the work-planner agent's "Plan File Frontmatter" and "Day-end Status Rules" 
 
 Auto-commit the day's files in daily-notes:
 ```bash
-bash scripts/commit-daily-notes.sh
+bash scripts/commit-notes.sh daily
 ```
 
 ## 11. Learn

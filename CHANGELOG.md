@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- Audit follow-up (reliability + simplification)
+- `tracker.sh audit`: exact company-name match replaces substring glob; "Stripe" no longer false-matches "Stripe Financial"
+- `scrape-jobs.py`: `enrich_company_descriptions` now honors `job_search.scraper.max_enrich_companies` budget (default 10) and 15s timeout; prevents runaway Claude calls
+- `scrape-jobs.py`: HN scraper catches `requests.RequestException` and returns `[]` instead of crashing the run
+- `gather-sessions.sh`: crash-detection `set -e` escape fixed (jq array-diff replaces piped `while read` subshell)
+- `calendar-sync.sh`: surfaces AppleScript errors with Privacy > Calendars hint instead of silently swallowing
+- `checkin-state.sh`: state writes go through `write_state` helper with `.tmp + mv` atomic pattern
+- Consolidated `commit-{daily-notes,weekly,monthly}.sh` into single `commit-notes.sh {daily|weekly|monthly}`
+
 ### Added -- Job detail enrichment
 - `enrich_job_details()` fetches each new job's detail URL once and populates the `Comp` column in `jobs.csv` (previously empty). Hostname dispatch picks a parser strategy: LinkedIn anonymous pages get an HTML parser reading `.compensation__salary`; all other hosts fall through to a JSON-LD `JobPosting` parser that handles Greenhouse/Lever/Ashby-style ATS boards.
 - `parse_jsonld_jobposting()` — pure helper; reads `<script type="application/ld+json">` blocks and extracts comp + `datePosted` from `JobPosting` schema with currency-aware formatting (`CA$130,000–150,000/yr`).

@@ -73,8 +73,9 @@ esc() { printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 cal_escaped=$(esc "$CALENDAR_NAME")
 
 # Ensure calendar exists
-if ! osascript -e "tell application \"Calendar\" to if not (exists calendar \"${cal_escaped}\") then make new calendar with properties {name:\"${cal_escaped}\"}" 2>/dev/null; then
-  echo "WARNING: Calendar access denied -- grant Terminal/Claude access in System Settings > Privacy > Calendars"
+if ! err=$(osascript -e "tell application \"Calendar\" to if not (exists calendar \"${cal_escaped}\") then make new calendar with properties {name:\"${cal_escaped}\"}" 2>&1); then
+  echo "WARNING: Calendar ensure failed: ${err}" >&2
+  echo "  If this is a permissions error, grant access in System Settings > Privacy > Calendars" >&2
   exit 0
 fi
 

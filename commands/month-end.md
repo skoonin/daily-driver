@@ -66,5 +66,5 @@ Write the monthly summary to `{output_dir}/{save_dir}/YYYY/YYYY-MM-MonthName-mon
 ## 7. Commit
 
 ```bash
-bash scripts/commit-monthly.sh
+bash scripts/commit-notes.sh monthly
 ```

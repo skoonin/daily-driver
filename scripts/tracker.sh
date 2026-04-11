@@ -17,18 +17,10 @@ if [[ ! -f "$CONFIG" ]]; then
   exit 1
 fi
 
-if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
-  echo "ERROR: tracker: could not read output_dir from config: ${OUTPUT_DIR}" >&2
-  exit 1
-fi
-if [[ "$OUTPUT_DIR" == "null" || -z "$OUTPUT_DIR" ]]; then
-  echo "ERROR: output_dir not set in config.yaml"
-  exit 1
-fi
-OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
+OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh") || exit 1
 TRACKER="${OUTPUT_DIR}/tracker.yaml"
-if ! FOLLOW_UP_DAYS=$(yq '.tracker.follow_up_days // 7' "$CONFIG" 2>&1); then
-  echo "WARNING: tracker: could not read follow_up_days from config, using 7: ${FOLLOW_UP_DAYS}" >&2
+if ! FOLLOW_UP_DAYS=$(yq '.tracker.follow_up_days // 7' "$CONFIG" 2>/dev/null); then
+  echo "WARNING: tracker: could not read follow_up_days from config, using 7" >&2
   FOLLOW_UP_DAYS=7
 fi
 if [[ ! "$FOLLOW_UP_DAYS" =~ ^[0-9]+$ ]]; then
@@ -45,8 +37,8 @@ ensure_tracker() {
 
 next_id() {
   local raw
-  if ! raw=$(yq '.applications[].id' "$TRACKER" 2>&1); then
-    echo "ERROR: next_id: could not read tracker IDs: ${raw}" >&2
+  if ! raw=$(yq '.applications[].id' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: next_id: could not read tracker IDs" >&2
     exit 1
   fi
   local max
@@ -69,8 +61,8 @@ follow_up_date() {
   local status="${1:-applied}"
   # Prefer status-specific interval; fall back to global follow_up_days
   local days
-  if ! days=$(STATUS="$status" yq ".tracker.follow_up_by_status.[strenv(STATUS)] // ${FOLLOW_UP_DAYS}" "$CONFIG" 2>&1); then
-    echo "WARNING: follow_up_date: yq failed reading config, using ${FOLLOW_UP_DAYS} days: ${days}" >&2
+  if ! days=$(STATUS="$status" yq ".tracker.follow_up_by_status.[strenv(STATUS)] // ${FOLLOW_UP_DAYS}" "$CONFIG" 2>/dev/null); then
+    echo "WARNING: follow_up_date: yq failed reading config, using ${FOLLOW_UP_DAYS} days" >&2
     days="$FOLLOW_UP_DAYS"
   fi
   if [[ -z "$days" || "$days" == "null" || ! "$days" =~ ^[0-9]+$ ]]; then
@@ -99,11 +91,9 @@ cmd_add() {
   local fu
   fu=$(follow_up_date "applied")
 
-  if ! ID="$id" COMPANY="$company" ROLE="$role" URL="$url" DT="$dt" FU="$fu" SOURCE="$source" \
-    yq -i '.applications += [{"id": strenv(ID), "company": strenv(COMPANY), "role": strenv(ROLE), "url": strenv(URL), "status": "applied", "date_applied": strenv(DT), "last_activity": strenv(DT), "follow_up_date": strenv(FU), "notes": "", "source": strenv(SOURCE)}]' "$TRACKER" 2>&1; then
-    echo "ERROR: tracker add: yq failed to append application" >&2
-    exit 1
-  fi
+  ID="$id" COMPANY="$company" ROLE="$role" URL="$url" DT="$dt" FU="$fu" SOURCE="$source" \
+    yq -i '.applications += [{"id": strenv(ID), "company": strenv(COMPANY), "role": strenv(ROLE), "url": strenv(URL), "status": "applied", "date_applied": strenv(DT), "last_activity": strenv(DT), "follow_up_date": strenv(FU), "notes": "", "source": strenv(SOURCE)}]' "$TRACKER" \
+    || { echo "ERROR: tracker add: yq failed to append application" >&2; exit 1; }
 
   echo "${id} | ${company} | ${role} | applied | follow-up: ${fu}"
 }
@@ -123,8 +113,8 @@ cmd_update() {
 
   # Verify the app exists
   local exists
-  if ! exists=$(APPID="$app_id" yq '.applications[] | select(.id == strenv(APPID)) | .id' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker update: could not read tracker: ${exists}" >&2
+  if ! exists=$(APPID="$app_id" yq '.applications[] | select(.id == strenv(APPID)) | .id' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: tracker update: could not read tracker" >&2
     exit 1
   fi
   if [[ -z "$exists" ]]; then
@@ -132,27 +122,53 @@ cmd_update() {
     exit 1
   fi
 
-  local yq_err
-  if ! yq_err=$(VALUE="$value" APPID="$app_id" FIELD="$field" yq -i '(.applications[] | select(.id == strenv(APPID)))[strenv(FIELD)] = strenv(VALUE)' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker update: yq failed to set ${field}: ${yq_err}" >&2
-    exit 1
-  fi
-  if ! yq_err=$(APPID="$app_id" ACTIVITY="$(today)" yq -i '(.applications[] | select(.id == strenv(APPID))).last_activity = strenv(ACTIVITY)' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker update: yq failed to set last_activity: ${yq_err}" >&2
-    exit 1
-  fi
+  VALUE="$value" APPID="$app_id" FIELD="$field" yq -i '(.applications[] | select(.id == strenv(APPID)))[strenv(FIELD)] = strenv(VALUE)' "$TRACKER" \
+    || { echo "ERROR: tracker update: yq failed to set ${field} (yq exit non-zero)" >&2; exit 1; }
+
+  APPID="$app_id" ACTIVITY="$(today)" yq -i '(.applications[] | select(.id == strenv(APPID))).last_activity = strenv(ACTIVITY)' "$TRACKER" \
+    || { echo "ERROR: tracker update: yq failed to set last_activity (yq exit non-zero)" >&2; exit 1; }
 
   # Recalculate follow-up date on status change using status-specific interval
   if [[ "$field" == "status" ]]; then
     local fu
     fu=$(follow_up_date "$value")
-    if ! yq_err=$(APPID="$app_id" FU="$fu" yq -i '(.applications[] | select(.id == strenv(APPID))).follow_up_date = strenv(FU)' "$TRACKER" 2>&1); then
-      echo "ERROR: tracker update: yq failed to set follow_up_date: ${yq_err}" >&2
-      exit 1
-    fi
+    APPID="$app_id" FU="$fu" yq -i '(.applications[] | select(.id == strenv(APPID))).follow_up_date = strenv(FU)' "$TRACKER" \
+      || { echo "ERROR: tracker update: yq failed to set follow_up_date (yq exit non-zero)" >&2; exit 1; }
   fi
 
   echo "Updated ${app_id}: ${field} = ${value}"
+}
+
+# Loads all applications from tracker as TSV.
+# Outputs: tab-separated id, company, role, status, last_activity, follow_up_date
+# Prints error to stderr and returns 1 on failure.
+# Prints "(no applications tracked yet)" to stdout and returns 0 if tracker is empty.
+_load_applications_tsv() {
+  local label="${1:-tracker}"
+
+  local count
+  if ! count=$(yq '.applications | length' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: ${label}: could not read applications from ${TRACKER}" >&2
+    return 1
+  fi
+  if [[ "$count" -eq 0 ]]; then
+    echo "(no applications tracked yet)"
+    return 0
+  fi
+
+  local apps_json
+  if ! apps_json=$(yq -o=json '.applications' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: ${label}: yq failed reading tracker" >&2
+    return 1
+  fi
+
+  local tsv
+  if ! tsv=$(echo "$apps_json" | jq -r '.[] | [.id, .company, .role, .status, .last_activity, (.follow_up_date // "")] | @tsv' 2>/dev/null); then
+    echo "ERROR: ${label}: could not parse applications from ${TRACKER}" >&2
+    return 1
+  fi
+
+  echo "$tsv"
 }
 
 cmd_list() {
@@ -160,39 +176,24 @@ cmd_list() {
 
   ensure_tracker
 
-  local count
-  if ! count=$(yq '.applications | length' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker list: could not read applications from ${TRACKER}: ${count}" >&2
-    return 1
-  fi
-  if [[ "$count" -eq 0 ]]; then
-    echo "(no applications tracked yet)"
+  local app_tsv
+  app_tsv=$(_load_applications_tsv "tracker list") || return 1
+
+  if [[ "$app_tsv" == "(no applications tracked yet)" ]]; then
+    echo "$app_tsv"
     return
   fi
 
-  local dt
-  dt=$(today)
   local dt_epoch
-  if ! dt_epoch=$(date -j -f "%Y-%m-%d" "$dt" +%s 2>&1); then
-    echo "ERROR: tracker list: invalid date '${dt}': ${dt_epoch}" >&2
-    return 1
-  fi
-
-  local apps_json
-  if ! apps_json=$(yq -o=json '.applications' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker list: yq failed reading tracker: ${apps_json}" >&2
-    return 1
-  fi
-  local app_tsv
-  if ! app_tsv=$(echo "$apps_json" | jq -r '.[] | [.id, .company, .role, .status, .last_activity] | @tsv' 2>&1); then
-    echo "ERROR: tracker list: could not parse applications from ${TRACKER}" >&2
+  if ! dt_epoch=$(date -j -f "%Y-%m-%d" "$(today)" +%s 2>/dev/null); then
+    echo "ERROR: tracker list: could not compute today's epoch" >&2
     return 1
   fi
 
   printf "%-8s | %-20s | %-25s | %-14s | %s\n" "ID" "Company" "Role" "Status" "Days"
   printf "%s\n" "---------|----------------------|---------------------------|----------------|------"
 
-  while IFS=$'\t' read -r id company role status last_activity; do
+  while IFS=$'\t' read -r id company role status last_activity _follow_up; do
     [[ -z "$id" ]] && continue
     if [[ -n "$filter_status" && "$status" != "$filter_status" ]]; then
       continue
@@ -213,22 +214,22 @@ cmd_stats() {
   ensure_tracker
 
   local dow
-  if ! dow=$(date +%u 2>&1); then
-    echo "ERROR: tracker stats: could not determine day of week: ${dow}" >&2
+  if ! dow=$(date +%u 2>/dev/null); then
+    echo "ERROR: tracker stats: could not determine day of week" >&2
     return 1
   fi
   local days_since_mon
   days_since_mon=$(( (dow - 1) ))
   local week_start
-  if ! week_start=$(date -v-${days_since_mon}d +%Y-%m-%d 2>&1); then
-    echo "ERROR: tracker stats: could not compute week start: ${week_start}" >&2
+  if ! week_start=$(date -v-${days_since_mon}d +%Y-%m-%d 2>/dev/null); then
+    echo "ERROR: tracker stats: could not compute week start" >&2
     return 1
   fi
 
   local total researching applied screening interviewing offer rejected ghosted this_week
   local stats_json
-  if ! stats_json=$(yq -o=json '.applications' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker stats: yq failed reading tracker: ${stats_json}" >&2
+  if ! stats_json=$(yq -o=json '.applications' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: tracker stats: yq failed reading tracker" >&2
     return 1
   fi
   local stats_line
@@ -242,8 +243,8 @@ cmd_stats() {
     ([.[] | select(.status == "rejected")] | length),
     ([.[] | select(.status == "ghosted")] | length),
     ([.[] | select(.date_applied >= $ws)] | length)
-  ] | @tsv' 2>&1); then
-    echo "ERROR: tracker stats: failed to compute stats: ${stats_line}" >&2
+  ] | @tsv' 2>/dev/null); then
+    echo "ERROR: tracker stats: failed to compute stats" >&2
     return 1
   fi
   IFS=$'\t' read -r total researching applied screening interviewing offer rejected ghosted this_week <<< "$stats_line"
@@ -262,8 +263,8 @@ cmd_get() {
   ensure_tracker
 
   local result
-  if ! result=$(APPID="$app_id" yq '.applications[] | select(.id == strenv(APPID))' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker get: could not read tracker: ${result}" >&2
+  if ! result=$(APPID="$app_id" yq '.applications[] | select(.id == strenv(APPID))' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: tracker get: could not read tracker" >&2
     exit 1
   fi
   if [[ -z "$result" ]]; then
@@ -286,8 +287,8 @@ cmd_audit() {
 
   # Validate tracker data is a proper array before auditing
   local tracker_raw
-  if ! tracker_raw=$(yq -o=json '.applications' "$TRACKER" 2>&1); then
-    echo "ERROR: cmd_audit: yq failed to read tracker: ${tracker_raw}" >&2
+  if ! tracker_raw=$(yq -o=json '.applications' "$TRACKER" 2>/dev/null); then
+    echo "ERROR: cmd_audit: yq failed to read tracker" >&2
     exit 1
   fi
   if ! echo "$tracker_raw" | jq -e 'type == "array"' &>/dev/null; then
@@ -299,15 +300,14 @@ cmd_audit() {
 
   # Pre-extract tracker data once (O(1) yq call)
   local tracker_json
-  if ! tracker_json=$(echo "$tracker_raw" | jq -r '[.[] | {id: .id, company: .company, company_lower: (.company | ascii_downcase), role: .role, status: .status}]' 2>&1); then
-    echo "ERROR: cmd_audit: jq failed to parse tracker data: ${tracker_json}" >&2
+  if ! tracker_json=$(echo "$tracker_raw" | jq -r '[.[] | {id: .id, company: .company, company_lower: (.company | ascii_downcase), role: .role, status: .status}]' 2>/dev/null); then
+    echo "ERROR: cmd_audit: jq failed to parse tracker data" >&2
     exit 1
   fi
 
-  # Pre-extract CSV active rows using awk for proper quoted-field handling
-  # Output: company\trole\tstatus (lowercased company)
-  local csv_active
-  if ! csv_active=$(awk -F',' '
+  # Parse jobs.csv once into combined intermediate: co_lower TAB company TAB role TAB status
+  local csv_combined
+  if ! csv_combined=$(awk -F',' '
     NR == 1 { next }
     {
       # Rejoin fields split inside quotes
@@ -328,43 +328,21 @@ cmd_audit() {
           else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
         }
       }
-      company = fields[2]; role = fields[4]; status = fields[11]
-      if (status == "applied" || status == "screening" || status == "interviewing" || status == "offer") {
-        co = tolower(company)
-        print co "\t" company "\t" role "\t" status
-      }
+      print tolower(fields[2]) "\t" fields[2] "\t" fields[4] "\t" fields[11]
     }
-  ' "$jobs_csv" 2>&1); then
-    echo "ERROR: cmd_audit: awk failed parsing jobs.csv for active rows: ${csv_active}" >&2
+  ' "$jobs_csv" 2>/dev/null); then
+    echo "ERROR: cmd_audit: awk failed parsing jobs.csv: ${csv_combined}" >&2
     return 1
   fi
 
-  # Pre-build CSV company lookup (lowercased company -> status) for O(1) checks
-  local csv_all_companies
-  if ! csv_all_companies=$(awk -F',' '
-    NR == 1 { next }
-    {
-      line = $0; nf = 0; delete fields
-      while (line != "") {
-        if (substr(line, 1, 1) == "\"") {
-          p = index(substr(line, 2), "\"")
-          while (p > 0 && substr(line, p+2, 1) == "\"") {
-            p = p + 1 + index(substr(line, p+2+1), "\"")
-          }
-          fields[++nf] = substr(line, 2, p-1)
-          # Unescape doubled quotes ("" -> ") per RFC 4180
-          gsub(/""/, "\"", fields[nf])
-          line = substr(line, p+3)
-        } else {
-          p = index(line, ",")
-          if (p == 0) { fields[++nf] = line; line = "" }
-          else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
-        }
-      }
-      print tolower(fields[2]) "\t" fields[11]
-    }
-  ' "$jobs_csv" 2>&1); then
-    echo "ERROR: cmd_audit: awk failed parsing jobs.csv for company lookup: ${csv_all_companies}" >&2
+  # Derive active rows (applied/screening/interviewing/offer) from combined parse
+  local csv_active
+  csv_active=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing" || $4 == "offer"' <<< "$csv_combined")
+
+  # Build CSV lookup as a JSON array for exact-match jq join
+  local csv_json
+  if ! csv_json=$(awk -F'\t' 'BEGIN{printf "["} NR>1{printf ","} {printf "{\"co_lower\":\"%s\",\"company\":\"%s\",\"role\":\"%s\",\"status\":\"%s\"}", $1,$2,$3,$4} END{printf "]"}' <<< "$csv_combined" 2>/dev/null); then
+    echo "ERROR: cmd_audit: failed to build CSV JSON for join" >&2
     return 1
   fi
 
@@ -374,7 +352,7 @@ cmd_audit() {
   while IFS=$'\t' read -r co_lower company role status; do
     [[ -z "$co_lower" ]] && continue
     local found
-    if ! found=$(echo "$tracker_json" | jq -r --arg c "$co_lower" '[.[] | . as $obj | select(($obj.company_lower | contains($c)) or ($c | contains($obj.company_lower)))] | length' 2>&1); then
+    if ! found=$(echo "$tracker_json" | jq -r --arg c "$co_lower" '[.[] | select(.company_lower == $c)] | length' 2>/dev/null); then
       echo "WARNING: cmd_audit: jq failed for company '${co_lower}' -- skipping" >&2
       continue
     fi
@@ -387,62 +365,51 @@ cmd_audit() {
 
   [[ "$csv_issues" -eq 0 ]] && echo "  (none)"
 
-  # Check tracker entries with no jobs.csv row
-  echo ""
-  echo "=== Tracker entries with no jobs.csv row ==="
-  local tracker_issues=0
-  local active_tsv
-  if ! active_tsv=$(echo "$tracker_json" | jq -r '.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing" or .status == "offer") | [.id, .company, .role, .status] | @tsv' 2>&1); then
-    echo "ERROR: could not extract active entries from tracker: ${active_tsv}" >&2
+  # Use jq to compute tracker-vs-csv mismatches in one exact-match join pass.
+  # Produces lines prefixed with MISSING or MISMATCH for section routing below.
+  local audit_results
+  if ! audit_results=$(echo "$tracker_json" | jq -r --argjson csv "$csv_json" '
+    [.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing" or .status == "offer")] as $active |
+    ($csv | INDEX(.co_lower)) as $csv_idx |
+    $active[] |
+    . as $t |
+    ($csv_idx[$t.company_lower]) as $csv_row |
+    if $csv_row == null then
+      "MISSING\t\($t.id)\t\($t.company)\t\($t.role)\t\($t.status)"
+    elif $csv_row.status != $t.status then
+      "MISMATCH\t\($t.id)\t\($t.company)\t\($t.role)\t\($t.status)\t\($csv_row.status)"
+    else empty end
+  ' 2>/dev/null); then
+    echo "ERROR: cmd_audit: jq join failed" >&2
     return 1
   fi
 
-  while IFS=$'\t' read -r id company role status; do
-    [[ -z "$id" ]] && continue
-    local co_lower
-    co_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
-    local found_in_csv=false
+  local missing_output mismatch_output
+  missing_output=$(grep $'^MISSING\t' <<< "$audit_results" || true)
+  mismatch_output=$(grep $'^MISMATCH\t' <<< "$audit_results" || true)
 
-    while IFS=$'\t' read -r csv_co csv_status; do
-      [[ -z "$csv_co" ]] && continue
-      # Substring match in either direction
-      if [[ "$csv_co" == *"$co_lower"* || "$co_lower" == *"$csv_co"* ]]; then
-        found_in_csv=true
-        break
-      fi
-    done <<< "$csv_all_companies"
-
-    if [[ "$found_in_csv" == "false" ]]; then
+  echo ""
+  echo "=== Tracker entries with no jobs.csv row ==="
+  local tracker_issues=0
+  if [[ -n "$missing_output" ]]; then
+    while IFS=$'\t' read -r _tag id company role status; do
       echo "  MISSING: ${id} | ${company} / ${role} (tracker status: ${status})"
       tracker_issues=$((tracker_issues + 1))
       issues=$((issues + 1))
-    fi
-  done <<< "$active_tsv"
-
+    done <<< "$missing_output"
+  fi
   [[ "$tracker_issues" -eq 0 ]] && echo "  (none)"
 
-  # Check status mismatches for companies present in both
   echo ""
   echo "=== Status mismatches ==="
   local mismatch_issues=0
-  while IFS=$'\t' read -r id company role tracker_status; do
-    [[ -z "$id" ]] && continue
-    local co_lower
-    co_lower=$(echo "$company" | tr '[:upper:]' '[:lower:]')
-
-    while IFS=$'\t' read -r csv_co csv_status; do
-      [[ -z "$csv_co" ]] && continue
-      if [[ "$csv_co" == *"$co_lower"* || "$co_lower" == *"$csv_co"* ]]; then
-        if [[ "$csv_status" != "$tracker_status" ]]; then
-          echo "  MISMATCH: ${company} | jobs.csv=${csv_status} tracker=${tracker_status} (${id})"
-          mismatch_issues=$((mismatch_issues + 1))
-          issues=$((issues + 1))
-        fi
-        break
-      fi
-    done <<< "$csv_all_companies"
-  done <<< "$active_tsv"
-
+  if [[ -n "$mismatch_output" ]]; then
+    while IFS=$'\t' read -r _tag id company role tracker_status csv_status; do
+      echo "  MISMATCH: ${company} | jobs.csv=${csv_status} tracker=${tracker_status} (${id})"
+      mismatch_issues=$((mismatch_issues + 1))
+      issues=$((issues + 1))
+    done <<< "$mismatch_output"
+  fi
   [[ "$mismatch_issues" -eq 0 ]] && echo "  (none)"
 
   echo ""
@@ -456,38 +423,32 @@ cmd_audit() {
 cmd_follow_ups() {
   ensure_tracker
 
-  local dt
-  dt=$(today)
-  local count
-  if ! count=$(yq '.applications | length' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker follow-ups: could not read applications from ${TRACKER}: ${count}" >&2
-    return 1
-  fi
+  local fu_tsv
+  fu_tsv=$(_load_applications_tsv "tracker follow-ups") || return 1
 
-  if [[ "$count" -eq 0 ]]; then
-    echo "(no applications tracked yet)"
+  if [[ "$fu_tsv" == "(no applications tracked yet)" ]]; then
+    echo "$fu_tsv"
     return
   fi
 
-  local found=0
+  # Filter to active statuses with follow-up dates
+  local active_fu_tsv
+  active_fu_tsv=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing"' <<< "$fu_tsv")
+
+  if [[ -z "$active_fu_tsv" ]]; then
+    echo "(no active applications with follow-ups)"
+    return
+  fi
+
+  local dt
+  dt=$(today)
   local dt_epoch
-  if ! dt_epoch=$(date -j -f "%Y-%m-%d" "$dt" +%s 2>&1); then
-    echo "ERROR: tracker follow-ups: invalid date '${dt}': ${dt_epoch}" >&2
+  if ! dt_epoch=$(date -j -f "%Y-%m-%d" "$dt" +%s 2>/dev/null); then
+    echo "ERROR: tracker follow-ups: could not compute today's epoch" >&2
     return 1
   fi
 
-  local fu_json
-  if ! fu_json=$(yq -o=json '.applications' "$TRACKER" 2>&1); then
-    echo "ERROR: tracker follow-ups: yq failed reading tracker: ${fu_json}" >&2
-    return 1
-  fi
-  local fu_tsv
-  if ! fu_tsv=$(echo "$fu_json" | jq -r '.[] | select(.status == "applied" or .status == "screening" or .status == "interviewing") | [.id, .company, .role, .status, .last_activity, .follow_up_date] | @tsv' 2>&1); then
-    echo "ERROR: tracker follow-ups: could not parse applications from ${TRACKER}" >&2
-    return 1
-  fi
-
-  [[ -z "$fu_tsv" ]] && { echo "(no active applications with follow-ups)"; return; }
+  local found=0
 
   while IFS=$'\t' read -r id company role status last_activity follow_up; do
     if [[ "$follow_up" == "null" || -z "$follow_up" ]]; then
@@ -517,7 +478,7 @@ cmd_follow_ups() {
         "$id" "$company" "$role" "$status" "$days_since" "$follow_up" "$label"
       found=$((found + 1))
     fi
-  done <<< "$fu_tsv"
+  done <<< "$active_fu_tsv"
 
   if [[ "$found" -eq 0 ]]; then
     echo "(no follow-ups due)"

@@ -5,16 +5,7 @@ set -euo pipefail
 # Used by day-start, check-in, and day-end commands
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG="${SCRIPT_DIR}/../config.yaml"
-OUTPUT_DIR=""
-if command -v yq &>/dev/null && [[ -f "$CONFIG" ]]; then
-  if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
-    echo "WARNING: gather-applications: could not read output_dir from config: ${OUTPUT_DIR}" >&2
-    OUTPUT_DIR=""
-  else
-    OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
-  fi
-fi
+OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh" 2>/dev/null) || OUTPUT_DIR=""
 
 echo "=== Application Pipeline ==="
 bash "${SCRIPT_DIR}/tracker.sh" stats

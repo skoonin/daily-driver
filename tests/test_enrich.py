@@ -400,3 +400,28 @@ class TestAppendJobsCompColumn:
             rows = list(_csv.reader(f))
         comp_idx = CSV_HEADER.index("Comp")
         assert rows[1][comp_idx] == ""
+
+
+# ── enrich_company_descriptions budget ──────────────────────────────────────
+
+
+class TestEnrichCompanyDescriptionsBudget:
+    def test_budget_limits_claude_calls(self):
+        # 5 companies, budget=2 — only 2 claude subprocess calls should be made.
+        jobs = [
+            {"company": f"Co{i}", "role": "SRE", "url": f"https://x.com/{i}"}
+            for i in range(5)
+        ]
+        config = {"job_search": {"scraper": {"max_enrich_companies": 2}}}
+
+        def _fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "Makes software products."
+            return result
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=_fake_run) as mock_run:
+                sj.enrich_company_descriptions(jobs, config)
+
+        assert mock_run.call_count == 2

@@ -19,6 +19,19 @@ ensure_state_dir() {
   mkdir -p "$STATE_DIR"
 }
 
+write_state() {
+  local updated="$1"
+  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
+    echo "ERROR: checkin-state: failed to write tmp state file" >&2
+    return 1
+  fi
+  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
+    echo "ERROR: checkin-state: failed to replace state file" >&2
+    rm -f "${STATE_FILE}.tmp"
+    return 1
+  fi
+}
+
 # Archive state from a previous date and create fresh state for today
 archive_and_reset() {
   if [[ -f "$STATE_FILE" ]]; then
@@ -59,15 +72,7 @@ cmd_record_checkin() {
     echo "ERROR: checkin-state record-checkin: jq failed: ${updated}" >&2
     return 1
   fi
-  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
-    echo "ERROR: checkin-state: failed to write tmp state file" >&2
-    return 1
-  fi
-  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
-    echo "ERROR: checkin-state: failed to replace state file" >&2
-    rm -f "${STATE_FILE}.tmp"
-    return 1
-  fi
+  write_state "$updated" || return 1
 }
 
 cmd_get_last_checkin() {
@@ -96,15 +101,7 @@ cmd_flag_overrun() {
     echo "ERROR: checkin-state flag-overrun: jq failed: ${updated}" >&2
     return 1
   fi
-  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
-    echo "ERROR: checkin-state: failed to write tmp state file" >&2
-    return 1
-  fi
-  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
-    echo "ERROR: checkin-state: failed to replace state file" >&2
-    rm -f "${STATE_FILE}.tmp"
-    return 1
-  fi
+  write_state "$updated" || return 1
 }
 
 cmd_record_focus_session() {
@@ -117,15 +114,7 @@ cmd_record_focus_session() {
     echo "ERROR: checkin-state record-focus-session: jq failed: ${updated}" >&2
     return 1
   fi
-  if ! printf '%s\n' "$updated" > "${STATE_FILE}.tmp"; then
-    echo "ERROR: checkin-state: failed to write tmp state file" >&2
-    return 1
-  fi
-  if ! mv "${STATE_FILE}.tmp" "$STATE_FILE"; then
-    echo "ERROR: checkin-state: failed to replace state file" >&2
-    rm -f "${STATE_FILE}.tmp"
-    return 1
-  fi
+  write_state "$updated" || return 1
 }
 
 cmd_read() {

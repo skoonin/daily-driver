@@ -38,15 +38,7 @@ if [[ ! "$START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [[ ! "$END_DATE" =~ 
   exit 1
 fi
 
-if ! OUTPUT_DIR=$(yq '.output_dir' "$CONFIG" 2>&1); then
-  echo "ERROR: gather-notes-range: could not read output_dir from config: ${OUTPUT_DIR}" >&2
-  exit 1
-fi
-if [[ "$OUTPUT_DIR" == "null" || -z "$OUTPUT_DIR" ]]; then
-  echo "ERROR: output_dir not set in config.yaml"
-  exit 1
-fi
-OUTPUT_DIR="${OUTPUT_DIR/#\~/$HOME}"
+OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh") || exit 1
 
 if [[ "$TYPE" == "all" ]]; then
   types=("plan" "notes")
@@ -61,8 +53,8 @@ while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
   year=$(date -j -f "%Y-%m-%d" "$current" +%Y)
   month=$(date -j -f "%Y-%m-%d" "$current" +%m)
 
-  if ! dow=$(date -j -f "%Y-%m-%d" "$current" +%u 2>&1); then
-    echo "ERROR: gather-notes-range: failed to parse date '${current}': ${dow}" >&2
+  if ! dow=$(date -j -f "%Y-%m-%d" "$current" +%u 2>/dev/null); then
+    echo "ERROR: gather-notes-range: failed to parse date '${current}'" >&2
     exit 1
   fi
 
@@ -78,8 +70,8 @@ while [[ "$current" < "$END_DATE" || "$current" == "$END_DATE" ]]; do
     fi
   done
 
-  if ! next_date=$(date -j -v+1d -f "%Y-%m-%d" "$current" +%Y-%m-%d 2>&1); then
-    echo "ERROR: gather-notes-range: date advance failed from '${current}': ${next_date}" >&2
+  if ! next_date=$(date -j -v+1d -f "%Y-%m-%d" "$current" +%Y-%m-%d 2>/dev/null); then
+    echo "ERROR: gather-notes-range: date advance failed from '${current}'" >&2
     exit 1
   fi
   current="$next_date"

@@ -99,17 +99,31 @@ def dedup_key(company: str, role: str) -> str:
 
 # ── Company enrichment ───────────────────────────────────────────────────────
 
-def enrich_company_descriptions(jobs: list[dict]) -> None:
+def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) -> None:
     """Populate Product/Purpose in-place for jobs that lack it, using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
     Silently skips enrichment if the `claude` CLI is not on PATH.
+
+    Budget limits total claude calls to avoid silent stalls on slow networks —
+    each call blocks for up to 15s, so 10 companies = max 2.5 min wall time.
     """
     if shutil.which("claude") is None:
         log.debug("[enrich] claude CLI not found, skipping product lookup")
         return
 
+    cfg = scraper_cfg(config) if config else {}
+    budget = int(cfg.get("max_enrich_companies", 10))
+
+    unique_companies = {
+        job.get("company", "").strip()
+        for job in jobs
+        if not job.get("product") and job.get("company", "").strip()
+    }
+    log.info("[enrich] enriching up to %d companies (%d unique)...", budget, len(unique_companies))
+
     cache: dict[str, str] = {}
+    calls_made = 0
 
     for job in jobs:
         if job.get("product"):
@@ -118,6 +132,10 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
         if not company:
             continue
         if company not in cache:
+            if calls_made >= budget:
+                remaining = len([j for j in jobs if not j.get("product") and j.get("company", "").strip() and j.get("company", "").strip() not in cache])
+                log.warning("[enrich] budget reached, skipping %d companies", remaining)
+                break
             prompt = (
                 f"In one sentence (max 12 words), what does {company} build or do? "
                 "Answer only, no preamble."
@@ -125,7 +143,7 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
             try:
                 result = subprocess.run(
                     ["claude", "-p", prompt],
-                    capture_output=True, text=True, timeout=30,
+                    capture_output=True, text=True, timeout=15,
                 )
                 if result.returncode == 0:
                     lines = [l for l in result.stdout.splitlines() if l.strip()]
@@ -133,12 +151,13 @@ def enrich_company_descriptions(jobs: list[dict]) -> None:
                 else:
                     cache[company] = ""
             except subprocess.TimeoutExpired:
-                log.warning("[enrich] %s: claude CLI timed out after 30s", company)
+                log.warning("[enrich] %s: claude CLI timed out after 15s", company)
                 cache[company] = ""
             except OSError as exc:
                 log.debug("[enrich] %s lookup failed: %s", company, exc)
                 cache[company] = ""
-        if cache[company]:
+            calls_made += 1
+        if cache.get(company):
             job["product"] = cache[company]
 
 
@@ -486,45 +505,24 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str], next_num: i
     if not jobs:
         return 0
 
-    col = {name: i for i, name in enumerate(header)}
-
-    num_idx = col.get("#")
-    company_idx = col.get("Company")
-    product_idx = col.get("Product/Purpose")
-    role_idx = col.get("Role")
-    comp_idx = col.get("Comp")
-    location_idx = col.get("Location")
-    source_idx = col.get("Source")
-    date_idx = col.get("Date Found")
-    status_idx = col.get("Status")
-    link_idx = col.get("Link")
-
     written = 0
     try:
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+            writer = csv.DictWriter(
+                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+            )
             for job in jobs:
-                row = [""] * len(header)
-                if num_idx is not None:
-                    row[num_idx] = str(next_num)
-                if company_idx is not None:
-                    row[company_idx] = job.get("company", "")
-                if product_idx is not None:
-                    row[product_idx] = job.get("product", "(auto-scraped -- needs fill)")
-                if role_idx is not None:
-                    row[role_idx] = job.get("role", "")
-                if comp_idx is not None:
-                    row[comp_idx] = job.get("comp", "")
-                if location_idx is not None:
-                    row[location_idx] = job.get("location", "")
-                if source_idx is not None:
-                    row[source_idx] = job.get("source", "")
-                if date_idx is not None:
-                    row[date_idx] = job.get("date_found", date.today().isoformat())
-                if status_idx is not None:
-                    row[status_idx] = "found"
-                if link_idx is not None:
-                    row[link_idx] = job.get("url", "")
+                row = {col: "" for col in header}
+                row["#"] = str(next_num)
+                row["Company"] = job.get("company", "")
+                row["Product/Purpose"] = job.get("product", "(auto-scraped -- needs fill)")
+                row["Role"] = job.get("role", "")
+                row["Comp"] = job.get("comp", "")
+                row["Location"] = job.get("location", "")
+                row["Source"] = job.get("source", "")
+                row["Date Found"] = job.get("date_found", date.today().isoformat())
+                row["Status"] = "found"
+                row["Link"] = job.get("url", "")
                 writer.writerow(row)
                 next_num += 1
                 written += 1
@@ -617,6 +615,9 @@ def _playwright_browser(config: dict):
     Indeed, and Wellfound without requiring a logged-in session.
     Set job_search.scraper.headless: true in config to run headless.
     """
+    if not _has_playwright():
+        raise ImportError("playwright not installed — run: pip install playwright && playwright install chromium")
+
     from playwright.sync_api import sync_playwright, Error as PWError
 
     headless = scraper_cfg(config).get("headless", False)
@@ -649,10 +650,6 @@ def scrape_remoteok(config: dict) -> list[dict]:
     Uses slug-encoded search URLs per term. Job rows are in a <table> with
     tr.job elements carrying data-id attributes.
     """
-    if not _has_playwright():
-        log.warning("[remoteok] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
@@ -713,10 +710,6 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
 
     Navigates to the search URL per term. Job items are in section.jobs > article > ul > li.
     """
-    if not _has_playwright():
-        log.warning("[weworkremotely] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
@@ -798,12 +791,17 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     timeout = timeout_seconds(config)
     current_month_str = date.today().strftime("%B %Y")
 
-    index_resp = requests.get(
-        "https://news.ycombinator.com/submitted?id=whoishiring",
-        headers=headers,
-        timeout=timeout,
-    )
-    index_resp.raise_for_status()
+    try:
+        index_resp = requests.get(
+            "https://news.ycombinator.com/submitted?id=whoishiring",
+            headers=headers,
+            timeout=timeout,
+        )
+        index_resp.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("[hn_who_is_hiring] index fetch failed: %s", exc)
+        return []
+
     index_soup = BeautifulSoup(index_resp.text, "html.parser")
 
     thread_url = None
@@ -821,8 +819,13 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
         log.warning("[hn_who_is_hiring] could not find thread for %s", current_month_str)
         return []
 
-    thread_resp = requests.get(thread_url, headers=headers, timeout=timeout)
-    thread_resp.raise_for_status()
+    try:
+        thread_resp = requests.get(thread_url, headers=headers, timeout=timeout)
+        thread_resp.raise_for_status()
+    except requests.RequestException as exc:
+        log.warning("[hn_who_is_hiring] thread fetch failed: %s", exc)
+        return []
+
     thread_soup = BeautifulSoup(thread_resp.text, "html.parser")
 
     jobs = []
@@ -887,10 +890,6 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
 
 def scrape_anthropic(config: dict) -> list[dict]:
     """Playwright scraper for the Anthropic careers page (Greenhouse-hosted, JS-rendered)."""
-    if not _has_playwright():
-        log.warning("[anthropic] playwright not installed, skipping")
-        return []
-
     from playwright.sync_api import TimeoutError as PWTimeout, Error as PWError
 
     roles = roles_list(config)
@@ -948,10 +947,6 @@ def scrape_linkedin(config: dict) -> list[dict]:
     what LinkedIn serves without authentication — typically the first page of
     results per search term. f_WT=2 filters for remote, f_TPR=r86400 for last 24h.
     """
-    if not _has_playwright():
-        log.warning("[linkedin] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
@@ -1030,10 +1025,6 @@ def scrape_indeed(config: dict) -> list[dict]:
 
     Filters for Remote postings within the last 7 days. Skips sponsored ads.
     """
-    if not _has_playwright():
-        log.warning("[indeed] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
@@ -1117,10 +1108,6 @@ def scrape_wellfound(config: dict) -> list[dict]:
     plus a fixed wait for React hydration — networkidle never resolves on this SPA.
     CSS class names are hashed so multiple selectors are tried.
     """
-    if not _has_playwright():
-        log.warning("[wellfound] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
@@ -1197,10 +1184,6 @@ def scrape_apple(config: dict) -> list[dict]:
     Searches each compressed role term. Job rows render after React hydrates;
     title links follow the pattern /en-ca/details/{id}.
     """
-    if not _has_playwright():
-        log.warning("[apple] playwright not installed, skipping")
-        return []
-
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000

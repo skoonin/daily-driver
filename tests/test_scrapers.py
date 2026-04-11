@@ -237,6 +237,15 @@ class TestScrapeWeWorkRemotely:
         assert jobs == []
 
 
+# ── HN scraper error handling ────────────────────────────────────────────────
+
+class TestScrapeHnErrorHandling:
+    def test_returns_empty_on_connection_error(self):
+        with patch.object(sj.requests, "get", side_effect=requests.ConnectionError("unreachable")):
+            jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
+        assert jobs == []
+
+
 # ── run_all_scrapers ──────────────────────────────────────────────────────────
 
 class TestRunAllScrapers:

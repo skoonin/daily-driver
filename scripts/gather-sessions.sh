@@ -38,27 +38,15 @@ if [[ -f "$OUTCOMES_LOG" ]]; then
             while IFS= read -r sid; do
                 [[ -z "$sid" ]] && continue
 
-                # Get session metadata
-                if ! meta=$(echo "$todays_entries" | jq -r --arg sid "$sid" 'select(.type == "session_end" and .session_id == $sid)' 2>&1); then
+                # Single jq call for all session metadata fields; duration_min is last
+                # because IFS=$'\t' read collapses consecutive tabs (empty middle fields shift)
+                if ! session_line=$(echo "$todays_entries" | jq -r --arg sid "$sid" \
+                    'select(.type == "session_end" and .session_id == $sid)
+                     | [(.session_name // "unnamed"), (.project // "unknown"), (.ts // ""), (.duration_min // "")] | @tsv' 2>&1); then
                     echo "WARNING: gather-sessions: failed to parse metadata for session ${sid}" >&2
                     continue
                 fi
-                if ! session_name=$(echo "$meta" | jq -r '.session_name // "unnamed"' 2>&1); then
-                    echo "WARNING: gather-sessions: failed to read session_name for ${sid}: ${session_name}" >&2
-                    session_name="unnamed"
-                fi
-                if ! project=$(echo "$meta" | jq -r '.project // "unknown"' 2>&1); then
-                    echo "WARNING: gather-sessions: failed to read project for ${sid}: ${project}" >&2
-                    project="unknown"
-                fi
-                if ! duration=$(echo "$meta" | jq -r '.duration_min // empty' 2>&1); then
-                    echo "WARNING: gather-sessions: failed to read duration for ${sid}: ${duration}" >&2
-                    duration=""
-                fi
-                if ! ts_raw=$(echo "$meta" | jq -r '.ts // empty' 2>&1); then
-                    echo "WARNING: gather-sessions: failed to read ts for ${sid}: ${ts_raw}" >&2
-                    ts_raw=""
-                fi
+                IFS=$'\t' read -r session_name project ts_raw duration <<< "$session_line"
                 ts="${ts_raw:11:5}"
 
                 duration_str=""
@@ -104,14 +92,11 @@ if [[ -f "$OUTCOMES_LOG" ]]; then
             echo "$orphaned"
         fi
 
-        # Detect unclosed sessions: session_start with no matching session_end
-        ended_sids=$(echo "$todays_entries" | jq -r 'select(.type == "session_end") | .session_id' | sort -u)
-        unclosed=$(echo "$todays_entries" | jq -r 'select(.type == "session_start") | .session_id' | while IFS= read -r sid; do
-            [[ -z "$sid" ]] && continue
-            if ! echo "$ended_sids" | grep -qxF "$sid"; then
-                echo "$sid"
-            fi
-        done)
+        # Detect unclosed sessions: session_start with no matching session_end.
+        # -rs slurps the per-line JSON objects into an array so [select(...)] produces one valid JSON array.
+        ended_sids_json=$(echo "$todays_entries" | jq -rs '[.[] | select(.type == "session_end") | .session_id]')
+        unclosed=$(echo "$todays_entries" | jq -r --argjson ended "$ended_sids_json" \
+            'select(.type == "session_start") | .session_id | select(. as $s | $ended | index($s) | not)')
 
         if [[ -n "$unclosed" ]]; then
             echo ""
