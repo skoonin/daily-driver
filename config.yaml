@@ -32,6 +32,9 @@ calendar:
 # 15:00 -> /check-in
 # 17:00 -> /day-end    (separate day-end plist)
 checkin:
+  # NOTE: times below are not read by any script. The actual check-in schedule
+  # lives in launchd/com.daily-driver.checkin.plist. Edit the plist and re-run
+  # `make launchd-install` to change the schedule.
   times:
     - "11:00"
     - "15:00"
@@ -52,6 +55,9 @@ reporting:
     save_dir: monthly
 
 job_search:
+  # NOTE: schedule below is not read by any script. The actual gather-jobs schedule
+  # lives in launchd/com.daily-driver.gather-jobs.plist. Edit the plist and re-run
+  # `make launchd-install` to change the schedule.
   schedule: "07:00"
   sources:
     boards:

@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
        test test-cov \
        day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update \
-       gather-jobs gather-jobs-install scrape-jobs
+       gather-jobs scrape-jobs
 
 PROJ_DIR := $(shell pwd)
 
@@ -71,7 +71,7 @@ status:  ## Check installation status of all dependencies and services
 	fi
 	@echo ""
 	@echo "=== Symlinks ==="
-	@if [ -L "$(CLAUDE_DIR)/CLAUDE.md" ]; then echo "  commands: linked"; else echo "  commands: not linked (run make install)"; fi
+	@if [ -L "$(CLAUDE_DIR)/commands/day-start.md" ]; then echo "  commands: linked"; else echo "  commands: not linked (run make install)"; fi
 	@if [ -L "$(CLAUDE_DIR)/settings.local.json" ]; then echo "  settings.local.json: linked"; else echo "  settings.local.json: not linked (run make install)"; fi
 	@echo ""
 	@echo "=== LaunchAgents ==="
@@ -252,6 +252,4 @@ gather-jobs:  ## Run job discovery now (manual trigger, includes Phase 2 scraper
 scrape-jobs:  ## Run Phase 2 scraper only (usage: make scrape-jobs ARGS="--dry-run")
 	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
 
-gather-jobs-install:  ## Install gather-jobs launchd plist (07:00 daily background run)
-	@bash scripts/launchd-install.sh install
 

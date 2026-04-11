@@ -40,7 +40,7 @@ bash scripts/gather-notes-range.sh "$TODAY" "$TODAY" plan
 ## 4. Read Standup Format
 
 ```bash
-yq '.reporting.standup.format // "slack"' config.yaml
+yq '.reporting.standup.format // "plain"' config.yaml
 ```
 
 ## 5. Generate Standup

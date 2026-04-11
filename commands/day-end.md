@@ -82,7 +82,7 @@ If yes:
 
 Get the current time to anchor tomorrow's date:
 ```bash
-date +%Y-%m-%d
+date -v+1d +%Y-%m-%d
 ```
 
 Save tomorrow's plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatter — same schema as today's plan but with tomorrow's date. Pre-populate `carry_forward` items as `plan_items` with `status: planned`.

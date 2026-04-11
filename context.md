@@ -5,7 +5,7 @@
 - **Name**: Shawn
 - **Background**: SRE Engineer (experienced with Kubernetes, Terraform, AWS, Python, monitoring)
 - **Current Focus**: Job searching -- finding and applying for roles
-- **Timezone**: US Central (CT)
+- **Timezone**: Pacific (PT)
 - **Hours**: Flexible, but structured with check-ins at 9am, 11am, 3pm, 5pm
 
 ## Job Search

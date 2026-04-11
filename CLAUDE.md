@@ -37,12 +37,20 @@ This repo is the **engine** that powers daily job search planning and end-of-day
 - `context.md` - User profile and preferences
 - `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in at fixed times
 
+## Scripts vs. inline commands
+
+**Rule**: Non-trivial shell logic lives in `scripts/`, not inline in `commands/*.md`. Even one-line diagnostic helpers (e.g. `check-state-dir.sh`, `check-output-dir.sh`) belong as scripts.
+
+**Why**: Claude Code's permission model prompts the user to approve each distinct shell invocation. A named script is approved once and reused; a fresh inline command string triggers a new approval prompt every run, which is disruptive during a `/setup` or `/day-start` that runs many checks. Scripts also let us audit, test, and version the logic independently of the prompt.
+
+**How to apply**: When adding a new command step that runs shell, prefer `bash scripts/foo.sh` over inline `yq ... | jq ...`. "But it's only one line" is not a reason to inline — the permission friction cost is per-invocation, not per-line.
+
 ## Makefile
 
 ### Setup
 - `make setup` - Install dependencies and configure environment
 - `make deps` - Install script dependencies
-- `make install` - Install symlinks and launchd plists
+- `make install` - Install symlinks (commands, agents, settings.json). LaunchAgents are installed separately via `make launchd-install`.
 - `make status` - Show automation and integration status
 
 ### Automation
