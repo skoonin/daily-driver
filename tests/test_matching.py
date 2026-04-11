@@ -57,6 +57,12 @@ class TestTier2bStandalone:
     def test_standalone_platform_engineer(self):
         assert sj.matches_roles("Platform Engineer at Stripe", [])
 
+    def test_standalone_site_reliability_engineer(self):
+        # Spelled-out form must match standalone like "SRE" does. Regression
+        # guard for the Hiive posting that escaped the scraper because
+        # "Site Reliability Engineer" does not contain the "sre" substring.
+        assert sj.matches_roles("Site Reliability Engineer", [])
+
     def test_sre_embedded_in_title(self):
         assert sj.matches_roles("Junior SRE (entry level)", [])
 

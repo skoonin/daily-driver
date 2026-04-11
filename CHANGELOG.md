@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- Bare "Site Reliability Engineer" title now matches Tier 2b
+- `scrape-jobs.py`: `matches_roles` Tier 2b standalone set extended from `{"sre", "platform engineer"}` to also include `"site reliability engineer"`. The `"sre"` substring check does not hit the spelled-out form, so titles like "Site Reliability Engineer" (no seniority prefix) were silently dropped at the title gate even after LinkedIn URL fixes surfaced them in search results. Verified against the Hiive Vancouver posting that motivated Item 6 of the scraper improvement plan.
+- New test in `tests/test_matching.py::TestTier2bStandalone::test_standalone_site_reliability_engineer` as a regression guard.
+
 ### Added -- Countries of interest: multi-country search for LinkedIn, Indeed, Apple
 - `scrape-jobs.py`: New `COUNTRY_MAP` constant maps ISO 3166-1 alpha-2 country codes to per-scraper URL parameters (`apple_locale`, `linkedin_location`, `indeed_host`). Supports US, CA, GB out of the box; extend by adding a row to `COUNTRY_MAP` and a code to `config.yaml`.
 - New helpers: `countries_list(config)` (reads `job_search.scraper.countries`, defaults to `["US", "CA"]`), `country_params(country)` (looks up a code in `COUNTRY_MAP`, warns + returns `{}` for unknowns), `_apple_job_id(href)` (extracts numeric job ID for cross-locale dedup).

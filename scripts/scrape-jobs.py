@@ -737,7 +737,9 @@ def matches_roles(title: str, roles: list[str]) -> bool:
     # SRE and Platform Engineer match without seniority — they're precise enough
     # to be unambiguous IC roles. Broader terms (DevOps, Infrastructure) require
     # a seniority qualifier to avoid matching junior/intern postings.
-    if any(kw in title_lower for kw in {"sre", "platform engineer"}):
+    # "site reliability engineer" is the spelled-out form of SRE and must be
+    # matched here too, since the "sre" substring check does not hit it.
+    if any(kw in title_lower for kw in {"sre", "platform engineer", "site reliability engineer"}):
         return True
 
     return False
