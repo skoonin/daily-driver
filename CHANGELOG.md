@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Countries of interest: multi-country search for LinkedIn, Indeed, Apple
+- `scrape-jobs.py`: New `COUNTRY_MAP` constant maps ISO 3166-1 alpha-2 country codes to per-scraper URL parameters (`apple_locale`, `linkedin_location`, `indeed_host`). Supports US, CA, GB out of the box; extend by adding a row to `COUNTRY_MAP` and a code to `config.yaml`.
+- New helpers: `countries_list(config)` (reads `job_search.scraper.countries`, defaults to `["US", "CA"]`), `country_params(country)` (looks up a code in `COUNTRY_MAP`, warns + returns `{}` for unknowns), `_apple_job_id(href)` (extracts numeric job ID for cross-locale dedup).
+- `scrape_apple`, `scrape_linkedin`, `scrape_indeed` rewritten to iterate configured countries. Apple deduplicates cross-locale by numeric job ID. LinkedIn and Indeed deduplicate by URL.
+- LinkedIn: dropped `f_WT=2` (remote-only filter) and widened `f_TPR` from 24h to 7d (`r604800`), so daily runs that skip a day recover missed postings, and hybrid/onsite roles now surface for location-based ranking.
+- Indeed: dropped `l=Remote` location filter; regional host is now country-driven.
+- LinkedIn and Indeed scrapers pause 5 s between country switches to reduce bot-detection risk from rapid host/location pivots.
+- `config.yaml`: Added `job_search.scraper.countries: ["US", "CA"]`. Removed dead `careers_url: "https://jobs.apple.com/en-ca/search"` from the Apple company entry. Updated LinkedIn and Indeed `search_url` entries (used only by `gather-jobs.sh` to build the manual review queue) to match the new scraper filter set — removed `location=Canada`, `f_WT=2`, `l=Remote`, and the `ca.indeed.com` host.
+- 12 new tests in `tests/test_scrapers.py`: helper coverage (`test_countries_list_*`, `test_country_params_*`, `test_apple_job_id_extraction`) and per-scraper multi-country iteration tests (`TestScrapeAppleMultiCountry`, `TestScrapeLinkedInMultiCountry`, `TestScrapeIndeedMultiCountry`).
+
 ### Added -- Wildcard and negation support in role matching
 - `scrape-jobs.py`: `matches_roles` now supports `*` wildcards (`"Senior * Engineer"` matches any middle term) and `!`-prefixed exclusions (`"!*Manager*"` rejects any title containing "Manager"). Exclusions short-circuit before Tier 2/2b safety nets, fixing IC-only filtering where titles like "Senior SRE Manager" previously passed via the standalone `sre` keyword path.
 - New helpers: `_split_roles`, `_role_pattern`, `_role_matches`.

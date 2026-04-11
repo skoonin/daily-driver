@@ -53,6 +53,31 @@ _SENIORITY_PREFIXES = (
     "senior ", "staff ", "principal ", "lead ", "sr. ", "sr ",
 )
 
+# Per-scraper parameters for each supported country. Add a row here when
+# introducing a new country code in config.yaml.
+#
+# Keys:
+#   apple_locale          - path segment for jobs.apple.com/{locale}/search
+#   linkedin_location     - value for LinkedIn's ?location= query param
+#   indeed_host           - hostname for Indeed's regional site
+COUNTRY_MAP: dict[str, dict[str, str]] = {
+    "US": {
+        "apple_locale": "en-us",
+        "linkedin_location": "United States",
+        "indeed_host": "www.indeed.com",
+    },
+    "CA": {
+        "apple_locale": "en-ca",
+        "linkedin_location": "Canada",
+        "indeed_host": "ca.indeed.com",
+    },
+    "GB": {
+        "apple_locale": "en-gb",
+        "linkedin_location": "United Kingdom",
+        "indeed_host": "uk.indeed.com",
+    },
+}
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -84,6 +109,34 @@ def user_agent(config: dict) -> str:
 
 def timeout_seconds(config: dict) -> int:
     return int(scraper_cfg(config).get("timeout", 15))
+
+
+def countries_list(config: dict) -> list[str]:
+    """Return the configured ISO country codes, defaulting to US + CA."""
+    return scraper_cfg(config).get("countries", ["US", "CA"])
+
+
+def country_params(country: str) -> dict[str, str]:
+    """Look up per-scraper parameters for an ISO country code.
+
+    Returns {} and logs a warning for unknown codes so the caller can skip
+    that country without crashing the run.
+    """
+    params = COUNTRY_MAP.get(country.upper())
+    if params is None:
+        log.warning("[country] unknown country code %r, skipping", country)
+        return {}
+    return params
+
+
+def _apple_job_id(href: str) -> str:
+    """Extract the numeric job id from an Apple careers URL.
+
+    Same role appears at /en-us/details/<id>/... and /en-ca/details/<id>/...
+    with identical IDs. Falls back to the full href for unknown URL shapes.
+    """
+    m = re.search(r"/details/(\d+)", href)
+    return m.group(1) if m else href
 
 
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
@@ -1079,7 +1132,7 @@ def scrape_linkedin(config: dict) -> list[dict]:
 
     Uses non-headless Chromium to avoid bot detection. Results are limited to
     what LinkedIn serves without authentication — typically the first page of
-    results per search term. f_WT=2 filters for remote, f_TPR=r86400 for last 24h.
+    results per search term. Iterates each configured country.
     """
     roles = roles_list(config)
     terms = _search_terms(config)
@@ -1089,64 +1142,77 @@ def scrape_linkedin(config: dict) -> list[dict]:
 
     try:
         with _playwright_browser(config) as page:
-            for term in terms:
-                encoded = urllib.parse.quote_plus(term)
-                url = (
-                    f"https://www.linkedin.com/jobs/search/"
-                    f"?keywords={encoded}&location=Canada&f_WT=2&f_TPR=r86400"
-                )
-                try:
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(3000)  # LinkedIn lazy-loads cards
-                except Exception as exc:
-                    log.warning("[linkedin] navigation failed for %r: %s", term, exc)
+            for idx, country in enumerate(countries_list(config)):
+                params = country_params(country)
+                if not params:
                     continue
-
-                cards = page.query_selector_all(".base-card")
-                if not cards:
-                    cards = page.query_selector_all(".job-search-card")
-
-                for card in cards:
+                # Extra cooldown between countries to reduce bot-detection risk:
+                # rapid country-scoped search pivots are a known LinkedIn flag.
+                if idx > 0:
+                    page.wait_for_timeout(5000)
+                for term in terms:
+                    encoded = urllib.parse.quote_plus(term)
+                    # Widened from r86400 (24h) to r604800 (7d) so daily runs that skip a day
+                    # still recover postings, and from f_WT=2 (remote-only) to no workplace-type
+                    # filter so hybrid/onsite postings surface for Shawn's location ranking.
+                    url = (
+                        f"https://www.linkedin.com/jobs/search/"
+                        f"?keywords={encoded}"
+                        f"&location={urllib.parse.quote_plus(params['linkedin_location'])}"
+                        f"&f_TPR=r604800"
+                    )
                     try:
-                        title_el = (
-                            card.query_selector(".base-search-card__title")
-                            or card.query_selector("h3")
-                        )
-                        company_el = (
-                            card.query_selector(".base-search-card__subtitle")
-                            or card.query_selector("h4")
-                        )
-                        loc_el = card.query_selector(".job-search-card__location")
-                        link_el = (
-                            card.query_selector("a.base-card__full-link")
-                            or card.query_selector("a[href*='/jobs/view/']")
-                        )
-                        if not title_el:
-                            continue
-                        role = title_el.inner_text().strip()
-                        company = company_el.inner_text().strip() if company_el else ""
-                        location = loc_el.inner_text().strip() if loc_el else ""
-                        if not matches_roles(role, roles):
-                            continue
-                        href = link_el.get_attribute("href") if link_el else ""
-                        # Strip tracking params from LinkedIn URLs
-                        if href and "linkedin.com/jobs/view/" in href:
-                            href = href.split("?")[0]
-                        if href in seen_urls:
-                            continue
-                        if href:
-                            seen_urls.add(href)
-                        jobs.append({
-                            "company": company,
-                            "role": role,
-                            "location": location or "Remote",
-                            "url": href,
-                            "source": "LinkedIn",
-                            "date_found": date.today().isoformat(),
-                        })
+                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                        page.wait_for_timeout(3000)  # LinkedIn lazy-loads cards
                     except Exception as exc:
-                        log.debug("[linkedin] parse error on card: %s", exc)
+                        log.warning("[linkedin] navigation failed for %r (%s): %s", term, country, exc)
                         continue
+
+                    cards = page.query_selector_all(".base-card")
+                    if not cards:
+                        cards = page.query_selector_all(".job-search-card")
+
+                    for card in cards:
+                        try:
+                            title_el = (
+                                card.query_selector(".base-search-card__title")
+                                or card.query_selector("h3")
+                            )
+                            company_el = (
+                                card.query_selector(".base-search-card__subtitle")
+                                or card.query_selector("h4")
+                            )
+                            loc_el = card.query_selector(".job-search-card__location")
+                            link_el = (
+                                card.query_selector("a.base-card__full-link")
+                                or card.query_selector("a[href*='/jobs/view/']")
+                            )
+                            if not title_el:
+                                continue
+                            role = title_el.inner_text().strip()
+                            company = company_el.inner_text().strip() if company_el else ""
+                            location = loc_el.inner_text().strip() if loc_el else ""
+                            if not matches_roles(role, roles):
+                                continue
+                            href = link_el.get_attribute("href") if link_el else ""
+                            # Strip tracking params from LinkedIn URLs
+                            if href and "linkedin.com/jobs/view/" in href:
+                                href = href.split("?")[0]
+                            if href in seen_urls:
+                                continue
+                            if href:
+                                seen_urls.add(href)
+                            jobs.append({
+                                "company": company,
+                                "role": role,
+                                "location": location or "Remote",
+                                "url": href,
+                                "source": "LinkedIn",
+                                "date_found": date.today().isoformat(),
+                            })
+                        except Exception as exc:
+                            log.debug("[linkedin] parse error on card: %s", exc)
+                            continue
     except Exception as exc:
         log.warning("[linkedin] browser session error: %s", exc)
 
@@ -1155,79 +1221,87 @@ def scrape_linkedin(config: dict) -> list[dict]:
 
 
 def scrape_indeed(config: dict) -> list[dict]:
-    """Playwright scraper for ca.indeed.com public search results.
+    """Playwright scraper for Indeed public search results.
 
-    Filters for Remote postings within the last 7 days. Skips sponsored ads.
+    Skips sponsored ads. Iterates each configured country's regional host.
     """
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
     jobs: list[dict] = []
     seen_urls: set[str] = set()
-    base_url = "https://ca.indeed.com"
 
     try:
         with _playwright_browser(config) as page:
-            for term in terms:
-                encoded = urllib.parse.quote_plus(term)
-                url = f"{base_url}/jobs?q={encoded}&l=Remote&fromage=7"
-                try:
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)
-                except Exception as exc:
-                    log.warning("[indeed] navigation failed for %r: %s", term, exc)
+            for idx, country in enumerate(countries_list(config)):
+                params = country_params(country)
+                if not params:
                     continue
-
-                cards = page.query_selector_all(".job_seen_beacon")
-                if not cards:
-                    cards = page.query_selector_all("[data-testid='slider_item']")
-
-                for card in cards:
+                base_url = f"https://{params['indeed_host']}"
+                # Cooldown between regional Indeed hosts — rapid host switching
+                # increases captcha probability.
+                if idx > 0:
+                    page.wait_for_timeout(5000)
+                for term in terms:
+                    encoded = urllib.parse.quote_plus(term)
+                    url = f"{base_url}/jobs?q={encoded}&fromage=7"
                     try:
-                        title_el = (
-                            card.query_selector("h2.jobTitle a span")
-                            or card.query_selector("h2.jobTitle")
-                        )
-                        company_el = (
-                            card.query_selector("span.companyName")
-                            or card.query_selector("[data-testid='company-name']")
-                        )
-                        loc_el = (
-                            card.query_selector("div.companyLocation")
-                            or card.query_selector("[data-testid='text-location']")
-                        )
-                        link_el = (
-                            card.query_selector("h2.jobTitle a")
-                            or card.query_selector("a[data-jk]")
-                        )
-                        if not title_el:
-                            continue
-                        role = title_el.inner_text().strip()
-                        company = company_el.inner_text().strip() if company_el else ""
-                        location = loc_el.inner_text().strip() if loc_el else ""
-                        if not matches_roles(role, roles):
-                            continue
-                        href = link_el.get_attribute("href") if link_el else ""
-                        if href and not href.startswith("http"):
-                            href = f"{base_url}{href}"
-                        # Skip sponsored/pagead results
-                        if href and "pagead" in href:
-                            continue
-                        if href in seen_urls:
-                            continue
-                        if href:
-                            seen_urls.add(href)
-                        jobs.append({
-                            "company": company,
-                            "role": role,
-                            "location": location or "Remote",
-                            "url": href,
-                            "source": "Indeed",
-                            "date_found": date.today().isoformat(),
-                        })
+                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                        page.wait_for_timeout(2000)
                     except Exception as exc:
-                        log.debug("[indeed] parse error on card: %s", exc)
+                        log.warning("[indeed] navigation failed for %r (%s): %s", term, country, exc)
                         continue
+
+                    cards = page.query_selector_all(".job_seen_beacon")
+                    if not cards:
+                        cards = page.query_selector_all("[data-testid='slider_item']")
+
+                    for card in cards:
+                        try:
+                            title_el = (
+                                card.query_selector("h2.jobTitle a span")
+                                or card.query_selector("h2.jobTitle")
+                            )
+                            company_el = (
+                                card.query_selector("span.companyName")
+                                or card.query_selector("[data-testid='company-name']")
+                            )
+                            loc_el = (
+                                card.query_selector("div.companyLocation")
+                                or card.query_selector("[data-testid='text-location']")
+                            )
+                            link_el = (
+                                card.query_selector("h2.jobTitle a")
+                                or card.query_selector("a[data-jk]")
+                            )
+                            if not title_el:
+                                continue
+                            role = title_el.inner_text().strip()
+                            company = company_el.inner_text().strip() if company_el else ""
+                            location = loc_el.inner_text().strip() if loc_el else ""
+                            if not matches_roles(role, roles):
+                                continue
+                            href = link_el.get_attribute("href") if link_el else ""
+                            if href and not href.startswith("http"):
+                                href = f"{base_url}{href}"
+                            # Skip sponsored/pagead results
+                            if href and "pagead" in href:
+                                continue
+                            if href in seen_urls:
+                                continue
+                            if href:
+                                seen_urls.add(href)
+                            jobs.append({
+                                "company": company,
+                                "role": role,
+                                "location": location or "Remote",
+                                "url": href,
+                                "source": "Indeed",
+                                "date_found": date.today().isoformat(),
+                            })
+                        except Exception as exc:
+                            log.debug("[indeed] parse error on card: %s", exc)
+                            continue
     except Exception as exc:
         log.warning("[indeed] browser session error: %s", exc)
 
@@ -1313,70 +1387,74 @@ def scrape_wellfound(config: dict) -> list[dict]:
 
 
 def scrape_apple(config: dict) -> list[dict]:
-    """Playwright scraper for Apple's Canada careers search page (React SPA).
+    """Playwright scraper for Apple's careers search page (React SPA).
 
-    Searches each compressed role term. Job rows render after React hydrates;
-    title links follow the pattern /en-ca/details/{id}.
+    Iterates each configured country's locale. Job rows render after React
+    hydrates; title links follow the pattern /{locale}/details/{id}.
     """
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
     jobs: list[dict] = []
-    seen_urls: set[str] = set()
+    seen_ids: set[str] = set()
     base_url = "https://jobs.apple.com"
 
     try:
         with _playwright_browser(config) as page:
-            for term in terms:
-                encoded = urllib.parse.quote_plus(term)
-                url = f"{base_url}/en-ca/search?search={encoded}&sort=newest"
-                try:
-                    # domcontentloaded avoids networkidle timeout on React SPAs
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)
-                except Exception as exc:
-                    log.warning("[apple] navigation failed for %r: %s", term, exc)
+            for country in countries_list(config):
+                params = country_params(country)
+                if not params:
                     continue
-
-                rows = (
-                    page.query_selector_all("tbody.table-row-container tr")
-                    or page.query_selector_all("[role='row']")
-                )
-
-                for row in rows:
+                locale = params["apple_locale"]
+                for term in terms:
+                    encoded = urllib.parse.quote_plus(term)
+                    url = f"{base_url}/{locale}/search?search={encoded}&sort=newest"
                     try:
-                        link_el = row.query_selector("a[href*='/details/']")
-                        if not link_el:
-                            continue
-                        role = link_el.inner_text().strip()
-                        if not role or not matches_roles(role, roles):
-                            continue
-                        href = link_el.get_attribute("href") or ""
-                        if href and not href.startswith("http"):
-                            href = f"{base_url}{href}"
-                        if href in seen_urls:
-                            continue
-                        if href:
-                            seen_urls.add(href)
-                        # Location is typically in a sibling <td> after the title cell
-                        cells = row.query_selector_all("td")
-                        location = ""
-                        for cell in cells[1:]:
-                            text = cell.inner_text().strip()
-                            if text and "apple" not in text.lower():
-                                location = text
-                                break
-                        jobs.append({
-                            "company": "Apple",
-                            "role": role,
-                            "location": location or "Various",
-                            "url": href,
-                            "source": "Apple Careers",
-                            "date_found": date.today().isoformat(),
-                        })
+                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                        page.wait_for_timeout(2000)
                     except Exception as exc:
-                        log.debug("[apple] parse error on row: %s", exc)
+                        log.warning("[apple] navigation failed for %r (%s): %s", term, country, exc)
                         continue
+
+                    rows = (
+                        page.query_selector_all("tbody.table-row-container tr")
+                        or page.query_selector_all("[role='row']")
+                    )
+
+                    for row in rows:
+                        try:
+                            link_el = row.query_selector("a[href*='/details/']")
+                            if not link_el:
+                                continue
+                            role = link_el.inner_text().strip()
+                            if not role or not matches_roles(role, roles):
+                                continue
+                            href = link_el.get_attribute("href") or ""
+                            if href and not href.startswith("http"):
+                                href = f"{base_url}{href}"
+                            job_id = _apple_job_id(href)
+                            if job_id in seen_ids:
+                                continue
+                            if job_id:
+                                seen_ids.add(job_id)
+                            cells = row.query_selector_all("td")
+                            location = ""
+                            for cell in cells[1:]:
+                                text = cell.inner_text().strip()
+                                if text and "apple" not in text.lower():
+                                    location = text
+                                    break
+                            jobs.append({
+                                "company": "Apple",
+                                "role": role,
+                                "location": location or "Various",
+                                "url": href,
+                                "source": "Apple Careers",
+                                "date_found": date.today().isoformat(),
+                            })
+                        except Exception as exc:
+                            log.debug("[apple] parse error on row: %s", exc)
+                            continue
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 

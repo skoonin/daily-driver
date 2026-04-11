@@ -64,12 +64,16 @@ job_search:
       - id: linkedin
         name: LinkedIn
         type: playwright
-        search_url: "https://www.linkedin.com/jobs/search/?keywords={role}&location=Canada&f_WT=2"
+        # Manual review queue URL only — the Python scraper ignores this and
+        # builds its own per-country URLs via COUNTRY_MAP in scrape-jobs.py.
+        search_url: "https://www.linkedin.com/jobs/search/?keywords={role}&f_TPR=r604800"
         enabled: true
       - id: indeed
         name: Indeed
         type: playwright
-        search_url: "https://ca.indeed.com/jobs?q={role}&l=Remote"
+        # Manual review queue URL only — the Python scraper iterates regional
+        # Indeed hosts from COUNTRY_MAP.
+        search_url: "https://www.indeed.com/jobs?q={role}&fromage=7"
         enabled: true
       - id: hn_who_is_hiring
         name: HN Who's Hiring
@@ -100,11 +104,17 @@ job_search:
       - id: apple
         name: Apple
         type: playwright
-        careers_url: "https://jobs.apple.com/en-ca/search"
         enabled: true
   scraper:
     enabled: true
     headless: false
+    # Countries to search. ISO 3166-1 alpha-2 codes. Each country maps to
+    # per-scraper URL parameters via COUNTRY_MAP in scripts/scrape-jobs.py.
+    # Adding a new country: (1) add its code here, (2) add a row to
+    # COUNTRY_MAP with the scraper-specific values.
+    countries:
+      - "US"
+      - "CA"
     # Phase 1 (headless) scraper concurrency. Phase 2 (linkedin/indeed/wellfound)
     # always runs serially due to bot detection + visible-browser constraints.
     parallel_workers: 4

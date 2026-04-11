@@ -475,3 +475,94 @@ class TestRunAllScrapersParallel:
         returned_sources = {j["company"] for j in jobs}
         # The four other Phase 1 sources all produced their row
         assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "anthropic", "apple"}
+
+
+# ── Country helpers ───────────────────────────────────────────────────────────
+
+def test_countries_list_default():
+    assert sj.countries_list({}) == ["US", "CA"]
+
+
+def test_countries_list_from_config():
+    cfg = {"job_search": {"scraper": {"countries": ["US", "GB"]}}}
+    assert sj.countries_list(cfg) == ["US", "GB"]
+
+
+def test_country_params_known():
+    assert sj.country_params("US")["apple_locale"] == "en-us"
+    assert sj.country_params("ca")["linkedin_location"] == "Canada"
+
+
+def test_country_params_unknown_returns_empty(caplog):
+    with caplog.at_level("WARNING"):
+        assert sj.country_params("XX") == {}
+    assert "unknown country code" in caplog.text.lower()
+
+
+def test_apple_job_id_extraction():
+    assert sj._apple_job_id("https://jobs.apple.com/en-us/details/200604983/foo") == "200604983"
+    assert sj._apple_job_id("https://jobs.apple.com/en-ca/details/200604983/bar") == "200604983"
+    assert sj._apple_job_id("https://weird.example.com/job/1") == "https://weird.example.com/job/1"
+
+
+# ── Multi-country scraper iteration ──────────────────────────────────────────
+
+class TestScrapeAppleMultiCountry:
+    def test_visits_every_configured_country_locale(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_apple(cfg)
+        assert any("/en-us/search" in u for u in visited)
+        assert any("/en-ca/search" in u for u in visited)
+
+    def test_default_countries_when_unset(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"].pop("countries", None)
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_apple(cfg)
+        assert any("/en-us/search" in u for u in visited)
+        assert any("/en-ca/search" in u for u in visited)
+
+
+class TestScrapeLinkedInMultiCountry:
+    def test_visits_every_configured_country(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_linkedin(cfg)
+        assert any("location=United+States" in u for u in visited)
+        assert any("location=Canada" in u for u in visited)
+
+    def test_linkedin_url_uses_7day_window_no_remote_filter(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_linkedin(cfg)
+        for u in visited:
+            assert "f_TPR=r604800" in u
+            assert "f_WT=2" not in u
+
+
+class TestScrapeIndeedMultiCountry:
+    def test_uses_configured_regional_host(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_indeed(cfg)
+        assert any("www.indeed.com" in u for u in visited)
+        assert any("ca.indeed.com" in u for u in visited)
