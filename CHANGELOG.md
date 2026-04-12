@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Notes auto-summary with tech stack, remote policy, red flags
+- `scrape-jobs.py`: New `enrich_notes(jobs, config)` generates a one-line summary per job via Claude CLI. Uses `description_text` from the detail page when available (tech stack, remote policy, red flags); falls back to a role-only prompt otherwise. Budget-capped via `max_enrich_notes` (default 10). Controlled by `enrich_notes` config flag (default true).
+- `scrape-jobs.py`: Detail-page parsers (`parse_jsonld_jobposting`, `parse_linkedin_html`, `parse_greenhouse_html`) now extract `description_text` from job descriptions. JSON-LD uses the `description` field; LinkedIn targets `.show-more-less-html__markup` / `.description__text` divs; Greenhouse targets `#content` / `.job-description` divs. Stored as an intermediate field on the job dict (not written to CSV).
+- `append_jobs` now writes the `Notes` column from job dicts.
+- 14 new tests: description extraction across all 3 parsers (6), enrich_notes behavior (7), CSV Notes write-through (1).
+
 ### Added -- Claude CLI enrichment for GD Rating and Fit
 - `scrape-jobs.py`: `enrich_company_descriptions` now returns Glassdoor rating alongside Product/Purpose in a single two-line prompt. Ratings stored as decimal (e.g. "4.2") or "unknown". Controlled by `enrich_gd_rating` config flag (default true).
 - `scrape-jobs.py`: New `enrich_fit(jobs, config)` scores each job 1-10 for fit using the Claude CLI. Reads `location-preferences.md` from output_dir once per run to build the prompt. Budget-capped via `max_enrich_fit` (default 5 jobs/run). Scores stored as "N/10" format matching existing manual entries.

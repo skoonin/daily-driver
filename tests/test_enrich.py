@@ -1,6 +1,7 @@
 """Tests for JSON-LD job-detail parser and enrich_job_details network pass."""
 
 import json
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -617,6 +618,154 @@ class TestEnrichFit:
                 with patch("scrape_jobs.resolve_output_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(**{"read_text.return_value": ""})})):
                     sj.enrich_fit(jobs, config)
         assert not jobs[0].get("fit")
+
+
+# ── Description text extraction ─────────────────────────────────────────────
+
+
+class TestDescriptionTextExtraction:
+    def test_jsonld_extracts_description_text(self):
+        posting = {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "SRE",
+            "description": "<p>Build <b>distributed</b> systems.</p>",
+        }
+        result = sj.parse_jsonld_jobposting(_html_with_jsonld(posting))
+        assert result["description_text"] == "Build distributed systems."
+
+    def test_linkedin_html_extracts_description_text(self):
+        html = (
+            "<html><body>"
+            '<div class="show-more-less-html__markup">Kubernetes, Go, remote US-only</div>'
+            "</body></html>"
+        )
+        result = sj.parse_linkedin_html(html)
+        assert result["description_text"] == "Kubernetes, Go, remote US-only"
+
+    def test_linkedin_html_fallback_description_div(self):
+        html = (
+            "<html><body>"
+            '<div class="description__text">Python, AWS, hybrid</div>'
+            "</body></html>"
+        )
+        result = sj.parse_linkedin_html(html)
+        assert result["description_text"] == "Python, AWS, hybrid"
+
+    def test_greenhouse_html_extracts_description_text(self):
+        html = (
+            "<html><body>"
+            '<div id="content">Terraform, remote Canada OK, Series B</div>'
+            "</body></html>"
+        )
+        result = sj.parse_greenhouse_html(html)
+        assert result["description_text"] == "Terraform, remote Canada OK, Series B"
+
+    def test_greenhouse_html_fallback_job_description(self):
+        html = (
+            "<html><body>"
+            '<div class="job-description">GCP, on-site SF</div>'
+            "</body></html>"
+        )
+        result = sj.parse_greenhouse_html(html)
+        assert result["description_text"] == "GCP, on-site SF"
+
+    def test_description_text_stored_on_job(self):
+        posting = {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "SRE",
+            "description": "<p>Stack: K8s, Go</p>",
+        }
+        html = _html_with_jsonld(posting)
+        resp = MagicMock(spec=requests.Response)
+        resp.text = html
+        resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+
+        with patch("requests.get", return_value=resp):
+            jobs = [{"company": "X", "role": "SRE", "url": "https://example.com/1"}]
+            sj.enrich_job_details(jobs, {})
+        assert jobs[0]["description_text"] == "Stack: K8s, Go"
+
+
+# ── enrich_notes ────────────────────────────────────────────────────────────
+
+
+class TestEnrichNotes:
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("subprocess.run")
+    def test_populates_notes_with_description(self, mock_run, _which):
+        mock_run.return_value = MagicMock(returncode=0, stdout="K8s, Go, remote US-only, no red flags\n")
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
+                 "description_text": "Build K8s platform using Go"}]
+        sj.enrich_notes(jobs, None)
+        assert jobs[0]["notes"] == "K8s, Go, remote US-only, no red flags"
+        # Prompt should include description text
+        prompt_arg = mock_run.call_args[0][0][2]
+        assert "Build K8s platform using Go" in prompt_arg
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("subprocess.run")
+    def test_populates_notes_without_description(self, mock_run, _which):
+        mock_run.return_value = MagicMock(returncode=0, stdout="Infra platform, likely K8s/AWS\n")
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
+                 "product": "cloud IDE"}]
+        sj.enrich_notes(jobs, None)
+        assert jobs[0]["notes"] == "Infra platform, likely K8s/AWS"
+        prompt_arg = mock_run.call_args[0][0][2]
+        assert "(cloud IDE)" in prompt_arg
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("subprocess.run")
+    def test_skips_existing_notes(self, mock_run, _which):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
+                 "notes": "already filled"}]
+        sj.enrich_notes(jobs, None)
+        mock_run.assert_not_called()
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("subprocess.run")
+    def test_budget_cap(self, mock_run, _which):
+        mock_run.return_value = MagicMock(returncode=0, stdout="summary\n")
+        jobs = [{"company": f"Co{i}", "role": "SRE", "location": "Remote"} for i in range(5)]
+        sj.enrich_notes(jobs, {"job_search": {"scraper": {"max_enrich_notes": 2}}})
+        assert mock_run.call_count == 2
+
+    @patch("shutil.which", return_value=None)
+    def test_skips_when_no_claude(self, _which):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
+        sj.enrich_notes(jobs, None)
+        assert "notes" not in jobs[0]
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    def test_disabled_via_config(self, _which):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
+        sj.enrich_notes(jobs, {"job_search": {"scraper": {"enrich_notes": False}}})
+        assert "notes" not in jobs[0]
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=15))
+    def test_timeout_handled(self, _run, _which):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
+        sj.enrich_notes(jobs, None)
+        assert "notes" not in jobs[0]
+
+
+class TestAppendJobsNotes:
+    def test_notes_written_to_csv(self, empty_csv):
+        from fixtures import CSV_HEADER
+        import csv as _csv
+
+        jobs = [{
+            "company": "Acme", "role": "SRE", "url": "https://x.com/1",
+            "source": "HN", "notes": "K8s, Go, remote US-only",
+        }]
+        sj.append_jobs(empty_csv, jobs, CSV_HEADER)
+        with open(empty_csv) as f:
+            rows = list(_csv.reader(f))
+        notes_idx = CSV_HEADER.index("Notes")
+        assert rows[1][notes_idx] == "K8s, Go, remote US-only"
 
 
 class TestAppendJobsFitGDRating:

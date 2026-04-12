@@ -319,6 +319,72 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
         calls_made += 1
 
 
+def enrich_notes(jobs: list[dict], config: dict | None = None) -> None:
+    """Populate Notes in-place with a one-line summary via Claude CLI.
+
+    Summarizes tech stack, remote policy, and red flags. Uses description_text
+    from the detail-page parser when available; falls back to a role-only prompt.
+    """
+    if shutil.which("claude") is None:
+        log.debug("[enrich-notes] claude CLI not found, skipping")
+        return
+
+    cfg = scraper_cfg(config) if config else {}
+    if not cfg.get("enrich_notes", True):
+        log.debug("[enrich-notes] disabled via config")
+        return
+
+    budget = int(cfg.get("max_enrich_notes", 10))
+
+    calls_made = 0
+    for job in jobs:
+        if job.get("notes"):
+            continue
+        if calls_made >= budget:
+            remaining = sum(1 for j in jobs if not j.get("notes"))
+            log.warning("[enrich-notes] budget reached (%d), skipping %d jobs", budget, remaining)
+            break
+
+        role = job.get("role", "unknown")
+        company = job.get("company", "unknown")
+        location = job.get("location", "unknown")
+        product = job.get("product", "")
+        desc = job.get("description_text", "")
+
+        if desc:
+            # Truncate to ~500 words
+            words = desc.split()
+            if len(words) > 500:
+                desc = " ".join(words[:500]) + " ..."
+            prompt = (
+                "Summarize this job in ONE line (max 25 words). Include: key "
+                "tech stack, remote policy (e.g. 'Remote US-only', 'Hybrid "
+                "Vancouver', 'Remote Canada OK'), red flags. No preamble.\n\n"
+                f"Job: {role} at {company}, {location}\n"
+                f"Description: {desc}"
+            )
+        else:
+            prompt = (
+                f"Summarize what a {role} at {company}"
+                + (f" ({product})" if product else "")
+                + f" in {location} likely involves in ONE line (max 25 words). "
+                "Include tech stack and remote policy if known. No preamble."
+            )
+
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                job["notes"] = result.stdout.strip().splitlines()[0].strip()
+        except subprocess.TimeoutExpired:
+            log.warning("[enrich-notes] %s: claude CLI timed out after 15s", company)
+        except OSError as exc:
+            log.debug("[enrich-notes] %s failed: %s", company, exc)
+        calls_made += 1
+
+
 # ── Job detail enrichment ────────────────────────────────────────────────────
 
 # Currency code → display prefix. Anything not listed falls through to the
@@ -457,6 +523,8 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
             enriched_count += 1
         if details.get("posted_date") and not job.get("posted_date"):
             job["posted_date"] = details["posted_date"]
+        if details.get("description_text") and not job.get("description_text"):
+            job["description_text"] = details["description_text"]
 
     log.info(
         "[detail] fetched %d pages, enriched %d of %d jobs",
@@ -538,15 +606,24 @@ def parse_linkedin_html(html: str) -> dict:
 
     # compensation__salary is LinkedIn's stable class for the disclosed-range div.
     # Similar-jobs sidebars use .salary-info instead, so this class is precise.
-    salary_div = soup.find("div", class_="compensation__salary")
-    if salary_div is None:
-        return {}
+    out = {}
 
-    raw = salary_div.get_text(strip=True)
-    comp = _clean_linkedin_comp(raw)
-    if not comp:
-        return {}
-    return {"comp": comp}
+    # Job description text for downstream Notes enrichment.
+    desc_div = (
+        soup.find("div", class_="show-more-less-html__markup")
+        or soup.find("div", class_="description__text")
+    )
+    if desc_div:
+        out["description_text"] = desc_div.get_text(" ", strip=True)
+
+    salary_div = soup.find("div", class_="compensation__salary")
+    if salary_div is not None:
+        raw = salary_div.get_text(strip=True)
+        comp = _clean_linkedin_comp(raw)
+        if comp:
+            out["comp"] = comp
+
+    return out
 
 
 def parse_greenhouse_html(html: str) -> dict:
@@ -564,6 +641,16 @@ def parse_greenhouse_html(html: str) -> dict:
     except Exception:
         return {}
 
+    out = {}
+
+    # Job description text for downstream Notes enrichment.
+    desc_div = (
+        soup.find("div", id="content")
+        or soup.find("div", class_="job-description")
+    )
+    if desc_div:
+        out["description_text"] = desc_div.get_text(" ", strip=True)
+
     text = soup.get_text(" ", strip=True)
     m = re.search(
         r"Annual Salary:\s*"
@@ -575,15 +662,12 @@ def parse_greenhouse_html(html: str) -> dict:
         r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?",
         text,
     )
-    if not m:
-        return {}
-    currency_suffix = f" {m['cur']}" if m["cur"] else ""
-    # Reuse the second-half prefix when present so cross-prefix ranges
-    # render correctly; otherwise repeat the first half's prefix.
-    max_prefix = m["p2"] or m["p"]
-    return {
-        "comp": f"{m['p']}{m['min']}\u2013{max_prefix}{m['max']}/yr{currency_suffix}".strip()
-    }
+    if m:
+        currency_suffix = f" {m['cur']}" if m["cur"] else ""
+        max_prefix = m["p2"] or m["p"]
+        out["comp"] = f"{m['p']}{m['min']}\u2013{max_prefix}{m['max']}/yr{currency_suffix}".strip()
+
+    return out
 
 
 def _parse_detail_page(html: str, url: str) -> dict:
@@ -668,6 +752,12 @@ def parse_jsonld_jobposting(html: str) -> dict:
         out["employment_type"] = employment
     elif isinstance(employment, list) and employment:
         out["employment_type"] = str(employment[0])
+
+    desc_html = posting.get("description", "")
+    if desc_html:
+        out["description_text"] = BeautifulSoup(
+            desc_html, "html.parser"
+        ).get_text(" ", strip=True)
 
     return out
 
@@ -770,6 +860,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["Link"] = job.get("url", "")
                 row["Fit"] = job.get("fit", "")
                 row["GD Rating"] = job.get("gd_rating", "")
+                row["Notes"] = job.get("notes", "")
                 writer.writerow(row)
                 written += 1
     except OSError as exc:
@@ -1811,6 +1902,7 @@ def main() -> None:  # pragma: no cover
     enrich_job_details(new_jobs, config)
     enrich_company_descriptions(new_jobs, config)
     enrich_fit(new_jobs, config)
+    enrich_notes(new_jobs, config)
 
     if args.dry_run:
         for j in new_jobs:
