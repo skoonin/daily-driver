@@ -104,6 +104,7 @@ job_search:
       - id: apple
         name: Apple
         type: playwright
+        carreers_url: "https://jobs.apple.com/en-us/search={role}"
         enabled: true
   scraper:
     enabled: true

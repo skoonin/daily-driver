@@ -494,3 +494,144 @@ class TestEnrichCompanyDescriptionsBudget:
                 sj.enrich_company_descriptions(jobs, config)
 
         assert mock_run.call_count == 2
+
+    def test_populates_gd_rating_when_enabled(self):
+        jobs = [{"company": "Stripe", "role": "SRE", "url": "https://x.com/1"}]
+        config = {"job_search": {"scraper": {"enrich_gd_rating": True}}}
+
+        def _fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "Online payment processing infrastructure.\n4.2"
+            return result
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=_fake_run):
+                sj.enrich_company_descriptions(jobs, config)
+
+        assert jobs[0]["product"] == "Online payment processing infrastructure."
+        assert jobs[0]["gd_rating"] == "4.2"
+
+    def test_gd_rating_unknown_accepted(self):
+        jobs = [{"company": "Stealth", "role": "SRE", "url": "https://x.com/1"}]
+        config = {"job_search": {"scraper": {}}}
+
+        def _fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "Pre-launch startup.\nunknown"
+            return result
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=_fake_run):
+                sj.enrich_company_descriptions(jobs, config)
+
+        assert jobs[0]["gd_rating"] == "unknown"
+
+    def test_gd_rating_skipped_when_disabled(self):
+        jobs = [{"company": "Acme", "role": "SRE", "url": "https://x.com/1"}]
+        config = {"job_search": {"scraper": {"enrich_gd_rating": False}}}
+
+        def _fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = "Makes widgets."
+            return result
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=_fake_run):
+                sj.enrich_company_descriptions(jobs, config)
+
+        assert jobs[0]["product"] == "Makes widgets."
+        assert not jobs[0].get("gd_rating")
+
+
+# ── enrich_fit ────────────────────────────────────────────────────────────────
+
+
+class TestEnrichFit:
+    def _run_with_mock(self, jobs, config=None, stdout="7"):
+        if config is None:
+            config = {"job_search": {"scraper": {}}, "output_dir": "/tmp"}
+
+        def _fake_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = stdout
+            return result
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=_fake_run) as mock_run:
+                with patch("scrape_jobs.resolve_output_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(**{"read_text.return_value": "| 1 - Ideal | Vancouver, BC |"})})):
+                    sj.enrich_fit(jobs, config)
+        return mock_run
+
+    def test_populates_fit_for_job(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Vancouver", "url": "https://x.com/1"}]
+        self._run_with_mock(jobs)
+        assert jobs[0]["fit"] == "7/10"
+
+    def test_parses_score_with_slash(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
+        self._run_with_mock(jobs, stdout="8/10")
+        assert jobs[0]["fit"] == "8/10"
+
+    def test_budget_limits_calls(self):
+        jobs = [
+            {"company": f"Co{i}", "role": "SRE", "location": "Remote", "url": f"https://x.com/{i}"}
+            for i in range(5)
+        ]
+        config = {"job_search": {"scraper": {"max_enrich_fit": 2}}, "output_dir": "/tmp"}
+        mock_run = self._run_with_mock(jobs, config)
+        assert mock_run.call_count == 2
+
+    def test_skips_jobs_with_existing_fit(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1", "fit": "9/10"}]
+        mock_run = self._run_with_mock(jobs)
+        assert mock_run.call_count == 0
+
+    def test_disabled_via_config(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
+        config = {"job_search": {"scraper": {"enrich_fit": False}}, "output_dir": "/tmp"}
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run") as mock_run:
+                sj.enrich_fit(jobs, config)
+        assert mock_run.call_count == 0
+
+    def test_claude_not_on_path(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
+        with patch("scrape_jobs.shutil.which", return_value=None):
+            with patch("scrape_jobs.subprocess.run") as mock_run:
+                sj.enrich_fit(jobs, {"job_search": {"scraper": {}}, "output_dir": "/tmp"})
+        assert mock_run.call_count == 0
+        assert not jobs[0].get("fit")
+
+    def test_timeout_leaves_fit_absent(self):
+        import subprocess
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
+        config = {"job_search": {"scraper": {}}, "output_dir": "/tmp"}
+
+        with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
+            with patch("scrape_jobs.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 15)):
+                with patch("scrape_jobs.resolve_output_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(**{"read_text.return_value": ""})})):
+                    sj.enrich_fit(jobs, config)
+        assert not jobs[0].get("fit")
+
+
+class TestAppendJobsFitGDRating:
+    def test_fit_and_gd_rating_write_to_csv(self, empty_csv):
+        from fixtures import CSV_HEADER
+        import csv as _csv
+
+        jobs = [{
+            "company": "Acme", "role": "SRE", "url": "https://x.com/1",
+            "source": "HN", "fit": "8/10", "gd_rating": "4.1",
+        }]
+        sj.append_jobs(empty_csv, jobs, CSV_HEADER)
+        with open(empty_csv) as f:
+            rows = list(_csv.reader(f))
+        fit_idx = CSV_HEADER.index("Fit")
+        gd_idx = CSV_HEADER.index("GD Rating")
+        assert rows[1][fit_idx] == "8/10"
+        assert rows[1][gd_idx] == "4.1"

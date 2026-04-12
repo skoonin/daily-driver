@@ -155,7 +155,7 @@ def dedup_key(company: str, role: str) -> str:
 # ── Company enrichment ───────────────────────────────────────────────────────
 
 def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) -> None:
-    """Populate Product/Purpose in-place for jobs that lack it, using the Claude CLI.
+    """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
     Silently skips enrichment if the `claude` CLI is not on PATH.
@@ -169,6 +169,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
 
     cfg = scraper_cfg(config) if config else {}
     budget = int(cfg.get("max_enrich_companies", 10))
+    include_gd = cfg.get("enrich_gd_rating", True)
 
     unique_companies = {
         job.get("company", "").strip()
@@ -177,7 +178,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
     }
     log.info("[enrich] enriching up to %d companies (%d unique)...", budget, len(unique_companies))
 
-    cache: dict[str, str] = {}
+    cache: dict[str, dict[str, str]] = {}
     calls_made = 0
 
     for job in jobs:
@@ -191,10 +192,17 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
                 remaining = len([j for j in jobs if not j.get("product") and j.get("company", "").strip() and j.get("company", "").strip() not in cache])
                 log.warning("[enrich] budget reached, skipping %d companies", remaining)
                 break
-            prompt = (
-                f"In one sentence (max 12 words), what does {company} build or do? "
-                "Answer only, no preamble."
-            )
+            if include_gd:
+                prompt = (
+                    f"Answer in exactly 2 lines, no preamble:\n"
+                    f"Line 1: What does {company} build or do? (max 12 words)\n"
+                    f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
+                )
+            else:
+                prompt = (
+                    f"In one sentence (max 12 words), what does {company} build or do? "
+                    "Answer only, no preamble."
+                )
             try:
                 result = subprocess.run(
                     ["claude", "-p", prompt],
@@ -202,18 +210,113 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
                 )
                 if result.returncode == 0:
                     lines = [l for l in result.stdout.splitlines() if l.strip()]
-                    cache[company] = lines[0] if lines else ""
+                    product = lines[0] if lines else ""
+                    gd_rating = ""
+                    if include_gd and len(lines) >= 2:
+                        raw = lines[1].strip().lower()
+                        # Accept decimal ratings or "unknown"
+                        if raw == "unknown":
+                            gd_rating = "unknown"
+                        else:
+                            try:
+                                gd_rating = str(round(float(raw), 1))
+                            except ValueError:
+                                gd_rating = raw
+                    cache[company] = {"product": product, "gd_rating": gd_rating}
                 else:
-                    cache[company] = ""
+                    cache[company] = {"product": "", "gd_rating": ""}
             except subprocess.TimeoutExpired:
                 log.warning("[enrich] %s: claude CLI timed out after 15s", company)
-                cache[company] = ""
+                cache[company] = {"product": "", "gd_rating": ""}
             except OSError as exc:
                 log.debug("[enrich] %s lookup failed: %s", company, exc)
-                cache[company] = ""
+                cache[company] = {"product": "", "gd_rating": ""}
             calls_made += 1
-        if cache.get(company):
-            job["product"] = cache[company]
+        cached = cache.get(company, {})
+        if cached.get("product"):
+            job["product"] = cached["product"]
+        if cached.get("gd_rating") and not job.get("gd_rating"):
+            job["gd_rating"] = cached["gd_rating"]
+
+
+def _load_location_tiers(config: dict) -> str:
+    """Read location-preferences.md and return a compressed tier summary."""
+    loc_path = resolve_output_dir(config) / "location-preferences.md"
+    try:
+        text = loc_path.read_text()
+    except FileNotFoundError:
+        return "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
+    tiers: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("|") and "Tier" in line and "---" not in line:
+            # Extract "Tier N" and location from the table row
+            parts = [c.strip() for c in line.split("|") if c.strip()]
+            if len(parts) >= 2:
+                tiers.append(f"{parts[0]}: {parts[1]}")
+    return "; ".join(tiers) if tiers else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
+
+
+def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
+    """Populate Fit score in-place for new jobs, using the Claude CLI.
+
+    One `claude -p` call per job. Budget-capped via max_enrich_fit (default 5).
+    Reads location-preferences.md once from output_dir to build the prompt.
+    """
+    if shutil.which("claude") is None:
+        log.debug("[enrich-fit] claude CLI not found, skipping fit scoring")
+        return
+
+    cfg = scraper_cfg(config) if config else {}
+    if not cfg.get("enrich_fit", True):
+        log.debug("[enrich-fit] disabled via config")
+        return
+
+    budget = int(cfg.get("max_enrich_fit", 5))
+    tiers = _load_location_tiers(config) if config else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
+
+    calls_made = 0
+    for job in jobs:
+        if job.get("fit"):
+            continue
+        if calls_made >= budget:
+            remaining = sum(1 for j in jobs if not j.get("fit"))
+            log.warning("[enrich-fit] budget reached (%d), skipping %d jobs", budget, remaining)
+            break
+
+        role = job.get("role", "unknown")
+        company = job.get("company", "unknown")
+        location = job.get("location", "unknown")
+        product = job.get("product", "")
+
+        prompt = (
+            f"Rate this job's fit from 1-10 for an SRE/Platform/Infra engineer "
+            f"based in Vancouver BC. Reply with ONLY the number, e.g. '7'. "
+            f"No preamble.\n\n"
+            f"Location tiers: {tiers}\n"
+            f"Job: {role} at {company}, {location}\n"
+        )
+        if product:
+            prompt += f"Company: {product}\n"
+
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                raw = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ""
+                # Accept "7", "7/10", or just extract the leading digit(s)
+                m = re.match(r"(\d+)", raw)
+                if m:
+                    score = min(int(m.group(1)), 10)
+                    job["fit"] = f"{score}/10"
+                else:
+                    log.debug("[enrich-fit] unparseable response for %s: %r", company, raw)
+        except subprocess.TimeoutExpired:
+            log.warning("[enrich-fit] %s: claude CLI timed out after 15s", company)
+        except OSError as exc:
+            log.debug("[enrich-fit] %s scoring failed: %s", company, exc)
+        calls_made += 1
 
 
 # ── Job detail enrichment ────────────────────────────────────────────────────
@@ -665,6 +768,8 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["Date Found"] = job.get("date_found", date.today().isoformat())
                 row["Status"] = "found"
                 row["Link"] = job.get("url", "")
+                row["Fit"] = job.get("fit", "")
+                row["GD Rating"] = job.get("gd_rating", "")
                 writer.writerow(row)
                 written += 1
     except OSError as exc:
@@ -1704,7 +1809,8 @@ def main() -> None:  # pragma: no cover
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
     enrich_job_details(new_jobs, config)
-    enrich_company_descriptions(new_jobs)
+    enrich_company_descriptions(new_jobs, config)
+    enrich_fit(new_jobs, config)
 
     if args.dry_run:
         for j in new_jobs:

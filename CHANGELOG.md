@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Claude CLI enrichment for GD Rating and Fit
+- `scrape-jobs.py`: `enrich_company_descriptions` now returns Glassdoor rating alongside Product/Purpose in a single two-line prompt. Ratings stored as decimal (e.g. "4.2") or "unknown". Controlled by `enrich_gd_rating` config flag (default true).
+- `scrape-jobs.py`: New `enrich_fit(jobs, config)` scores each job 1-10 for fit using the Claude CLI. Reads `location-preferences.md` from output_dir once per run to build the prompt. Budget-capped via `max_enrich_fit` (default 5 jobs/run). Scores stored as "N/10" format matching existing manual entries.
+- `append_jobs` now writes `Fit` and `GD Rating` columns from job dicts (previously always blank).
+- Fixed missing `config` argument in `main()` call to `enrich_company_descriptions`.
+- 11 new tests in `tests/test_enrich.py` covering GD Rating (enabled/disabled/unknown), Fit (scoring/budget/skip/timeout/disabled/no-claude), and CSV column write-through.
+
 ### Fixed -- IC-only filter: reject manager/director/junior/intern titles
 - `config.yaml`: Added five exclusion patterns to `job_search.roles`: `!*Manager*`, `!*Director*`, `!*Head of*`, `!Junior *`, `!*Internship*`. Closes the Tier 2b gap where titles like "Junior SRE" and "Senior SRE Manager" previously passed the standalone keyword match. Patterns deliberately avoid `!*Intern*` because `re.search` semantics would false-match "International" and "Internal" (both of which appear in legitimate senior IC titles).
 - `scrape-jobs.py`: Updated the Tier 2b rationale comment at `matches_roles` to reflect that junior/manager filtering is now delegated to config exclusions rather than claiming the standalone set is "precise enough" on its own.
