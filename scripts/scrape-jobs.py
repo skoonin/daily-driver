@@ -3,15 +3,17 @@
 Job scraper: scrapes enabled sources and appends new rows to jobs.csv.
 Safe to re-run — deduplicates by URL and by (company, role) against existing rows.
 
-Sources:
-  remoteok          — Playwright, public listings
-  weworkremotely    — Playwright, public listings
-  hn_who_is_hiring  — requests + BeautifulSoup (static HTML, no JS required)
-  anthropic         — Playwright, careers page
+Sources (API — no browser required):
+  remoteok          — requests, public JSON API (/api)
+  weworkremotely    — requests, public RSS feeds (/categories/*.rss)
+  hn_who_is_hiring  — requests + BeautifulSoup (static HTML)
+  greenhouse        — requests, public JSON API (boards-api.greenhouse.io)
+
+Sources (Playwright — browser required):
   linkedin          — Playwright, public search (non-headless, best-effort)
   indeed            — Playwright, public search (non-headless, best-effort)
   wellfound         — Playwright, public search (non-headless, best-effort)
-  apple             — Playwright, careers search page
+  apple             — Playwright, search input + API response intercept
 """
 
 import argparse
@@ -30,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from xml.etree import ElementTree as ET
 import shutil
 
 import requests
@@ -128,15 +131,6 @@ def country_params(country: str) -> dict[str, str]:
         return {}
     return params
 
-
-def _apple_job_id(href: str) -> str:
-    """Extract the numeric job id from an Apple careers URL.
-
-    Same role appears at /en-us/details/<id>/... and /en-ca/details/<id>/...
-    with identical IDs. Falls back to the full href for unknown URL shapes.
-    """
-    m = re.search(r"/details/(\d+)", href)
-    return m.group(1) if m else href
 
 
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
@@ -982,6 +976,33 @@ def _search_terms(config: dict) -> list[str]:
     return _compress_search_terms(roles_list(config))
 
 
+# ── Shared HTTP helpers ───────────────────────────────────────────────────────
+
+
+def _http_session(config: dict) -> requests.Session:
+    """Build a reusable requests.Session from scraper config."""
+    session = requests.Session()
+    session.headers["User-Agent"] = user_agent(config)
+    return session
+
+
+def _api_get(
+    session: requests.Session,
+    url: str,
+    config: dict,
+    *,
+    label: str = "",
+) -> requests.Response | None:
+    """GET a URL, log + return None on failure instead of raising."""
+    try:
+        resp = session.get(url, timeout=timeout_seconds(config))
+        resp.raise_for_status()
+        return resp
+    except requests.RequestException as exc:
+        log.warning("[%s] request failed for %s: %s", label, url, exc)
+        return None
+
+
 # ── Playwright helpers ────────────────────────────────────────────────────────
 
 def _has_playwright() -> bool:
@@ -1030,134 +1051,102 @@ def _playwright_browser(config: dict):
 # ── Scrapers ──────────────────────────────────────────────────────────────────
 
 def scrape_remoteok(config: dict) -> list[dict]:
-    """Playwright scraper for remoteok.com.
+    """Fetch jobs from RemoteOK's public JSON API.
 
-    Uses slug-encoded search URLs per term. Job rows are in a <table> with
-    tr.job elements carrying data-id attributes.
+    GET https://remoteok.com/api returns all current listings as JSON.
+    No auth or browser required. We filter client-side with matches_roles().
     """
     roles = roles_list(config)
-    terms = _search_terms(config)
-    timeout_ms = timeout_seconds(config) * 1000
+    session = _http_session(config)
     jobs: list[dict] = []
-    seen_urls: set[str] = set()
+    seen_ids: set[str] = set()
 
-    try:
-        with _playwright_browser(config) as page:
-            for term in terms:
-                slug = term.lower().replace("/", "-").replace(" ", "-")
-                url = f"https://remoteok.com/remote-{slug}-jobs"
-                try:
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)
-                except Exception as exc:
-                    log.warning("[remoteok] navigation failed for %r: %s", term, exc)
-                    continue
+    resp = _api_get(session, "https://remoteok.com/api", config, label="remoteok")
+    if not resp:
+        return jobs
 
-                rows = page.query_selector_all("tr.job")
-                for row in rows:
-                    try:
-                        title_el = row.query_selector("h2[itemprop='title']")
-                        company_el = row.query_selector("h3[itemprop='name']")
-                        if not title_el:
-                            continue
-                        role = title_el.inner_text().strip()
-                        company = company_el.inner_text().strip() if company_el else ""
-                        if not matches_roles(role, roles):
-                            continue
-                        job_id = row.get_attribute("data-id") or row.get_attribute("id") or ""
-                        link = f"https://remoteok.com/remote-jobs/{job_id}" if job_id else ""
-                        if link in seen_urls:
-                            continue
-                        if link:
-                            seen_urls.add(link)
-                        loc_el = row.query_selector(".location")
-                        location = loc_el.inner_text().strip() if loc_el else "Remote"
-                        jobs.append({
-                            "company": company,
-                            "role": role,
-                            "location": location or "Remote",
-                            "url": link,
-                            "source": "RemoteOK",
-                            "date_found": date.today().isoformat(),
-                        })
-                    except Exception as exc:
-                        log.debug("[remoteok] parse error on row: %s", exc)
-                        continue
-    except Exception as exc:
-        log.warning("[remoteok] browser session error: %s", exc)
+    for item in resp.json():
+        if "position" not in item:
+            continue
+        role = item["position"]
+        if not matches_roles(role, roles):
+            continue
+        job_id = str(item.get("id", ""))
+        if job_id in seen_ids:
+            continue
+        if job_id:
+            seen_ids.add(job_id)
+        jobs.append({
+            "company": item.get("company", ""),
+            "role": role,
+            "location": item.get("location", "") or "Remote",
+            "url": item.get("url", ""),
+            "source": "RemoteOK",
+            "date_found": date.today().isoformat(),
+        })
 
     log.info("[remoteok] %d jobs matched", len(jobs))
     return jobs
 
 
-def scrape_weworkremotely(config: dict) -> list[dict]:
-    """Playwright scraper for weworkremotely.com search results.
+_WWR_RSS_CATEGORIES = [
+    "devops-sysadmin",
+    "back-end-programming",
+    "full-stack-programming",
+]
 
-    Navigates to the search URL per term. Job items are in section.jobs > article > ul > li.
+
+def scrape_weworkremotely(config: dict) -> list[dict]:
+    """Fetch jobs from WeWorkRemotely's public RSS feeds.
+
+    WWR publishes per-category RSS at
+    /categories/remote-{category}-jobs.rss. We pull the categories most
+    likely to contain SRE/infra roles and filter with matches_roles().
+    No auth or browser required.
     """
     roles = roles_list(config)
-    terms = _search_terms(config)
-    timeout_ms = timeout_seconds(config) * 1000
+    session = _http_session(config)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
-    base_url = "https://weworkremotely.com"
 
-    try:
-        with _playwright_browser(config) as page:
-            for term in terms:
-                encoded = urllib.parse.quote_plus(term)
-                url = f"{base_url}/remote-jobs/search?term={encoded}"
-                try:
-                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(1500)
-                except Exception as exc:
-                    log.warning("[weworkremotely] navigation failed for %r: %s", term, exc)
-                    continue
+    for category in _WWR_RSS_CATEGORIES:
+        url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
+        resp = _api_get(session, url, config, label="weworkremotely")
+        if not resp:
+            continue
 
-                items = page.query_selector_all("section.jobs article ul li")
-                if not items:
-                    items = page.query_selector_all("ul.jobs li")
+        try:
+            root = ET.fromstring(resp.content)
+        except ET.ParseError as exc:
+            log.warning("[weworkremotely] RSS parse failed for %s: %s", category, exc)
+            continue
 
-                for item in items:
-                    try:
-                        # Skip category header items
-                        if item.query_selector(".category"):
-                            continue
-                        title_el = (
-                            item.query_selector(".title .position")
-                            or item.query_selector("span.title")
-                            or item.query_selector("h4")
-                        )
-                        company_el = (
-                            item.query_selector(".company span")
-                            or item.query_selector(".company")
-                        )
-                        link_el = item.query_selector("a[href*='/remote-jobs/']")
-                        if not title_el:
-                            continue
-                        role = title_el.inner_text().strip()
-                        company = company_el.inner_text().strip() if company_el else ""
-                        if not matches_roles(role, roles):
-                            continue
-                        href = link_el.get_attribute("href") if link_el else ""
-                        link = f"{base_url}{href}" if href and not href.startswith("http") else href
-                        if link in seen_urls:
-                            continue
-                        if link:
-                            seen_urls.add(link)
-                        jobs.append({
-                            "company": company,
-                            "role": role,
-                            "location": "Remote",
-                            "url": link,
-                            "source": "We Work Remotely",
-                            "date_found": date.today().isoformat(),
-                        })
-                    except Exception as exc:
-                        log.debug("[weworkremotely] parse error on item: %s", exc)
-                        continue
-    except Exception as exc:
-        log.warning("[weworkremotely] browser session error: %s", exc)
+        for item in root.findall(".//item"):
+            raw_title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            region = (item.findtext("region") or "Remote").strip()
+
+            # Title format: "Company: Role Title"
+            if ": " in raw_title:
+                company, role = raw_title.split(": ", 1)
+            else:
+                company, role = "", raw_title
+
+            if not role or not matches_roles(role, roles):
+                continue
+            if link in seen_urls:
+                continue
+            if link:
+                seen_urls.add(link)
+
+            jobs.append({
+                "company": company,
+                "role": role,
+                "location": region,
+                "url": link,
+                "source": "We Work Remotely",
+                "date_found": date.today().isoformat(),
+            })
 
     log.info("[weworkremotely] %d jobs matched", len(jobs))
     return jobs
@@ -1172,19 +1161,16 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     """
     max_posts = scraper_cfg(config).get("hn_max_posts", 100)
     roles = roles_list(config)
-    headers = {"User-Agent": user_agent(config)}
-    timeout = timeout_seconds(config)
+    session = _http_session(config)
     current_month_str = date.today().strftime("%B %Y")
 
-    try:
-        index_resp = requests.get(
-            "https://news.ycombinator.com/submitted?id=whoishiring",
-            headers=headers,
-            timeout=timeout,
-        )
-        index_resp.raise_for_status()
-    except requests.RequestException as exc:
-        log.warning("[hn_who_is_hiring] index fetch failed: %s", exc)
+    index_resp = _api_get(
+        session,
+        "https://news.ycombinator.com/submitted?id=whoishiring",
+        config,
+        label="hn_who_is_hiring",
+    )
+    if not index_resp:
         return []
 
     index_soup = BeautifulSoup(index_resp.text, "html.parser")
@@ -1204,11 +1190,8 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
         log.warning("[hn_who_is_hiring] could not find thread for %s", current_month_str)
         return []
 
-    try:
-        thread_resp = requests.get(thread_url, headers=headers, timeout=timeout)
-        thread_resp.raise_for_status()
-    except requests.RequestException as exc:
-        log.warning("[hn_who_is_hiring] thread fetch failed: %s", exc)
+    thread_resp = _api_get(session, thread_url, config, label="hn_who_is_hiring")
+    if not thread_resp:
         return []
 
     thread_soup = BeautifulSoup(thread_resp.text, "html.parser")
@@ -1282,21 +1265,16 @@ def scrape_greenhouse(config: dict) -> list[dict]:
     which returns all jobs with full HTML descriptions in a single request.
     """
     roles = roles_list(config)
-    cfg = scraper_cfg(config)
-    boards = cfg.get("greenhouse_boards", ["anthropic"])
-    timeout_s = timeout_seconds(config)
-    headers = {"User-Agent": cfg.get("user_agent", "")}
+    boards = scraper_cfg(config).get("greenhouse_boards", ["anthropic"])
+    session = _http_session(config)
     jobs: list[dict] = []
 
     for board in boards:
         api_url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
-        try:
-            resp = requests.get(api_url, headers=headers, timeout=timeout_s)
-            resp.raise_for_status()
-            data = resp.json()
-        except requests.RequestException as exc:
-            log.warning("[greenhouse] %s: API request failed: %s", board, exc)
+        resp = _api_get(session, api_url, config, label=f"greenhouse/{board}")
+        if not resp:
             continue
+        data = resp.json()
 
         board_jobs = data.get("jobs", [])
         company_name = board.replace("-", " ").title()
@@ -1599,16 +1577,20 @@ def scrape_wellfound(config: dict) -> list[dict]:
 
 
 def scrape_apple(config: dict) -> list[dict]:
-    """Playwright scraper for Apple's careers search page (React SPA).
+    """Playwright scraper for Apple's careers search via internal JSON API.
 
-    Iterates each configured country's locale. Job rows render after React
-    hydrates; title links follow the pattern /{locale}/details/{id}.
+    Apple's jobs site is a React SPA. Server-rendered HTML shows generic
+    results; the real search only fires when client JS submits a POST to
+    /api/v1/search. We drive the search input with Playwright and intercept
+    the API response to get structured JSON (title, location, team, date).
+
+    Iterates each configured country's locale x search term.
     """
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
     jobs: list[dict] = []
-    seen_ids: set[str] = set()
+    seen_positions: set[str] = set()
     base_url = "https://jobs.apple.com"
 
     try:
@@ -1618,55 +1600,87 @@ def scrape_apple(config: dict) -> list[dict]:
                 if not params:
                     continue
                 locale = params["apple_locale"]
+
+                # Navigate once per locale; reuse the page for each term
+                url = f"{base_url}/{locale}/search"
+                try:
+                    page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+                    page.wait_for_timeout(1500)
+                except Exception as exc:
+                    log.warning("[apple] navigation failed for %s: %s", locale, exc)
+                    continue
+
                 for term in terms:
-                    encoded = urllib.parse.quote_plus(term)
-                    url = f"{base_url}/{locale}/search?search={encoded}&sort=newest"
+                    # Fresh list each iteration; closure captures the name, not
+                    # the value, so each _capture_response writes to its own list.
+                    api_results = []
+
+                    def _capture_response(response):
+                        if "jobs.apple.com/api/v1/search" in response.url:
+                            try:
+                                body = response.json()
+                                api_results.extend(
+                                    body.get("res", {}).get("searchResults", [])
+                                )
+                            except Exception as exc:
+                                log.debug("[apple] response parse failed: %s", exc)
+
+                    page.on("response", _capture_response)
                     try:
-                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                        page.wait_for_timeout(2000)
+                        search_input = page.query_selector(
+                            "input.search-typeahead-input"
+                        )
+                        if not search_input:
+                            log.warning("[apple] search input not found for %s", locale)
+                            break
+
+                        search_input.click()
+                        search_input.fill("")
+                        page.wait_for_timeout(200)
+                        search_input.fill(term)
+                        page.wait_for_timeout(500)
+                        search_input.press("Enter")
+                        page.wait_for_timeout(4000)
                     except Exception as exc:
-                        log.warning("[apple] navigation failed for %r (%s): %s", term, country, exc)
+                        log.warning(
+                            "[apple] search failed for %r (%s): %s", term, country, exc
+                        )
                         continue
+                    finally:
+                        page.remove_listener("response", _capture_response)
 
-                    rows = (
-                        page.query_selector_all("tbody.table-row-container tr")
-                        or page.query_selector_all("[role='row']")
-                    )
-
-                    for row in rows:
+                    for item in api_results:
                         try:
-                            link_el = row.query_selector("a[href*='/details/']")
-                            if not link_el:
+                            title = item.get("postingTitle", "")
+                            if not title or not matches_roles(title, roles):
                                 continue
-                            role = link_el.inner_text().strip()
-                            if not role or not matches_roles(role, roles):
+                            position_id = item.get("positionId", "") or item.get("id", "")
+                            if not position_id:
                                 continue
-                            href = link_el.get_attribute("href") or ""
-                            if href and not href.startswith("http"):
-                                href = f"{base_url}{href}"
-                            job_id = _apple_job_id(href)
-                            if job_id in seen_ids:
+                            if position_id in seen_positions:
                                 continue
-                            if job_id:
-                                seen_ids.add(job_id)
-                            cells = row.query_selector_all("td")
-                            location = ""
-                            for cell in cells[1:]:
-                                text = cell.inner_text().strip()
-                                if text and "apple" not in text.lower():
-                                    location = text
-                                    break
+                            seen_positions.add(position_id)
+                            locs = item.get("locations", [])
+                            location = locs[0].get("name", "Various") if locs else "Various"
+                            job_id = item.get("id", position_id)
+                            slug = item.get("transformedPostingTitle", "")
+                            detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
                             jobs.append({
                                 "company": "Apple",
-                                "role": role,
-                                "location": location or "Various",
-                                "url": href,
+                                "role": title,
+                                "location": location,
+                                "url": detail_url,
                                 "source": "Apple Careers",
                                 "date_found": date.today().isoformat(),
                             })
                         except Exception as exc:
-                            log.debug("[apple] parse error on row: %s", exc)
+                            log.debug("[apple] parse error on result: %s", exc)
                             continue
+
+                    log.debug(
+                        "[apple] %s/%s: %d API results, %d matched",
+                        locale, term, len(api_results), len(jobs),
+                    )
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 

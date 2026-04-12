@@ -1,6 +1,7 @@
-"""Tests for Playwright-based scrapers and run_all_scrapers() orchestrator."""
+"""Tests for scrapers and run_all_scrapers() orchestrator."""
 
 import copy
+import json
 import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
@@ -72,168 +73,165 @@ def _mock_row_el(text, href):
 
 # ── RemoteOK ──────────────────────────────────────────────────────────────────
 
-def _remoteok_row(role, company, job_id, location="Remote"):
-    """Build a mock tr.job row for the RemoteOK scraper."""
-    title_el = MagicMock(); title_el.inner_text.return_value = role
-    company_el = MagicMock(); company_el.inner_text.return_value = company
-    loc_el = MagicMock(); loc_el.inner_text.return_value = location
+def _remoteok_api_item(position, company, job_id, location="", url=""):
+    """Build a dict matching RemoteOK's /api JSON shape."""
+    return {
+        "id": str(job_id),
+        "position": position,
+        "company": company,
+        "location": location,
+        "url": url or f"https://remoteok.com/remote-jobs/{job_id}",
+        "tags": [],
+    }
 
-    row = MagicMock()
 
-    def _qs(selector):
-        if "title" in selector:
-            return title_el
-        if "name" in selector:
-            return company_el
-        if "location" in selector:
-            return loc_el
-        return None
-
-    row.query_selector.side_effect = _qs
-
-    def _get_attr(name):
-        if name in ("data-id", "id"):
-            return job_id
-        return None
-    row.get_attribute.side_effect = _get_attr
-    return row
+def _mock_response_json(data, status_code=200):
+    """Build a mock requests.Response that returns data from .json()."""
+    resp = MagicMock(spec=requests.Response)
+    resp.status_code = status_code
+    resp.json.return_value = data
+    resp.ok = status_code < 400
+    return resp
 
 
 class TestScrapeRemoteOK:
-    def _run(self, rows):
-        page = _mock_page(rows)
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+    def _run(self, api_items):
+        resp = _mock_response_json([{"legal": "..."}] + api_items)
+        with patch("scrape_jobs._api_get", return_value=resp):
             return sj.scrape_remoteok(SAMPLE_CONFIG)
 
     def test_returns_only_matching_jobs(self):
-        rows = [
-            _remoteok_row("Senior SRE", "Acme", "1"),
-            _remoteok_row("Frontend Developer", "Beta", "2"),
-            _remoteok_row("Staff Platform Engineer", "Gamma", "3"),
+        items = [
+            _remoteok_api_item("Senior SRE", "Acme", "1"),
+            _remoteok_api_item("Frontend Developer", "Beta", "2"),
+            _remoteok_api_item("Staff Platform Engineer", "Gamma", "3"),
         ]
-        jobs = self._run(rows)
+        jobs = self._run(items)
         titles = [j["role"] for j in jobs]
         assert "Senior SRE" in titles
         assert "Staff Platform Engineer" in titles
         assert "Frontend Developer" not in titles
 
-    def test_constructs_url_from_data_id(self):
-        rows = [_remoteok_row("SRE", "Co", "99999")]
-        jobs = self._run(rows)
+    def test_preserves_url_from_api(self):
+        items = [_remoteok_api_item("SRE", "Co", "99999")]
+        jobs = self._run(items)
         assert "99999" in jobs[0]["url"]
 
     def test_defaults_empty_location_to_remote(self):
-        rows = [_remoteok_row("SRE", "Co", "1", location="")]
-        jobs = self._run(rows)
+        items = [_remoteok_api_item("SRE", "Co", "1", location="")]
+        jobs = self._run(items)
         assert jobs[0]["location"] == "Remote"
 
     def test_source_label(self):
-        rows = [_remoteok_row("SRE", "Co", "1")]
-        jobs = self._run(rows)
+        items = [_remoteok_api_item("SRE", "Co", "1")]
+        jobs = self._run(items)
         assert jobs[0]["source"] == "RemoteOK"
 
-    def test_returns_empty_when_no_rows(self):
+    def test_returns_empty_when_no_items(self):
         jobs = self._run([])
         assert jobs == []
 
-    def test_deduplicates_same_url_within_run(self):
-        rows = [
-            _remoteok_row("SRE", "Acme", "42"),
-            _remoteok_row("SRE", "Acme", "42"),  # same id → same URL
+    def test_deduplicates_same_id_within_run(self):
+        items = [
+            _remoteok_api_item("SRE", "Acme", "42"),
+            _remoteok_api_item("SRE", "Acme", "42"),
         ]
-        jobs = self._run(rows)
+        jobs = self._run(items)
         assert len(jobs) == 1
 
-    def test_returns_empty_when_playwright_not_installed(self):
-        with patch("scrape_jobs._has_playwright", return_value=False):
+    def test_returns_empty_when_api_fails(self):
+        with patch("scrape_jobs._api_get", return_value=None):
             jobs = sj.scrape_remoteok(SAMPLE_CONFIG)
         assert jobs == []
 
 
 # ── WeWorkRemotely ────────────────────────────────────────────────────────────
 
-def _wwr_item(role, company, href, *, is_category=False):
-    """Build a mock li item for the WWR scraper."""
-    title_el = MagicMock(); title_el.inner_text.return_value = role
-    company_el = MagicMock(); company_el.inner_text.return_value = company
-    link_el = MagicMock(); link_el.get_attribute.return_value = href
+def _wwr_rss_xml(items):
+    """Build RSS XML bytes with <item> elements.
 
-    item = MagicMock()
+    Each item is a dict with keys: title, link, region (optional).
+    """
+    parts = ['<?xml version="1.0" encoding="UTF-8"?><rss><channel>']
+    for it in items:
+        parts.append("<item>")
+        parts.append(f"<title>{it['title']}</title>")
+        parts.append(f"<link>{it['link']}</link>")
+        if "region" in it:
+            parts.append(f"<region>{it['region']}</region>")
+        parts.append("</item>")
+    parts.append("</channel></rss>")
+    return "".join(parts).encode()
 
-    def _qs(selector):
-        if "category" in selector:
-            return MagicMock() if is_category else None
-        # Match various title selectors in order of preference
-        if ".position" in selector or "span.title" in selector or selector == "h4":
-            return title_el
-        if "company" in selector:
-            return company_el
-        if "remote-jobs" in selector:
-            return link_el
-        return None
 
-    item.query_selector.side_effect = _qs
-    return item
+def _mock_response_content(content_bytes, status_code=200):
+    """Build a mock requests.Response with .content for XML parsing."""
+    resp = MagicMock(spec=requests.Response)
+    resp.status_code = status_code
+    resp.content = content_bytes
+    resp.ok = status_code < 400
+    return resp
 
 
 class TestScrapeWeWorkRemotely:
-    def _run(self, items, second_page=None):
-        if second_page is not None:
-            page = _mock_page(items, second_page)
-        else:
-            page = _mock_page(items, [])  # second call (ul.jobs fallback) returns empty
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+    def _run(self, rss_items):
+        """Run scrape_weworkremotely with _api_get returning the same RSS for every category."""
+        resp = _mock_response_content(_wwr_rss_xml(rss_items))
+        with patch("scrape_jobs._api_get", return_value=resp):
             return sj.scrape_weworkremotely(SAMPLE_CONFIG)
 
     def test_returns_only_matching_jobs(self):
         items = [
-            _wwr_item("Senior SRE", "Acme", "/remote-jobs/1"),
-            _wwr_item("Junior Frontend Developer", "Beta", "/remote-jobs/2"),
+            {"title": "Acme: Senior SRE", "link": "https://weworkremotely.com/1"},
+            {"title": "Beta: Junior Frontend Developer", "link": "https://weworkremotely.com/2"},
         ]
         jobs = self._run(items)
-        assert len(jobs) == 1
-        assert jobs[0]["role"] == "Senior SRE"
+        titles = [j["role"] for j in jobs]
+        assert "Senior SRE" in titles
+        assert "Junior Frontend Developer" not in titles
 
     def test_extracts_company_and_role(self):
-        items = [_wwr_item("Senior SRE", "Acme", "/remote-jobs/1")]
+        items = [{"title": "Acme: Senior SRE", "link": "https://weworkremotely.com/1"}]
         jobs = self._run(items)
         assert jobs[0]["company"] == "Acme"
         assert jobs[0]["role"] == "Senior SRE"
 
-    def test_prepends_base_url_to_relative_href(self):
-        items = [_wwr_item("Senior SRE", "Acme", "/remote-jobs/42")]
+    def test_title_without_colon_uses_whole_as_role(self):
+        items = [{"title": "Senior SRE", "link": "https://weworkremotely.com/1"}]
         jobs = self._run(items)
-        assert jobs[0]["url"] == "https://weworkremotely.com/remote-jobs/42"
-
-    def test_absolute_href_used_as_is(self):
-        items = [_wwr_item("Senior SRE", "Acme", "https://weworkremotely.com/remote-jobs/42")]
-        jobs = self._run(items)
-        assert jobs[0]["url"] == "https://weworkremotely.com/remote-jobs/42"
+        assert jobs[0]["company"] == ""
+        assert jobs[0]["role"] == "Senior SRE"
 
     def test_source_label(self):
-        items = [_wwr_item("SRE", "Co", "/remote-jobs/1")]
+        items = [{"title": "Co: SRE", "link": "https://weworkremotely.com/1"}]
         jobs = self._run(items)
         assert jobs[0]["source"] == "We Work Remotely"
 
-    def test_location_is_always_remote(self):
-        items = [_wwr_item("SRE", "Co", "/remote-jobs/1")]
+    def test_uses_region_element_for_location(self):
+        items = [{"title": "Co: SRE", "link": "https://weworkremotely.com/1", "region": "Europe"}]
+        jobs = self._run(items)
+        assert jobs[0]["location"] == "Europe"
+
+    def test_defaults_missing_region_to_remote(self):
+        items = [{"title": "Co: SRE", "link": "https://weworkremotely.com/1"}]
         jobs = self._run(items)
         assert jobs[0]["location"] == "Remote"
 
-    def test_skips_category_items(self):
+    def test_deduplicates_same_url_across_categories(self):
         items = [
-            _wwr_item("DevOps / Sysadmin", "", "/remote-jobs/cat", is_category=True),
-            _wwr_item("Senior SRE", "Acme", "/remote-jobs/1"),
+            {"title": "Co: SRE", "link": "https://weworkremotely.com/same"},
+            {"title": "Co: SRE", "link": "https://weworkremotely.com/same"},
         ]
         jobs = self._run(items)
+        # Same RSS returned for each of 3 categories, but URL dedup means only 1
         assert len(jobs) == 1
 
     def test_returns_empty_when_no_items(self):
         jobs = self._run([])
         assert jobs == []
 
-    def test_returns_empty_when_playwright_not_installed(self):
-        with patch("scrape_jobs._has_playwright", return_value=False):
+    def test_returns_empty_when_api_fails(self):
+        with patch("scrape_jobs._api_get", return_value=None):
             jobs = sj.scrape_weworkremotely(SAMPLE_CONFIG)
         assert jobs == []
 
@@ -241,8 +239,8 @@ class TestScrapeWeWorkRemotely:
 # ── HN scraper error handling ────────────────────────────────────────────────
 
 class TestScrapeHnErrorHandling:
-    def test_returns_empty_on_connection_error(self):
-        with patch.object(sj.requests, "get", side_effect=requests.ConnectionError("unreachable")):
+    def test_returns_empty_when_api_fails(self):
+        with patch("scrape_jobs._api_get", return_value=None):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs == []
 
@@ -499,34 +497,51 @@ def test_country_params_unknown_returns_empty(caplog):
     assert "unknown country code" in caplog.text.lower()
 
 
-def test_apple_job_id_extraction():
-    assert sj._apple_job_id("https://jobs.apple.com/en-us/details/200604983/foo") == "200604983"
-    assert sj._apple_job_id("https://jobs.apple.com/en-ca/details/200604983/bar") == "200604983"
-    assert sj._apple_job_id("https://weird.example.com/job/1") == "https://weird.example.com/job/1"
-
-
 # ── Multi-country scraper iteration ──────────────────────────────────────────
+
+
+def _apple_mock_page():
+    """Build a mock Playwright page for Apple's response-interception scraper.
+
+    The page simulates:
+      - goto() records visited URLs
+      - query_selector("input.search-typeahead-input") returns a mock input
+      - on("response", cb) / remove_listener("response", cb) are no-ops
+    """
+    page = MagicMock()
+    page._visited = []
+    page.goto.side_effect = lambda url, **kw: page._visited.append(url) or None
+    page.wait_for_timeout.return_value = None
+
+    search_input = MagicMock()
+    search_input.click.return_value = None
+    search_input.fill.return_value = None
+    search_input.press.return_value = None
+    page.query_selector.return_value = search_input
+
+    page.on.return_value = None
+    page.remove_listener.return_value = None
+    return page
+
 
 class TestScrapeAppleMultiCountry:
     def test_visits_every_configured_country_locale(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
         cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        page = _apple_mock_page()
         with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
             sj.scrape_apple(cfg)
+        visited = page._visited
         assert any("/en-us/search" in u for u in visited)
         assert any("/en-ca/search" in u for u in visited)
 
     def test_default_countries_when_unset(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
         cfg["job_search"]["scraper"].pop("countries", None)
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        page = _apple_mock_page()
         with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
             sj.scrape_apple(cfg)
+        visited = page._visited
         assert any("/en-us/search" in u for u in visited)
         assert any("/en-ca/search" in u for u in visited)
 
