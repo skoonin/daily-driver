@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Fixed -- IC-only filter: reject manager/director/junior/intern titles
+- `config.yaml`: Added five exclusion patterns to `job_search.roles`: `!*Manager*`, `!*Director*`, `!*Head of*`, `!Junior *`, `!*Internship*`. Closes the Tier 2b gap where titles like "Junior SRE" and "Senior SRE Manager" previously passed the standalone keyword match. Patterns deliberately avoid `!*Intern*` because `re.search` semantics would false-match "International" and "Internal" (both of which appear in legitimate senior IC titles).
+- `scrape-jobs.py`: Updated the Tier 2b rationale comment at `matches_roles` to reflect that junior/manager filtering is now delegated to config exclusions rather than claiming the standalone set is "precise enough" on its own.
+
 ### Fixed -- Bare "Site Reliability Engineer" title now matches Tier 2b
 - `scrape-jobs.py`: `matches_roles` Tier 2b standalone set extended from `{"sre", "platform engineer"}` to also include `"site reliability engineer"`. The `"sre"` substring check does not hit the spelled-out form, so titles like "Site Reliability Engineer" (no seniority prefix) were silently dropped at the title gate even after LinkedIn URL fixes surfaced them in search results. Verified against the Hiive Vancouver posting that motivated Item 6 of the scraper improvement plan.
 - New test in `tests/test_matching.py::TestTier2bStandalone::test_standalone_site_reliability_engineer` as a regression guard.

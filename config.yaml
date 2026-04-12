@@ -158,3 +158,12 @@ job_search:
     - "Senior Release Engineer"
     - "Production Engineer"
     - "Senior Production Engineer"
+    # Exclusions — reject people-management and entry-level titles that would
+    # otherwise slip through Tier 2b's standalone SRE/Platform Engineer match.
+    # Substring semantics: patterns are re.search-style, so *Intern* is
+    # intentionally avoided (it would false-match "International"/"Internal").
+    - "!*Manager*"
+    - "!*Director*"
+    - "!*Head of*"
+    - "!Junior *"
+    - "!*Internship*"
