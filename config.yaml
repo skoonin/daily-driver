@@ -135,6 +135,12 @@ job_search:
     greenhouse_boards:
       - anthropic
     hn_max_posts: 100
+    # Max pages per (search-term x country) for paginated scrapers
+    # (LinkedIn, Indeed). Higher = more coverage but slower + more bot risk.
+    max_pages: 3
+    # Date window: only return postings from the last N days.
+    # Drives LinkedIn f_TPR and Indeed fromage parameters.
+    date_window_days: 7
     timeout: 30
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 

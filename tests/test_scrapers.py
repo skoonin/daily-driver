@@ -561,7 +561,19 @@ class TestScrapeLinkedInMultiCountry:
         assert any("location=United+States" in u for u in visited)
         assert any("location=Canada" in u for u in visited)
 
-    def test_linkedin_url_uses_7day_window_no_remote_filter(self):
+    def test_linkedin_url_uses_config_date_window(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["date_window_days"] = 14
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_linkedin(cfg)
+        for u in visited:
+            assert "f_TPR=r1209600" in u  # 14 * 86400
+            assert "f_WT=2" not in u
+
+    def test_linkedin_default_date_window_is_7_days(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
         visited: list[str] = []
         page = _mock_page([])
@@ -570,7 +582,32 @@ class TestScrapeLinkedInMultiCountry:
             sj.scrape_linkedin(cfg)
         for u in visited:
             assert "f_TPR=r604800" in u
-            assert "f_WT=2" not in u
+
+    def test_linkedin_paginates_up_to_max_pages(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["max_pages"] = 2
+        cfg["job_search"]["scraper"]["countries"] = ["US"]
+        visited: list[str] = []
+        # Return 25 cards on first call (triggers page 2), 0 on second
+        cards_25 = [_mock_element(inner_text="SRE") for _ in range(25)]
+        call_count = [0]
+        def _goto(url, **kw):
+            visited.append(url)
+        page = MagicMock()
+        page.goto.side_effect = _goto
+        page.wait_for_timeout.return_value = None
+        def _qsa(selector):
+            nonlocal call_count
+            idx = call_count[0]
+            call_count[0] += 1
+            return cards_25 if idx == 0 else []
+        page.query_selector_all.side_effect = _qsa
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_linkedin(cfg)
+        page1_urls = [u for u in visited if "start=" not in u]
+        page2_urls = [u for u in visited if "start=25" in u]
+        assert len(page1_urls) >= 1
+        assert len(page2_urls) >= 1
 
 
 class TestScrapeIndeedMultiCountry:
@@ -584,6 +621,18 @@ class TestScrapeIndeedMultiCountry:
             sj.scrape_indeed(cfg)
         assert any("www.indeed.com" in u for u in visited)
         assert any("ca.indeed.com" in u for u in visited)
+
+    def test_indeed_uses_config_date_window(self):
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["date_window_days"] = 14
+        cfg["job_search"]["scraper"]["countries"] = ["US"]
+        visited: list[str] = []
+        page = _mock_page([])
+        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
+        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
+            sj.scrape_indeed(cfg)
+        for u in visited:
+            assert "fromage=14" in u
 
 
 # ── enrich_company_descriptions budget fix ──────────────────────────────────

@@ -1328,13 +1328,16 @@ def scrape_greenhouse(config: dict) -> list[dict]:
 def scrape_linkedin(config: dict) -> list[dict]:
     """Playwright scraper for LinkedIn public job search (no login).
 
-    Uses non-headless Chromium to avoid bot detection. Results are limited to
-    what LinkedIn serves without authentication — typically the first page of
-    results per search term. Iterates each configured country.
+    Uses non-headless Chromium to avoid bot detection. Paginates via &start=
+    up to max_pages per (term x country). Iterates each configured country.
     """
+    cfg = scraper_cfg(config)
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
+    max_pages = int(cfg.get("max_pages", 3))
+    date_window = int(cfg.get("date_window_days", 7))
+    date_seconds = date_window * 86400
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
@@ -1344,73 +1347,79 @@ def scrape_linkedin(config: dict) -> list[dict]:
                 params = country_params(country)
                 if not params:
                     continue
-                # Extra cooldown between countries to reduce bot-detection risk:
-                # rapid country-scoped search pivots are a known LinkedIn flag.
                 if idx > 0:
                     page.wait_for_timeout(5000)
                 for term in terms:
                     encoded = urllib.parse.quote_plus(term)
-                    # Widened from r86400 (24h) to r604800 (7d) so daily runs that skip a day
-                    # still recover postings, and from f_WT=2 (remote-only) to no workplace-type
-                    # filter so hybrid/onsite postings surface for Shawn's location ranking.
-                    url = (
+                    base_url = (
                         f"https://www.linkedin.com/jobs/search/"
                         f"?keywords={encoded}"
                         f"&location={urllib.parse.quote_plus(params['linkedin_location'])}"
-                        f"&f_TPR=r604800"
+                        f"&f_TPR=r{date_seconds}"
                     )
-                    try:
-                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                        page.wait_for_timeout(3000)  # LinkedIn lazy-loads cards
-                    except Exception as exc:
-                        log.warning("[linkedin] navigation failed for %r (%s): %s", term, country, exc)
-                        continue
 
-                    cards = page.query_selector_all(".base-card")
-                    if not cards:
-                        cards = page.query_selector_all(".job-search-card")
-
-                    for card in cards:
+                    for page_num in range(max_pages):
+                        start = page_num * 25
+                        url = f"{base_url}&start={start}" if page_num > 0 else base_url
                         try:
-                            title_el = (
-                                card.query_selector(".base-search-card__title")
-                                or card.query_selector("h3")
-                            )
-                            company_el = (
-                                card.query_selector(".base-search-card__subtitle")
-                                or card.query_selector("h4")
-                            )
-                            loc_el = card.query_selector(".job-search-card__location")
-                            link_el = (
-                                card.query_selector("a.base-card__full-link")
-                                or card.query_selector("a[href*='/jobs/view/']")
-                            )
-                            if not title_el:
-                                continue
-                            role = title_el.inner_text().strip()
-                            company = company_el.inner_text().strip() if company_el else ""
-                            location = loc_el.inner_text().strip() if loc_el else ""
-                            if not matches_roles(role, roles):
-                                continue
-                            href = link_el.get_attribute("href") if link_el else ""
-                            # Strip tracking params from LinkedIn URLs
-                            if href and "linkedin.com/jobs/view/" in href:
-                                href = href.split("?")[0]
-                            if href in seen_urls:
-                                continue
-                            if href:
-                                seen_urls.add(href)
-                            jobs.append({
-                                "company": company,
-                                "role": role,
-                                "location": location or "Remote",
-                                "url": href,
-                                "source": "LinkedIn",
-                                "date_found": date.today().isoformat(),
-                            })
+                            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                            page.wait_for_timeout(3000)
                         except Exception as exc:
-                            log.debug("[linkedin] parse error on card: %s", exc)
-                            continue
+                            log.warning("[linkedin] navigation failed for %r (%s) page %d: %s", term, country, page_num, exc)
+                            break
+
+                        cards = page.query_selector_all(".base-card")
+                        if not cards:
+                            cards = page.query_selector_all(".job-search-card")
+                        if not cards:
+                            break
+
+                        for card in cards:
+                            try:
+                                title_el = (
+                                    card.query_selector(".base-search-card__title")
+                                    or card.query_selector("h3")
+                                )
+                                company_el = (
+                                    card.query_selector(".base-search-card__subtitle")
+                                    or card.query_selector("h4")
+                                )
+                                loc_el = card.query_selector(".job-search-card__location")
+                                link_el = (
+                                    card.query_selector("a.base-card__full-link")
+                                    or card.query_selector("a[href*='/jobs/view/']")
+                                )
+                                if not title_el:
+                                    continue
+                                role = title_el.inner_text().strip()
+                                company = company_el.inner_text().strip() if company_el else ""
+                                location = loc_el.inner_text().strip() if loc_el else ""
+                                if not matches_roles(role, roles):
+                                    continue
+                                href = link_el.get_attribute("href") if link_el else ""
+                                if href and "linkedin.com/jobs/view/" in href:
+                                    href = href.split("?")[0]
+                                if href in seen_urls:
+                                    continue
+                                if href:
+                                    seen_urls.add(href)
+                                jobs.append({
+                                    "company": company,
+                                    "role": role,
+                                    "location": location or "Remote",
+                                    "url": href,
+                                    "source": "LinkedIn",
+                                    "date_found": date.today().isoformat(),
+                                })
+                            except Exception as exc:
+                                log.debug("[linkedin] parse error on card: %s", exc)
+                                continue
+
+                        log.debug("[linkedin] %s/%s page %d: %d cards", country, term, page_num, len(cards))
+                        if len(cards) < 20:
+                            break
+                        # Cooldown between pages
+                        page.wait_for_timeout(2000)
     except Exception as exc:
         log.warning("[linkedin] browser session error: %s", exc)
 
@@ -1421,11 +1430,15 @@ def scrape_linkedin(config: dict) -> list[dict]:
 def scrape_indeed(config: dict) -> list[dict]:
     """Playwright scraper for Indeed public search results.
 
-    Skips sponsored ads. Iterates each configured country's regional host.
+    Skips sponsored ads. Paginates via &start= up to max_pages per
+    (term x country). Iterates each configured country's regional host.
     """
+    cfg = scraper_cfg(config)
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
+    max_pages = int(cfg.get("max_pages", 3))
+    date_window = int(cfg.get("date_window_days", 7))
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
@@ -1435,71 +1448,79 @@ def scrape_indeed(config: dict) -> list[dict]:
                 params = country_params(country)
                 if not params:
                     continue
-                base_url = f"https://{params['indeed_host']}"
-                # Cooldown between regional Indeed hosts — rapid host switching
-                # increases captcha probability.
+                host_url = f"https://{params['indeed_host']}"
                 if idx > 0:
                     page.wait_for_timeout(5000)
                 for term in terms:
                     encoded = urllib.parse.quote_plus(term)
-                    url = f"{base_url}/jobs?q={encoded}&fromage=7"
-                    try:
-                        page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                        page.wait_for_timeout(2000)
-                    except Exception as exc:
-                        log.warning("[indeed] navigation failed for %r (%s): %s", term, country, exc)
-                        continue
+                    base_url = f"{host_url}/jobs?q={encoded}&fromage={date_window}"
 
-                    cards = page.query_selector_all(".job_seen_beacon")
-                    if not cards:
-                        cards = page.query_selector_all("[data-testid='slider_item']")
-
-                    for card in cards:
+                    for page_num in range(max_pages):
+                        start = page_num * 10
+                        url = f"{base_url}&start={start}" if page_num > 0 else base_url
                         try:
-                            title_el = (
-                                card.query_selector("h2.jobTitle a span")
-                                or card.query_selector("h2.jobTitle")
-                            )
-                            company_el = (
-                                card.query_selector("span.companyName")
-                                or card.query_selector("[data-testid='company-name']")
-                            )
-                            loc_el = (
-                                card.query_selector("div.companyLocation")
-                                or card.query_selector("[data-testid='text-location']")
-                            )
-                            link_el = (
-                                card.query_selector("h2.jobTitle a")
-                                or card.query_selector("a[data-jk]")
-                            )
-                            if not title_el:
-                                continue
-                            role = title_el.inner_text().strip()
-                            company = company_el.inner_text().strip() if company_el else ""
-                            location = loc_el.inner_text().strip() if loc_el else ""
-                            if not matches_roles(role, roles):
-                                continue
-                            href = link_el.get_attribute("href") if link_el else ""
-                            if href and not href.startswith("http"):
-                                href = f"{base_url}{href}"
-                            # Skip sponsored/pagead results
-                            if href and "pagead" in href:
-                                continue
-                            if href in seen_urls:
-                                continue
-                            if href:
-                                seen_urls.add(href)
-                            jobs.append({
-                                "company": company,
-                                "role": role,
-                                "location": location or "Remote",
-                                "url": href,
-                                "source": "Indeed",
-                                "date_found": date.today().isoformat(),
-                            })
+                            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                            page.wait_for_timeout(2000)
                         except Exception as exc:
-                            log.debug("[indeed] parse error on card: %s", exc)
-                            continue
+                            log.warning("[indeed] navigation failed for %r (%s) page %d: %s", term, country, page_num, exc)
+                            break
+
+                        cards = page.query_selector_all(".job_seen_beacon")
+                        if not cards:
+                            cards = page.query_selector_all("[data-testid='slider_item']")
+                        if not cards:
+                            break
+
+                        for card in cards:
+                            try:
+                                title_el = (
+                                    card.query_selector("h2.jobTitle a span")
+                                    or card.query_selector("h2.jobTitle")
+                                )
+                                company_el = (
+                                    card.query_selector("span.companyName")
+                                    or card.query_selector("[data-testid='company-name']")
+                                )
+                                loc_el = (
+                                    card.query_selector("div.companyLocation")
+                                    or card.query_selector("[data-testid='text-location']")
+                                )
+                                link_el = (
+                                    card.query_selector("h2.jobTitle a")
+                                    or card.query_selector("a[data-jk]")
+                                )
+                                if not title_el:
+                                    continue
+                                role = title_el.inner_text().strip()
+                                company = company_el.inner_text().strip() if company_el else ""
+                                location = loc_el.inner_text().strip() if loc_el else ""
+                                if not matches_roles(role, roles):
+                                    continue
+                                href = link_el.get_attribute("href") if link_el else ""
+                                if href and not href.startswith("http"):
+                                    href = f"{host_url}{href}"
+                                if href and "pagead" in href:
+                                    continue
+                                if href in seen_urls:
+                                    continue
+                                if href:
+                                    seen_urls.add(href)
+                                jobs.append({
+                                    "company": company,
+                                    "role": role,
+                                    "location": location or "Remote",
+                                    "url": href,
+                                    "source": "Indeed",
+                                    "date_found": date.today().isoformat(),
+                                })
+                            except Exception as exc:
+                                log.debug("[indeed] parse error on card: %s", exc)
+                                continue
+
+                        log.debug("[indeed] %s/%s page %d: %d cards", country, term, page_num, len(cards))
+                        if len(cards) < 8:
+                            break
+                        page.wait_for_timeout(2000)
     except Exception as exc:
         log.warning("[indeed] browser session error: %s", exc)
 
@@ -1592,11 +1613,17 @@ def scrape_apple(config: dict) -> list[dict]:
     /api/v1/search. We drive the search input with Playwright and intercept
     the API response to get structured JSON (title, location, team, date).
 
+    Scrolls down after the initial search to trigger additional API pages
+    (the SPA fires more /api/v1/search POSTs on scroll). max_pages controls
+    how many scroll passes per search term.
+
     Iterates each configured country's locale x search term.
     """
+    cfg = scraper_cfg(config)
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
+    max_pages = int(cfg.get("max_pages", 3))
     jobs: list[dict] = []
     seen_positions: set[str] = set()
     base_url = "https://jobs.apple.com"
@@ -1649,6 +1676,14 @@ def scrape_apple(config: dict) -> list[dict]:
                         page.wait_for_timeout(500)
                         search_input.press("Enter")
                         page.wait_for_timeout(4000)
+
+                        # Scroll to trigger additional API pages
+                        for _ in range(max_pages - 1):
+                            prev_count = len(api_results)
+                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            page.wait_for_timeout(2000)
+                            if len(api_results) == prev_count:
+                                break
                     except Exception as exc:
                         log.warning(
                             "[apple] search failed for %r (%s): %s", term, country, exc
