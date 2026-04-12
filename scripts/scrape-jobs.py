@@ -162,7 +162,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
         return
 
     cfg = scraper_cfg(config) if config else {}
-    budget = int(cfg.get("max_enrich_companies", 10))
+    budget = int(cfg.get("max_enrich_companies", 50))
     include_gd = cfg.get("enrich_gd_rating", True)
 
     unique_companies = {
@@ -174,6 +174,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
 
     cache: dict[str, dict[str, str]] = {}
     calls_made = 0
+    budget_warned = False
 
     for job in jobs:
         if job.get("product"):
@@ -183,49 +184,56 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
             continue
         if company not in cache:
             if calls_made >= budget:
-                remaining = len([j for j in jobs if not j.get("product") and j.get("company", "").strip() and j.get("company", "").strip() not in cache])
-                log.warning("[enrich] budget reached, skipping %d companies", remaining)
-                break
-            if include_gd:
-                prompt = (
-                    f"Answer in exactly 2 lines, no preamble:\n"
-                    f"Line 1: What does {company} build or do? (max 12 words)\n"
-                    f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
-                )
+                if not budget_warned:
+                    remaining = len({
+                        j.get("company", "").strip() for j in jobs
+                        if not j.get("product")
+                        and j.get("company", "").strip()
+                        and j.get("company", "").strip() not in cache
+                    })
+                    log.warning("[enrich] budget reached (%d), %d companies unenriched", budget, remaining)
+                    budget_warned = True
+                cache[company] = {"product": "", "gd_rating": ""}
             else:
-                prompt = (
-                    f"In one sentence (max 12 words), what does {company} build or do? "
-                    "Answer only, no preamble."
-                )
-            try:
-                result = subprocess.run(
-                    ["claude", "-p", prompt],
-                    capture_output=True, text=True, timeout=15,
-                )
-                if result.returncode == 0:
-                    lines = [l for l in result.stdout.splitlines() if l.strip()]
-                    product = lines[0] if lines else ""
-                    gd_rating = ""
-                    if include_gd and len(lines) >= 2:
-                        raw = lines[1].strip().lower()
-                        # Accept decimal ratings or "unknown"
-                        if raw == "unknown":
-                            gd_rating = "unknown"
-                        else:
-                            try:
-                                gd_rating = str(round(float(raw), 1))
-                            except ValueError:
-                                gd_rating = raw
-                    cache[company] = {"product": product, "gd_rating": gd_rating}
+                if include_gd:
+                    prompt = (
+                        f"Answer in exactly 2 lines, no preamble:\n"
+                        f"Line 1: What does {company} build or do? (max 12 words)\n"
+                        f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
+                    )
                 else:
+                    prompt = (
+                        f"In one sentence (max 12 words), what does {company} build or do? "
+                        "Answer only, no preamble."
+                    )
+                try:
+                    result = subprocess.run(
+                        ["claude", "-p", prompt],
+                        capture_output=True, text=True, timeout=15,
+                    )
+                    if result.returncode == 0:
+                        lines = [l for l in result.stdout.splitlines() if l.strip()]
+                        product = lines[0] if lines else ""
+                        gd_rating = ""
+                        if include_gd and len(lines) >= 2:
+                            raw = lines[1].strip().lower()
+                            if raw == "unknown":
+                                gd_rating = "unknown"
+                            else:
+                                try:
+                                    gd_rating = str(round(float(raw), 1))
+                                except ValueError:
+                                    gd_rating = raw
+                        cache[company] = {"product": product, "gd_rating": gd_rating}
+                    else:
+                        cache[company] = {"product": "", "gd_rating": ""}
+                except subprocess.TimeoutExpired:
+                    log.warning("[enrich] %s: claude CLI timed out after 15s", company)
                     cache[company] = {"product": "", "gd_rating": ""}
-            except subprocess.TimeoutExpired:
-                log.warning("[enrich] %s: claude CLI timed out after 15s", company)
-                cache[company] = {"product": "", "gd_rating": ""}
-            except OSError as exc:
-                log.debug("[enrich] %s lookup failed: %s", company, exc)
-                cache[company] = {"product": "", "gd_rating": ""}
-            calls_made += 1
+                except OSError as exc:
+                    log.debug("[enrich] %s lookup failed: %s", company, exc)
+                    cache[company] = {"product": "", "gd_rating": ""}
+                calls_made += 1
         cached = cache.get(company, {})
         if cached.get("product"):
             job["product"] = cached["product"]
@@ -265,7 +273,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
         log.debug("[enrich-fit] disabled via config")
         return
 
-    budget = int(cfg.get("max_enrich_fit", 5))
+    budget = int(cfg.get("max_enrich_fit", 50))
     tiers = _load_location_tiers(config) if config else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
 
     calls_made = 0
@@ -328,7 +336,7 @@ def enrich_notes(jobs: list[dict], config: dict | None = None) -> None:
         log.debug("[enrich-notes] disabled via config")
         return
 
-    budget = int(cfg.get("max_enrich_notes", 10))
+    budget = int(cfg.get("max_enrich_notes", 50))
 
     calls_made = 0
     for job in jobs:
@@ -1850,12 +1858,111 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
         )
 
 
+# ── Backfill ─────────────────────────────────────────────────────────────────
+
+# Column mapping: CSV header name -> internal dict key
+_CSV_TO_DICT = {
+    "Status": "status",
+    "Company": "company",
+    "Product/Purpose": "product",
+    "Role": "role",
+    "Comp": "comp",
+    "Location": "location",
+    "Fit": "fit",
+    "GD Rating": "gd_rating",
+    "Source": "source",
+    "Date Found": "date_found",
+    "Date Applied": "date_applied",
+    "Link": "url",
+    "Notes": "notes",
+}
+
+_DICT_TO_CSV = {v: k for k, v in _CSV_TO_DICT.items()}
+
+_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
+
+
+def _row_to_dict(row: dict[str, str]) -> dict[str, str]:
+    """Convert a CSV DictReader row to our internal job dict format."""
+    out: dict[str, str] = {}
+    for csv_col, dict_key in _CSV_TO_DICT.items():
+        val = (row.get(csv_col) or "").strip()
+        if dict_key == "product" and val == _PLACEHOLDER_PRODUCT:
+            val = ""
+        out[dict_key] = val
+    return out
+
+
+def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
+    """Convert an internal job dict back to a CSV row dict."""
+    row = {col: "" for col in header}
+    for dict_key, csv_col in _DICT_TO_CSV.items():
+        if csv_col in row:
+            row[csv_col] = job.get(dict_key, "")
+    return row
+
+
+def backfill(config: dict, csv_path: Path) -> None:
+    """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
+    if not csv_path.exists():
+        log.error("jobs.csv not found at %s", csv_path)
+        sys.exit(1)
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        header = reader.fieldnames or CANONICAL_HEADER
+        rows = list(reader)
+
+    jobs = [_row_to_dict(r) for r in rows]
+
+    needs_product = sum(1 for j in jobs if not j.get("product"))
+    needs_fit = sum(1 for j in jobs if not j.get("fit"))
+    needs_gd = sum(1 for j in jobs if not j.get("gd_rating"))
+    needs_notes = sum(1 for j in jobs if not j.get("notes"))
+
+    log.info(
+        "[backfill] %d rows: %d need Product, %d need GD, %d need Fit, %d need Notes",
+        len(jobs), needs_product, needs_gd, needs_fit, needs_notes,
+    )
+
+    if not (needs_product or needs_fit or needs_gd or needs_notes):
+        print("All rows already enriched, nothing to backfill.")
+        return
+
+    enrich_company_descriptions(jobs, config)
+    enrich_fit(jobs, config)
+    enrich_notes(jobs, config)
+
+    # Write back
+    backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
+    shutil.copy2(csv_path, backup)
+    log.info("[backfill] backed up to %s", backup.name)
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=list(header), quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+        )
+        writer.writeheader()
+        for job in jobs:
+            writer.writerow(_dict_to_row(job, list(header)))
+
+    filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
+    filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))
+    filled_gd = needs_gd - sum(1 for j in jobs if not j.get("gd_rating"))
+    filled_notes = needs_notes - sum(1 for j in jobs if not j.get("notes"))
+    print(
+        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
+        f"+{filled_fit} Fit, +{filled_notes} Notes"
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:  # pragma: no cover
     parser = argparse.ArgumentParser(description="Scrape job boards and append to jobs.csv")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--dry-run", action="store_true", help="Print matches without writing to CSV")
+    parser.add_argument("--backfill", action="store_true", help="Enrich empty fields in existing jobs.csv rows")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1882,12 +1989,16 @@ def main() -> None:  # pragma: no cover
         log.error("Cannot read config.yaml at %s: %s", config_path, exc)
         sys.exit(1)
 
+    output_dir = resolve_output_dir(config)
+    csv_path = output_dir / "jobs.csv"
+
+    if args.backfill:
+        backfill(config, csv_path)
+        return
+
     if not scraper_cfg(config).get("enabled", False):
         print("Scraper disabled. Set job_search.scraper.enabled: true in config.yaml")
         sys.exit(0)
-
-    output_dir = resolve_output_dir(config)
-    csv_path = output_dir / "jobs.csv"
 
     known_urls, known_keys, header = load_existing_jobs(csv_path)
 

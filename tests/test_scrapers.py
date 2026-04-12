@@ -1,9 +1,12 @@
 """Tests for scrapers and run_all_scrapers() orchestrator."""
 
 import copy
+import csv
 import json
+import tempfile
 import time
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -581,3 +584,164 @@ class TestScrapeIndeedMultiCountry:
             sj.scrape_indeed(cfg)
         assert any("www.indeed.com" in u for u in visited)
         assert any("ca.indeed.com" in u for u in visited)
+
+
+# ── enrich_company_descriptions budget fix ──────────────────────────────────
+
+class TestEnrichCompanyBudgetFix:
+    """After budget exhaustion, cached companies must still get enriched."""
+
+    def test_cached_companies_applied_after_budget(self):
+        """Two companies, budget=1. First company gets a Claude call; second
+        doesn't (budget hit). But if the first company appears again later
+        in the list, it should still get its cached product applied."""
+        jobs = [
+            {"company": "Acme", "role": "SRE"},
+            {"company": "Beta", "role": "SRE"},
+            {"company": "Acme", "role": "Staff SRE"},
+        ]
+        cfg = copy.deepcopy(SAMPLE_CONFIG)
+        cfg["job_search"]["scraper"]["max_enrich_companies"] = 1
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "Acme builds rockets\n4.2\n"
+
+        with patch("shutil.which", return_value="/usr/bin/claude"), \
+             patch("subprocess.run", return_value=mock_result):
+            sj.enrich_company_descriptions(jobs, cfg)
+
+        # First Acme job enriched via Claude call
+        assert jobs[0]["product"] == "Acme builds rockets"
+        assert jobs[0]["gd_rating"] == "4.2"
+        # Beta skipped (budget), product stays empty
+        assert not jobs[1].get("product")
+        # Second Acme job enriched via cache (the old break bug would skip this)
+        assert jobs[2]["product"] == "Acme builds rockets"
+        assert jobs[2]["gd_rating"] == "4.2"
+
+
+# ── Backfill ────────────────────────────────────────────────────────────────
+
+class TestBackfillHelpers:
+    def test_row_to_dict_maps_columns(self):
+        row = {
+            "Status": "found", "Company": "Acme", "Product/Purpose": "Widgets",
+            "Role": "SRE", "Comp": "$100k", "Location": "Remote",
+            "Fit": "7/10", "GD Rating": "4.1", "Source": "LinkedIn",
+            "Date Found": "2026-04-12", "Date Applied": "", "Link": "https://example.com",
+            "Notes": "Good role",
+        }
+        d = sj._row_to_dict(row)
+        assert d["company"] == "Acme"
+        assert d["product"] == "Widgets"
+        assert d["url"] == "https://example.com"
+        assert d["fit"] == "7/10"
+
+    def test_row_to_dict_clears_placeholder_product(self):
+        row = {"Product/Purpose": "(auto-scraped -- needs fill)", "Company": "X"}
+        d = sj._row_to_dict(row)
+        assert d["product"] == ""
+
+    def test_dict_to_row_roundtrips(self):
+        job = {
+            "status": "found", "company": "Acme", "product": "Widgets",
+            "role": "SRE", "comp": "", "location": "Remote",
+            "fit": "8/10", "gd_rating": "4.0", "source": "HN",
+            "date_found": "2026-04-12", "date_applied": "", "url": "https://x.com",
+            "notes": "test",
+        }
+        row = sj._dict_to_row(job, sj.CANONICAL_HEADER)
+        assert row["Company"] == "Acme"
+        assert row["Fit"] == "8/10"
+        assert row["Link"] == "https://x.com"
+
+    def test_backfill_writes_enriched_data(self):
+        """backfill() reads CSV, calls enrichers, writes back updated rows."""
+        header = sj.CANONICAL_HEADER
+        rows = [
+            {"Status": "found", "Company": "Acme", "Product/Purpose": "",
+             "Role": "SRE", "Comp": "", "Location": "Remote",
+             "Fit": "", "GD Rating": "", "Source": "HN",
+             "Date Found": "2026-04-12", "Date Applied": "",
+             "Link": "https://example.com/1", "Notes": ""},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "jobs.csv"
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            cfg = copy.deepcopy(SAMPLE_CONFIG)
+
+            # Mock all three enrichers to set values
+            def mock_company(jobs, config):
+                for j in jobs:
+                    if not j.get("product"):
+                        j["product"] = "Acme builds widgets"
+                        j["gd_rating"] = "4.5"
+
+            def mock_fit(jobs, config):
+                for j in jobs:
+                    if not j.get("fit"):
+                        j["fit"] = "8/10"
+
+            def mock_notes(jobs, config):
+                for j in jobs:
+                    if not j.get("notes"):
+                        j["notes"] = "Looks good"
+
+            with patch.object(sj, "enrich_company_descriptions", side_effect=mock_company), \
+                 patch.object(sj, "enrich_fit", side_effect=mock_fit), \
+                 patch.object(sj, "enrich_notes", side_effect=mock_notes):
+                sj.backfill(cfg, csv_path)
+
+            # Read back and verify
+            with open(csv_path, newline="") as f:
+                result = list(csv.DictReader(f))
+
+            assert len(result) == 1
+            assert result[0]["Product/Purpose"] == "Acme builds widgets"
+            assert result[0]["GD Rating"] == "4.5"
+            assert result[0]["Fit"] == "8/10"
+            assert result[0]["Notes"] == "Looks good"
+            # Preserved fields
+            assert result[0]["Company"] == "Acme"
+            assert result[0]["Status"] == "found"
+            assert result[0]["Link"] == "https://example.com/1"
+
+    def test_backfill_preserves_existing_data(self):
+        """backfill() must not clobber manually-entered values."""
+        header = sj.CANONICAL_HEADER
+        rows = [
+            {"Status": "applied", "Company": "Rootly", "Product/Purpose": "Incident mgmt",
+             "Role": "SRE", "Comp": "$150k", "Location": "Toronto",
+             "Fit": "7/10", "GD Rating": "3.9", "Source": "HN",
+             "Date Found": "2026-04-06", "Date Applied": "2026-04-07",
+             "Link": "https://example.com/2", "Notes": "Applied via referral"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "jobs.csv"
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=header)
+                writer.writeheader()
+                writer.writerows(rows)
+
+            cfg = copy.deepcopy(SAMPLE_CONFIG)
+
+            # Enrichers should be called but skip already-filled fields
+            with patch.object(sj, "enrich_company_descriptions") as m_co, \
+                 patch.object(sj, "enrich_fit") as m_fit, \
+                 patch.object(sj, "enrich_notes") as m_notes:
+                sj.backfill(cfg, csv_path)
+
+            with open(csv_path, newline="") as f:
+                result = list(csv.DictReader(f))
+
+            assert result[0]["Product/Purpose"] == "Incident mgmt"
+            assert result[0]["Fit"] == "7/10"
+            assert result[0]["Date Applied"] == "2026-04-07"
+            assert result[0]["Notes"] == "Applied via referral"

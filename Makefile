@@ -4,7 +4,7 @@ SHELL := /bin/bash
 .PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
        test test-cov \
        day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update \
-       gather-jobs scrape-jobs
+       gather-jobs scrape-jobs backfill-jobs
 
 PROJ_DIR := $(shell pwd)
 
@@ -251,5 +251,8 @@ gather-jobs:  ## Run job discovery now (manual trigger, includes Phase 2 scraper
 
 scrape-jobs:  ## Run Phase 2 scraper only (usage: make scrape-jobs ARGS="--dry-run")
 	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
+
+backfill-jobs:  ## Enrich empty Fit/GD/Product/Notes in existing jobs.csv
+	@python3 scripts/scrape-jobs.py --config config.yaml --backfill $(ARGS)
 
 
