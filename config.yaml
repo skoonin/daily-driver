@@ -98,7 +98,8 @@ job_search:
     companies:
       - id: anthropic
         name: Anthropic
-        type: playwright
+        type: greenhouse_api
+        greenhouse_board: anthropic
         careers_url: "https://www.anthropic.com/careers"
         enabled: true
       - id: apple
@@ -123,11 +124,16 @@ job_search:
       remoteok: true
       weworkremotely: true
       hn_who_is_hiring: true
-      anthropic: true
+      greenhouse: true
       linkedin: true
       indeed: true
       wellfound: true
       apple: true
+    # Greenhouse Job Board API slugs. Each slug corresponds to a company's
+    # public board at boards-api.greenhouse.io/v1/boards/{slug}/jobs.
+    # No auth required. Add any company that uses Greenhouse as their ATS.
+    greenhouse_boards:
+      - anthropic
     hn_max_posts: 100
     timeout: 30
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"

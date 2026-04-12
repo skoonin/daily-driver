@@ -260,7 +260,7 @@ class TestRunAllScrapers:
                     "remoteok": False,
                     "weworkremotely": False,
                     "hn_who_is_hiring": False,
-                    "anthropic": False,
+                    "greenhouse": False,
                     "linkedin": False,
                     "indeed": False,
                     "wellfound": False,
@@ -359,7 +359,7 @@ class TestRunAllScrapersParallel:
                     "remoteok": True,
                     "weworkremotely": True,
                     "hn_who_is_hiring": True,
-                    "anthropic": True,
+                    "greenhouse": True,
                     "apple": True,
                     "linkedin": True,
                     "indeed": True,
@@ -398,7 +398,7 @@ class TestRunAllScrapersParallel:
             assert m.call_count == 1, f"{sid} called {m.call_count} times"
 
         # Phase 1 sources saw headless=True
-        for sid in ("remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic", "apple"):
+        for sid in ("remoteok", "weworkremotely", "hn_who_is_hiring", "greenhouse", "apple"):
             assert seen_modes[sid] is True, f"{sid} should run headless"
 
         # Phase 2 sources saw headless=False
@@ -420,7 +420,7 @@ class TestRunAllScrapersParallel:
         cfg = self._config(workers=4)
         for sid in sj.SCRAPERS:
             cfg["job_search"]["scraper"]["sources"][sid] = sid in {
-                "remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic"
+                "remoteok", "weworkremotely", "hn_who_is_hiring", "greenhouse"
             }
 
         mocks = {sid: MagicMock(side_effect=_slow) for sid in sj.SCRAPERS}
@@ -440,7 +440,7 @@ class TestRunAllScrapersParallel:
         cfg = self._config(workers=1)
         for sid in sj.SCRAPERS:
             cfg["job_search"]["scraper"]["sources"][sid] = sid in {
-                "remoteok", "weworkremotely", "hn_who_is_hiring", "anthropic"
+                "remoteok", "weworkremotely", "hn_who_is_hiring", "greenhouse"
             }
 
         mocks = {sid: MagicMock(side_effect=_slow) for sid in sj.SCRAPERS}
@@ -474,7 +474,7 @@ class TestRunAllScrapersParallel:
         assert "remoteok" in failed
         returned_sources = {j["company"] for j in jobs}
         # The four other Phase 1 sources all produced their row
-        assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "anthropic", "apple"}
+        assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "greenhouse", "apple"}
 
 
 # ── Country helpers ───────────────────────────────────────────────────────────

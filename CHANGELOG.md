@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Changed -- Replace Anthropic Playwright scraper with Greenhouse Job Board API
+- `scrape-jobs.py`: New `scrape_greenhouse(config)` replaces `scrape_anthropic`. Uses the public Greenhouse Job Board API (`boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`) — no browser, no auth, structured JSON with full descriptions. Completes in <1s vs 30s+ for Playwright. Job descriptions are extracted as `description_text` for the Notes enricher.
+- `config.yaml`: `greenhouse: true` replaces `anthropic: true` in scraper sources. New `greenhouse_boards` list (default `[anthropic]`) — add any company using Greenhouse as their ATS (e.g. `stripe`, `hashicorp`).
+- Tests rewritten from Playwright mocks to API response mocks (11 tests).
+
 ### Added -- Notes auto-summary with tech stack, remote policy, red flags
 - `scrape-jobs.py`: New `enrich_notes(jobs, config)` generates a one-line summary per job via Claude CLI. Uses `description_text` from the detail page when available (tech stack, remote policy, red flags); falls back to a role-only prompt otherwise. Budget-capped via `max_enrich_notes` (default 10). Controlled by `enrich_notes` config flag (default true).
 - `scrape-jobs.py`: Detail-page parsers (`parse_jsonld_jobposting`, `parse_linkedin_html`, `parse_greenhouse_html`) now extract `description_text` from job descriptions. JSON-LD uses the `description` field; LinkedIn targets `.show-more-less-html__markup` / `.description__text` divs; Greenhouse targets `#content` / `.job-description` divs. Stored as an intermediate field on the job dict (not written to CSV).

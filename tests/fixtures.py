@@ -20,7 +20,7 @@ SAMPLE_CONFIG = {
                 "remoteok": True,
                 "weworkremotely": True,
                 "hn_who_is_hiring": False,
-                "anthropic": False,
+                "greenhouse": False,
             },
         },
     },

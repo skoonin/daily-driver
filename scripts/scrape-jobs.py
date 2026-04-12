@@ -1273,55 +1273,69 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     return jobs
 
 
-def scrape_anthropic(config: dict) -> list[dict]:
-    """Playwright scraper for the Anthropic careers page (Greenhouse-hosted, JS-rendered)."""
-    from playwright.sync_api import TimeoutError as PWTimeout, Error as PWError
+def scrape_greenhouse(config: dict) -> list[dict]:
+    """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
 
+    Reads board slugs from config at job_search.scraper.greenhouse_boards
+    (default: ["anthropic"]). Each slug maps to
+    https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
+    which returns all jobs with full HTML descriptions in a single request.
+    """
     roles = roles_list(config)
-    jobs = []
+    cfg = scraper_cfg(config)
+    boards = cfg.get("greenhouse_boards", ["anthropic"])
+    timeout_s = timeout_seconds(config)
+    headers = {"User-Agent": cfg.get("user_agent", "")}
+    jobs: list[dict] = []
 
-    try:
-        with _playwright_browser(config) as page:
-            try:
-                page.goto("https://www.anthropic.com/careers/jobs", timeout=30000)
-                page.wait_for_load_state("networkidle", timeout=15000)
-                content = page.content()
-            except (PWTimeout, PWError) as exc:
-                log.warning("[anthropic] page error (%s): %s", type(exc).__name__, exc)
-                return []
-    except Exception as exc:
-        log.warning("[anthropic] browser session error: %s", exc)
-        return []
-
-    soup = BeautifulSoup(content, "html.parser")
-    seen_hrefs: set[str] = set()
-    for a_tag in soup.find_all("a", href=True):
-        href = a_tag["href"]
-        if not re.search(r"greenhouse\.io/anthropic/jobs/\d+", href):
-            continue
-        if href in seen_hrefs:
-            continue
-        seen_hrefs.add(href)
-
-        role_el = a_tag.select_one("[class*='jobRole'] p")
-        title = role_el.get_text(strip=True) if role_el else a_tag.get_text(strip=True)
-        if not title or not matches_roles(title, roles):
+    for board in boards:
+        api_url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
+        try:
+            resp = requests.get(api_url, headers=headers, timeout=timeout_s)
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:
+            log.warning("[greenhouse] %s: API request failed: %s", board, exc)
             continue
 
-        loc_el = a_tag.select_one("[class*='jobLocation'] p")
-        location = (loc_el.get_text(strip=True) if loc_el else "") or "Remote"
+        board_jobs = data.get("jobs", [])
+        company_name = board.replace("-", " ").title()
+        # Use the first job's metadata to get the real company name if available.
+        if board_jobs:
+            first_meta = board_jobs[0].get("company_name")
+            if first_meta:
+                company_name = first_meta
 
-        full_url = href if href.startswith("http") else f"https://www.anthropic.com{href}"
-        jobs.append({
-            "company": "Anthropic",
-            "role": title,
-            "location": location,
-            "url": full_url,
-            "source": "Anthropic Careers",
-            "date_found": date.today().isoformat(),
-        })
+        for entry in board_jobs:
+            title = entry.get("title", "")
+            if not title or not matches_roles(title, roles):
+                continue
 
-    log.info("[anthropic] %d jobs matched", len(jobs))
+            loc = entry.get("location", {})
+            location = loc.get("name", "") if isinstance(loc, dict) else str(loc)
+
+            absolute_url = entry.get("absolute_url", "")
+            desc_html = entry.get("content", "")
+            desc_text = ""
+            if desc_html:
+                desc_text = BeautifulSoup(
+                    desc_html, "html.parser"
+                ).get_text(" ", strip=True)
+
+            jobs.append({
+                "company": company_name,
+                "role": title,
+                "location": location or "Remote",
+                "url": absolute_url,
+                "source": f"Greenhouse ({board})",
+                "date_found": date.today().isoformat(),
+                "description_text": desc_text,
+            })
+
+        log.info("[greenhouse] %s: %d jobs matched out of %d listed",
+                 board, sum(1 for j in jobs if j["source"] == f"Greenhouse ({board})"),
+                 len(board_jobs))
+
     return jobs
 
 
@@ -1666,7 +1680,7 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
-    "anthropic": scrape_anthropic,
+    "greenhouse": scrape_greenhouse,
     "linkedin": scrape_linkedin,
     "indeed": scrape_indeed,
     "wellfound": scrape_wellfound,
