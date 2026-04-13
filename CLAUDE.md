@@ -32,6 +32,8 @@ This repo is the **engine** that powers daily job search planning and end-of-day
 - `config.yaml` - Central configuration (paths, repos, tracker settings, check-in times, calendar sync)
 - `scripts/` - Shell scripts for data gathering (calendar, applications, Claude sessions, git activity, carry-forward)
 - `scripts/tracker.sh` - Application tracker CRUD (add, update, list, stats, follow-ups)
+- `scripts/scrape-jobs.py` - Job scraper: 8 sources (LinkedIn, Indeed, Apple, Greenhouse, RemoteOK, WWR, HN, Wellfound), detail-page enrichment, Claude CLI enrichment (Fit, GD Rating, Product/Purpose, Notes)
+- `scripts/gather-jobs.sh` - Orchestrator: builds job queue from config, runs scraper, triggers enrichment
 - `agents/work-planner.md` - Planning intelligence agent (symlinked to `.claude/agents/`)
 - `commands/` - Slash command definitions (symlinked to `.claude/commands/`)
 - `context.md` - User profile and preferences
@@ -69,19 +71,26 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - `make focus` - Toggle focus mode (headless)
 - `make voice-update ARGS="/path/to/file.md"` - Update voice profile from a writing sample
 
+### Job Scraping
+- `make gather-jobs` - Run full job discovery pipeline (queue + scrape + enrich)
+- `make scrape-jobs` - Run scraper only (usage: `make scrape-jobs ARGS="--dry-run"`)
+- `make backfill-jobs` - Re-enrich empty Fit/GD/Product/Notes in existing jobs.csv rows
+
 ## Integrations
 
 - **Application Tracker**: Local YAML file managed by `scripts/tracker.sh` using `yq`
 - **Calendar**: macOS Calendar via `icalBuddy` (read) and AppleScript (write plan time blocks)
 - **Claude Sessions**: `~/.claude/history.jsonl` and `sessions-index.json`
-- **launchd**: Automated check-in triggers via macOS LaunchAgent (opens iTerm2 window)
+- **Job Scraper**: Python scraper (`scripts/scrape-jobs.py`) with 8 sources. Phase 1 (headless, parallel): RemoteOK, WWR, HN, Greenhouse API, Apple. Phase 2 (visible browser, serial): LinkedIn, Indeed, Wellfound. Pagination via `max_pages` config. Detail-page enrichment for comp data. Claude CLI enrichment for Fit, GD Rating, Product/Purpose, Notes. Backfill mode re-enriches existing rows.
+- **launchd**: Automated check-in triggers and scheduled job scraping via macOS LaunchAgents (opens iTerm2 window)
 
 ## Output
 
 - Daily plans and notes: `{output_dir}/YYYY/MM/YYYY-MM-DD-{plan,notes}.md`
 - Weekly summaries: `{output_dir}/weekly/YYYY/YYYY-WNN-week.md`
 - Application tracker: `{output_dir}/tracker.yaml`
-- Jobs discovered: `{output_dir}/jobs.csv`
+- Jobs discovered: `{output_dir}/jobs.csv` (populated by `make gather-jobs`; backfill gaps with `make backfill-jobs`)
+- Job queue (daily): `{output_dir}/job-queue-YYYY-MM-DD.md`
 - Contacts log: `{output_dir}/contacts.csv`
 - Location preferences: `{output_dir}/location-preferences.md`
 - Writing voice profile: `{output_dir}/voice-profile.md`

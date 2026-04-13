@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] -- v2.0
 
+### Added -- Pagination for LinkedIn, Indeed, Apple scrapers
+- `scrape-jobs.py`: LinkedIn paginates via `&start=N` (25/page), Indeed via `&start=N` (10/page), Apple via scroll-triggered API intercepts. All respect `max_pages` config (default 3). Short-circuits on partial pages or empty results. 2s cooldown between LinkedIn pages to reduce bot-detection risk.
+- `config.yaml`: New `job_search.scraper.max_pages` (default 3) and `job_search.scraper.date_window_days` (default 7). `date_window_days` drives LinkedIn `f_TPR=r{days*86400}` and Indeed `fromage={days}` parameters (previously hard-coded to 7).
+- Tests: `test_linkedin_paginates_up_to_max_pages`, `test_linkedin_url_uses_config_date_window`, `test_linkedin_default_date_window_is_7_days`, `test_indeed_uses_config_date_window`.
+
+### Fixed -- Enrichment budget bug; backfill for existing rows
+- `scrape-jobs.py`: `enrich_company_descriptions` used `break` when budget was hit, which stopped the entire job loop -- even jobs whose company was already cached got skipped. Replaced with `continue` + cache sentinel so cached companies are still applied. Budget defaults raised from 10/5/10 to 50/50/50.
+- `scrape-jobs.py`: New `--backfill` CLI flag re-enriches existing `jobs.csv` rows with empty Fit, GD Rating, Product/Purpose, or Notes. Uses `_CSV_TO_DICT`/`_DICT_TO_CSV` mappings and `_row_to_dict()`/`_dict_to_row()` helpers for round-trip fidelity.
+- `Makefile`: New `backfill-jobs` target (`make backfill-jobs`).
+- Tests: `TestEnrichCompanyBudgetFix` (cached companies applied after budget), `TestBackfillHelpers` (row_to_dict, dict_to_row, backfill writes/preserves).
+
+### Changed -- Switch headless scrapers to shared HTTP helpers; Apple API intercept
+- `scrape-jobs.py`: RemoteOK now uses its JSON API via `_api_get` (no browser). WeWorkRemotely switched to RSS XML feed via `_http_session`. HN and Greenhouse use shared `_api_get` helper. All four no longer need Playwright for Phase 1.
+- `scrape-jobs.py`: Apple scraper rewritten to intercept `/api/v1/search` POST responses via Playwright's `page.on("response")` handler instead of parsing DOM elements. Captures structured JSON with job IDs, titles, locations, and team names.
+- Shared helpers: `_http_session(config)` (requests.Session with configured user-agent + timeout) and `_api_get(session, url, config, label=)` (GET with retry logging).
+- Tests: WWR tests rewritten with `_wwr_rss_xml()` + `_mock_response_content()`, HN patches `_api_get`, Apple uses `_apple_mock_page()` with response interception mocks.
+
 ### Changed -- Replace Anthropic Playwright scraper with Greenhouse Job Board API
 - `scrape-jobs.py`: New `scrape_greenhouse(config)` replaces `scrape_anthropic`. Uses the public Greenhouse Job Board API (`boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`) — no browser, no auth, structured JSON with full descriptions. Completes in <1s vs 30s+ for Playwright. Job descriptions are extracted as `description_text` for the Notes enricher.
 - `config.yaml`: `greenhouse: true` replaces `anthropic: true` in scraper sources. New `greenhouse_boards` list (default `[anthropic]`) — add any company using Greenhouse as their ATS (e.g. `stripe`, `hashicorp`).
