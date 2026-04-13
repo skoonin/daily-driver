@@ -154,7 +154,7 @@ def dedup_key(company: str, role: str) -> str:
 
 # ── Company enrichment ───────────────────────────────────────────────────────
 
-def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) -> None:
+def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
@@ -168,7 +168,8 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
         return
 
     cfg = scraper_cfg(config) if config else {}
-    budget = int(cfg.get("max_enrich_companies", 50))
+    if budget <= 0:
+        budget = int(cfg.get("max_enrich_companies", 50))
     include_gd = cfg.get("enrich_gd_rating", True)
 
     unique_companies = {
@@ -264,7 +265,7 @@ def _load_location_tiers(config: dict) -> str:
     return "; ".join(tiers) if tiers else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
 
 
-def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
+def enrich_fit(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
     """Populate Fit score in-place for new jobs, using the Claude CLI.
 
     One `claude -p` call per job. Budget-capped via max_enrich_fit (default 5).
@@ -279,7 +280,8 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
         log.debug("[enrich-fit] disabled via config")
         return
 
-    budget = int(cfg.get("max_enrich_fit", 50))
+    if budget <= 0:
+        budget = int(cfg.get("max_enrich_fit", 50))
     tiers = _load_location_tiers(config) if config else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
 
     calls_made = 0
@@ -327,7 +329,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
         calls_made += 1
 
 
-def enrich_notes(jobs: list[dict], config: dict | None = None) -> None:
+def enrich_notes(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
     """Populate Notes in-place with a one-line summary via Claude CLI.
 
     Summarizes tech stack, remote policy, and red flags. Uses description_text
@@ -342,7 +344,8 @@ def enrich_notes(jobs: list[dict], config: dict | None = None) -> None:
         log.debug("[enrich-notes] disabled via config")
         return
 
-    budget = int(cfg.get("max_enrich_notes", 50))
+    if budget <= 0:
+        budget = int(cfg.get("max_enrich_notes", 50))
 
     calls_made = 0
     for job in jobs:
@@ -1970,9 +1973,9 @@ def backfill(config: dict, csv_path: Path) -> None:
         print("All rows already enriched, nothing to backfill.")
         return
 
-    enrich_company_descriptions(jobs, config)
-    enrich_fit(jobs, config)
-    enrich_notes(jobs, config)
+    enrich_company_descriptions(jobs, config, budget=sys.maxsize)
+    enrich_fit(jobs, config, budget=sys.maxsize)
+    enrich_notes(jobs, config, budget=sys.maxsize)
 
     # Write back
     backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")

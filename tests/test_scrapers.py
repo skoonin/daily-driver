@@ -726,18 +726,18 @@ class TestBackfillHelpers:
             cfg = copy.deepcopy(SAMPLE_CONFIG)
 
             # Mock all three enrichers to set values
-            def mock_company(jobs, config):
+            def mock_company(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("product"):
                         j["product"] = "Acme builds widgets"
                         j["gd_rating"] = "4.5"
 
-            def mock_fit(jobs, config):
+            def mock_fit(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("fit"):
                         j["fit"] = "8/10"
 
-            def mock_notes(jobs, config):
+            def mock_notes(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("notes"):
                         j["notes"] = "Looks good"
