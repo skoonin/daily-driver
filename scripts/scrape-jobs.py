@@ -114,6 +114,12 @@ def timeout_seconds(config: dict) -> int:
     return int(scraper_cfg(config).get("timeout", 15))
 
 
+def enrich_timeout(config: dict | None) -> int:
+    """Timeout for Claude CLI enrichment calls (seconds)."""
+    cfg = scraper_cfg(config) if config else {}
+    return int(cfg.get("enrich_timeout", 30))
+
+
 def countries_list(config: dict) -> list[str]:
     """Return the configured ISO country codes, defaulting to US + CA."""
     return scraper_cfg(config).get("countries", ["US", "CA"])
@@ -155,7 +161,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
     Silently skips enrichment if the `claude` CLI is not on PATH.
 
     Budget limits total claude calls to avoid silent stalls on slow networks —
-    each call blocks for up to 15s, so 10 companies = max 2.5 min wall time.
+    each call blocks for up to enrich_timeout seconds (default 30s).
     """
     if shutil.which("claude") is None:
         log.debug("[enrich] claude CLI not found, skipping product lookup")
@@ -209,7 +215,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
                 try:
                     result = subprocess.run(
                         ["claude", "-p", prompt],
-                        capture_output=True, text=True, timeout=15,
+                        capture_output=True, text=True, timeout=enrich_timeout(config),
                     )
                     if result.returncode == 0:
                         lines = [l for l in result.stdout.splitlines() if l.strip()]
@@ -228,7 +234,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None) ->
                     else:
                         cache[company] = {"product": "", "gd_rating": ""}
                 except subprocess.TimeoutExpired:
-                    log.warning("[enrich] %s: claude CLI timed out after 15s", company)
+                    log.warning("[enrich] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
                     cache[company] = {"product": "", "gd_rating": ""}
                 except OSError as exc:
                     log.debug("[enrich] %s lookup failed: %s", company, exc)
@@ -303,7 +309,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
         try:
             result = subprocess.run(
                 ["claude", "-p", prompt],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=enrich_timeout(config),
             )
             if result.returncode == 0:
                 raw = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ""
@@ -315,7 +321,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None) -> None:
                 else:
                     log.debug("[enrich-fit] unparseable response for %s: %r", company, raw)
         except subprocess.TimeoutExpired:
-            log.warning("[enrich-fit] %s: claude CLI timed out after 15s", company)
+            log.warning("[enrich-fit] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
         except OSError as exc:
             log.debug("[enrich-fit] %s scoring failed: %s", company, exc)
         calls_made += 1
@@ -376,12 +382,12 @@ def enrich_notes(jobs: list[dict], config: dict | None = None) -> None:
         try:
             result = subprocess.run(
                 ["claude", "-p", prompt],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True, text=True, timeout=enrich_timeout(config),
             )
             if result.returncode == 0 and result.stdout.strip():
                 job["notes"] = result.stdout.strip().splitlines()[0].strip()
         except subprocess.TimeoutExpired:
-            log.warning("[enrich-notes] %s: claude CLI timed out after 15s", company)
+            log.warning("[enrich-notes] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
         except OSError as exc:
             log.debug("[enrich-notes] %s failed: %s", company, exc)
         calls_made += 1

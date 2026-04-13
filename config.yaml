@@ -142,6 +142,9 @@ job_search:
     # Drives LinkedIn f_TPR and Indeed fromage parameters.
     date_window_days: 7
     timeout: 30
+    # Timeout (seconds) for Claude CLI enrichment calls (product, fit, notes).
+    # Higher = fewer timeouts but slower backfill runs.
+    enrich_timeout: 30
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
   # Role patterns. Supports fnmatch-style '*' wildcards and '!'-prefixed
