@@ -91,6 +91,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - Application tracker: `{output_dir}/tracker.yaml`
 - Jobs discovered: `{output_dir}/jobs.csv` (populated by `make gather-jobs`; backfill gaps with `make backfill-jobs`)
 - Job queue (daily): `{output_dir}/job-queue-YYYY-MM-DD.md`
+- Company docs: `{output_dir}/companies/{company}/{app-id}-{role-slug}.md` (auto-created by `tracker.sh add`)
 - Contacts log: `{output_dir}/contacts.csv`
 - Location preferences: `{output_dir}/location-preferences.md`
 - Writing voice profile: `{output_dir}/voice-profile.md`
@@ -120,6 +121,20 @@ Tracks people met during the search: recruiters, hiring managers, referrals, net
 - Add anyone worth remembering after a meaningful interaction (not every LinkedIn connection)
 - Update Last Contact and Next Action after each interaction
 - Include context in Notes that future-you needs (what you discussed, what they offered to help with)
+
+## Company Docs (`companies/{company}/{app-id}-{role-slug}.md`)
+
+Living documents that track everything about a specific application: company research, call notes, interview rounds, questions, and assessment. One file per application.
+
+**Structure**: `{output_dir}/companies/{company-slug}/{app-id}-{role-slug}.md`
+
+**Auto-created**: `tracker.sh add` creates a template doc when a new application is added.
+
+**Maintenance rules**:
+- Append to the Timeline section after every interaction (call, email, interview round)
+- Update Company and Role sections as you learn more
+- Keep Open Questions current -- remove answered ones, add new ones
+- Record assessment and decision rationale -- future-you needs to know why you moved forward or didn't
 
 ## Location Preferences (`location-preferences.md`)
 

@@ -71,6 +71,71 @@ follow_up_date() {
   date -v+"${days}"d +%Y-%m-%d
 }
 
+slugify() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//'
+}
+
+create_company_doc() {
+  local id="$1" company="$2" role="$3" url="$4" source="$5" dt="$6"
+  local company_slug role_slug
+  company_slug=$(slugify "$company")
+  role_slug=$(slugify "$role")
+  local dir="${OUTPUT_DIR}/companies/${company_slug}"
+  local file="${dir}/${id}-${role_slug}.md"
+
+  if [[ -f "$file" ]]; then
+    return 0
+  fi
+
+  mkdir -p "$dir"
+  cat > "$file" <<TEMPLATE
+# ${company} -- ${role}
+
+**App**: ${id}
+**Status**: applied
+**Applied**: ${dt}
+**URL**: ${url}
+**Source**: ${source}
+**Comp**: TBD
+**Location**: TBD
+
+---
+
+## Company
+
+(Research needed)
+
+## Role
+
+(Details from job posting)
+
+## Draws
+
+(What's appealing)
+
+## Concerns
+
+(What to watch for)
+
+## Open Questions
+
+1. Tech stack
+2. Team size and structure
+3. Interview process
+
+---
+
+## Timeline
+
+### ${dt} -- Applied
+
+- Source: ${source}
+- URL: ${url}
+TEMPLATE
+
+  echo "Company doc created: ${file}"
+}
+
 cmd_init() {
   ensure_tracker
   echo "Tracker initialized at ${TRACKER}"
@@ -94,6 +159,8 @@ cmd_add() {
   ID="$id" COMPANY="$company" ROLE="$role" URL="$url" DT="$dt" FU="$fu" SOURCE="$source" \
     yq -i '.applications += [{"id": strenv(ID), "company": strenv(COMPANY), "role": strenv(ROLE), "url": strenv(URL), "status": "applied", "date_applied": strenv(DT), "last_activity": strenv(DT), "follow_up_date": strenv(FU), "notes": "", "source": strenv(SOURCE)}]' "$TRACKER" \
     || { echo "ERROR: tracker add: yq failed to append application" >&2; exit 1; }
+
+  create_company_doc "$id" "$company" "$role" "$url" "$source" "$dt"
 
   echo "${id} | ${company} | ${role} | applied | follow-up: ${fu}"
 }
