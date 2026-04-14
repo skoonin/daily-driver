@@ -12,3 +12,4 @@ coverage.json
 .tox/
 __pycache__/
 *.pyc
+logs/

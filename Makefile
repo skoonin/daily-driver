@@ -15,7 +15,7 @@ CLDE  = CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium
 CLDELT = CLAUDE_CODE_SUBAGENT_MODEL=haiku claude --model sonnet --effort low
 CLAUDE_DIR := $(PROJ_DIR)/.claude
 
-##@ Setup
+##@ Getting Started
 
 help:  ## Display this help
 	@echo ""
@@ -180,12 +180,60 @@ uninstall:  ## Remove symlinks from .claude/
 	@rm -f $(CLAUDE_DIR)/CLAUDE.md $(CLAUDE_DIR)/settings.local.json
 	@echo "Uninstalled. Symlinks removed from .claude/"
 
-##@ Automation
+##@ Daily Workflow (run these every day)
+
+day-start:  ## Morning planning — gather context, build plan, block calendar
+	@$(CLDE) --agent work-planner -n "day-start-$$(date +%Y-%m-%d)" '/day-start'
+
+check-in:  ## Mid-day review — progress against plan, flag overruns
+	@$(CLDE) --agent work-planner -n "check-in-$$(date +%Y-%m-%d-%H%M)" '/check-in'
+
+day-end:  ## Evening wrap-up — plan vs actual, write daily notes
+	@$(CLDE) --agent work-planner -n "day-end-$$(date +%Y-%m-%d)" '/day-end'
+
+focus:  ## Suppress check-ins for deep work (usage: make focus ARGS="90")
+	@$(CLDELT) -p '/focus $(ARGS)'
+
+##@ Reporting
+
+standup:  ## Standup summary (Yesterday/Today/Blockers) copied to clipboard
+	@$(CLDELT) -p '/standup' | pbcopy
+	@echo "Standup copied to clipboard"
+
+week-end:  ## Friday rollup — daily notes into weekly summary
+	@$(CLDE) --agent work-planner -n "week-end-$$(date +%Y-W%V)" '/week-end'
+
+month-end:  ## Monthly rollup — weekly summaries into monthly report
+	@$(CLDE) --agent work-planner -n "month-end-$$(date +%Y-%m)" '/month-end'
+
+prep:  ## Meeting prep — application context for upcoming meeting
+	@$(CLDE) --agent work-planner -n "prep-$$(date +%Y-%m-%d-%H%M)" '/prep $(ARGS)'
+
+interview-prep:  ## Practice questions for a target role (usage: make interview-prep ARGS="Company")
+	@$(CLDE) --agent work-planner -n "interview-prep-$$(date +%Y-%m-%d-%H%M)" '/interview-prep $(ARGS)'
+
+##@ Job Discovery
+
+gather-jobs:  ## Full pipeline — queue, scrape all sources, enrich with Claude
+	@bash scripts/gather-jobs.sh
+
+scrape-jobs:  ## Scraper only (usage: make scrape-jobs ARGS="--dry-run")
+	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
+
+backfill-jobs:  ## Re-enrich rows missing Fit/GD/Product/Notes in jobs.csv
+	@python3 scripts/scrape-jobs.py --config config.yaml --backfill $(ARGS)
+
+##@ Writing
+
+voice-update:  ## Update voice profile from sample (usage: make voice-update ARGS="/path/to/file.md")
+	@$(CLDE) -n "voice-update-$$(date +%Y-%m-%d)" '/voice-update $(ARGS)'
+
+##@ Automation (LaunchAgents)
 
 launchd-install:  ## Install all LaunchAgents (day-start, check-in, day-end)
 	@bash scripts/launchd-install.sh install
 
-launchd-start:  ## Load all LaunchAgents if installed but not running
+launchd-start:  ## Load agents that are installed but not running
 	@any_missing=0; \
 	for agent in day-start checkin day-end gather-jobs; do \
 		plist_name="com.daily-driver.$${agent}"; \
@@ -205,54 +253,12 @@ launchd-start:  ## Load all LaunchAgents if installed but not running
 launchd-uninstall:  ## Remove all LaunchAgents
 	@bash scripts/launchd-install.sh uninstall
 
-##@ Testing
+##@ Development
 
-test:  ## Run tests (no coverage)
+test:  ## Run tests
 	pytest
 
 test-cov:  ## Run tests with coverage report
 	pytest --cov=scripts --cov-report=term-missing
-
-##@ Workflow
-
-day-start:  ## Morning planning: gather context and plan the day
-	@$(CLDE) --agent work-planner -n "day-start-$$(date +%Y-%m-%d)" '/day-start'
-
-day-end:  ## End of day: compare plan vs actual, write daily notes
-	@$(CLDE) --agent work-planner -n "day-end-$$(date +%Y-%m-%d)" '/day-end'
-
-check-in:  ## Mid-day check-in: review progress against plan
-	@$(CLDE) --agent work-planner -n "check-in-$$(date +%Y-%m-%d-%H%M)" '/check-in'
-
-standup:  ## Generate async standup summary to clipboard
-	@$(CLDELT) -p '/standup' | pbcopy
-	@echo "Standup copied to clipboard"
-
-week-end:  ## Weekly rollup: summarize the week into a report
-	@$(CLDE) --agent work-planner -n "week-end-$$(date +%Y-W%V)" '/week-end'
-
-month-end:  ## Monthly rollup: summarize the month into a report
-	@$(CLDE) --agent work-planner -n "month-end-$$(date +%Y-%m)" '/month-end'
-
-prep:  ## Meeting prep: gather context for an upcoming meeting
-	@$(CLDE) --agent work-planner -n "prep-$$(date +%Y-%m-%d-%H%M)" '/prep $(ARGS)'
-
-focus:  ## Toggle focus mode (usage: make focus ARGS="90")
-	@$(CLDELT) -p '/focus $(ARGS)'
-
-interview-prep:  ## Interview prep: practice questions for a target role (usage: make interview-prep ARGS="Company")
-	@$(CLDE) --agent work-planner -n "interview-prep-$$(date +%Y-%m-%d-%H%M)" '/interview-prep $(ARGS)'
-
-voice-update:  ## Update writing voice profile from an approved sample or feedback (usage: make voice-update ARGS="/path/to/file.md")
-	@$(CLDE) -n "voice-update-$$(date +%Y-%m-%d)" '/voice-update $(ARGS)'
-
-gather-jobs:  ## Run job discovery now (manual trigger, includes Phase 2 scraper)
-	@bash scripts/gather-jobs.sh
-
-scrape-jobs:  ## Run Phase 2 scraper only (usage: make scrape-jobs ARGS="--dry-run")
-	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
-
-backfill-jobs:  ## Enrich empty Fit/GD/Product/Notes in existing jobs.csv
-	@python3 scripts/scrape-jobs.py --config config.yaml --backfill $(ARGS)
 
 
