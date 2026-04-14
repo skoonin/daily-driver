@@ -31,7 +31,7 @@ cmd_install() {
   local brew_prefix
   brew_prefix=$(detect_brew_prefix)
   local repo_dir
-  repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
+  repo_dir="$(git -C "${SCRIPT_DIR}" worktree list --porcelain | head -1 | sed 's/^worktree //')"
 
   mkdir -p "$AGENTS_DIR"
   chmod +x "${repo_dir}/scripts/open-session.sh"
