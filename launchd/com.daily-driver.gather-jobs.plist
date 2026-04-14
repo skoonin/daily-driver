@@ -19,9 +19,9 @@
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/tmp/daily-driver-gather-jobs.log</string>
+  <string>PLACEHOLDER_REPO/logs/gather-jobs.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/daily-driver-gather-jobs.log</string>
+  <string>PLACEHOLDER_REPO/logs/gather-jobs.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>

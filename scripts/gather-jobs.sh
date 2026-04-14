@@ -212,11 +212,11 @@ scraper_exit=0
 if [[ -f "$SCRAPER" && -n "$PYTHON" ]]; then
   echo "Running job scraper..."
   set +e
-  "$PYTHON" "$SCRAPER" --config "$CONFIG" 2>&1 | tee -a /tmp/daily-driver-gather-jobs.log
+  "$PYTHON" "$SCRAPER" --config "$CONFIG" 2>&1 | tee -a "${SCRIPT_DIR}/../logs/gather-jobs.log"
   scraper_exit=${PIPESTATUS[0]}
   set -e
   if [[ $scraper_exit -ne 0 ]]; then
-    echo "WARNING: scraper exited with code ${scraper_exit} — check /tmp/daily-driver-gather-jobs.log"
+    echo "WARNING: scraper exited with code ${scraper_exit} — check logs/gather-jobs.log"
   fi
 else
   echo "Skipping Phase 2: scrape-jobs.py or python3 not found"

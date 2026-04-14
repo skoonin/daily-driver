@@ -20,9 +20,9 @@
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/tmp/daily-driver-day-end.log</string>
+  <string>PLACEHOLDER_REPO/logs/day-end.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/daily-driver-day-end.log</string>
+  <string>PLACEHOLDER_REPO/logs/day-end.log</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
