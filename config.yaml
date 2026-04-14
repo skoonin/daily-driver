@@ -7,7 +7,8 @@ output_dir: ~/git/docs-local/daily-driver
 # Git repos to sync at day-start (skipped if dirty)
 sync_repos:
   - ~/.claude
-  - ~/git/code-workspaces
+  - ~/git/daily-driver
+  - ~/git/docs-local
 
 # Directory to scan for git activity at day-end
 git_scan_dir: ~/git
@@ -117,6 +118,7 @@ job_search:
     countries:
       - "US"
       - "CA"
+      - "GB"
     # Phase 1 (headless) scraper concurrency. Phase 2 (linkedin/indeed/wellfound)
     # always runs serially due to bot detection + visible-browser constraints.
     parallel_workers: 4
@@ -182,4 +184,4 @@ job_search:
     - "!*Director*"
     - "!*Head of*"
     - "!Junior *"
-    - "!*Internship*"
+    - "!*Intern*"
