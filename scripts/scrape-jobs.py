@@ -215,7 +215,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
                     )
                 try:
                     result = subprocess.run(
-                        ["claude", "-p", prompt],
+                        ["claude", "--bare", "--no-session-persistence", "-p", prompt],
                         capture_output=True, text=True, timeout=enrich_timeout(config),
                     )
                     if result.returncode == 0:
@@ -310,7 +310,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None, *, budget: int = 0)
 
         try:
             result = subprocess.run(
-                ["claude", "-p", prompt],
+                ["claude", "--bare", "--no-session-persistence", "-p", prompt],
                 capture_output=True, text=True, timeout=enrich_timeout(config),
             )
             if result.returncode == 0:
@@ -384,7 +384,7 @@ def enrich_notes(jobs: list[dict], config: dict | None = None, *, budget: int = 
 
         try:
             result = subprocess.run(
-                ["claude", "-p", prompt],
+                ["claude", "--bare", "--no-session-persistence", "-p", prompt],
                 capture_output=True, text=True, timeout=enrich_timeout(config),
             )
             if result.returncode == 0 and result.stdout.strip():

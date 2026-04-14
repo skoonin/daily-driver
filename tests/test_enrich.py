@@ -702,7 +702,7 @@ class TestEnrichNotes:
         sj.enrich_notes(jobs, None)
         assert jobs[0]["notes"] == "K8s, Go, remote US-only, no red flags"
         # Prompt should include description text
-        prompt_arg = mock_run.call_args[0][0][2]
+        prompt_arg = mock_run.call_args[0][0][-1]
         assert "Build K8s platform using Go" in prompt_arg
 
     @patch("shutil.which", return_value="/usr/bin/claude")
@@ -713,7 +713,7 @@ class TestEnrichNotes:
                  "product": "cloud IDE"}]
         sj.enrich_notes(jobs, None)
         assert jobs[0]["notes"] == "Infra platform, likely K8s/AWS"
-        prompt_arg = mock_run.call_args[0][0][2]
+        prompt_arg = mock_run.call_args[0][0][-1]
         assert "(cloud IDE)" in prompt_arg
 
     @patch("shutil.which", return_value="/usr/bin/claude")
