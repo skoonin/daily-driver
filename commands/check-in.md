@@ -43,6 +43,14 @@ bash scripts/gather-sessions.sh
 bash scripts/gather-git-activity.sh
 ```
 
+Collect application pipeline status and company docs for today's plan:
+```bash
+bash scripts/gather-applications.sh
+```
+```bash
+bash scripts/gather-company-docs.sh
+```
+
 ## 3. Present Check-in Summary
 
 Using the gathered data, present:
