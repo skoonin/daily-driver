@@ -47,7 +47,11 @@ cat context.md
 
 ## 5. Personal Tasks
 
-Ask the user: "Any personal tasks or appointments today? Include anything time-bound (doctor, errands, walks)."
+Pre-populate personal tasks from two sources:
+1. **Daily recurring** — items listed under "Daily Recurring Reminders" in `context.md`. Always present; do not ask about these.
+2. **Carried over** — items from the `=== Personal Tasks (carried from ...) ===` section of `gather-carryforward.sh` output (step 3). Include all of them; preserve their text and notes exactly.
+
+Then ask: "Anything extra today beyond [list the recurring items]? Include anything time-bound (doctor, errands, walks)."
 
 Accept free-form input. For each item, extract:
 - `text`: description
@@ -57,7 +61,7 @@ Accept free-form input. For each item, extract:
 
 If the user mentions a time but no duration, ask: "How long for that?" (needed for calendar sync).
 
-If no personal tasks, proceed.
+If no extra tasks, proceed.
 
 ## 6. Plan the Day
 
