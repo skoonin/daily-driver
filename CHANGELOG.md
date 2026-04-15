@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] -- Location preferences in config
+
+### Changed -- Location preferences moved from markdown to config.yaml
+- `config.yaml`: New `job_search.locations` block with `home_city`, `remote` (bool), `countries` (ISO codes), and `cities` (city strings). Replaces `{output_dir}/location-preferences.md` and `job_search.scraper.countries`. The countries list now drives both scraper search scope and location filtering.
+- `config.yaml`: New `job_search.persona` for enrichment prompts. New `job_search.domain_keywords` and `job_search.seniority_keywords` for Tier 2 role matching.
+- `scrape-jobs.py`: New `location_matches()` hard-filters jobs before enrichment. Empty/missing locations accepted when `remote: true`. New config helpers: `locations_config()`, `persona()`, `home_city()`, `domain_keywords()`, `seniority_keywords()`.
+- `scrape-jobs.py`: `_load_location_tiers()` replaced by `_location_summary()`. `COUNTRY_MAP` expanded with IE, AU, ZA. `COUNTRY_NAMES` uses explicit aliases (no ISO code substring matching). `matches_roles()` reads domain/seniority keywords from config.
+- `scrape-jobs.py`: Enrichment prompts (`enrich_fit`, `enrich_notes`) now use `persona()` and `home_city()` from config instead of hardcoded strings.
+- Tests: New `test_location_filter.py` (23 tests). Updated `test_enrich.py` to remove markdown file mocks. Updated `test_scrapers.py` for new config path.
+
 ## [Unreleased] -- v2.0
 
 ### Added -- Pagination for LinkedIn, Indeed, Apple scrapers

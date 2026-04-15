@@ -43,13 +43,14 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 log = logging.getLogger(__name__)
 
-# Two-tier role matching: domain + optional seniority
-_DOMAIN_KEYWORDS = {
+# Two-tier role matching: domain + optional seniority.
+# Defaults used when config keys are absent.
+_DEFAULT_DOMAIN_KEYWORDS = {
     "sre", "site reliability", "platform engineer", "platform engineering",
     "devops", "infrastructure", "cloud engineer", "cloud engineering",
     "ci/cd", "build engineer", "release engineer", "production engineer",
 }
-_SENIORITY_KEYWORDS = {"senior", "staff", "principal", "lead", "sr.", "sr "}
+_DEFAULT_SENIORITY_KEYWORDS = {"senior", "staff", "principal", "lead", "sr.", "sr "}
 
 # Seniority prefixes stripped when compressing 21 roles → ~10 search terms
 _SENIORITY_PREFIXES = (
@@ -79,6 +80,34 @@ COUNTRY_MAP: dict[str, dict[str, str]] = {
         "linkedin_location": "United Kingdom",
         "indeed_host": "uk.indeed.com",
     },
+    "IE": {
+        "apple_locale": "en-ie",
+        "linkedin_location": "Ireland",
+        "indeed_host": "ie.indeed.com",
+    },
+    "AU": {
+        "apple_locale": "en-au",
+        "linkedin_location": "Australia",
+        "indeed_host": "au.indeed.com",
+    },
+    "ZA": {
+        "apple_locale": "en-za",
+        "linkedin_location": "South Africa",
+        "indeed_host": "za.indeed.com",
+    },
+}
+
+# Country display names and common aliases for location matching.
+# Used by location_matches() to check if a job's location text belongs to
+# an allowed country. ISO codes are excluded to avoid false positives
+# (e.g., "CA" matching California instead of Canada).
+COUNTRY_NAMES: dict[str, list[str]] = {
+    "US": ["United States", "USA"],
+    "CA": ["Canada"],
+    "GB": ["United Kingdom", "UK", "England", "Scotland", "Wales"],
+    "IE": ["Ireland"],
+    "AU": ["Australia"],
+    "ZA": ["South Africa"],
 }
 
 
@@ -120,9 +149,36 @@ def enrich_timeout(config: dict | None) -> int:
     return int(cfg.get("enrich_timeout", 30))
 
 
+def locations_config(config: dict) -> dict:
+    """Return the job_search.locations block, or {} if absent."""
+    return config.get("job_search", {}).get("locations", {})
+
+
+def persona(config: dict) -> str:
+    """Return the job_search.persona string for enrichment prompts."""
+    return config.get("job_search", {}).get("persona", "SRE/Platform/Infra engineer")
+
+
+def home_city(config: dict) -> str:
+    """Return the configured home city from locations block."""
+    return locations_config(config).get("home_city", "Vancouver, BC")
+
+
+def domain_keywords(config: dict) -> set[str]:
+    """Return domain keywords for Tier 2 role matching."""
+    kws = config.get("job_search", {}).get("domain_keywords")
+    return set(kws) if kws else _DEFAULT_DOMAIN_KEYWORDS
+
+
+def seniority_keywords(config: dict) -> set[str]:
+    """Return seniority keywords for Tier 2 role matching."""
+    kws = config.get("job_search", {}).get("seniority_keywords")
+    return set(kws) if kws else _DEFAULT_SENIORITY_KEYWORDS
+
+
 def countries_list(config: dict) -> list[str]:
     """Return the configured ISO country codes, defaulting to US + CA."""
-    return scraper_cfg(config).get("countries", ["US", "CA"])
+    return locations_config(config).get("countries", ["US", "CA"])
 
 
 def country_params(country: str) -> dict[str, str]:
@@ -137,6 +193,38 @@ def country_params(country: str) -> dict[str, str]:
         return {}
     return params
 
+
+def location_matches(job: dict, config: dict) -> bool:
+    """Check whether a job's location matches the configured allow-list.
+
+    Accepts if any of:
+      - remote: true and job location contains "remote" (or is empty/missing)
+      - job location contains any entry from locations.cities
+      - job location contains a country name from locations.countries
+    Returns True (accept) when no locations block is configured.
+    """
+    loc_cfg = locations_config(config)
+    if not loc_cfg:
+        return True
+
+    loc = job.get("location", "").lower()
+    if not loc:
+        # Empty location implies remote-friendly; accept when remote is enabled
+        return loc_cfg.get("remote", True)
+
+    if loc_cfg.get("remote", True) and "remote" in loc:
+        return True
+
+    for city in loc_cfg.get("cities", []):
+        if city.lower() in loc:
+            return True
+
+    for code in loc_cfg.get("countries", []):
+        for name in COUNTRY_NAMES.get(code.upper(), []):
+            if name.lower() in loc:
+                return True
+
+    return False
 
 
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
@@ -248,41 +336,40 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
             job["gd_rating"] = cached["gd_rating"]
 
 
-def _load_location_tiers(config: dict) -> str:
-    """Read location-preferences.md and return a compressed tier summary."""
-    loc_path = resolve_output_dir(config) / "location-preferences.md"
-    try:
-        text = loc_path.read_text()
-    except FileNotFoundError:
-        return "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
-    tiers: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("|") and "Tier" in line and "---" not in line:
-            # Extract "Tier N" and location from the table row
-            parts = [c.strip() for c in line.split("|") if c.strip()]
-            if len(parts) >= 2:
-                tiers.append(f"{parts[0]}: {parts[1]}")
-    return "; ".join(tiers) if tiers else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
+def _location_summary(config: dict) -> str:
+    loc_cfg = locations_config(config)
+    parts = [f"Based in: {home_city(config)}"]
+    cities = loc_cfg.get("cities", [])
+    if cities:
+        parts.append("Preferred cities: " + ", ".join(cities))
+    codes = loc_cfg.get("countries", [])
+    if codes:
+        names = [COUNTRY_NAMES.get(c.upper(), [c])[0] for c in codes]
+        parts.append("Countries: " + ", ".join(names))
+    if loc_cfg.get("remote", True):
+        parts.append("Remote: yes")
+    return "; ".join(parts)
 
 
-def enrich_fit(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
+def enrich_fit(jobs: list[dict], config: dict, *, budget: int = 0) -> None:
     """Populate Fit score in-place for new jobs, using the Claude CLI.
 
     One `claude -p` call per job. Budget-capped via max_enrich_fit (default 5).
-    Reads location-preferences.md once from output_dir to build the prompt.
+    Builds location context from job_search.locations config.
     """
     if shutil.which("claude") is None:
         log.debug("[enrich-fit] claude CLI not found, skipping fit scoring")
         return
 
-    cfg = scraper_cfg(config) if config else {}
+    cfg = scraper_cfg(config)
     if not cfg.get("enrich_fit", True):
         log.debug("[enrich-fit] disabled via config")
         return
 
     if budget <= 0:
         budget = int(cfg.get("max_enrich_fit", 50))
-    tiers = _load_location_tiers(config) if config else "Tier 1: Vancouver/Remote-CA; Tier 5: US cities"
+    loc_summary = _location_summary(config)
+    role_persona = persona(config)
 
     calls_made = 0
     for job in jobs:
@@ -299,10 +386,9 @@ def enrich_fit(jobs: list[dict], config: dict | None = None, *, budget: int = 0)
         product = job.get("product", "")
 
         prompt = (
-            f"Rate this job's fit from 1-10 for an SRE/Platform/Infra engineer "
-            f"based in Vancouver BC. Reply with ONLY the number, e.g. '7'. "
-            f"No preamble.\n\n"
-            f"Location tiers: {tiers}\n"
+            f"Rate this job's fit from 1-10 for a {role_persona}. "
+            f"Reply with ONLY the number, e.g. '7'. No preamble.\n\n"
+            f"Location preferences: {loc_summary}\n"
             f"Job: {role} at {company}, {location}\n"
         )
         if product:
@@ -329,7 +415,7 @@ def enrich_fit(jobs: list[dict], config: dict | None = None, *, budget: int = 0)
         calls_made += 1
 
 
-def enrich_notes(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
+def enrich_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> None:
     """Populate Notes in-place with a one-line summary via Claude CLI.
 
     Summarizes tech stack, remote policy, and red flags. Uses description_text
@@ -339,13 +425,14 @@ def enrich_notes(jobs: list[dict], config: dict | None = None, *, budget: int = 
         log.debug("[enrich-notes] claude CLI not found, skipping")
         return
 
-    cfg = scraper_cfg(config) if config else {}
+    cfg = scraper_cfg(config)
     if not cfg.get("enrich_notes", True):
         log.debug("[enrich-notes] disabled via config")
         return
 
     if budget <= 0:
         budget = int(cfg.get("max_enrich_notes", 50))
+    hc = home_city(config)
 
     calls_made = 0
     for job in jobs:
@@ -370,7 +457,7 @@ def enrich_notes(jobs: list[dict], config: dict | None = None, *, budget: int = 
             prompt = (
                 "Summarize this job in ONE line (max 25 words). Include: key "
                 "tech stack, remote policy (e.g. 'Remote US-only', 'Hybrid "
-                "Vancouver', 'Remote Canada OK'), red flags. No preamble.\n\n"
+                f"{hc}', 'Remote {hc} OK'), red flags. No preamble.\n\n"
                 f"Job: {role} at {company}, {location}\n"
                 f"Description: {desc}"
             )
@@ -916,7 +1003,7 @@ def _role_matches(role: str, title: str, title_lower: str) -> bool:
     return pat.search(title) is not None
 
 
-def matches_roles(title: str, roles: list[str]) -> bool:
+def matches_roles(title: str, roles: list[str], config: dict | None = None) -> bool:
     """True if the job title is relevant based on configured roles.
 
     Exclusions (entries starting with '!') short-circuit and dominate over
@@ -936,8 +1023,10 @@ def matches_roles(title: str, roles: list[str]) -> bool:
         if _role_matches(role, title, title_lower):
             return True
 
-    has_domain = any(kw in title_lower for kw in _DOMAIN_KEYWORDS)
-    has_seniority = any(kw in title_lower for kw in _SENIORITY_KEYWORDS)
+    d_kws = domain_keywords(config) if config else _DEFAULT_DOMAIN_KEYWORDS
+    s_kws = seniority_keywords(config) if config else _DEFAULT_SENIORITY_KEYWORDS
+    has_domain = any(kw in title_lower for kw in d_kws)
+    has_seniority = any(kw in title_lower for kw in s_kws)
     if has_domain and has_seniority:
         return True
 
@@ -1086,7 +1175,7 @@ def scrape_remoteok(config: dict) -> list[dict]:
         if "position" not in item:
             continue
         role = item["position"]
-        if not matches_roles(role, roles):
+        if not matches_roles(role, roles, config):
             continue
         job_id = str(item.get("id", ""))
         if job_id in seen_ids:
@@ -1149,7 +1238,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
             else:
                 company, role = "", raw_title
 
-            if not role or not matches_roles(role, roles):
+            if not role or not matches_roles(role, roles, config):
                 continue
             if link in seen_urls:
                 continue
@@ -1246,7 +1335,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
         company = parts[0]
         role = parts[1] if len(parts) > 1 else ""
 
-        if not matches_roles(" ".join(parts), roles):
+        if not matches_roles(" ".join(parts), roles, config):
             continue
 
         location = "Remote"
@@ -1303,7 +1392,7 @@ def scrape_greenhouse(config: dict) -> list[dict]:
 
         for entry in board_jobs:
             title = entry.get("title", "")
-            if not title or not matches_roles(title, roles):
+            if not title or not matches_roles(title, roles, config):
                 continue
 
             loc = entry.get("location", {})
@@ -1403,7 +1492,7 @@ def scrape_linkedin(config: dict) -> list[dict]:
                                 role = title_el.inner_text().strip()
                                 company = company_el.inner_text().strip() if company_el else ""
                                 location = loc_el.inner_text().strip() if loc_el else ""
-                                if not matches_roles(role, roles):
+                                if not matches_roles(role, roles, config):
                                     continue
                                 href = link_el.get_attribute("href") if link_el else ""
                                 if href and "linkedin.com/jobs/view/" in href:
@@ -1503,7 +1592,7 @@ def scrape_indeed(config: dict) -> list[dict]:
                                 role = title_el.inner_text().strip()
                                 company = company_el.inner_text().strip() if company_el else ""
                                 location = loc_el.inner_text().strip() if loc_el else ""
-                                if not matches_roles(role, roles):
+                                if not matches_roles(role, roles, config):
                                     continue
                                 href = link_el.get_attribute("href") if link_el else ""
                                 if href and not href.startswith("http"):
@@ -1587,7 +1676,7 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             continue
                         role = title_el.inner_text().strip()
                         company = company_el.inner_text().strip() if company_el else ""
-                        if not matches_roles(role, roles):
+                        if not matches_roles(role, roles, config):
                             continue
                         href = link_el.get_attribute("href") if link_el else ""
                         if href and not href.startswith("http"):
@@ -1704,7 +1793,7 @@ def scrape_apple(config: dict) -> list[dict]:
                     for item in api_results:
                         try:
                             title = item.get("postingTitle", "")
-                            if not title or not matches_roles(title, roles):
+                            if not title or not matches_roles(title, roles, config):
                                 continue
                             position_id = item.get("positionId", "") or item.get("id", "")
                             if not position_id:
@@ -2079,6 +2168,13 @@ def main() -> None:  # pragma: no cover
     new_jobs = [j for j in new_jobs if j.get("url")]
 
     log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
+
+    pre_filter = len(new_jobs)
+    new_jobs = [j for j in new_jobs if location_matches(j, config)]
+    filtered = pre_filter - len(new_jobs)
+    if filtered:
+        log.info("Filtered %d jobs by location preferences", filtered)
+
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 

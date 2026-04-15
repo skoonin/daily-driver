@@ -485,7 +485,7 @@ def test_countries_list_default():
 
 
 def test_countries_list_from_config():
-    cfg = {"job_search": {"scraper": {"countries": ["US", "GB"]}}}
+    cfg = {"job_search": {"locations": {"countries": ["US", "GB"]}}}
     assert sj.countries_list(cfg) == ["US", "GB"]
 
 
@@ -530,7 +530,7 @@ def _apple_mock_page():
 class TestScrapeAppleMultiCountry:
     def test_visits_every_configured_country_locale(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        cfg["job_search"]["locations"]["countries"] = ["US", "CA"]
         page = _apple_mock_page()
         with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
             sj.scrape_apple(cfg)
@@ -540,7 +540,7 @@ class TestScrapeAppleMultiCountry:
 
     def test_default_countries_when_unset(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"].pop("countries", None)
+        cfg["job_search"].pop("locations", None)
         page = _apple_mock_page()
         with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
             sj.scrape_apple(cfg)
@@ -552,7 +552,7 @@ class TestScrapeAppleMultiCountry:
 class TestScrapeLinkedInMultiCountry:
     def test_visits_every_configured_country(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        cfg["job_search"]["locations"]["countries"] = ["US", "CA"]
         visited: list[str] = []
         page = _mock_page([])
         page.goto.side_effect = lambda url, **kw: visited.append(url) or None
@@ -586,7 +586,7 @@ class TestScrapeLinkedInMultiCountry:
     def test_linkedin_paginates_up_to_max_pages(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
         cfg["job_search"]["scraper"]["max_pages"] = 2
-        cfg["job_search"]["scraper"]["countries"] = ["US"]
+        cfg["job_search"]["locations"]["countries"] = ["US"]
         visited: list[str] = []
         # Return 25 cards on first call (triggers page 2), 0 on second
         cards_25 = [_mock_element(inner_text="SRE") for _ in range(25)]
@@ -613,7 +613,7 @@ class TestScrapeLinkedInMultiCountry:
 class TestScrapeIndeedMultiCountry:
     def test_uses_configured_regional_host(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["countries"] = ["US", "CA"]
+        cfg["job_search"]["locations"]["countries"] = ["US", "CA"]
         visited: list[str] = []
         page = _mock_page([])
         page.goto.side_effect = lambda url, **kw: visited.append(url) or None
@@ -625,7 +625,7 @@ class TestScrapeIndeedMultiCountry:
     def test_indeed_uses_config_date_window(self):
         cfg = copy.deepcopy(SAMPLE_CONFIG)
         cfg["job_search"]["scraper"]["date_window_days"] = 14
-        cfg["job_search"]["scraper"]["countries"] = ["US"]
+        cfg["job_search"]["locations"]["countries"] = ["US"]
         visited: list[str] = []
         page = _mock_page([])
         page.goto.side_effect = lambda url, **kw: visited.append(url) or None

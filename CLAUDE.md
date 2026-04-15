@@ -93,7 +93,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - Job queue (daily): `{output_dir}/job-queue-YYYY-MM-DD.md`
 - Company docs: `{output_dir}/companies/{company}/{app-id}-{role-slug}.md` (auto-created by `tracker.sh add`)
 - Contacts log: `{output_dir}/contacts.csv`
-- Location preferences: `{output_dir}/location-preferences.md`
+- Location preferences: configured in `config.yaml` under `job_search.locations`
 - Writing voice profile: `{output_dir}/voice-profile.md`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)
 
@@ -136,9 +136,9 @@ Living documents that track everything about a specific application: company res
 - Keep Open Questions current -- remove answered ones, add new ones
 - Record assessment and decision rationale -- future-you needs to know why you moved forward or didn't
 
-## Location Preferences (`location-preferences.md`)
+## Location Preferences (`config.yaml`)
 
-Ranked location tiers that drive job filtering. Read this file before assessing new roles to apply location fit correctly. Update when preferences change or new locations are evaluated.
+Configured under `job_search.locations` in `config.yaml`. Keys: `home_city`, `remote` (bool), `countries` (ISO codes), `cities` (city strings). The scraper hard-filters jobs that don't match any allowed location and uses the same `countries` list to determine which country-specific sites to search. Jobs with empty/missing location are accepted when `remote: true`. The `home_city` and `job_search.persona` drive enrichment prompt context. Update `config.yaml` when preferences change.
 
 ## Writing Voice Profile (`voice-profile.md`)
 
