@@ -553,7 +553,13 @@ class TestEnrichCompanyDescriptionsBudget:
 class TestEnrichFit:
     def _run_with_mock(self, jobs, config=None, stdout="7"):
         if config is None:
-            config = {"job_search": {"scraper": {}}, "output_dir": "/tmp"}
+            config = {
+                "job_search": {
+                    "scraper": {},
+                    "locations": {"remote": True, "countries": ["CA"], "cities": ["Vancouver, BC"]},
+                },
+                "output_dir": "/tmp",
+            }
 
         def _fake_run(cmd, **kwargs):
             result = MagicMock()
@@ -563,8 +569,7 @@ class TestEnrichFit:
 
         with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
             with patch("scrape_jobs.subprocess.run", side_effect=_fake_run) as mock_run:
-                with patch("scrape_jobs.resolve_output_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(**{"read_text.return_value": "| 1 - Ideal | Vancouver, BC |"})})):
-                    sj.enrich_fit(jobs, config)
+                sj.enrich_fit(jobs, config)
         return mock_run
 
     def test_populates_fit_for_job(self):
@@ -615,8 +620,7 @@ class TestEnrichFit:
 
         with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
             with patch("scrape_jobs.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 15)):
-                with patch("scrape_jobs.resolve_output_dir", return_value=MagicMock(**{"__truediv__": lambda self, x: MagicMock(**{"read_text.return_value": ""})})):
-                    sj.enrich_fit(jobs, config)
+                sj.enrich_fit(jobs, config)
         assert not jobs[0].get("fit")
 
 
@@ -699,7 +703,7 @@ class TestEnrichNotes:
         mock_run.return_value = MagicMock(returncode=0, stdout="K8s, Go, remote US-only, no red flags\n")
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
                  "description_text": "Build K8s platform using Go"}]
-        sj.enrich_notes(jobs, None)
+        sj.enrich_notes(jobs, {})
         assert jobs[0]["notes"] == "K8s, Go, remote US-only, no red flags"
         # Prompt should include description text
         prompt_arg = mock_run.call_args[0][0][-1]
@@ -711,7 +715,7 @@ class TestEnrichNotes:
         mock_run.return_value = MagicMock(returncode=0, stdout="Infra platform, likely K8s/AWS\n")
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
                  "product": "cloud IDE"}]
-        sj.enrich_notes(jobs, None)
+        sj.enrich_notes(jobs, {})
         assert jobs[0]["notes"] == "Infra platform, likely K8s/AWS"
         prompt_arg = mock_run.call_args[0][0][-1]
         assert "(cloud IDE)" in prompt_arg
@@ -721,7 +725,7 @@ class TestEnrichNotes:
     def test_skips_existing_notes(self, mock_run, _which):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
                  "notes": "already filled"}]
-        sj.enrich_notes(jobs, None)
+        sj.enrich_notes(jobs, {})
         mock_run.assert_not_called()
 
     @patch("shutil.which", return_value="/usr/bin/claude")
@@ -735,7 +739,7 @@ class TestEnrichNotes:
     @patch("shutil.which", return_value=None)
     def test_skips_when_no_claude(self, _which):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
-        sj.enrich_notes(jobs, None)
+        sj.enrich_notes(jobs, {})
         assert "notes" not in jobs[0]
 
     @patch("shutil.which", return_value="/usr/bin/claude")
@@ -748,7 +752,7 @@ class TestEnrichNotes:
     @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=15))
     def test_timeout_handled(self, _run, _which):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
-        sj.enrich_notes(jobs, None)
+        sj.enrich_notes(jobs, {})
         assert "notes" not in jobs[0]
 
 

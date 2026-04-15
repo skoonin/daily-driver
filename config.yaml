@@ -56,6 +56,9 @@ reporting:
     save_dir: monthly
 
 job_search:
+  # Short role descriptor used in enrichment prompts (fit scoring, notes).
+  persona: "SRE/Platform/Infra engineer"
+
   # NOTE: schedule below is not read by any script. The actual gather-jobs schedule
   # lives in launchd/com.daily-driver.gather-jobs.plist. Edit the plist and re-run
   # `make launchd-install` to change the schedule.
@@ -108,17 +111,29 @@ job_search:
         type: playwright
         careers_url: "https://jobs.apple.com/en-us/search"
         enabled: true
+  # Location preferences. Drives both search scope (which countries to
+  # query) and hard filtering (drop jobs outside these locations).
+  locations:
+    home_city: "Vancouver, BC"
+    remote: true
+    countries:
+      - "CA"
+      - "GB"
+      - "IE"
+      - "AU"
+      - "ZA"
+      - "US"
+    cities:
+      - "Vancouver, BC"
+      - "London, UK"
+      - "Dublin, IE"
+      - "San Francisco, CA"
+      - "Los Angeles, CA"
+      - "Seattle, WA"
+
   scraper:
     enabled: true
     headless: false
-    # Countries to search. ISO 3166-1 alpha-2 codes. Each country maps to
-    # per-scraper URL parameters via COUNTRY_MAP in scripts/scrape-jobs.py.
-    # Adding a new country: (1) add its code here, (2) add a row to
-    # COUNTRY_MAP with the scraper-specific values.
-    countries:
-      - "US"
-      - "CA"
-      - "GB"
     # Phase 1 (headless) scraper concurrency. Phase 2 (linkedin/indeed/wellfound)
     # always runs serially due to bot detection + visible-browser constraints.
     parallel_workers: 4
@@ -185,3 +200,28 @@ job_search:
     - "!*Head of*"
     - "!Junior *"
     - "!*Intern*"
+
+  # Tier 2 domain keywords for fuzzy title matching. A title containing any
+  # domain keyword + any seniority keyword passes the role filter even if it
+  # doesn't match an explicit role pattern above.
+  domain_keywords:
+    - "sre"
+    - "site reliability"
+    - "platform engineer"
+    - "platform engineering"
+    - "devops"
+    - "infrastructure"
+    - "cloud engineer"
+    - "cloud engineering"
+    - "ci/cd"
+    - "build engineer"
+    - "release engineer"
+    - "production engineer"
+
+  seniority_keywords:
+    - "senior"
+    - "staff"
+    - "principal"
+    - "lead"
+    - "sr."
+    - "sr "

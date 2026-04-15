@@ -10,6 +10,13 @@ SAMPLE_CONFIG = {
     "output_dir": "~/jobs",
     "job_search": {
         "roles": ["SRE", "Platform Engineer", "DevOps Engineer"],
+        "persona": "SRE/Platform/Infra engineer",
+        "locations": {
+            "home_city": "Vancouver, BC",
+            "remote": True,
+            "countries": ["US", "CA"],
+            "cities": [],
+        },
         "scraper": {
             "enabled": True,
             "user_agent": "TestAgent/1.0",
