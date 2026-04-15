@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/opt/homebrew/bin/bash
 set -euo pipefail
 
 # Generates a dated job-queue markdown file with clickable search URLs per source x role.
