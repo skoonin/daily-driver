@@ -43,7 +43,7 @@ bash scripts/read-plan.sh
 ## 6. Read Context
 
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
 
 ## 7. Review the Day
@@ -63,7 +63,7 @@ Using the work-planner agent behavior, present:
    - `carry-over`: add with `carried_days` incremented
    - `blocked`: add with `blocked: true` and `blocked_reason` (ask if not known)
    - `unplanned`: ask user if it should carry forward
-   - Personal tasks: carry all unfinished ones forward into tomorrow's `personal_tasks` frontmatter. Ask about any that have been outstanding 3+ days (drop, schedule, or keep carrying?).
+   - Personal items (`type: personal`): carry unfinished ones forward as `carry_forward` entries with `type: personal`, same as work items. Ask about any outstanding 3+ days (drop, schedule, or keep carrying?).
 6. **Key Outcomes** - Applications sent, responses received, interviews scheduled, follow-ups completed
 
 Then ask the user:
@@ -99,9 +99,8 @@ bash scripts/ensure-daily-dir.sh
 
 Write the notes to `{output_dir}/YYYY/MM/YYYY-MM-DD-notes.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:
 - `date`: today's date
-- `carry_forward`: the list built in step 7 (items for tomorrow)
-- `personal_tasks`: all outstanding personal tasks from today's plan (unfinished ones, using the same pt-NNN IDs from the plan; preserve `notes` field to show how long they've been outstanding)
-- `plan_items`: all items from the morning plan with their final status values
+- `carry_forward`: the list built in step 7 (items for tomorrow, both work and personal with `type: personal`)
+- `plan_items`: all items from the morning plan (work and personal) with their final status values
 
 See the work-planner agent's "Plan File Frontmatter" and "Day-end Status Rules" sections for the exact schema.
 

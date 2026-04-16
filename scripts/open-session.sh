@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/opt/homebrew/bin/bash
 set -euo pipefail
 
 # Open an iTerm2 (or Terminal) window running a daily-driver slash command.
@@ -7,7 +7,19 @@ set -euo pipefail
 # Usage: open-session.sh <day-start|check-in|day-end>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="$HOME/.local/share/daily-driver"
+if ! STATE_DIR=$(bash "${SCRIPT_DIR}/get-state-dir.sh" 2>&1); then
+  echo "ERROR: $(basename "$0"): could not resolve state_dir: ${STATE_DIR}" >&2
+  exit 1
+fi
+mkdir -p "$STATE_DIR"
+
+log_msg() {
+  local msg
+  msg="$(date): $1"
+  echo "$msg" >&2
+  echo "$msg" >> "${STATE_DIR}/open-session.log"
+}
+
 LOCK_FILE="${STATE_DIR}/focus.lock"
 
 COMMAND="${1:-check-in}"
@@ -16,6 +28,17 @@ COMMAND="${1:-check-in}"
 for dir in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
   [[ -d "$dir" ]] && export PATH="${dir}:${PATH}"
 done
+
+# Read Claude session defaults from config
+CONFIG="${SCRIPT_DIR}/../config.yaml"
+CLAUDE_MODEL="sonnet"
+CLAUDE_EFFORT="medium"
+CLAUDE_SUBAGENT="sonnet"
+if command -v yq &>/dev/null && [[ -f "$CONFIG" ]]; then
+  CLAUDE_MODEL=$(yq '.claude.model // "sonnet"' "$CONFIG" 2>/dev/null)
+  CLAUDE_EFFORT=$(yq '.claude.effort // "medium"' "$CONFIG" 2>/dev/null)
+  CLAUDE_SUBAGENT=$(yq '.claude.subagent_model // "sonnet"' "$CONFIG" 2>/dev/null)
+fi
 
 open_session() {
   local repo_dir session_name slash_cmd wid_file existing_wid new_wid
@@ -29,7 +52,7 @@ open_session() {
 
   if [[ -f "$wid_file" ]]; then
     if ! existing_wid=$(cat "$wid_file" 2>&1); then
-      echo "WARNING: open-session: could not read ${wid_file}: ${existing_wid}" >&2
+      log_msg "WARNING: could not read ${wid_file}: ${existing_wid}"
       existing_wid=""
     fi
     if [[ ! "$existing_wid" =~ ^[0-9]+$ ]]; then
@@ -64,28 +87,28 @@ tell application "iTerm"
     end tell
   end if
   tell current session of targetTab
-    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
   end tell
   return (id of targetWindow) as text
 end tell
 EOF
     ); then
-      echo "ERROR: open-session: iTerm AppleScript failed: ${new_wid}" >&2
+      log_msg "ERROR: iTerm AppleScript failed: ${new_wid}"
       return 1
     fi
     if [[ -n "$new_wid" && "$new_wid" =~ ^[0-9]+$ ]]; then
       if ! printf '%s\n' "$new_wid" > "$wid_file" 2>&1; then
-        echo "WARNING: open-session: could not persist window ID to ${wid_file}" >&2
+        log_msg "WARNING: could not persist window ID to ${wid_file}"
       fi
     fi
   else
     if ! osascript 2>&1 <<EOF
 tell application "Terminal"
-  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
 end tell
 EOF
     then
-      echo "ERROR: open-session: Terminal AppleScript failed" >&2
+      log_msg "ERROR: Terminal AppleScript failed"
       return 1
     fi
   fi
@@ -95,6 +118,7 @@ EOF
 # Gate 1: Weekends
 dow=$(date +%u)
 if [[ "$dow" -ge 6 ]]; then
+  log_msg "skipped ${COMMAND} — weekend (dow=${dow})"
   exit 0
 fi
 
@@ -112,6 +136,7 @@ if [[ "$COMMAND" == "check-in" && -f "$LOCK_FILE" ]]; then
     now_epoch=0
   fi
   if [[ "$now_epoch" -lt "$end_epoch" ]]; then
+    log_msg "skipped ${COMMAND} — focus lock active (ends $(date -r "${end_epoch}" +%H:%M 2>/dev/null || echo "epoch:${end_epoch}"))"
     exit 0
   fi
   rm -f "$LOCK_FILE"
@@ -127,8 +152,7 @@ if [[ -f "$SESSION_LOCK" ]]; then
   # treating empty content as "corrupt" and deleting the lock, which would
   # bypass duplicate-session protection on a transient permission error.
   if ! locked_content=$(cat "$SESSION_LOCK" 2>&1); then
-    mkdir -p "$STATE_DIR"
-    echo "$(date): open-session: could not read ${SESSION_LOCK}: ${locked_content} -- skipping ${COMMAND}" >> "${STATE_DIR}/open-session.log"
+    log_msg "open-session: could not read ${SESSION_LOCK}: ${locked_content} -- skipping ${COMMAND}"
     exit 0
   fi
   if [[ "$locked_content" =~ ^pending:([0-9]+)$ ]]; then
@@ -137,29 +161,28 @@ if [[ -f "$SESSION_LOCK" ]]; then
     # comparing against 0 (which makes `lock_now - lock_epoch` a large negative
     # and would hold the lock indefinitely).
     if ! lock_now=$(date +%s 2>/dev/null); then
-      echo "$(date): open-session: date +%s failed while checking pending lock — clearing" >> "${STATE_DIR}/open-session.log"
+      log_msg "open-session: date +%s failed while checking pending lock — clearing"
       rm -f "$SESSION_LOCK"
     elif (( lock_now - lock_epoch < 60 )); then
       # Hold pending locks for up to 60s to let the spawned terminal replace with its own PID
-      echo "$(date): skipped ${COMMAND} — pending session launch (age $((lock_now - lock_epoch))s)" >> "${STATE_DIR}/open-session.log"
+      log_msg "skipped ${COMMAND} — pending session launch (age $((lock_now - lock_epoch))s)"
       exit 0
     else
-      echo "$(date): clearing stale pending lock (age $((lock_now - lock_epoch))s)" >> "${STATE_DIR}/open-session.log"
+      log_msg "clearing stale pending lock (age $((lock_now - lock_epoch))s)"
       rm -f "$SESSION_LOCK"
     fi
   elif [[ "$locked_content" =~ ^[0-9]+$ ]]; then
     if kill -0 "$locked_content" 2>/dev/null; then
-      echo "$(date): skipped ${COMMAND} — session already running (PID ${locked_content})" >> "${STATE_DIR}/open-session.log"
+      log_msg "skipped ${COMMAND} — session already running (PID ${locked_content})"
       exit 0
     fi
     rm -f "$SESSION_LOCK"
   else
-    echo "$(date): stale/corrupt lock at ${SESSION_LOCK} (content: '${locked_content}') — clearing" >> "${STATE_DIR}/open-session.log"
+    log_msg "stale/corrupt lock at ${SESSION_LOCK} (content: '${locked_content}') — clearing"
     rm -f "$SESSION_LOCK"
   fi
 fi
 
-mkdir -p "$STATE_DIR"
 # Preliminary lock: `pending:<epoch>` sentinel. The spawned terminal replaces this
 # with its own shell PID once it starts running. Gate 3 holds the pending lock for
 # up to 60s so a concurrent launchd trigger cannot spawn a duplicate session while
@@ -168,12 +191,12 @@ if ! PENDING_EPOCH=$(date +%s 2>/dev/null); then
   # If date fails here, skip locking entirely rather than writing pending:0 which
   # later comparisons would treat as indefinitely held. Log and continue without
   # a lock (the worst case is a duplicate session, which is recoverable).
-  echo "$(date): open-session: date +%s failed writing preliminary lock — proceeding unlocked" >> "${STATE_DIR}/open-session.log"
+  log_msg "open-session: date +%s failed writing preliminary lock — proceeding unlocked"
 else
   echo "pending:${PENDING_EPOCH}" > "$SESSION_LOCK"
 fi
 if ! open_session; then
-  echo "$(date): open_session failed for ${COMMAND} -- clearing pending session lock" >> "${STATE_DIR}/open-session.log"
+  log_msg "open_session failed for ${COMMAND} -- clearing pending session lock"
   rm -f "$SESSION_LOCK"
   exit 1
 fi

@@ -100,13 +100,13 @@ if ! echo "$carry_forward_json" | jq -e 'type == "array"' &>/dev/null; then
   carry_forward_json="[]"
 fi
 
-if ! carry_forward_tsv=$(echo "$carry_forward_json" | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 0 | tostring)] | @tsv' 2>/dev/null); then
+if ! carry_forward_tsv=$(echo "$carry_forward_json" | jq -r '.[] | [.text, (.app_id // "null"), (.blocked | tostring), (.carried_days // 0 | tostring), (.type // "work")] | @tsv' 2>/dev/null); then
   echo "WARNING: could not format carry_forward items from ${PREV_DATE} notes" >&2
   echo "(no carry-forward items emitted -- continuing)"
   carry_forward_tsv=""
 fi
 
-while IFS=$'\t' read -r text app_id blocked carried_days; do
+while IFS=$'\t' read -r text app_id blocked carried_days item_type; do
   [[ -z "$text" ]] && continue
   if [[ ! "$carried_days" =~ ^[0-9]+$ ]]; then
     echo "WARNING: gather-carryforward: non-numeric carried_days '${carried_days}' for '${text:0:40}' -- treating as 0" >&2
@@ -120,7 +120,9 @@ while IFS=$'\t' read -r text app_id blocked carried_days; do
   fi
 
   # Build the reference tag
-  if [[ "$app_id" != "null" && -n "$app_id" ]]; then
+  if [[ "$item_type" == "personal" ]]; then
+    ref="[personal]"
+  elif [[ "$app_id" != "null" && -n "$app_id" ]]; then
     ref="[${app_id}]"
   else
     ref="[work]"
@@ -146,43 +148,4 @@ echo "${item_count} items carried forward (${blocked_count} blocked, ${stale_cou
 
 if [[ "$max_days" -ge "$STALE_THRESHOLD" ]]; then
   echo "WARNING: oldest item is ${max_days} days old -- consider escalating or dropping"
-fi
-
-# Extract personal tasks from previous day's notes
-if ! personal_count=$(echo "$frontmatter" | yq '.personal_tasks | length // 0' 2>/dev/null); then
-  personal_count=0
-fi
-if [[ ! "$personal_count" =~ ^[0-9]+$ ]]; then
-  personal_count=0
-fi
-
-if [[ "$personal_count" -gt 0 ]]; then
-  echo ""
-  echo "=== Personal Tasks (carried from ${PREV_DATE}) ==="
-  if ! personal_json=$(echo "$frontmatter" | yq -o=json '.personal_tasks' 2>/dev/null); then
-    echo "WARNING: could not parse personal_tasks from ${PREV_DATE} notes" >&2
-    personal_json="[]"
-  fi
-  if ! echo "$personal_json" | jq -e 'type == "array"' &>/dev/null; then
-    echo "WARNING: personal_tasks in ${PREV_DATE} notes is not a valid array -- skipping" >&2
-  else
-    if ! personal_tsv=$(echo "$personal_json" | jq -r '.[] | [.text, (.time // "null"), (.duration_minutes // "null" | tostring), (.notes // "null")] | @tsv' 2>/dev/null); then
-      echo "WARNING: could not format personal_tasks from ${PREV_DATE} notes" >&2
-      personal_tsv=""
-    fi
-    while IFS=$'\t' read -r pt_text pt_time pt_dur pt_notes; do
-      [[ -z "$pt_text" ]] && continue
-      line="- ${pt_text}"
-      if [[ "$pt_time" != "null" && -n "$pt_time" ]]; then
-        line="${line} @ ${pt_time}"
-      fi
-      if [[ "$pt_dur" != "null" && -n "$pt_dur" ]]; then
-        line="${line} (~${pt_dur}min)"
-      fi
-      if [[ "$pt_notes" != "null" && -n "$pt_notes" ]]; then
-        line="${line} — ${pt_notes}"
-      fi
-      echo "$line"
-    done <<< "$personal_tsv"
-  fi
 fi

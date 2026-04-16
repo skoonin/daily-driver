@@ -42,22 +42,20 @@ bash scripts/gather-carryforward.sh
 
 Read the user's work context:
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
 
 ## 5. Personal Tasks
 
-Pre-populate personal tasks from two sources:
-1. **Daily recurring** — items listed under "Daily Recurring Reminders" in `context.md`. Always present; do not ask about these.
-2. **Carried over** — items from the `=== Personal Tasks (carried from ...) ===` section of `gather-carryforward.sh` output (step 3). Include all of them; preserve their text and notes exactly.
+Pre-populate personal items as `plan_items` with `type: personal` from three sources:
+1. **Recurring** — items listed under "Recurring Tasks" in `context.md`. Add each as a plan_item with `type: personal`, `recurring: true`, `time_block: null`. Always present; do not ask about these.
+2. **Carried over** — carry_forward items from step 3 with `type: personal`. Include all of them; preserve their text and carry_forward_id.
+3. **Ad-hoc** — ask the user: "Anything extra today beyond [list the recurring items]? Include anything time-bound (doctor, errands, walks)."
 
-Then ask: "Anything extra today beyond [list the recurring items]? Include anything time-bound (doctor, errands, walks)."
-
-Accept free-form input. For each item, extract:
+For each ad-hoc item, extract:
 - `text`: description
-- `time`: HH:MM in 24h if mentioned (e.g., "at 2pm" -> "14:00"), null if open-ended
-- `duration_minutes`: if a range is given (e.g., "3-4pm" -> 60), null if unknown
-- `notes`: any extra context
+- `time_block`: "HH:MM-HH:MM" if time-bound, null if open-ended
+- `recurring: false`
 
 If the user mentions a time but no duration, ask: "How long for that?" (needed for calendar sync).
 
@@ -69,9 +67,8 @@ Using the work-planner agent behavior, present:
 
 1. **Today's Schedule** - Meetings and fixed commitments with time blocks
 2. **Application Pipeline** - Follow-ups due, active applications by stage, new leads to research
-3. **Carry-forward** - Structured items from yesterday (BLOCKED, STALE, CARRY-OVER)
-4. **Personal Tasks** - Time-bound and open-ended personal items
-5. **Proposed Plan** - Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal tasks, and buffer. Do not schedule work in time that has already passed.
+3. **Carry-forward** - Structured items from yesterday (BLOCKED, STALE, CARRY-OVER) -- includes both work and personal items
+4. **Proposed Plan** - Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal items, and buffer. Do not schedule work in time that has already passed. All items (work and personal) are plan_items.
 
 Use the required time block format: `- HH:MM - HH:MM | app-NNN - Company Role - Task description`
 
@@ -91,9 +88,8 @@ bash scripts/ensure-daily-dir.sh
 Write the plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:
 - `date`: today's date
 - `generated_at`: current time HH:MM
-- `carry_forward`: items from gather-carryforward.sh output (`carried_days` already incremented by the script -- copy values as-is)
-- `personal_tasks`: items collected in step 5
-- `plan_items`: one entry per planned item with `time_block`, `app_id`, `type`, `status: planned`, and `carry_forward_id` linking to source cf-NNN where applicable
+- `carry_forward`: items from gather-carryforward.sh output (`carried_days` already incremented by the script -- copy values as-is). Includes both work and personal items.
+- `plan_items`: one entry per planned item (work and personal) with `time_block`, `app_id`, `type`, `status: planned`, `carry_forward_id` linking to source cf-NNN where applicable, and for personal items: `recurring`
 
 See the work-planner agent's "Plan File Frontmatter" section for the exact schema.
 

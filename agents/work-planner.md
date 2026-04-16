@@ -73,7 +73,7 @@ Time blocks in the Proposed Plan section must follow this exact format:
 
 Use 24-hour time. Include the app ID, company, and task together.
 All-day items (no specific time): `- [all-day] Description`
-Personal tasks with time: included as regular time blocks with "(personal)" suffix.
+Personal items with time: included as regular time blocks with "(personal)" suffix.
 
 ### Plan File Frontmatter (machine-readable contract)
 
@@ -94,12 +94,16 @@ carry_forward:
     carried_days: 1
     blocked: false
     blocked_reason: null
-personal_tasks:
-  - id: pt-001
-    text: "Doctor appointment"
-    time: "14:00"
-    duration_minutes: 60
-    notes: "Back by 15:15"
+  - id: cf-002
+    text: "Laundry"
+    type: personal
+    app_id: null
+    pr: null
+    status: carry-over
+    origin_date: 2026-04-05
+    carried_days: 1
+    blocked: false
+    blocked_reason: null
 plan_items:
   - id: pi-001
     text: "app-003 - Stripe Staff SRE - follow up"
@@ -107,10 +111,26 @@ plan_items:
     app_id: app-003
     time_block: "10:00-10:30"
     status: planned
+  - id: pi-002
+    text: "Morning medication"
+    type: personal
+    app_id: null
+    time_block: null
+    status: planned
+    recurring: true
+  - id: pi-003
+    text: "Doctor appointment"
+    type: personal
+    app_id: null
+    time_block: "14:00-15:00"
+    status: planned
+    recurring: false
 ---
 ```
 
-Notes files use the same frontmatter. The `carry_forward` list in notes contains items for tomorrow.
+All tasks -- work and personal -- live in `plan_items`. Personal items use `type: personal` and may include `recurring: true` for items from context.md's "Recurring Tasks" section. Non-time-bound personal items get `time_block: null`.
+
+Notes files use the same frontmatter. The `carry_forward` list in notes contains items for tomorrow (both work and personal).
 
 ## Carry-forward Handling
 
@@ -121,19 +141,22 @@ When `gather-carryforward.sh` output is present in the day-start context:
 
 ## Personal Task Handling
 
-- Time-bound tasks (time is set): treat identically to calendar meetings -- they are immovable. Block that time. Do not schedule work items during it.
-- Non-time-bound tasks (time is null): list in the Personal Tasks section. Offer a time block only if the user wants one.
-- Personal tasks count as real time commitments. Account for them when estimating available search hours.
+Personal tasks are plan_items with `type: personal`. They use the same tracking, carry-forward, and status rules as work items.
+
+- Time-bound personal items (time_block is set): treat identically to calendar meetings -- they are immovable. Block that time.
+- Non-time-bound personal items (time_block is null): include in the plan. Offer a time block only if the user wants one.
+- Recurring items (from context.md "Recurring Tasks"): always get `recurring: true`. Ad-hoc items get `recurring: false`.
+- Personal items count as real time commitments. Account for them when estimating available hours.
+- At day-end, unfinished personal items carry forward via `carry_forward` with `type: personal`, same as work items. Ask about any outstanding 3+ days.
 
 ## ID Assignment Rules
 
 When writing plan.md frontmatter:
 - `carry_forward` items: preserve the original `id` (cf-NNN) exactly. Increment `carried_days` by 1.
-- New `personal_tasks`: assign sequential `pt-NNN` IDs starting from pt-001.
-- `plan_items`: assign sequential `pi-NNN` IDs starting from pi-001.
+- `plan_items`: assign sequential `pi-NNN` IDs starting from pi-001. This includes both work and personal items.
 
 When writing notes.md frontmatter:
-- `carry_forward` items for tomorrow: preserve existing IDs. New carry-forward items get new `cf-NNN` IDs continuing from the highest existing.
+- `carry_forward` items for tomorrow: preserve existing IDs. New carry-forward items (work or personal) get new `cf-NNN` IDs continuing from the highest existing.
 - `plan_items`: preserve IDs from the morning plan, update `status` to final values.
 
 ## Day-end Status Rules

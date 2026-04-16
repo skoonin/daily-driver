@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] -- Config-driven state, context move, unified tasks
+
+### Changed -- Centralize state_dir and schedule in config.yaml
+- `config.yaml`: New `state_dir`, `schedule` (day_start, checkin, day_end, gather_jobs times), and `claude` (model, effort, subagent_model) sections. Schedule times are now the source of truth for launchd plists -- edit config.yaml and re-run `make launchd-install`.
+- `launchd-install.sh`: Reads schedule times from config.yaml instead of hardcoded plist values. Generates checkin multi-interval XML dynamically. Validates HH:MM format.
+- Launchd plists converted to templates with PLACEHOLDER values populated by `launchd-install.sh`.
+- Scripts (`check-state-dir.sh`, `checkin-state.sh`, `focus-mode.sh`, `gather-sessions.sh`, `open-session.sh`) use `get-state-dir.sh` instead of hardcoded `~/.local/share/daily-driver`.
+- `gather-sessions.sh`: Numeric timestamp comparison (was lexicographic), error handling for jq unclosed-session detection.
+- `gather-jobs.sh`: Skip weekends.
+- `commit-notes.sh`, `week-range.sh`: Use `%G` (ISO week-numbering year) with `%V` week number.
+- `tracker.sh`: Duplicate company+role guard on `add`. Audit uses Python csv module for RFC 4180 compliance. Active status filter includes `found`/`researched`.
+- `scrape-jobs.py`: `resolve_output_dir` raises on missing config (no silent default). Timeout default 15s -> 30s.
+
+### Changed -- Move context.md to output_dir, template settings.json
+- `context.md` removed from repo; `context.md.example` added as template. Actual `context.md` lives in `{output_dir}/context.md`.
+- New `scripts/read-context.sh` reads context from output_dir with actionable error messages.
+- `settings.json` replaced by `settings.json.tmpl` with PLACEHOLDER_HOME, PLACEHOLDER_STATE_DIR, PLACEHOLDER_OUTPUT_DIR. `make install` generates `settings.json` via sed. Null-guard rejects missing `output_dir`.
+- `init-output-dir.sh` copies `context.md.example` on first setup if target doesn't exist.
+- All commands updated: `cat context.md` -> `bash scripts/read-context.sh`.
+
+### Changed -- Unify personal task tracking into plan_items
+- Personal tasks now tracked as `plan_items` with `type: personal` instead of separate `personal_tasks` frontmatter. Eliminates `pt-NNN` ID namespace; all items use `pi-NNN`.
+- `work-planner.md`: Updated schema, ID rules, carry-forward handling, and examples for unified tracking. Personal items use `recurring: true/false`.
+- `gather-carryforward.sh`: Emits `[personal]` tag and `type` field. Removed separate personal_tasks section.
+- `day-start.md`: Three-source personal item flow (recurring, carried, ad-hoc).
+- `day-end.md`: Personal items carry forward via `carry_forward` entries with `type: personal`.
+
+### Changed -- Consistent logging in open-session.sh
+- `open-session.sh`: All operational paths (gates, errors, warnings) use `log_msg()` for dual-write to stderr and state-dir log file. Previously, error paths inside `open_session()` only wrote to stderr.
+
 ## [Unreleased] -- Location preferences in config
 
 ### Changed -- Location preferences moved from markdown to config.yaml
