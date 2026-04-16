@@ -94,6 +94,7 @@ carry_forward:
     carried_days: 1
     blocked: false
     blocked_reason: null
+    dropped_reason: null
   - id: cf-002
     text: "Laundry"
     type: personal
@@ -104,6 +105,7 @@ carry_forward:
     carried_days: 1
     blocked: false
     blocked_reason: null
+    dropped_reason: null
 plan_items:
   - id: pi-001
     text: "app-003 - Stripe Staff SRE - follow up"
@@ -167,7 +169,7 @@ When writing notes.md frontmatter:
 | Partially done, will continue | carry-over | Yes |
 | Waiting on response, no action possible | blocked | Yes, with blocked_reason |
 | Appeared during day, not in plan | unplanned | Ask user |
-| Explicitly decided not to do | dropped | No |
+| Explicitly decided not to do | dropped | No, but set `dropped_reason` on the carry_forward item in notes (e.g., `dropped_reason: "window passed"`) so the planner does not re-question the decision |
 
 ## Application Follow-up Reminders
 

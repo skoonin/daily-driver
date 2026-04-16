@@ -28,6 +28,18 @@
     ],
     "additionalDirectories": ["PLACEHOLDER_HOME/git", "PLACEHOLDER_HOME/.claude", "/tmp", "PLACEHOLDER_OUTPUT_DIR"]
   },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash scripts/hook-current-time.sh"
+          }
+        ]
+      }
+    ]
+  },
   "sandbox": {
     "enabled": false
   }
