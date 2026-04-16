@@ -1,9 +1,9 @@
 """Shared test constants used across test modules."""
 
 CSV_HEADER = [
-    "Status", "Company", "Product/Purpose", "Role", "Comp", "Location",
-    "Fit", "GD Rating", "Source", "Date Found",
-    "Date Applied", "Link", "Notes",
+    "Status", "Notes", "Company", "Location", "Role", "Fit", "Comp",
+    "Date Found", "Date Applied", "Link", "Product/Purpose",
+    "GD Rating", "Source",
 ]
 
 SAMPLE_CONFIG = {

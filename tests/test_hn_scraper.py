@@ -84,65 +84,65 @@ class TestScrapeHNWhoIsHiring:
         ]
 
     def test_returns_matching_jobs(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         roles = [j["role"] for j in jobs]
         assert "Senior SRE" in roles
 
     def test_skips_non_matching_roles(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         companies = [j["company"] for j in jobs]
         assert "BetaCo" not in companies
 
     def test_skips_nested_comments(self):
         # The row with img width=40 should be skipped regardless of content
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         # Only top-level comments (width=0) are included
         for job in jobs:
             assert "Nested" not in job.get("company", "")
 
     def test_parses_company_from_first_part(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs[0]["company"] == "Acme Corp"
 
     def test_parses_role_from_second_part(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs[0]["role"] == "Senior SRE"
 
     def test_detects_remote_location(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs[0]["location"] == "Remote"
 
     def test_uses_city_location_when_not_remote(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         gamma = next(j for j in jobs if j["company"] == "GammaCo")
         assert gamma["location"] == "San Francisco"
 
     def test_source_label(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert all(j["source"] == "HN Who's Hiring" for j in jobs)
 
     def test_url_contains_comment_id(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert "99000001" in jobs[0]["url"]
 
     def test_returns_empty_when_thread_not_found(self):
         # Index page with no matching link
         stale_index = _make_response("<html><body><a href='item?id=1'>Old thread</a></body></html>")
-        with patch("scrape_jobs.requests.get", return_value=stale_index):
+        with patch("scrape_jobs._api_get", return_value=stale_index):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs == []
 
     def test_skips_rows_without_enough_pipe_parts(self):
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses(_THREAD_SHORT_PARTS)):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses(_THREAD_SHORT_PARTS)):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs == []
 
@@ -157,7 +157,7 @@ class TestScrapeHNWhoIsHiring:
                 },
             },
         }
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses()):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses()):
             jobs = sj.scrape_hn_who_is_hiring(cfg)
         assert len(jobs) == 1
 
@@ -166,7 +166,7 @@ class TestScrapeHNWhoIsHiring:
 <a href="https://news.ycombinator.com/item?id=42000001">Ask HN: Who is hiring? ({self._month_str()})</a>
 </body></html>"""
         responses = [_make_response(index), _make_response(_THREAD_HTML)]
-        with patch("scrape_jobs.requests.get", side_effect=responses):
+        with patch("scrape_jobs._api_get", side_effect=responses):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert len(jobs) >= 1
 
@@ -177,7 +177,7 @@ class TestScrapeHNWhoIsHiring:
     <td><span>no comment div here</span></td>
   </tr>
 </table></body></html>"""
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses(thread)):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses(thread)):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs == []
 
@@ -188,7 +188,7 @@ class TestScrapeHNWhoIsHiring:
     <td><div class="comment"><span>no commtext div</span></div></td>
   </tr>
 </table></body></html>"""
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses(thread)):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses(thread)):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert jobs == []
 
@@ -201,7 +201,7 @@ class TestScrapeHNWhoIsHiring:
     </div></td>
   </tr>
 </table></body></html>"""
-        with patch("scrape_jobs.requests.get", side_effect=self._two_responses(thread)):
+        with patch("scrape_jobs._api_get", side_effect=self._two_responses(thread)):
             jobs = sj.scrape_hn_who_is_hiring(SAMPLE_CONFIG)
         assert len(jobs) == 1
         assert "item?id=42000001" in jobs[0]["url"]

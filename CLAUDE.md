@@ -102,9 +102,9 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 
 Tracks every role discovered during the search -- applied, skipped, or still evaluating. This is the top of the funnel. Active application pipeline details (stages, follow-ups, dates) live in `tracker.yaml`.
 
-**Columns**: Status, Company, Product/Purpose, Role, Comp, Location, Fit (1-10), GD Rating, Source, Date Found, Date Applied, Link, Notes
+**Columns**: Status, Notes, Company, Location, Role, Fit (1-10), Comp, Date Found, Date Applied, Link, Product/Purpose, GD Rating, Source
 
-**Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `interviewing`, `offer`, `withdrawn`
+**Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `screening`, `interviewing`, `offer`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `dropped` (stopped pursuing; re-activatable if contacted), `withdrawn`
 
 **Maintenance rules**:
 - Add every role discovered during research, even if immediately skipped (builds pattern data on what's out there)
