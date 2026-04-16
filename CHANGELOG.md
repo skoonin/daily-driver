@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed -- jobs.csv column reorder; status vocabulary; audit robustness
-- `jobs.csv` canonical column order changed to ergonomic triage layout: `Status, Notes, Company, Location, Fit, Comp, Date Found, Date Applied, Link, Product/Purpose, Role, GD Rating, Source`. High-signal fields first; existing migration logic handles rewriting on next run.
+- `jobs.csv` canonical column order changed to ergonomic triage layout: `Status, Notes, Company, Location, Role, Fit, Comp, Date Found, Date Applied, Link, Product/Purpose, GD Rating, Source`. High-signal fields first; existing migration logic handles rewriting on next run.
 - `scrape-jobs.py`: `CANONICAL_HEADER` updated to new order. All reads/writes use `DictReader`/`DictWriter` so no functional impact.
 - `tracker.sh` stats: `cmd_stats` now covers all 10 status values (`found`, `researched`, `applied`, `screening`, `interviewing`, `offer`, `skipped`, `rejected`, `ghosted`, `withdrawn`, `dropped`). Removed stale `researching` bucket. Active count narrowed to `applied+screening+interviewing+offer`. Output grouped into Funnel / Pipeline / Closed sections.
 - Status vocabulary: added `screening` (active pipeline) and `dropped` (closed; re-activatable if contacted). `researching` removed — canonical value is `researched`.

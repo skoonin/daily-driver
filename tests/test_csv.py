@@ -214,8 +214,8 @@ class TestMigrateLegacyHeader:
         """No backup is created when the header is already current."""
         legacy = tmp_path / "jobs.csv"
         legacy.write_text(
-            'Status,Notes,Company,Location,Fit,Comp,'
-            'Date Found,Date Applied,Link,Product/Purpose,Role,GD Rating,Source\n'
+            'Status,Notes,Company,Location,Role,Fit,Comp,'
+            'Date Found,Date Applied,Link,Product/Purpose,GD Rating,Source\n'
         )
         with open(legacy) as f:
             current_header = next(csv.reader(f))

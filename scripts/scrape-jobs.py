@@ -865,9 +865,9 @@ def parse_jsonld_jobposting(html: str) -> dict:
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
 CANONICAL_HEADER = [
-    "Status", "Notes", "Company", "Location", "Fit", "Comp",
+    "Status", "Notes", "Company", "Location", "Role", "Fit", "Comp",
     "Date Found", "Date Applied", "Link", "Product/Purpose",
-    "Role", "GD Rating", "Source",
+    "GD Rating", "Source",
 ]
 
 
