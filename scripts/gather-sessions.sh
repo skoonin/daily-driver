@@ -14,7 +14,12 @@ set -euo pipefail
 # hook never fires (terminal closed, crash), the start entry has no matching end --
 # reported as an unclosed session so the gap is visible rather than silent.
 
-OUTCOMES_LOG="$HOME/.local/share/daily-driver/session-outcomes.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if ! STATE_DIR=$(bash "${SCRIPT_DIR}/get-state-dir.sh" 2>&1); then
+  echo "ERROR: $(basename "$0"): could not resolve state_dir: ${STATE_DIR}" >&2
+  exit 1
+fi
+OUTCOMES_LOG="${STATE_DIR}/session-outcomes.log"
 TODAY=$(date +%Y-%m-%d)
 
 echo "=== Claude Sessions: ${TODAY} ==="
@@ -94,9 +99,15 @@ if [[ -f "$OUTCOMES_LOG" ]]; then
 
         # Detect unclosed sessions: session_start with no matching session_end.
         # -rs slurps the per-line JSON objects into an array so [select(...)] produces one valid JSON array.
-        ended_sids_json=$(echo "$todays_entries" | jq -rs '[.[] | select(.type == "session_end") | .session_id]')
-        unclosed=$(echo "$todays_entries" | jq -r --argjson ended "$ended_sids_json" \
-            'select(.type == "session_start") | .session_id | select(. as $s | $ended | index($s) | not)')
+        if ! ended_sids_json=$(echo "$todays_entries" | jq -rs '[.[] | select(.type == "session_end") | .session_id]' 2>&1); then
+            echo "WARNING: gather-sessions: failed to extract ended session IDs: ${ended_sids_json}" >&2
+            ended_sids_json="[]"
+        fi
+        if ! unclosed=$(echo "$todays_entries" | jq -r --argjson ended "$ended_sids_json" \
+            'select(.type == "session_start") | .session_id | select(. as $s | $ended | index($s) | not)' 2>&1); then
+            echo "WARNING: gather-sessions: failed to detect unclosed sessions: ${unclosed}" >&2
+            unclosed=""
+        fi
 
         if [[ -n "$unclosed" ]]; then
             echo ""
@@ -127,7 +138,7 @@ if [[ -f "$HISTORY" && -r "$HISTORY" ]]; then
         jq_tmp=$(mktemp)
         trap 'rm -f "$jq_tmp"' EXIT
         if jq -R -r --arg start "$TODAY_START" '
-            fromjson? | select((.timestamp | tostring) >= $start)
+            fromjson? | select((.timestamp // 0) >= ($start | tonumber))
             | "- \(.display[:120]) [project=\(.project // "unknown" | split("/") | last)]"
         ' "$HISTORY" > "$jq_tmp" 2>/dev/null; then
             history_results=$(sort -u "$jq_tmp" | head -30)

@@ -12,9 +12,9 @@
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
-    <integer>7</integer>
+    <integer>PLACEHOLDER_HOUR</integer>
     <key>Minute</key>
-    <integer>0</integer>
+    <integer>PLACEHOLDER_MINUTE</integer>
   </dict>
   <key>RunAtLoad</key>
   <false/>

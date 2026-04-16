@@ -119,7 +119,9 @@ def load_config(config_path: Path) -> dict:
 
 
 def resolve_output_dir(config: dict) -> Path:
-    raw = config.get("output_dir", "~/git/docs-local/daily-driver")
+    raw = config.get("output_dir")
+    if not raw:
+        raise SystemExit("ERROR: output_dir not set in config.yaml")
     return Path(raw).expanduser()
 
 
@@ -140,7 +142,7 @@ def user_agent(config: dict) -> str:
 
 
 def timeout_seconds(config: dict) -> int:
-    return int(scraper_cfg(config).get("timeout", 15))
+    return int(scraper_cfg(config).get("timeout", 30))
 
 
 def enrich_timeout(config: dict | None) -> int:

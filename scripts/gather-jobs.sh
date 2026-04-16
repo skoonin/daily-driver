@@ -22,6 +22,13 @@ OUTPUT_DIR=$(bash "${SCRIPT_DIR}/get-output-dir.sh") || exit 1
 TODAY=$(date +%Y-%m-%d)
 QUEUE_FILE="${OUTPUT_DIR}/job-queue-${TODAY}.md"
 
+# Skip weekends -- no job boards update Saturday/Sunday
+DOW=$(date +%u)
+if [[ "$DOW" -ge 6 ]]; then
+  echo "Weekend (day ${DOW}) -- skipping job gathering"
+  exit 0
+fi
+
 mkdir -p "$OUTPUT_DIR"
 
 # Remove previous days' queue files — only today's is relevant

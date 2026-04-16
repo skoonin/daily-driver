@@ -22,9 +22,13 @@ class TestResolveOutputDir:
         assert not str(result).startswith("~")
         assert result.is_absolute()
 
-    def test_uses_default_when_key_missing(self):
-        result = sj.resolve_output_dir({})
-        assert result.is_absolute()
+    def test_raises_when_key_missing(self):
+        with pytest.raises(SystemExit, match="output_dir not set"):
+            sj.resolve_output_dir({})
+
+    def test_raises_when_value_empty(self):
+        with pytest.raises(SystemExit, match="output_dir not set"):
+            sj.resolve_output_dir({"output_dir": ""})
 
 
 class TestScraperCfg:
@@ -62,8 +66,8 @@ class TestTimeoutSeconds:
     def test_returns_configured_timeout(self, config):
         assert sj.timeout_seconds(config) == 5
 
-    def test_returns_default_15_when_missing(self):
-        assert sj.timeout_seconds({}) == 15
+    def test_returns_default_30_when_missing(self):
+        assert sj.timeout_seconds({}) == 30
 
     def test_coerces_string_to_int(self):
         cfg = {"job_search": {"scraper": {"timeout": "30"}}}

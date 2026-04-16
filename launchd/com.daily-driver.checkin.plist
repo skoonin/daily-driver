@@ -12,18 +12,7 @@
   </array>
   <key>StartCalendarInterval</key>
   <array>
-    <dict>
-      <key>Hour</key>
-      <integer>11</integer>
-      <key>Minute</key>
-      <integer>0</integer>
-    </dict>
-    <dict>
-      <key>Hour</key>
-      <integer>15</integer>
-      <key>Minute</key>
-      <integer>0</integer>
-    </dict>
+PLACEHOLDER_CHECKIN_INTERVALS
   </array>
   <key>RunAtLoad</key>
   <false/>

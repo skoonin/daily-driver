@@ -12,7 +12,7 @@ fi
 DOW=$(date +%u)
 DAYS_SINCE_MON=$((DOW - 1))
 WEEK_NUM=$(date +%V)
-YEAR=$(date +%Y)
+YEAR=$(date +%G)
 
 if [[ "$LAST" == "true" ]]; then
   LAST_MON=$(date -j -v-${DAYS_SINCE_MON}d -v-7d +%Y-%m-%d)

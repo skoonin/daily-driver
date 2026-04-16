@@ -7,7 +7,7 @@ set -euo pipefail
 TYPE="${1:-}"
 case "$TYPE" in
   daily)   LABEL="daily notes: $(date +%Y-%m-%d)" ;;
-  weekly)  LABEL="weekly summary: $(date +%Y)-W$(date +%V)" ;;
+  weekly)  LABEL="weekly summary: $(date +%G)-W$(date +%V)" ;;
   monthly) LABEL="monthly summary: $(date +%Y)-$(date +%m) $(date +%B)" ;;
   *) echo "Usage: $0 {daily|weekly|monthly}" >&2; exit 1 ;;
 esac

@@ -149,6 +149,15 @@ cmd_add() {
 
   ensure_tracker
 
+  # Guard against duplicate company+role entries
+  local existing
+  existing=$(COMPANY="$company" ROLE="$role" yq '.applications[] | select(.company == strenv(COMPANY) and .role == strenv(ROLE)) | .id' "$TRACKER" 2>/dev/null || true)
+  if [[ -n "$existing" ]]; then
+    echo "WARNING: ${company} / ${role} already exists as ${existing} -- skipping add" >&2
+    echo "${existing} | ${company} | ${role} | (duplicate, not added)"
+    return 0
+  fi
+
   local id
   id=$(next_id)
   local dt
@@ -372,39 +381,24 @@ cmd_audit() {
     exit 1
   fi
 
-  # Parse jobs.csv once into combined intermediate: co_lower TAB company TAB role TAB status
+  # Parse jobs.csv via Python csv module for RFC 4180 compliance (handles embedded newlines/quotes)
   local csv_combined
-  if ! csv_combined=$(awk -F',' '
-    NR == 1 { next }
-    {
-      # Rejoin fields split inside quotes
-      line = $0; nf = 0; delete fields
-      while (line != "") {
-        if (substr(line, 1, 1) == "\"") {
-          p = index(substr(line, 2), "\"")
-          while (p > 0 && substr(line, p+2, 1) == "\"") {
-            p = p + 1 + index(substr(line, p+2+1), "\"")
-          }
-          fields[++nf] = substr(line, 2, p-1)
-          # Unescape doubled quotes ("" -> ") per RFC 4180
-          gsub(/""/, "\"", fields[nf])
-          line = substr(line, p+3)
-        } else {
-          p = index(line, ",")
-          if (p == 0) { fields[++nf] = line; line = "" }
-          else { fields[++nf] = substr(line, 1, p-1); line = substr(line, p+1) }
-        }
-      }
-      print tolower(fields[2]) "\t" fields[2] "\t" fields[4] "\t" fields[1]
-    }
-  ' "$jobs_csv" 2>/dev/null); then
-    echo "ERROR: cmd_audit: awk failed parsing jobs.csv: ${csv_combined}" >&2
+  if ! csv_combined=$(python3 -c "
+import csv, sys
+with open(sys.argv[1], newline='', encoding='utf-8') as f:
+    for row in csv.DictReader(f):
+        co = row.get('Company', '')
+        role = row.get('Role', '')
+        status = row.get('Status', '')
+        print(f'{co.lower()}\t{co}\t{role}\t{status}')
+" "$jobs_csv" 2>/dev/null); then
+    echo "ERROR: cmd_audit: python3 csv parse failed for jobs.csv" >&2
     return 1
   fi
 
-  # Derive active rows (applied/screening/interviewing/offer) from combined parse
+  # Derive active rows from combined parse (include found/researched to catch top-of-funnel gaps)
   local csv_active
-  csv_active=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing" || $4 == "offer"' <<< "$csv_combined")
+  csv_active=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing" || $4 == "offer" || $4 == "found" || $4 == "researched"' <<< "$csv_combined")
 
   # Build CSV lookup as a JSON array for exact-match jq join
   local csv_json
@@ -414,7 +408,7 @@ cmd_audit() {
   fi
 
   # Check applied jobs in jobs.csv that have no tracker entry
-  echo "=== Applied jobs.csv rows with no tracker entry ==="
+  echo "=== Active jobs.csv rows with no tracker entry ==="
   local csv_issues=0
   while IFS=$'\t' read -r co_lower company role status; do
     [[ -z "$co_lower" ]] && continue

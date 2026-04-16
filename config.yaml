@@ -4,6 +4,15 @@
 # Where daily plans and notes are saved
 output_dir: ~/git/docs-local/daily-driver
 
+# Runtime state directory (check-in state, focus lock, session outcomes)
+state_dir: ~/.local/share/daily-driver
+
+# Claude Code session defaults
+claude:
+  model: sonnet
+  effort: medium
+  subagent_model: sonnet
+
 # Git repos to sync at day-start (skipped if dirty)
 sync_repos:
   - ~/.claude
@@ -27,18 +36,17 @@ calendar:
   sync_enabled: true
   excluded_calendars: []
 
-# Automated session schedule (managed by launchd)
-# 09:00 -> /day-start  (separate day-start plist)
-# 11:00 -> /check-in
-# 15:00 -> /check-in
-# 17:00 -> /day-end    (separate day-end plist)
-checkin:
-  # NOTE: times below are not read by any script. The actual check-in schedule
-  # lives in launchd/com.daily-driver.checkin.plist. Edit the plist and re-run
-  # `make launchd-install` to change the schedule.
-  times:
+# Automated session schedule (read by launchd-install.sh).
+# Edit times here, then re-run `make launchd-install` to apply.
+schedule:
+  day_start: "09:00"
+  checkin:
     - "11:00"
     - "15:00"
+  day_end: "17:00"
+  gather_jobs: "07:00"
+
+checkin:
   default_focus_minutes: 90
 
 # Planning and carry-forward
@@ -59,10 +67,6 @@ job_search:
   # Short role descriptor used in enrichment prompts (fit scoring, notes).
   persona: "SRE/Platform/Infra engineer"
 
-  # NOTE: schedule below is not read by any script. The actual gather-jobs schedule
-  # lives in launchd/com.daily-driver.gather-jobs.plist. Edit the plist and re-run
-  # `make launchd-install` to change the schedule.
-  schedule: "07:00"
   sources:
     boards:
       - id: linkedin
@@ -162,6 +166,13 @@ job_search:
     # Timeout (seconds) for Claude CLI enrichment calls (product, fit, notes).
     # Higher = fewer timeouts but slower backfill runs.
     enrich_timeout: 30
+    # Enrichment knobs: control which Claude CLI enrichment steps run and budgets.
+    max_enrich_companies: 50
+    enrich_gd_rating: true
+    enrich_fit: true
+    max_enrich_fit: 50
+    enrich_notes: true
+    max_enrich_notes: 50
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
   # Role patterns. Supports fnmatch-style '*' wildcards and '!'-prefixed

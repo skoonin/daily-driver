@@ -14,7 +14,10 @@ for cmd in jq yq; do
   fi
 done
 
-STATE_DIR="$HOME/.local/share/daily-driver"
+if ! STATE_DIR=$(bash "${SCRIPT_DIR}/get-state-dir.sh" 2>&1); then
+  echo "ERROR: $(basename "$0"): could not resolve state_dir: ${STATE_DIR}" >&2
+  exit 1
+fi
 LOCK_FILE="${STATE_DIR}/focus.lock"
 
 ensure_state_dir() {
