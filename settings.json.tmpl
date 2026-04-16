@@ -5,9 +5,9 @@
   "permissions": {
     "defaultMode": "bypassPermissions",
     "allow": [
-      "Bash(mkdir -p /Users/shawnk/git/docs-local/daily-driver*)",
-      "Bash(ls /Users/shawnk/git/docs-local/daily-driver*)",
-      "Bash(git -C /Users/shawnk/git/docs-local/daily-driver*)",
+      "Bash(mkdir -p PLACEHOLDER_OUTPUT_DIR*)",
+      "Bash(ls PLACEHOLDER_OUTPUT_DIR*)",
+      "Bash(git -C PLACEHOLDER_OUTPUT_DIR*)",
       "Bash(bash scripts/*)",
       "Bash(echo \"current_time=*)",
       "Bash(echo '{\"completed_tickets*)",
@@ -19,15 +19,14 @@
       "Bash(SEARCH_START=*)",
       "Bash(SAVE=*)",
       "Bash(yq *)",
-      "Bash(cat context.md)",
-      "Bash(cat ~/.local/share/daily-driver/*)",
+      "Bash(cat PLACEHOLDER_STATE_DIR/*)",
       "Bash(date *)",
       "Bash(pbcopy)",
 
       "Bash(icalBuddy -f -ic \"Work\" eventsToday)",
       "Bash(icalBuddy -f eventsToday)"
     ],
-    "additionalDirectories": ["/Users/shawnk/git", "/Users/shawnk/git/docs-local", "/Users/shawnk/.claude", "/tmp"]
+    "additionalDirectories": ["PLACEHOLDER_HOME/git", "PLACEHOLDER_HOME/.claude", "/tmp", "PLACEHOLDER_OUTPUT_DIR"]
   },
   "sandbox": {
     "enabled": false

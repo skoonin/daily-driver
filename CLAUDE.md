@@ -36,7 +36,7 @@ This repo is the **engine** that powers daily job search planning and end-of-day
 - `scripts/gather-jobs.sh` - Orchestrator: builds job queue from config, runs scraper, triggers enrichment
 - `agents/work-planner.md` - Planning intelligence agent (symlinked to `.claude/agents/`)
 - `commands/` - Slash command definitions (symlinked to `.claude/commands/`)
-- `context.md` - User profile and preferences
+- `context.md.example` - Template for user profile (actual context.md lives in output_dir)
 - `launchd/` - macOS LaunchAgent that opens iTerm2 with claude /check-in at fixed times
 
 ## Scripts vs. inline commands
@@ -93,6 +93,7 @@ Workflow targets invoke `claude` with `--agent work-planner` and `-n` for sessio
 - Job queue (daily): `{output_dir}/job-queue-YYYY-MM-DD.md`
 - Company docs: `{output_dir}/companies/{company}/{app-id}-{role-slug}.md` (auto-created by `tracker.sh add`)
 - Contacts log: `{output_dir}/contacts.csv`
+- User context: `{output_dir}/context.md` (copied from `context.md.example` at setup)
 - Location preferences: configured in `config.yaml` under `job_search.locations`
 - Writing voice profile: `{output_dir}/voice-profile.md`
 - Plan files use YAML frontmatter for machine-readable structured data (carry-forward, plan items, status)

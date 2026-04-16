@@ -32,7 +32,7 @@ TODAY=$(date +%Y-%m-%d); DOW=$(date +%u); if [ "$DOW" = "1" ]; then SINCE=$(date
 ## 3. Read User Profile
 
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
 
 ## 4. Practice Session

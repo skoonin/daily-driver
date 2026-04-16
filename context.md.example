@@ -2,15 +2,15 @@
 
 ## Profile
 
-- **Name**: Shawn
-- **Background**: SRE Engineer (experienced with Kubernetes, Terraform, AWS, Python, monitoring)
+- **Name**: (your name)
+- **Background**: (your professional background -- e.g. "SRE Engineer experienced with Kubernetes, Terraform, AWS")
 - **Current Focus**: Job searching -- finding and applying for roles
-- **Timezone**: Pacific (PT)
-- **Hours**: Flexible, but structured with check-ins at 9am, 11am, 3pm, 5pm
+- **Timezone**: (your timezone -- e.g. "America/Vancouver")
+- **Hours**: Flexible, but structured with check-ins (see schedule in config.yaml)
 
 ## Job Search
 
-- **Target Roles**: SRE, Platform Engineer, DevOps Engineer, Infrastructure Engineer
+- **Target Roles**: (see job_search.roles in config.yaml)
 - **Tracker**: `{output_dir}/tracker.yaml` -- local YAML file managed by `scripts/tracker.sh`
 - **Sources**: LinkedIn, Indeed, company career pages, job boards
 
@@ -22,15 +22,14 @@
 ## Reporting
 
 - **Purpose**: Personal accountability and progress tracking
-- **Output**: `~/git/docs-local/daily-driver/` (local git, not pushed)
+- **Output**: (see output_dir in config.yaml)
 - **Format**: Markdown daily plans and end-of-day notes
 
-## Daily Recurring Reminders
+## Recurring Tasks
 
-These appear as personal tasks in every day-start plan:
+These appear as plan items in every day-start plan:
 
-- Take morning medication
-- Stretching
+- (add your recurring personal tasks here)
 
 ## Preferences
 

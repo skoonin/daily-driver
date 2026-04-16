@@ -27,7 +27,7 @@ bash scripts/read-plan-frontmatter.sh
 
 Read current state for prior check-ins:
 ```bash
-cat ~/.local/share/daily-driver/state.json 2>/dev/null || echo "(no state file)"
+bash scripts/checkin-state.sh read
 ```
 
 ## 2. Gather Fresh Data

@@ -34,7 +34,7 @@ bash scripts/gather-notes-range.sh "$FIRST_DAY" "$LAST_DAY" all
 ## 4. Read Context
 
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
 
 ## 5. Generate Monthly Summary

@@ -8,11 +8,12 @@ SHELL := /bin/bash
 
 PROJ_DIR := $(shell pwd)
 
-# Claude invocation matching clde/cldelt launch modes
-# clde  = sonnet, medium effort, sonnet subagents
-# cldelt = sonnet, low effort, haiku subagents
-CLDE  = CLAUDE_CODE_SUBAGENT_MODEL=sonnet claude --model sonnet --effort medium
-CLDELT = CLAUDE_CODE_SUBAGENT_MODEL=haiku claude --model sonnet --effort low
+# Claude invocation: read model/effort from config.yaml, fall back to sonnet/medium
+CLAUDE_MODEL  = $(shell yq '.claude.model // "sonnet"' config.yaml 2>/dev/null || echo sonnet)
+CLAUDE_EFFORT = $(shell yq '.claude.effort // "medium"' config.yaml 2>/dev/null || echo medium)
+CLAUDE_SUBAGENT = $(shell yq '.claude.subagent_model // "sonnet"' config.yaml 2>/dev/null || echo sonnet)
+CLDE  = CLAUDE_CODE_SUBAGENT_MODEL=$(CLAUDE_SUBAGENT) claude --model $(CLAUDE_MODEL) --effort $(CLAUDE_EFFORT)
+CLDELT = CLAUDE_CODE_SUBAGENT_MODEL=haiku claude --model $(CLAUDE_MODEL) --effort low
 CLAUDE_DIR := $(PROJ_DIR)/.claude
 
 ##@ Getting Started
@@ -100,6 +101,20 @@ deps:  ## Install all dependencies (Homebrew + claude)
 		fi; \
 	done
 	@echo ""
+	@echo "=== Python packages ==="
+	@if python3 -c "import requests, bs4, lxml, yaml" 2>/dev/null; then \
+		echo "  python deps: already installed"; \
+	else \
+		echo "  python deps: installing from pyproject.toml..."; \
+		pip install -e .; \
+	fi
+	@if python3 -c "import playwright" 2>/dev/null; then \
+		echo "  playwright: already installed"; \
+	else \
+		echo "  playwright: installing browser..."; \
+		pip install playwright && playwright install chromium; \
+	fi
+	@echo ""
 	@echo "=== Claude Code ==="
 	@if command -v claude &>/dev/null; then \
 		echo "  claude: already installed ($$(claude --version 2>&1 | head -1))"; \
@@ -155,6 +170,7 @@ setup: deps install  ## Full setup: install deps, symlink commands, verify auth
 	@echo "Setup complete. Run 'make day-start' to begin."
 
 install:  ## Symlink commands and agents into .claude/ for Claude Code
+	@command -v yq &>/dev/null || { echo "ERROR: yq not installed. Run: make deps"; exit 1; }
 	@mkdir -p $(CLAUDE_DIR)/commands $(CLAUDE_DIR)/agents
 	@for f in $(PROJ_DIR)/commands/*.md; do \
 		name=$$(basename "$$f"); \
@@ -166,8 +182,22 @@ install:  ## Symlink commands and agents into .claude/ for Claude Code
 		ln -sf "$$f" "$(CLAUDE_DIR)/agents/$$name"; \
 		echo "  linked agents/$$name"; \
 	done
+	@STATE_DIR=$$(yq '.state_dir // "~/.local/share/daily-driver"' config.yaml 2>/dev/null); \
+	STATE_DIR="$${STATE_DIR/#\~/$${HOME}}"; \
+	STATE_DIR="$${STATE_DIR//&/\\&}"; \
+	OUTPUT_DIR=$$(yq '.output_dir' config.yaml 2>/dev/null); \
+	if [ -z "$$OUTPUT_DIR" ] || [ "$$OUTPUT_DIR" = "null" ]; then \
+		echo "ERROR: output_dir not set in config.yaml"; exit 1; \
+	fi; \
+	OUTPUT_DIR="$${OUTPUT_DIR/#\~/$${HOME}}"; \
+	OUTPUT_DIR="$${OUTPUT_DIR//&/\\&}"; \
+	HOME_ESC="$${HOME//&/\\&}"; \
+	sed -e "s|PLACEHOLDER_HOME|$${HOME_ESC}|g" \
+	    -e "s|PLACEHOLDER_STATE_DIR|$${STATE_DIR}|g" \
+	    -e "s|PLACEHOLDER_OUTPUT_DIR|$${OUTPUT_DIR}|g" \
+		$(PROJ_DIR)/settings.json.tmpl > $(PROJ_DIR)/settings.json
 	@ln -sf $(PROJ_DIR)/settings.json $(CLAUDE_DIR)/settings.local.json
-	@echo "  linked settings.local.json"
+	@echo "  generated settings.json from template"
 	@echo "Install complete. Commands and agents are now available in Claude Code."
 
 uninstall:  ## Remove symlinks from .claude/

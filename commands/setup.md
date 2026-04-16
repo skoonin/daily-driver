@@ -57,10 +57,12 @@ bash scripts/check-state-dir.sh
 
 ## 6. Review Context
 
-Show the current context.md:
+Show the current context.md (from output_dir):
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
+
+If context.md is not found, instruct the user: "Copy context.md.example to your output_dir and fill it in."
 
 Ask the user if anything needs updating (timezone, target roles, job sources, calendar exclusions).
 

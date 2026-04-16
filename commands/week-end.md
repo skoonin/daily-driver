@@ -28,7 +28,7 @@ If Monday with no current week data, use last week's range instead.
 ## 3. Read Context
 
 ```bash
-cat context.md
+bash scripts/read-context.sh
 ```
 
 ## 4. Generate Weekly Summary
