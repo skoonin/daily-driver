@@ -53,7 +53,7 @@ class TestScrapeGreenhouse:
         resp.raise_for_status = MagicMock()
         resp.json.return_value = api_response
         cfg = _greenhouse_config(boards)
-        with patch("requests.get", return_value=resp):
+        with patch("scrape_jobs._api_get", return_value=resp):
             return sj.scrape_greenhouse(cfg)
 
     def test_returns_matching_jobs(self):
@@ -94,8 +94,7 @@ class TestScrapeGreenhouse:
         assert jobs == []
 
     def test_returns_empty_on_api_error(self):
-        import requests as req
-        with patch("requests.get", side_effect=req.RequestException("timeout")):
+        with patch("scrape_jobs._api_get", return_value=None):
             jobs = sj.scrape_greenhouse(_greenhouse_config())
         assert jobs == []
 
@@ -105,9 +104,9 @@ class TestScrapeGreenhouse:
         resp.raise_for_status = MagicMock()
         resp.json.return_value = _API_RESPONSE
         cfg = _greenhouse_config(boards=["anthropic", "stripe"])
-        with patch("requests.get", return_value=resp) as mock_get:
+        with patch("scrape_jobs._api_get", return_value=resp) as mock_get:
             sj.scrape_greenhouse(cfg)
-        urls_called = [call[0][0] for call in mock_get.call_args_list]
+        urls_called = [call[0][1] for call in mock_get.call_args_list]
         assert any("anthropic" in u for u in urls_called)
         assert any("stripe" in u for u in urls_called)
 
