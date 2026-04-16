@@ -302,7 +302,7 @@ cmd_stats() {
     return 1
   fi
 
-  local total researching applied screening interviewing offer rejected ghosted this_week
+  local total found researched applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week
   local stats_json
   if ! stats_json=$(yq -o=json '.applications' "$TRACKER" 2>/dev/null); then
     echo "ERROR: tracker stats: yq failed reading tracker" >&2
@@ -311,25 +311,30 @@ cmd_stats() {
   local stats_line
   if ! stats_line=$(echo "$stats_json" | jq -r --arg ws "$week_start" '[
     length,
-    ([.[] | select(.status == "researching")] | length),
+    ([.[] | select(.status == "found")] | length),
+    ([.[] | select(.status == "researched")] | length),
     ([.[] | select(.status == "applied")] | length),
     ([.[] | select(.status == "screening")] | length),
     ([.[] | select(.status == "interviewing")] | length),
     ([.[] | select(.status == "offer")] | length),
+    ([.[] | select(.status == "skipped")] | length),
     ([.[] | select(.status == "rejected")] | length),
     ([.[] | select(.status == "ghosted")] | length),
+    ([.[] | select(.status == "withdrawn")] | length),
+    ([.[] | select(.status == "dropped")] | length),
     ([.[] | select(.date_applied >= $ws)] | length)
   ] | @tsv' 2>/dev/null); then
     echo "ERROR: tracker stats: failed to compute stats" >&2
     return 1
   fi
-  IFS=$'\t' read -r total researching applied screening interviewing offer rejected ghosted this_week <<< "$stats_line"
+  IFS=$'\t' read -r total found researched applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week <<< "$stats_line"
 
-  local active=$((researching + applied + screening + interviewing + offer))
+  local active=$((applied + screening + interviewing + offer))
 
   echo "Total: ${total} | Active: ${active}"
-  echo "Pipeline: researching=${researching} applied=${applied} screening=${screening} interviewing=${interviewing} offer=${offer}"
-  echo "Closed: rejected=${rejected} ghosted=${ghosted}"
+  echo "Funnel:   found=${found} researched=${researched}"
+  echo "Pipeline: applied=${applied} screening=${screening} interviewing=${interviewing} offer=${offer}"
+  echo "Closed:   rejected=${rejected} ghosted=${ghosted} dropped=${dropped} skipped=${skipped} withdrawn=${withdrawn}"
   echo "Applied this week: ${this_week}"
 }
 
@@ -402,7 +407,9 @@ with open(sys.argv[1], newline='', encoding='utf-8') as f:
 
   # Build CSV lookup as a JSON array for exact-match jq join
   local csv_json
-  if ! csv_json=$(awk -F'\t' 'BEGIN{printf "["} NR>1{printf ","} {printf "{\"co_lower\":\"%s\",\"company\":\"%s\",\"role\":\"%s\",\"status\":\"%s\"}", $1,$2,$3,$4} END{printf "]"}' <<< "$csv_combined" 2>/dev/null); then
+  if [[ -z "$csv_combined" ]]; then
+    csv_json="[]"
+  elif ! csv_json=$(awk -F'\t' 'BEGIN{printf "["} NR>1{printf ","} {printf "{\"co_lower\":\"%s\",\"company\":\"%s\",\"role\":\"%s\",\"status\":\"%s\"}", $1,$2,$3,$4} END{printf "]"}' <<< "$csv_combined" 2>/dev/null); then
     echo "ERROR: cmd_audit: failed to build CSV JSON for join" >&2
     return 1
   fi

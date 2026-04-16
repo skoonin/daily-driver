@@ -4,7 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] -- Config-driven state, context move, unified tasks
+## [Unreleased]
+
+### Changed -- jobs.csv column reorder; status vocabulary; audit robustness
+- `jobs.csv` canonical column order changed to ergonomic triage layout: `Status, Notes, Company, Location, Fit, Comp, Date Found, Date Applied, Link, Product/Purpose, Role, GD Rating, Source`. High-signal fields first; existing migration logic handles rewriting on next run.
+- `scrape-jobs.py`: `CANONICAL_HEADER` updated to new order. All reads/writes use `DictReader`/`DictWriter` so no functional impact.
+- `tracker.sh` stats: `cmd_stats` now covers all 10 status values (`found`, `researched`, `applied`, `screening`, `interviewing`, `offer`, `skipped`, `rejected`, `ghosted`, `withdrawn`, `dropped`). Removed stale `researching` bucket. Active count narrowed to `applied+screening+interviewing+offer`. Output grouped into Funnel / Pipeline / Closed sections.
+- Status vocabulary: added `screening` (active pipeline) and `dropped` (closed; re-activatable if contacted). `researching` removed — canonical value is `researched`.
+- `CLAUDE.md`: columns list and status vocabulary updated to match.
+- Tests: `CSV_HEADER` fixture and idempotent migration test updated to new column order.
+
+### Changed -- Config-driven state, context move, unified tasks
 
 ### Changed -- Centralize state_dir and schedule in config.yaml
 - `config.yaml`: New `state_dir`, `schedule` (day_start, checkin, day_end, gather_jobs times), and `claude` (model, effort, subagent_model) sections. Schedule times are now the source of truth for launchd plists -- edit config.yaml and re-run `make launchd-install`.
@@ -33,7 +43,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed -- Consistent logging in open-session.sh
 - `open-session.sh`: All operational paths (gates, errors, warnings) use `log_msg()` for dual-write to stderr and state-dir log file. Previously, error paths inside `open_session()` only wrote to stderr.
-
 ## [Unreleased] -- Location preferences in config
 
 ### Changed -- Location preferences moved from markdown to config.yaml
