@@ -2053,20 +2053,18 @@ def backfill(config: dict, csv_path: Path) -> None:
     needs_product = sum(1 for j in jobs if not j.get("product"))
     needs_fit = sum(1 for j in jobs if not j.get("fit"))
     needs_gd = sum(1 for j in jobs if not j.get("gd_rating"))
-    needs_notes = sum(1 for j in jobs if not j.get("notes"))
 
     log.info(
-        "[backfill] %d rows: %d need Product, %d need GD, %d need Fit, %d need Notes",
-        len(jobs), needs_product, needs_gd, needs_fit, needs_notes,
+        "[backfill] %d rows: %d need Product, %d need GD, %d need Fit",
+        len(jobs), needs_product, needs_gd, needs_fit,
     )
 
-    if not (needs_product or needs_fit or needs_gd or needs_notes):
+    if not (needs_product or needs_fit or needs_gd):
         print("All rows already enriched, nothing to backfill.")
         return
 
     enrich_company_descriptions(jobs, config, budget=sys.maxsize)
     enrich_fit(jobs, config, budget=sys.maxsize)
-    enrich_notes(jobs, config, budget=sys.maxsize)
 
     # Write back
     backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
@@ -2084,11 +2082,7 @@ def backfill(config: dict, csv_path: Path) -> None:
     filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
     filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))
     filled_gd = needs_gd - sum(1 for j in jobs if not j.get("gd_rating"))
-    filled_notes = needs_notes - sum(1 for j in jobs if not j.get("notes"))
-    print(
-        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
-        f"+{filled_fit} Fit, +{filled_notes} Notes"
-    )
+    print(f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, +{filled_fit} Fit")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

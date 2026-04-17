@@ -725,7 +725,7 @@ class TestBackfillHelpers:
 
             cfg = copy.deepcopy(SAMPLE_CONFIG)
 
-            # Mock all three enrichers to set values
+            # Mock enrichers (Notes is not backfilled)
             def mock_company(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("product"):
@@ -737,14 +737,8 @@ class TestBackfillHelpers:
                     if not j.get("fit"):
                         j["fit"] = "8/10"
 
-            def mock_notes(jobs, config, **kwargs):
-                for j in jobs:
-                    if not j.get("notes"):
-                        j["notes"] = "Looks good"
-
             with patch.object(sj, "enrich_company_descriptions", side_effect=mock_company), \
-                 patch.object(sj, "enrich_fit", side_effect=mock_fit), \
-                 patch.object(sj, "enrich_notes", side_effect=mock_notes):
+                 patch.object(sj, "enrich_fit", side_effect=mock_fit):
                 sj.backfill(cfg, csv_path)
 
             # Read back and verify
@@ -755,7 +749,7 @@ class TestBackfillHelpers:
             assert result[0]["Product/Purpose"] == "Acme builds widgets"
             assert result[0]["GD Rating"] == "4.5"
             assert result[0]["Fit"] == "8/10"
-            assert result[0]["Notes"] == "Looks good"
+            assert result[0]["Notes"] == ""
             # Preserved fields
             assert result[0]["Company"] == "Acme"
             assert result[0]["Status"] == "found"

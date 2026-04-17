@@ -165,13 +165,13 @@ job_search:
     timeout: 30
     # Timeout (seconds) for Claude CLI enrichment calls (product, fit, notes).
     # Higher = fewer timeouts but slower backfill runs.
-    enrich_timeout: 30
+    enrich_timeout: 90
     # Enrichment knobs: control which Claude CLI enrichment steps run and budgets.
-    max_enrich_companies: 50
+    max_enrich_companies: 500
     enrich_gd_rating: true
     enrich_fit: true
-    max_enrich_fit: 50
-    enrich_notes: true
+    max_enrich_fit: 500
+    enrich_notes: false
     max_enrich_notes: 50
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
