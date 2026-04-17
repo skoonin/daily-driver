@@ -23,6 +23,7 @@ SAMPLE_CONFIG = {
             "timeout": 5,
             "remoteok_max_jobs": 50,
             "hn_max_posts": 10,
+            "wwr_categories": ["devops-sysadmin", "back-end-programming"],
             "sources": {
                 "remoteok": True,
                 "weworkremotely": True,

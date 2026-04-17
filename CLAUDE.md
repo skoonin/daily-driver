@@ -104,7 +104,7 @@ Tracks every role discovered during the search -- applied, skipped, or still eva
 
 **Columns**: Status, Notes, Company, Location, Role, Fit (1-10), Comp, Date Found, Date Applied, Link, Product/Purpose, GD Rating, Source
 
-**Status values**: `found` (just discovered), `researched` (details reviewed), `applied`, `screening`, `interviewing`, `offer`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `dropped` (stopped pursuing; re-activatable if contacted), `withdrawn`
+**Status values**: `found` (just discovered), `pending` (actively investigating, decision pending), `applied`, `screening`, `interviewing`, `offer`, `skipped` (with reason in Notes), `rejected`, `ghosted`, `dropped` (stopped pursuing; re-activatable if contacted), `withdrawn`
 
 **Maintenance rules**:
 - Add every role discovered during research, even if immediately skipped (builds pattern data on what's out there)

@@ -8,6 +8,7 @@ dependencies = [
     "lxml>=5.0",
     "playwright>=1.56",
     "pyyaml>=6.0",
+    "python-jobspy>=1.1.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +52,7 @@ deps =
     lxml>=5.0
     pyyaml>=6.0
     playwright>=1.56
+    python-jobspy>=1.1.0,<2.0.0
 commands =
     pytest --cov=scripts --cov-report=term-missing {posargs}
 """

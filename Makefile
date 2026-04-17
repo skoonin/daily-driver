@@ -102,7 +102,7 @@ deps:  ## Install all dependencies (Homebrew + claude)
 	done
 	@echo ""
 	@echo "=== Python packages ==="
-	@if python3 -c "import requests, bs4, lxml, yaml" 2>/dev/null; then \
+	@if python3 -c "import requests, bs4, lxml, yaml, jobspy" 2>/dev/null; then \
 		echo "  python deps: already installed"; \
 	else \
 		echo "  python deps: installing from pyproject.toml..."; \
@@ -216,7 +216,12 @@ day-start:  ## Morning planning — gather context, build plan, block calendar
 	@$(CLDE) --agent work-planner -n "day-start-$$(date +%Y-%m-%d)" '/day-start'
 
 check-in:  ## Mid-day review — progress against plan, flag overruns
-	@$(CLDE) --agent work-planner -n "check-in-$$(date +%Y-%m-%d-%H%M)" '/check-in'
+	@day_start_session="day-start-$$(date +%Y-%m-%d)"; \
+	if session_id=$$(bash scripts/find-session-id.sh "$$day_start_session" 2>/dev/null) && [[ -n "$$session_id" ]]; then \
+		$(CLDE) --agent work-planner --resume "$$session_id" '/check-in'; \
+	else \
+		$(CLDE) --agent work-planner -n "check-in-$$(date +%Y-%m-%d-%H%M)" '/check-in'; \
+	fi
 
 day-end:  ## Evening wrap-up — plan vs actual, write daily notes
 	@$(CLDE) --agent work-planner -n "day-end-$$(date +%Y-%m-%d)" '/day-end'
@@ -227,8 +232,14 @@ focus:  ## Suppress check-ins for deep work (usage: make focus ARGS="90")
 ##@ Reporting
 
 standup:  ## Standup summary (Yesterday/Today/Blockers) copied to clipboard
-	@$(CLDELT) -p '/standup' | pbcopy
-	@echo "Standup copied to clipboard"
+	@EXIT=0; bash scripts/build-standup.sh || EXIT=$$?; \
+	if [ "$$EXIT" -eq 2 ]; then \
+		echo ""; \
+		echo "Ambiguous items detected. Resolving via Claude..."; \
+		bash scripts/build-standup.sh --ambiguous | $(CLDELT) -p "Normalise each item under AMBIGUOUS_ITEMS to a one-line completed action. Return only the corrected lines, one per bullet."; \
+	elif [ "$$EXIT" -ne 0 ]; then \
+		echo "build-standup.sh failed (exit $$EXIT)" >&2; exit $$EXIT; \
+	fi
 
 week-end:  ## Friday rollup — daily notes into weekly summary
 	@$(CLDE) --agent work-planner -n "week-end-$$(date +%Y-W%V)" '/week-end'

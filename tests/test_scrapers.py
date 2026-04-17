@@ -362,9 +362,8 @@ class TestRunAllScrapersParallel:
                     "hn_who_is_hiring": True,
                     "greenhouse": True,
                     "apple": True,
-                    "linkedin": True,
-                    "indeed": True,
-                    "wellfound": True,
+                    "jobspy": True,
+                    "wellfound": {"enabled": True, "type": "playwright"},
                 },
             },
         },
@@ -399,15 +398,15 @@ class TestRunAllScrapersParallel:
             assert m.call_count == 1, f"{sid} called {m.call_count} times"
 
         # Phase 1 sources saw headless=True
-        for sid in ("remoteok", "weworkremotely", "hn_who_is_hiring", "greenhouse", "apple"):
+        for sid in ("remoteok", "weworkremotely", "hn_who_is_hiring", "greenhouse", "apple", "jobspy"):
             assert seen_modes[sid] is True, f"{sid} should run headless"
 
         # Phase 2 sources saw headless=False
-        for sid in ("linkedin", "indeed", "wellfound"):
+        for sid in ("wellfound",):
             assert seen_modes[sid] is False, f"{sid} should run non-headless"
 
         # All jobs merged; one row per source, all unique
-        assert len(jobs) == 8
+        assert len(jobs) == 7
         assert failed == []
 
     def test_parallel_speedup(self):
@@ -462,9 +461,9 @@ class TestRunAllScrapersParallel:
             }]
 
         cfg = self._config()
-        # Only Phase 1 sources enabled so we're exercising the parallel path
+        non_headless = {"linkedin", "indeed", "wellfound"}
         for sid in sj.SCRAPERS:
-            cfg["job_search"]["scraper"]["sources"][sid] = sid not in sj.NON_HEADLESS_SOURCES
+            cfg["job_search"]["scraper"]["sources"][sid] = sid not in non_headless
 
         mocks = {sid: MagicMock(side_effect=_ok(sid)) for sid in sj.SCRAPERS}
         mocks["remoteok"] = MagicMock(side_effect=requests.exceptions.Timeout())
@@ -474,8 +473,8 @@ class TestRunAllScrapersParallel:
 
         assert "remoteok" in failed
         returned_sources = {j["company"] for j in jobs}
-        # The four other Phase 1 sources all produced their row
-        assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "greenhouse", "apple"}
+        # Remaining Phase 1 sources all produced their row
+        assert returned_sources == {"weworkremotely", "hn_who_is_hiring", "greenhouse", "apple", "jobspy"}
 
 
 # ── Country helpers ───────────────────────────────────────────────────────────
@@ -547,92 +546,6 @@ class TestScrapeAppleMultiCountry:
         visited = page._visited
         assert any("/en-us/search" in u for u in visited)
         assert any("/en-ca/search" in u for u in visited)
-
-
-class TestScrapeLinkedInMultiCountry:
-    def test_visits_every_configured_country(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["locations"]["countries"] = ["US", "CA"]
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_linkedin(cfg)
-        assert any("location=United+States" in u for u in visited)
-        assert any("location=Canada" in u for u in visited)
-
-    def test_linkedin_url_uses_config_date_window(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["date_window_days"] = 14
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_linkedin(cfg)
-        for u in visited:
-            assert "f_TPR=r1209600" in u  # 14 * 86400
-            assert "f_WT=2" not in u
-
-    def test_linkedin_default_date_window_is_7_days(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_linkedin(cfg)
-        for u in visited:
-            assert "f_TPR=r604800" in u
-
-    def test_linkedin_paginates_up_to_max_pages(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["max_pages"] = 2
-        cfg["job_search"]["locations"]["countries"] = ["US"]
-        visited: list[str] = []
-        # Return 25 cards on first call (triggers page 2), 0 on second
-        cards_25 = [_mock_element(inner_text="SRE") for _ in range(25)]
-        call_count = [0]
-        def _goto(url, **kw):
-            visited.append(url)
-        page = MagicMock()
-        page.goto.side_effect = _goto
-        page.wait_for_timeout.return_value = None
-        def _qsa(selector):
-            nonlocal call_count
-            idx = call_count[0]
-            call_count[0] += 1
-            return cards_25 if idx == 0 else []
-        page.query_selector_all.side_effect = _qsa
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_linkedin(cfg)
-        page1_urls = [u for u in visited if "start=" not in u]
-        page2_urls = [u for u in visited if "start=25" in u]
-        assert len(page1_urls) >= 1
-        assert len(page2_urls) >= 1
-
-
-class TestScrapeIndeedMultiCountry:
-    def test_uses_configured_regional_host(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["locations"]["countries"] = ["US", "CA"]
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_indeed(cfg)
-        assert any("www.indeed.com" in u for u in visited)
-        assert any("ca.indeed.com" in u for u in visited)
-
-    def test_indeed_uses_config_date_window(self):
-        cfg = copy.deepcopy(SAMPLE_CONFIG)
-        cfg["job_search"]["scraper"]["date_window_days"] = 14
-        cfg["job_search"]["locations"]["countries"] = ["US"]
-        visited: list[str] = []
-        page = _mock_page([])
-        page.goto.side_effect = lambda url, **kw: visited.append(url) or None
-        with patch("scrape_jobs._playwright_browser", _playwright_ctx_mock(page)):
-            sj.scrape_indeed(cfg)
-        for u in visited:
-            assert "fromage=14" in u
 
 
 # ── enrich_company_descriptions budget fix ──────────────────────────────────
@@ -725,20 +638,23 @@ class TestBackfillHelpers:
 
             cfg = copy.deepcopy(SAMPLE_CONFIG)
 
-            # Mock enrichers (Notes is not backfilled)
             def mock_company(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("product"):
                         j["product"] = "Acme builds widgets"
                         j["gd_rating"] = "4.5"
+                return {"enriched": len(jobs), "skipped_cached": 0, "failed": 0}
 
-            def mock_fit(jobs, config, **kwargs):
+            def mock_fit_and_notes(jobs, config, **kwargs):
                 for j in jobs:
                     if not j.get("fit"):
                         j["fit"] = "8/10"
+                    if not j.get("notes"):
+                        j["notes"] = "Looks good"
+                return {"enriched": len(jobs), "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
 
             with patch.object(sj, "enrich_company_descriptions", side_effect=mock_company), \
-                 patch.object(sj, "enrich_fit", side_effect=mock_fit):
+                 patch.object(sj, "enrich_fit_and_notes", side_effect=mock_fit_and_notes):
                 sj.backfill(cfg, csv_path)
 
             # Read back and verify
@@ -749,7 +665,7 @@ class TestBackfillHelpers:
             assert result[0]["Product/Purpose"] == "Acme builds widgets"
             assert result[0]["GD Rating"] == "4.5"
             assert result[0]["Fit"] == "8/10"
-            assert result[0]["Notes"] == ""
+            assert result[0]["Notes"] == "Looks good"
             # Preserved fields
             assert result[0]["Company"] == "Acme"
             assert result[0]["Status"] == "found"
@@ -777,8 +693,7 @@ class TestBackfillHelpers:
 
             # Enrichers should be called but skip already-filled fields
             with patch.object(sj, "enrich_company_descriptions") as m_co, \
-                 patch.object(sj, "enrich_fit") as m_fit, \
-                 patch.object(sj, "enrich_notes") as m_notes:
+                 patch.object(sj, "enrich_fit_and_notes") as m_fn:
                 sj.backfill(cfg, csv_path)
 
             with open(csv_path, newline="") as f:

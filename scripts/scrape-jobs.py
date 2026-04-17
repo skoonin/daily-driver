@@ -8,10 +8,9 @@ Sources (API — no browser required):
   weworkremotely    — requests, public RSS feeds (/categories/*.rss)
   hn_who_is_hiring  — requests + BeautifulSoup (static HTML)
   greenhouse        — requests, public JSON API (boards-api.greenhouse.io)
+  jobspy            — python-jobspy library (LinkedIn, Indeed, Glassdoor, Google)
 
 Sources (Playwright — browser required):
-  linkedin          — Playwright, public search (non-headless, best-effort)
-  indeed            — Playwright, public search (non-headless, best-effort)
   wellfound         — Playwright, public search (non-headless, best-effort)
   apple             — Playwright, search input + API response intercept
 """
@@ -21,6 +20,7 @@ import copy
 import csv
 import json
 import logging
+import os
 import time
 import re
 import subprocess
@@ -30,10 +30,13 @@ import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 import shutil
+
+if sys.platform != "win32":
+    import fcntl
 
 import requests
 import yaml
@@ -244,18 +247,21 @@ def dedup_key(company: str, role: str) -> str:
 
 # ── Company enrichment ───────────────────────────────────────────────────────
 
-def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> None:
+def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> dict:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
-    Silently skips enrichment if the `claude` CLI is not on PATH.
+    Logs a warning if the `claude` CLI is not on PATH.
 
     Budget limits total claude calls to avoid silent stalls on slow networks —
     each call blocks for up to enrich_timeout seconds (default 30s).
+
+    Returns a stats dict with keys: enriched, skipped_cached, failed.
     """
+    stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
     if shutil.which("claude") is None:
-        log.debug("[enrich] claude CLI not found, skipping product lookup")
-        return
+        log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
+        return stats
 
     cfg = scraper_cfg(config) if config else {}
     if budget <= 0:
@@ -275,6 +281,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
 
     for job in jobs:
         if job.get("product"):
+            stats["skipped_cached"] += 1
             continue
         company = job.get("company", "").strip()
         if not company:
@@ -320,22 +327,38 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
                                 try:
                                     gd_rating = str(round(float(raw), 1))
                                 except ValueError:
-                                    gd_rating = raw
+                                    # Claude occasionally returns prose; extract any float in 0.0-5.9 range.
+                                    m = re.search(r"([0-5]\.\d)", lines[1].strip())
+                                    if m:
+                                        gd_rating = m.group(1)
+                                        log.info("[enrich] GD rating fallback regex extracted %s for %s", gd_rating, company)
+                                    else:
+                                        gd_rating = ""
                         cache[company] = {"product": product, "gd_rating": gd_rating}
                     else:
+                        stderr_tail = (result.stderr or "").strip()[-200:]
+                        log.warning(
+                            "[enrich] company=%s rc=%d stderr=%r",
+                            company, result.returncode, stderr_tail,
+                        )
                         cache[company] = {"product": "", "gd_rating": ""}
+                        stats["failed"] += 1
                 except subprocess.TimeoutExpired:
                     log.warning("[enrich] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
                     cache[company] = {"product": "", "gd_rating": ""}
+                    stats["failed"] += 1
                 except OSError as exc:
-                    log.debug("[enrich] %s lookup failed: %s", company, exc)
+                    log.warning("[enrich] %s lookup failed: %s", company, exc)
                     cache[company] = {"product": "", "gd_rating": ""}
+                    stats["failed"] += 1
                 calls_made += 1
         cached = cache.get(company, {})
         if cached.get("product"):
             job["product"] = cached["product"]
+            stats["enriched"] += 1
         if cached.get("gd_rating") and not job.get("gd_rating"):
             job["gd_rating"] = cached["gd_rating"]
+    return stats
 
 
 def _location_summary(config: dict) -> str:
@@ -353,96 +376,62 @@ def _location_summary(config: dict) -> str:
     return "; ".join(parts)
 
 
-def enrich_fit(jobs: list[dict], config: dict, *, budget: int = 0) -> None:
-    """Populate Fit score in-place for new jobs, using the Claude CLI.
+def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> dict:
+    """Populate Fit score and Notes in-place for new jobs via a single Claude CLI call per job.
 
-    One `claude -p` call per job. Budget-capped via max_enrich_fit (default 5).
-    Builds location context from job_search.locations config.
+    One `claude -p` call per job returns strict JSON: {"fit": <int 1-10>, "notes": "<string>"}.
+    This replaces the former enrich_fit + enrich_notes pair, cutting per-job Claude spend by ~33%.
+
+    Budget applies to the combined call count. Previously enrich_fit and enrich_notes each had
+    their own budget (max_enrich_fit, max_enrich_notes). The combined budget uses max_enrich_fit
+    as the limit (configurable); set it to the combined limit you want.
+
+    Description handling: fit is scored from role/company/location alone, so description is
+    optional. When description_text is absent, notes is set to "" (not confabulated). The
+    skipped_no_desc counter is always 0 (fit is still scored when description is missing); the
+    key is retained for shape compatibility with the former per-enricher stats.
+
+    JSON contract expected from Claude stdout:
+        {"fit": 7, "notes": "Kubernetes-heavy SRE; remote CA/US; no comp listed"}
+    On description absent:
+        {"fit": 7, "notes": ""}
+    On insufficient info:
+        {"fit": 50, "notes": ""}
+
+    Example prompt response for "Staff SRE at Acme, Remote":
+        {"fit": 8, "notes": "AWS/k8s; fully remote; no comp range listed"}
+
+    Returns a stats dict: {"enriched": N, "skipped_budget": N, "skipped_no_desc": 0, "failed": N}.
     """
+    stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
     if shutil.which("claude") is None:
-        log.debug("[enrich-fit] claude CLI not found, skipping fit scoring")
-        return
+        log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
+        return stats
 
     cfg = scraper_cfg(config)
-    if not cfg.get("enrich_fit", True):
-        log.debug("[enrich-fit] disabled via config")
-        return
+    if not cfg.get("enrich_fit", True) or not cfg.get("enrich_notes", True):
+        log.debug("[enrich-fit-notes] fit or notes disabled via config")
+        return stats
 
     if budget <= 0:
         budget = int(cfg.get("max_enrich_fit", 50))
     loc_summary = _location_summary(config)
     role_persona = persona(config)
-
-    calls_made = 0
-    for job in jobs:
-        if job.get("fit"):
-            continue
-        if calls_made >= budget:
-            remaining = sum(1 for j in jobs if not j.get("fit"))
-            log.warning("[enrich-fit] budget reached (%d), skipping %d jobs", budget, remaining)
-            break
-
-        role = job.get("role", "unknown")
-        company = job.get("company", "unknown")
-        location = job.get("location", "unknown")
-        product = job.get("product", "")
-
-        prompt = (
-            f"Rate this job's fit from 1-10 for a {role_persona}. "
-            f"Reply with ONLY the number, e.g. '7'. No preamble.\n\n"
-            f"Location preferences: {loc_summary}\n"
-            f"Job: {role} at {company}, {location}\n"
-        )
-        if product:
-            prompt += f"Company: {product}\n"
-
-        try:
-            result = subprocess.run(
-                ["claude", "--bare", "--no-session-persistence", "-p", prompt],
-                capture_output=True, text=True, timeout=enrich_timeout(config),
-            )
-            if result.returncode == 0:
-                raw = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ""
-                # Accept "7", "7/10", or just extract the leading digit(s)
-                m = re.match(r"(\d+)", raw)
-                if m:
-                    score = min(int(m.group(1)), 10)
-                    job["fit"] = f"{score}/10"
-                else:
-                    log.debug("[enrich-fit] unparseable response for %s: %r", company, raw)
-        except subprocess.TimeoutExpired:
-            log.warning("[enrich-fit] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
-        except OSError as exc:
-            log.debug("[enrich-fit] %s scoring failed: %s", company, exc)
-        calls_made += 1
-
-
-def enrich_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> None:
-    """Populate Notes in-place with a one-line summary via Claude CLI.
-
-    Summarizes tech stack, remote policy, and red flags. Uses description_text
-    from the detail-page parser when available; falls back to a role-only prompt.
-    """
-    if shutil.which("claude") is None:
-        log.debug("[enrich-notes] claude CLI not found, skipping")
-        return
-
-    cfg = scraper_cfg(config)
-    if not cfg.get("enrich_notes", True):
-        log.debug("[enrich-notes] disabled via config")
-        return
-
-    if budget <= 0:
-        budget = int(cfg.get("max_enrich_notes", 50))
     hc = home_city(config)
 
     calls_made = 0
-    for job in jobs:
-        if job.get("notes"):
+    for idx, job in enumerate(jobs):
+        if job.get("status") == "skipped":
+            continue
+        if job.get("fit") and job.get("notes"):
             continue
         if calls_made >= budget:
-            remaining = sum(1 for j in jobs if not j.get("notes"))
-            log.warning("[enrich-notes] budget reached (%d), skipping %d jobs", budget, remaining)
+            remaining = sum(
+                1 for j in jobs[idx:]
+                if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+            )
+            log.warning("[enrich-fit-notes] budget reached (%d), skipping %d jobs", budget, remaining)
+            stats["skipped_budget"] += remaining
             break
 
         role = job.get("role", "unknown")
@@ -451,38 +440,78 @@ def enrich_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> None:
         product = job.get("product", "")
         desc = job.get("description_text", "")
 
+        desc_section = ""
         if desc:
-            # Truncate to ~500 words
             words = desc.split()
             if len(words) > 500:
                 desc = " ".join(words[:500]) + " ..."
-            prompt = (
-                "Summarize this job in ONE line (max 25 words). Include: key "
-                "tech stack, remote policy (e.g. 'Remote US-only', 'Hybrid "
-                f"{hc}', 'Remote {hc} OK'), red flags. No preamble.\n\n"
-                f"Job: {role} at {company}, {location}\n"
-                f"Description: {desc}"
-            )
-        else:
-            prompt = (
-                f"Summarize what a {role} at {company}"
-                + (f" ({product})" if product else "")
-                + f" in {location} likely involves in ONE line (max 25 words). "
-                "Include tech stack and remote policy if known. No preamble."
-            )
+            desc_section = f"\nDescription: {desc}"
+
+        prompt = (
+            f"You are evaluating a job for a {role_persona}.\n"
+            f"Location preferences: {loc_summary}\n"
+            f"Job: {role} at {company}, {location}\n"
+        )
+        if product:
+            prompt += f"Company: {product}\n"
+        prompt += (
+            f"{desc_section}\n\n"
+            "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
+            '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}\n\n'
+            "fit: rate 1-10 how well this role fits the candidate based on role/company/location. "
+            "If you truly lack enough information to assess, return 5.\n"
+            "notes: one-line summary including key tech stack, remote policy "
+            f"(e.g. 'Remote US-only', 'Hybrid {hc}', 'Remote {hc} OK'), red flags. "
+            "If description is absent, return notes as empty string. "
+            "Do not guess or hallucinate notes when you have no description.\n"
+            "Do not include any preamble, explanation, or markdown -- only the JSON object."
+        )
 
         try:
             result = subprocess.run(
                 ["claude", "--bare", "--no-session-persistence", "-p", prompt],
                 capture_output=True, text=True, timeout=enrich_timeout(config),
             )
-            if result.returncode == 0 and result.stdout.strip():
-                job["notes"] = result.stdout.strip().splitlines()[0].strip()
+            if result.returncode == 0:
+                raw = result.stdout.strip()
+                try:
+                    parsed = json.loads(raw)
+                    fit_val = parsed.get("fit")
+                    notes_val = parsed.get("notes", "")
+                    if isinstance(fit_val, (int, float)):
+                        score = min(int(fit_val), 10)
+                        if not job.get("fit"):
+                            job["fit"] = f"{score}/10"
+                        if not job.get("notes") and isinstance(notes_val, str):
+                            job["notes"] = notes_val
+                        stats["enriched"] += 1
+                    else:
+                        log.warning(
+                            "[enrich-fit-notes] company=%s role=%s: JSON missing valid fit field: %r",
+                            company, role, raw[:200],
+                        )
+                        stats["failed"] += 1
+                except json.JSONDecodeError:
+                    log.warning(
+                        "[enrich-fit-notes] company=%s role=%s: non-JSON response: %r",
+                        company, role, raw[:200],
+                    )
+                    stats["failed"] += 1
+            else:
+                stderr_tail = (result.stderr or "").strip()[-200:]
+                log.warning(
+                    "[enrich-fit-notes] company=%s role=%s rc=%d stderr=%r",
+                    company, role, result.returncode, stderr_tail,
+                )
+                stats["failed"] += 1
         except subprocess.TimeoutExpired:
-            log.warning("[enrich-notes] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
+            log.warning("[enrich-fit-notes] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
+            stats["failed"] += 1
         except OSError as exc:
-            log.debug("[enrich-notes] %s failed: %s", company, exc)
+            log.warning("[enrich-fit-notes] %s failed: %s", company, exc)
+            stats["failed"] += 1
         calls_made += 1
+    return stats
 
 
 # ── Job detail enrichment ────────────────────────────────────────────────────
@@ -594,6 +623,8 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     enriched_count = 0
     for job in jobs:
         if job.get("comp"):
+            continue
+        if job.get("status") == "skipped":
             continue
         url = (job.get("url") or "").strip()
         if not url:
@@ -726,6 +757,23 @@ def parse_linkedin_html(html: str) -> dict:
     return out
 
 
+def _parse_k_salary(s: str) -> int | None:
+    """Parse a salary amount that may use K/M shorthand into a plain integer.
+
+    Greenhouse boards (e.g. Anthropic) post "$150K-$200K" instead of full numbers.
+    Returns None on unrecognized input so callers leave comp blank.
+    """
+    s = s.replace(",", "").strip()
+    try:
+        if s.upper().endswith("K"):
+            return int(float(s[:-1]) * 1_000)
+        if s.upper().endswith("M"):
+            return int(float(s[:-1]) * 1_000_000)
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_greenhouse_html(html: str) -> dict:
     """Extract comp from a Greenhouse job-boards page.
 
@@ -755,17 +803,21 @@ def parse_greenhouse_html(html: str) -> dict:
     m = re.search(
         r"Annual Salary:\s*"
         r"(?P<p>\$|US\$|CA\$|[A-Z]{3}\s?)"
-        r"(?P<min>[\d,]+)"
+        # K/M suffix: Greenhouse boards like Anthropic post "$150K" shorthand
+        r"(?P<mraw>[\d,]+[KkMm]?)"
         r"\s*[-\u2013\u2014]\s*"
         r"(?P<p2>\$|US\$|CA\$|[A-Z]{3}\s?)?"
-        r"(?P<max>[\d,]+)"
+        r"(?P<xraw>[\d,]+[KkMm]?)"
         r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?",
         text,
     )
     if m:
-        currency_suffix = f" {m['cur']}" if m["cur"] else ""
-        max_prefix = m["p2"] or m["p"]
-        out["comp"] = f"{m['p']}{m['min']}\u2013{max_prefix}{m['max']}/yr{currency_suffix}".strip()
+        lo = _parse_k_salary(m["mraw"])
+        hi = _parse_k_salary(m["xraw"])
+        if lo is not None and hi is not None:
+            currency_suffix = f" {m['cur']}" if m["cur"] else ""
+            max_prefix = m["p2"] or m["p"]
+            out["comp"] = f"{m['p']}{lo:,}\u2013{max_prefix}{hi:,}/yr{currency_suffix}".strip()
 
     return out
 
@@ -936,6 +988,230 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     return known_urls, known_keys, header
 
 
+# Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
+# so downstream consumers see one canonical value.
+_REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset({
+    "", "anywhere", "worldwide", "remote - anywhere", "remote, worldwide",
+})
+
+# Role-title suffixes appended by some scrapers to signal remote eligibility.
+# Stripped here so dedup and display see clean titles.
+_REMOTE_ROLE_SUFFIXES: tuple[str, ...] = (" (remote)", "(remote)", " - remote")
+
+# Static FX table; refreshed manually — not worth an API call for rough filtering.
+_FX_TO_USD: dict[str, float] = {
+    "USD": 1.0,
+    "CAD": 0.73,
+    "GBP": 1.26,
+    "EUR": 1.09,
+}
+
+# Symbols that unambiguously signal a non-USD currency when bare $ is absent.
+_COMP_SYMBOL_TO_CURRENCY: dict[str, str] = {
+    "£": "GBP",
+    "€": "EUR",
+    "ca$": "CAD",
+}
+
+# Matches a currency token at the start of a comp segment.
+_COMP_CURRENCY_RE = re.compile(
+    r"""
+    (?:
+        (?P<code>USD|CAD|GBP|EUR)\s*      # explicit ISO code (USD 150K)
+        |
+        (?P<sym>CA\$|£|€|\$)              # currency symbol (CA$ before bare $)
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Matches a single monetary amount with optional commas and K/M suffix.
+_COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
+
+# Period tokens found as suffixes like "/yr", "/mo", "/hr".
+_COMP_PERIOD_MAP: dict[str, str] = {
+    "yr": "year", "year": "year",
+    "mo": "month", "month": "month",
+    "hr": "hour", "hour": "hour",
+}
+
+
+def _parse_comp(comp_str: str) -> dict:
+    """Parse a free-form comp display string into structured fields.
+
+    Returns a dict with keys: comp_min_native, comp_max_native, comp_currency,
+    comp_period, comp_min_usd, comp_max_usd. All values are None/"" on
+    unparseable input so callers can safely access without KeyError.
+
+    Currency detection precedence: explicit ISO code > symbol (CA$ > $ > £ > €).
+    A bare $ with no other signal defaults to USD.
+
+    Does NOT convert hourly/monthly amounts to annual equivalents — the caller
+    is responsible for that. comp_period signals which unit native values are in.
+
+    Examples::
+        >>> r = _parse_comp("$150,000-$200,000")
+        >>> r["comp_min_native"], r["comp_max_native"], r["comp_currency"]
+        (150000, 200000, 'USD')
+        >>> r = _parse_comp("CAD 120,000-160,000/yr")
+        >>> r["comp_currency"], r["comp_min_native"]
+        ('CAD', 120000)
+        >>> _parse_comp("unpublished")["comp_min_native"] is None
+        True
+    """
+    empty: dict = {
+        "comp_min_native": None,
+        "comp_max_native": None,
+        "comp_currency": "",
+        "comp_period": "",
+        "comp_min_usd": None,
+        "comp_max_usd": None,
+    }
+    if not comp_str or not comp_str.strip():
+        return empty
+
+    s = comp_str.strip()
+
+    # Extract period suffix before stripping it.
+    period = "year"  # default for yearly-ish numbers; overridden when explicit
+    period_match = re.search(r"/\s*(yr|year|mo|month|hr|hour)\b", s, re.IGNORECASE)
+    if period_match:
+        period = _COMP_PERIOD_MAP.get(period_match.group(1).lower(), "year")
+        s = s[: period_match.start()]
+
+    # Walk left-to-right consuming (optional currency token)(amount) pairs.
+    currencies_found: list[str] = []
+    amounts_found: list[int] = []
+
+    pos = 0
+    while pos < len(s):
+        cm = _COMP_CURRENCY_RE.match(s, pos)
+        if cm:
+            code = cm.group("code")
+            sym = cm.group("sym")
+            if code:
+                currencies_found.append(code.upper())
+            elif sym:
+                currencies_found.append(_COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD"))
+            pos = cm.end()
+            while pos < len(s) and s[pos] == " ":
+                pos += 1
+            am = _COMP_AMOUNT_RE.match(s, pos)
+            if am:
+                val = _parse_k_salary(am.group())
+                if val is not None:
+                    amounts_found.append(val)
+                pos = am.end()
+        elif s[pos] in "-\u2013\u2014 ,":
+            pos += 1
+        else:
+            am = _COMP_AMOUNT_RE.match(s, pos)
+            if am:
+                val = _parse_k_salary(am.group())
+                if val is not None:
+                    amounts_found.append(val)
+                pos = am.end()
+            else:
+                pos += 1
+
+    if not amounts_found:
+        return empty
+
+    # First explicit ISO code wins; fall back to first symbol; default USD.
+    currency = currencies_found[0] if currencies_found else "USD"
+    if currency not in _FX_TO_USD:
+        currency = "USD"
+
+    comp_min = amounts_found[0]
+    comp_max = amounts_found[1] if len(amounts_found) >= 2 else amounts_found[0]
+
+    if comp_min > comp_max:
+        comp_min, comp_max = comp_max, comp_min
+
+    fx = _FX_TO_USD[currency]
+    return {
+        "comp_min_native": comp_min,
+        "comp_max_native": comp_max,
+        "comp_currency": currency,
+        "comp_period": period,
+        "comp_min_usd": int(comp_min * fx),
+        "comp_max_usd": int(comp_max * fx),
+    }
+
+
+def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
+    """Return (True, "") if comp is acceptable or unknown; (False, reason) if below threshold.
+
+    Fails open when comp_max_usd is absent or zero so roles with no listed
+    comp reach CSV for manual review rather than being silently dropped.
+    """
+    threshold = int(config.get("job_search", {}).get("min_comp_usd", 180000))
+    cmax = job.get("comp_max_usd")
+    if not cmax:
+        return (True, "")
+    if cmax >= threshold:
+        return (True, "")
+    return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
+
+
+def normalize_job(raw: dict, source: str) -> dict:
+    """Canonicalize a scraped job dict before it is written to CSV.
+
+    Responsibilities:
+      - Location: collapses known remote-only aliases to "Remote".
+      - Role title: strips trailing remote-eligibility suffixes.
+      - Greenhouse source: splits "Greenhouse (board)" into in-memory keys
+        source_canonical and source_board for downstream filtering. The
+        original source value is preserved so append_jobs writes the same
+        CSV column as before.
+      - Comp: parses the display string into in-memory structured fields
+        (comp_min_native, comp_max_native, comp_currency, comp_period,
+        comp_min_usd, comp_max_usd). These fields are NOT written to CSV;
+        DictWriter extrasaction="ignore" drops them automatically.
+
+    Returns a new dict with canonical keys added; does not modify raw in place.
+    Does not touch GD rating (W2-E) or Wellfound-specific fields (W2-A).
+
+    Example::
+        >>> normalize_job(
+        ...     {"location": "Anywhere", "role": "Foo (Remote)", "source": "Greenhouse (acme)"},
+        ...     "Greenhouse (acme)",
+        ... )
+        # location -> "Remote", role -> "Foo", source_canonical -> "greenhouse",
+        # source_board -> "acme"
+    """
+    job = dict(raw)
+
+    loc = job.get("location", "").strip()
+    if loc.lower() in _REMOTE_LOCATION_ALIASES:
+        job["location"] = "Remote"
+    else:
+        job["location"] = loc
+
+    role = job.get("role", "")
+    role_lower = role.lower()
+    for suffix in _REMOTE_ROLE_SUFFIXES:
+        if role_lower.endswith(suffix):
+            role = role[: len(role) - len(suffix)].rstrip()
+            role_lower = role.lower()
+            break
+    job["role"] = role
+
+    # "Greenhouse (board-slug)" -> in-memory canonical fields only.
+    # Kept separate from source so CSV output is unchanged.
+    src = source or job.get("source", "")
+    if src.startswith("Greenhouse (") and src.endswith(")"):
+        job["source_canonical"] = "greenhouse"
+        job["source_board"] = src[len("Greenhouse ("):-1]
+    else:
+        job["source_canonical"] = src.split("/")[0].lower() if src else ""
+        job["source_board"] = ""
+
+    job.update(_parse_comp(job.get("comp", "") or ""))
+
+    return job
+
+
 def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     """Append new jobs to CSV. Returns count of rows written."""
     if not jobs:
@@ -944,6 +1220,8 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     written = 0
     try:
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            if sys.platform != "win32":
+                fcntl.flock(f, fcntl.LOCK_EX)
             writer = csv.DictWriter(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
@@ -956,7 +1234,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["Location"] = job.get("location", "")
                 row["Source"] = job.get("source", "")
                 row["Date Found"] = job.get("date_found", date.today().isoformat())
-                row["Status"] = "found"
+                row["Status"] = job.get("status") or "found"
                 row["Link"] = job.get("url", "")
                 row["Fit"] = job.get("fit", "")
                 row["GD Rating"] = job.get("gd_rating", "")
@@ -1184,32 +1462,37 @@ def scrape_remoteok(config: dict) -> list[dict]:
             continue
         if job_id:
             seen_ids.add(job_id)
-        jobs.append({
+        sal_min = item.get("salary_min")
+        sal_max = item.get("salary_max")
+        currency = item.get("salary_currency") or "USD"
+        prefix = "$" if currency == "USD" else f"{currency} "
+        comp = (
+            f"{prefix}{int(sal_min):,}-{prefix}{int(sal_max):,}/yr"
+            if sal_min and sal_max
+            else ""
+        )
+        job: dict = {
             "company": item.get("company", ""),
             "role": role,
             "location": item.get("location", "") or "Remote",
             "url": item.get("url", ""),
             "source": "RemoteOK",
             "date_found": date.today().isoformat(),
-        })
+        }
+        if comp:
+            job["comp"] = comp
+        jobs.append(job)
 
     log.info("[remoteok] %d jobs matched", len(jobs))
     return jobs
-
-
-_WWR_RSS_CATEGORIES = [
-    "devops-sysadmin",
-    "back-end-programming",
-    "full-stack-programming",
-]
 
 
 def scrape_weworkremotely(config: dict) -> list[dict]:
     """Fetch jobs from WeWorkRemotely's public RSS feeds.
 
     WWR publishes per-category RSS at
-    /categories/remote-{category}-jobs.rss. We pull the categories most
-    likely to contain SRE/infra roles and filter with matches_roles().
+    /categories/remote-{category}-jobs.rss. Categories are configured under
+    job_search.scraper.wwr_categories in config.yaml.
     No auth or browser required.
     """
     roles = roles_list(config)
@@ -1217,7 +1500,12 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
-    for category in _WWR_RSS_CATEGORIES:
+    categories = config.get("job_search", {}).get("scraper", {}).get("wwr_categories", [])
+    if not categories:
+        log.warning("[weworkremotely] no wwr_categories configured; skipping")
+        return jobs
+
+    for category in categories:
         url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
         resp = _api_get(session, url, config, label="weworkremotely")
         if not resp:
@@ -1261,10 +1549,11 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
 
 
 def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
-    """Scrape the current month's HN Who's Hiring thread.
+    """Scrape the current month's HN Who's Hiring thread via Algolia API.
 
-    HN is static HTML with no JS rendering — requests+BeautifulSoup is
-    sufficient and avoids the Playwright startup cost.
+    Index-page fetch resolves the thread ID from HN's HTML (unchanged).
+    Comment retrieval uses Algolia's public search API instead of parsing
+    HN's HTML comment tree, which breaks on markup changes.
     Comment headline format (convention): "Company | Role | Location | ..."
     """
     max_posts = scraper_cfg(config).get("hn_max_posts", 100)
@@ -1283,49 +1572,61 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
 
     index_soup = BeautifulSoup(index_resp.text, "html.parser")
 
-    thread_url = None
+    thread_id = None
     for a_tag in index_soup.find_all("a"):
         text = a_tag.get_text(strip=True)
         if "Who is hiring?" in text and current_month_str in text:
             href = a_tag.get("href", "")
             if href.startswith("item?id="):
-                thread_url = f"https://news.ycombinator.com/{href}"
-            elif "news.ycombinator.com" in href:
-                thread_url = href
+                thread_id = href.split("=", 1)[1]
+            elif "item?id=" in href:
+                thread_id = href.split("item?id=", 1)[1].split("&")[0]
             break
 
-    if not thread_url:
+    if not thread_id:
         log.warning("[hn_who_is_hiring] could not find thread for %s", current_month_str)
         return []
 
-    thread_resp = _api_get(session, thread_url, config, label="hn_who_is_hiring")
-    if not thread_resp:
+    algolia_url = (
+        f"https://hn.algolia.com/api/v1/search"
+        f"?tags=comment,story_{thread_id}&hitsPerPage=1000"
+    )
+    algolia_resp = _api_get(session, algolia_url, config, label="hn_who_is_hiring_algolia")
+    if not algolia_resp:
         return []
 
-    thread_soup = BeautifulSoup(thread_resp.text, "html.parser")
+    data = algolia_resp.json()
+    hits = data.get("hits", [])
+    total = data.get("nbHits", len(hits))
+    if isinstance(total, int) and total > 1000:
+        log.warning(
+            "[hn_who_is_hiring] thread has %d comments; only first 1000 retrieved", total
+        )
+
+    # Strip HTML tags from Algolia comment_text (simple tag-only removal;
+    # avoids pulling in a new dependency for this narrow use case).
+    _strip_tags = re.compile(r"<[^>]+>")
 
     jobs = []
-    comment_rows = thread_soup.find_all("tr", class_="athing comtr")
+    thread_url = f"https://news.ycombinator.com/item?id={thread_id}"
 
-    for row in comment_rows:
+    for hit in hits:
         if len(jobs) >= max_posts:
             break
 
-        ind = row.find("td", class_="ind")
-        if ind:
-            img = ind.find("img")
-            if img and img.get("width", "0") != "0":
-                continue  # nested comment
-
-        comment_id = row.get("id", "")
-        comment_div = row.find("div", class_="comment")
-        if not comment_div:
-            continue
-        commtext = comment_div.find("div", class_="commtext")
-        if not commtext:
+        raw_html = hit.get("comment_text") or ""
+        if not raw_html:
             continue
 
-        raw_text = commtext.get_text(separator="\n", strip=True)
+        raw_text = _strip_tags.sub("", raw_html).strip()
+        # Decode the handful of HTML entities that appear in HN posts.
+        raw_text = (
+            raw_text.replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&#x27;", "'")
+        )
         first_line = raw_text.split("\n")[0].strip()
         if not first_line:
             continue
@@ -1349,6 +1650,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
                 location = part
                 break
 
+        comment_id = hit.get("objectID", "")
         url = f"https://news.ycombinator.com/item?id={comment_id}" if comment_id else thread_url
 
         jobs.append({
@@ -1362,7 +1664,6 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
 
     log.info("[hn_who_is_hiring] %d jobs matched", len(jobs))
     return jobs
-
 
 def scrape_greenhouse(config: dict) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
@@ -1425,206 +1726,151 @@ def scrape_greenhouse(config: dict) -> list[dict]:
     return jobs
 
 
-def scrape_linkedin(config: dict) -> list[dict]:
-    """Playwright scraper for LinkedIn public job search (no login).
+# ── JobSpy (LinkedIn + Indeed + Glassdoor + Google) ──────────────────────────
 
-    Uses non-headless Chromium to avoid bot detection. Paginates via &start=
-    up to max_pages per (term x country). Iterates each configured country.
+# Country codes JobSpy's indeed engine accepts. Maps from ISO codes used in
+# config to the string values JobSpy's country_indeed parameter expects.
+_JOBSPY_COUNTRY_MAP: dict[str, str] = {
+    "US": "USA",
+    "CA": "Canada",
+    "GB": "UK",
+    "IE": "Ireland",
+    "AU": "Australia",
+    "ZA": "South Africa",
+}
+
+# JobSpy interval values → display suffixes
+_JOBSPY_INTERVAL_SUFFIX: dict[str, str] = {
+    "yearly": "/yr",
+    "monthly": "/mo",
+    "weekly": "/wk",
+    "daily": "/day",
+    "hourly": "/hr",
+}
+
+
+def _format_jobspy_comp(row: dict) -> str:
+    """Build a display string from JobSpy's structured comp fields.
+
+    JobSpy provides min_amount, max_amount, currency, and interval. Returns ""
+    when no amount data is present so the detail-page enricher can still
+    attempt to fill comp from JSON-LD.
     """
+    lo = row.get("min_amount")
+    hi = row.get("max_amount")
+    currency = (row.get("currency") or "").strip().upper()
+    interval = (row.get("interval") or "").strip().lower()
+
+    def _num(x) -> int | None:
+        try:
+            return int(float(x))
+        except (TypeError, ValueError):
+            return None
+
+    lo_i, hi_i = _num(lo), _num(hi)
+    if lo_i is None and hi_i is None:
+        return ""
+
+    prefix = _COMP_CURRENCY_PREFIX.get(currency, f"{currency} " if currency else "")
+    suffix = _JOBSPY_INTERVAL_SUFFIX.get(interval, "")
+
+    if lo_i is not None and hi_i is not None and lo_i != hi_i:
+        amount = f"{lo_i:,}\u2013{hi_i:,}"
+    elif hi_i is not None:
+        amount = f"{hi_i:,}"
+    else:
+        amount = f"{lo_i:,}"
+
+    return f"{prefix}{amount}{suffix}"
+
+
+def normalize_jobspy_row(row: dict) -> dict:
+    """Adapt a single JobSpy DataFrame record to the scraper dict shape."""
+    return {
+        "company": row.get("company") or "",
+        "role": row.get("title") or "",
+        "location": row.get("location") or "",
+        "url": row.get("job_url") or "",
+        # site field is the JobSpy source name (linkedin, indeed, glassdoor, google)
+        "source": row.get("site") or "jobspy",
+        "description": row.get("description") or "",
+        "comp": _format_jobspy_comp(row),
+        "date_found": date.today().isoformat(),
+    }
+
+
+def scrape_jobspy(config: dict) -> list[dict]:
+    """Headless multi-source scraper via JobSpy (LinkedIn, Indeed, Glassdoor, Google).
+
+    Imported lazily so the module still loads when python-jobspy is not yet
+    installed — only this scraper fails in that case, not the whole pipeline.
+    JobSpy handles its own HTTP session and returns a pandas DataFrame.
+    """
+    # Lazy import: keeps --help and other scrapers functional without the package.
+    try:
+        from jobspy import scrape_jobs as jobspy_scrape
+    except ImportError:
+        log.warning("[jobspy] python-jobspy not installed — run: pip install python-jobspy")
+        return []
+
     cfg = scraper_cfg(config)
+    jobspy_cfg = cfg.get("jobspy", {})
+    results_wanted = int(jobspy_cfg.get("results_wanted_per_query", 50))
+    hours_old = int(jobspy_cfg.get("hours_old", 168))
+    default_country_indeed = jobspy_cfg.get("country_indeed", "USA")
+
     roles = roles_list(config)
     terms = _search_terms(config)
-    timeout_ms = timeout_seconds(config) * 1000
-    max_pages = int(cfg.get("max_pages", 3))
-    date_window = int(cfg.get("date_window_days", 7))
-    date_seconds = date_window * 86400
+    countries = countries_list(config)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
-    try:
-        with _playwright_browser(config) as page:
-            for idx, country in enumerate(countries_list(config)):
-                params = country_params(country)
-                if not params:
+    for term in terms:
+        for country in countries:
+            country_code = country.upper()
+            country_indeed = _JOBSPY_COUNTRY_MAP.get(country_code, default_country_indeed)
+            location_name = COUNTRY_NAMES.get(country_code, [country])[0]
+            # Glassdoor only supports US searches in jobspy's free path
+            sites = ["linkedin", "indeed", "google"]
+            if country_code == "US":
+                sites.append("glassdoor")
+            try:
+                df = jobspy_scrape(
+                    site_name=sites,
+                    search_term=term,
+                    location=location_name,
+                    results_wanted=results_wanted,
+                    country_indeed=country_indeed,
+                    hours_old=hours_old,
+                )
+            except Exception as exc:
+                log.warning("[jobspy] scrape failed for %r / %s: %s", term, country, exc)
+                continue
+
+            if df is None or df.empty:
+                log.debug("[jobspy] no results for %r / %s", term, country)
+                continue
+
+            records = df.to_dict("records")
+            for row in records:
+                normalized = normalize_jobspy_row(row)
+                if not normalized["role"] or not matches_roles(normalized["role"], roles, config):
                     continue
-                if idx > 0:
-                    page.wait_for_timeout(5000)
-                for term in terms:
-                    encoded = urllib.parse.quote_plus(term)
-                    base_url = (
-                        f"https://www.linkedin.com/jobs/search/"
-                        f"?keywords={encoded}"
-                        f"&location={urllib.parse.quote_plus(params['linkedin_location'])}"
-                        f"&f_TPR=r{date_seconds}"
-                    )
-
-                    for page_num in range(max_pages):
-                        start = page_num * 25
-                        url = f"{base_url}&start={start}" if page_num > 0 else base_url
-                        try:
-                            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                            page.wait_for_timeout(3000)
-                        except Exception as exc:
-                            log.warning("[linkedin] navigation failed for %r (%s) page %d: %s", term, country, page_num, exc)
-                            break
-
-                        cards = page.query_selector_all(".base-card")
-                        if not cards:
-                            cards = page.query_selector_all(".job-search-card")
-                        if not cards:
-                            break
-
-                        for card in cards:
-                            try:
-                                title_el = (
-                                    card.query_selector(".base-search-card__title")
-                                    or card.query_selector("h3")
-                                )
-                                company_el = (
-                                    card.query_selector(".base-search-card__subtitle")
-                                    or card.query_selector("h4")
-                                )
-                                loc_el = card.query_selector(".job-search-card__location")
-                                link_el = (
-                                    card.query_selector("a.base-card__full-link")
-                                    or card.query_selector("a[href*='/jobs/view/']")
-                                )
-                                if not title_el:
-                                    continue
-                                role = title_el.inner_text().strip()
-                                company = company_el.inner_text().strip() if company_el else ""
-                                location = loc_el.inner_text().strip() if loc_el else ""
-                                if not matches_roles(role, roles, config):
-                                    continue
-                                href = link_el.get_attribute("href") if link_el else ""
-                                if href and "linkedin.com/jobs/view/" in href:
-                                    href = href.split("?")[0]
-                                if href in seen_urls:
-                                    continue
-                                if href:
-                                    seen_urls.add(href)
-                                jobs.append({
-                                    "company": company,
-                                    "role": role,
-                                    "location": location or "Remote",
-                                    "url": href,
-                                    "source": "LinkedIn",
-                                    "date_found": date.today().isoformat(),
-                                })
-                            except Exception as exc:
-                                log.debug("[linkedin] parse error on card: %s", exc)
-                                continue
-
-                        log.debug("[linkedin] %s/%s page %d: %d cards", country, term, page_num, len(cards))
-                        if len(cards) < 20:
-                            break
-                        # Cooldown between pages
-                        page.wait_for_timeout(2000)
-    except Exception as exc:
-        log.warning("[linkedin] browser session error: %s", exc)
-
-    log.info("[linkedin] %d jobs matched", len(jobs))
-    return jobs
-
-
-def scrape_indeed(config: dict) -> list[dict]:
-    """Playwright scraper for Indeed public search results.
-
-    Skips sponsored ads. Paginates via &start= up to max_pages per
-    (term x country). Iterates each configured country's regional host.
-    """
-    cfg = scraper_cfg(config)
-    roles = roles_list(config)
-    terms = _search_terms(config)
-    timeout_ms = timeout_seconds(config) * 1000
-    max_pages = int(cfg.get("max_pages", 3))
-    date_window = int(cfg.get("date_window_days", 7))
-    jobs: list[dict] = []
-    seen_urls: set[str] = set()
-
-    try:
-        with _playwright_browser(config) as page:
-            for idx, country in enumerate(countries_list(config)):
-                params = country_params(country)
-                if not params:
+                url = normalized["url"]
+                if url and url in seen_urls:
                     continue
-                host_url = f"https://{params['indeed_host']}"
-                if idx > 0:
-                    page.wait_for_timeout(5000)
-                for term in terms:
-                    encoded = urllib.parse.quote_plus(term)
-                    base_url = f"{host_url}/jobs?q={encoded}&fromage={date_window}"
+                if url:
+                    seen_urls.add(url)
+                # Preserve description from JobSpy so detail-page enrichment
+                # is skipped (enrich_job_details already short-circuits on comp,
+                # and the enricher skips rows that already have description_text).
+                normalized["description_text"] = normalized.pop("description", "")
+                jobs.append(normalized)
 
-                    for page_num in range(max_pages):
-                        start = page_num * 10
-                        url = f"{base_url}&start={start}" if page_num > 0 else base_url
-                        try:
-                            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                            page.wait_for_timeout(2000)
-                        except Exception as exc:
-                            log.warning("[indeed] navigation failed for %r (%s) page %d: %s", term, country, page_num, exc)
-                            break
+            log.debug("[jobspy] %s / %s: %d records, %d matched after role filter",
+                      term, country, len(records), sum(1 for j in jobs if j.get("date_found") == date.today().isoformat()))
 
-                        cards = page.query_selector_all(".job_seen_beacon")
-                        if not cards:
-                            cards = page.query_selector_all("[data-testid='slider_item']")
-                        if not cards:
-                            break
-
-                        for card in cards:
-                            try:
-                                title_el = (
-                                    card.query_selector("h2.jobTitle a span")
-                                    or card.query_selector("h2.jobTitle")
-                                )
-                                company_el = (
-                                    card.query_selector("span.companyName")
-                                    or card.query_selector("[data-testid='company-name']")
-                                )
-                                loc_el = (
-                                    card.query_selector("div.companyLocation")
-                                    or card.query_selector("[data-testid='text-location']")
-                                )
-                                link_el = (
-                                    card.query_selector("h2.jobTitle a")
-                                    or card.query_selector("a[data-jk]")
-                                )
-                                if not title_el:
-                                    continue
-                                role = title_el.inner_text().strip()
-                                company = company_el.inner_text().strip() if company_el else ""
-                                location = loc_el.inner_text().strip() if loc_el else ""
-                                if not matches_roles(role, roles, config):
-                                    continue
-                                href = link_el.get_attribute("href") if link_el else ""
-                                if href and not href.startswith("http"):
-                                    href = f"{host_url}{href}"
-                                if href and "pagead" in href:
-                                    continue
-                                if href in seen_urls:
-                                    continue
-                                if href:
-                                    seen_urls.add(href)
-                                jobs.append({
-                                    "company": company,
-                                    "role": role,
-                                    "location": location or "Remote",
-                                    "url": href,
-                                    "source": "Indeed",
-                                    "date_found": date.today().isoformat(),
-                                })
-                            except Exception as exc:
-                                log.debug("[indeed] parse error on card: %s", exc)
-                                continue
-
-                        log.debug("[indeed] %s/%s page %d: %d cards", country, term, page_num, len(cards))
-                        if len(cards) < 8:
-                            break
-                        page.wait_for_timeout(2000)
-    except Exception as exc:
-        log.warning("[indeed] browser session error: %s", exc)
-
-    log.info("[indeed] %d jobs matched", len(jobs))
+    log.info("[jobspy] %d jobs matched across all terms and countries", len(jobs))
     return jobs
 
 
@@ -1638,6 +1884,12 @@ def scrape_wellfound(config: dict) -> list[dict]:
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
+    wf_delays = (
+        scraper_cfg(config)
+        .get("playwright_delays", {})
+        .get("wellfound", {})
+    )
+    page_load_ms = int(wf_delays.get("page_load_ms", 3000))
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
@@ -1650,7 +1902,7 @@ def scrape_wellfound(config: dict) -> list[dict]:
                     # networkidle never resolves on Wellfound's SPA — use domcontentloaded
                     # then a fixed wait for React to hydrate the job listings.
                     page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(page_load_ms)
                 except Exception as exc:
                     log.warning("[wellfound] navigation failed for %r: %s", term, exc)
                     continue
@@ -1673,13 +1925,36 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             card.query_selector("[class*='companyName']")
                             or card.query_selector("[class*='startupName']")
                         )
+                        # Location: Wellfound cards surface location near the role
+                        # title with hashed class names containing 'location'.
+                        loc_el = (
+                            card.query_selector("[class*='location']")
+                            or card.query_selector("[class*='Location']")
+                            or card.query_selector("[class*='jobLocation']")
+                        )
+                        # Compensation: salary range displayed as "$X-$Y/yr" in a
+                        # span/div whose hashed class contains 'compensation' or 'salary'.
+                        comp_el = (
+                            card.query_selector("[class*='compensation']")
+                            or card.query_selector("[class*='Compensation']")
+                            or card.query_selector("[class*='salary']")
+                            or card.query_selector("[class*='Salary']")
+                        )
                         link_el = card.query_selector("a[href*='/jobs/']")
                         if not title_el:
                             continue
                         role = title_el.inner_text().strip()
                         company = company_el.inner_text().strip() if company_el else ""
+                        # Empty string fallback — the pipeline accepts empty location
+                        # as potentially remote; callers must not assume any default.
+                        location = loc_el.inner_text().strip() if loc_el else ""
                         if not matches_roles(role, roles, config):
                             continue
+                        # Filter before queuing detail enrichment to avoid Claude
+                        # calls on jobs that will be dropped at the post-scrape stage.
+                        if not location_matches({"location": location}, config):
+                            continue
+                        comp = comp_el.inner_text().strip() if comp_el else ""
                         href = link_el.get_attribute("href") if link_el else ""
                         if href and not href.startswith("http"):
                             href = f"https://wellfound.com{href}"
@@ -1687,14 +1962,17 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             continue
                         if href:
                             seen_urls.add(href)
-                        jobs.append({
+                        job: dict = {
                             "company": company,
                             "role": role,
-                            "location": "Remote",
+                            "location": location,
                             "url": href,
                             "source": "Wellfound",
                             "date_found": date.today().isoformat(),
-                        })
+                        }
+                        if comp:
+                            job["comp"] = comp
+                        jobs.append(job)
                     except Exception as exc:
                         log.debug("[wellfound] parse error on card: %s", exc)
                         continue
@@ -1838,16 +2116,23 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
     "greenhouse": scrape_greenhouse,
-    "linkedin": scrape_linkedin,
-    "indeed": scrape_indeed,
+    "jobspy": scrape_jobspy,
     "wellfound": scrape_wellfound,
     "apple": scrape_apple,
 }
 
-# Sources that must run with a visible Chromium window (bot-detection hedge).
-# These stay on a serial path; running 3 visible browsers concurrently is
-# RAM-heavy and makes detection patterns easier to spot.
-NON_HEADLESS_SOURCES = frozenset({"linkedin", "indeed", "wellfound"})
+def _non_headless_sources(config: dict) -> frozenset[str]:
+    """Derive the set of sources that require a visible browser from config.
+
+    A source entry with type: playwright in job_search.scraper.sources signals
+    that it must run in non-headless mode. Plain bool entries default to headless.
+    """
+    sources = scraper_cfg(config).get("sources", {})
+    return frozenset(
+        sid
+        for sid, entry in sources.items()
+        if isinstance(entry, dict) and entry.get("type") == "playwright"
+    )
 
 
 def _config_with_headless(config: dict, headless: bool) -> dict:
@@ -1924,22 +2209,29 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
 
     Two phases:
       Phase 1 — headless-safe sources run in parallel via ThreadPoolExecutor
-      Phase 2 — non-headless sources (linkedin/indeed/wellfound) run serially
+      Phase 2 — non-headless sources (wellfound, apple) run serially
 
-    Phase 2 stays serial by design: running 3 visible Chromium windows
+    Phase 2 stays serial by design: running multiple visible Chromium windows
     concurrently is RAM-heavy and makes bot detection easier. Deduplicates by
     both URL and company+role key so the same job appearing on multiple boards
     is only kept once (first scraper wins).
     """
     source_cfg = scraper_cfg(config).get("sources", {})
     workers = int(scraper_cfg(config).get("parallel_workers", 4))
-    enabled = [sid for sid in SCRAPERS if source_cfg.get(sid, False)]
-    disabled = [sid for sid in SCRAPERS if not source_cfg.get(sid, False)]
+
+    def _is_enabled(entry) -> bool:
+        if isinstance(entry, dict):
+            return bool(entry.get("enabled", False))
+        return bool(entry)
+
+    enabled = [sid for sid in SCRAPERS if _is_enabled(source_cfg.get(sid, False))]
+    disabled = [sid for sid in SCRAPERS if not _is_enabled(source_cfg.get(sid, False))]
     for sid in disabled:
         log.info("[%s] disabled in config, skipping", sid)
 
-    headless_sources = [sid for sid in enabled if sid not in NON_HEADLESS_SOURCES]
-    visible_sources = [sid for sid in enabled if sid in NON_HEADLESS_SOURCES]
+    non_headless = _non_headless_sources(config)
+    headless_sources = [sid for sid in enabled if sid not in non_headless]
+    visible_sources = [sid for sid in enabled if sid in non_headless]
 
     results: list[tuple[str, list[dict] | Exception]] = []
 
@@ -2043,41 +2335,51 @@ def backfill(config: dict, csv_path: Path) -> None:
         log.error("jobs.csv not found at %s", csv_path)
         sys.exit(1)
 
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    # Hold LOCK_EX for the entire read-enrich-write cycle to prevent a
+    # concurrent scrape run from appending rows that get dropped by our rewrite.
+    with open(csv_path, "r+", newline="", encoding="utf-8") as lock_fh:
+        if sys.platform != "win32":
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+
+        reader = csv.DictReader(lock_fh)
         header = reader.fieldnames or CANONICAL_HEADER
         rows = list(reader)
 
-    jobs = [_row_to_dict(r) for r in rows]
+        jobs = [_row_to_dict(r) for r in rows]
 
-    needs_product = sum(1 for j in jobs if not j.get("product"))
-    needs_fit = sum(1 for j in jobs if not j.get("fit"))
-    needs_gd = sum(1 for j in jobs if not j.get("gd_rating"))
+        needs_product = sum(1 for j in jobs if not j.get("product"))
+        needs_fit = sum(1 for j in jobs if not j.get("fit"))
+        needs_gd = sum(1 for j in jobs if not j.get("gd_rating"))
+        needs_notes = sum(1 for j in jobs if not j.get("notes"))
 
-    log.info(
-        "[backfill] %d rows: %d need Product, %d need GD, %d need Fit",
-        len(jobs), needs_product, needs_gd, needs_fit,
-    )
-
-    if not (needs_product or needs_fit or needs_gd):
-        print("All rows already enriched, nothing to backfill.")
-        return
-
-    enrich_company_descriptions(jobs, config, budget=sys.maxsize)
-    enrich_fit(jobs, config, budget=sys.maxsize)
-
-    # Write back
-    backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
-    shutil.copy2(csv_path, backup)
-    log.info("[backfill] backed up to %s", backup.name)
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=list(header), quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+        log.info(
+            "[backfill] %d rows: %d need Product, %d need GD, %d need Fit, %d need Notes",
+            len(jobs), needs_product, needs_gd, needs_fit, needs_notes,
         )
-        writer.writeheader()
-        for job in jobs:
-            writer.writerow(_dict_to_row(job, list(header)))
+
+        if not (needs_product or needs_fit or needs_gd or needs_notes):
+            print("All rows already enriched, nothing to backfill.")
+            return
+
+        enrich_company_descriptions(jobs, config, budget=sys.maxsize)
+        enrich_fit_and_notes(jobs, config, budget=sys.maxsize)
+
+        # Write to a sibling .tmp first so a crash mid-write leaves the
+        # original intact. rename() is atomic on POSIX same-filesystem paths.
+        backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
+        shutil.copy2(csv_path, backup)
+        log.info("[backfill] backed up to %s", backup.name)
+
+        tmp_path = csv_path.with_suffix(".csv.tmp")
+        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=list(header), quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+            )
+            writer.writeheader()
+            for job in jobs:
+                writer.writerow(_dict_to_row(job, list(header)))
+
+        tmp_path.rename(csv_path)
 
     filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
     filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))
@@ -2100,6 +2402,9 @@ def main() -> None:  # pragma: no cover
         datefmt="%H:%M:%S",
         stream=sys.stdout,
     )
+    log.info("PATH=%s", os.environ.get("PATH", ""))
+
+    started_at = datetime.now(timezone.utc)
 
     config_path = (
         Path(args.config) if args.config
@@ -2175,9 +2480,45 @@ def main() -> None:  # pragma: no cover
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
     enrich_job_details(new_jobs, config)
-    enrich_company_descriptions(new_jobs, config)
-    enrich_fit(new_jobs, config)
-    enrich_notes(new_jobs, config)
+
+    # normalize_job runs before threshold filter so comp_max_usd is populated
+    new_jobs = [normalize_job(j, j.get("source", "")) for j in new_jobs]
+
+    skipped_below_comp = 0
+    for job in new_jobs:
+        if job.get("status") == "skipped":
+            continue
+        ok, reason = comp_meets_threshold(job, config)
+        if ok:
+            continue
+        job["status"] = "skipped"
+        existing_notes = (job.get("notes") or "").strip()
+        job["notes"] = f"{existing_notes}; {reason}" if existing_notes else reason
+        skipped_below_comp += 1
+        log.info(
+            "[comp-filter] skipped: %s | %s | comp=%r",
+            job.get("company", "?"),
+            job.get("role", "?"),
+            job.get("comp", ""),
+        )
+    log.info(
+        "Comp-threshold filter: %d skipped below $%d USD",
+        skipped_below_comp,
+        int(config.get("job_search", {}).get("min_comp_usd", 180000)),
+    )
+
+    product_stats = enrich_company_descriptions(new_jobs, config)
+    fn_stats = enrich_fit_and_notes(new_jobs, config)
+
+    n = len(new_jobs)
+    log.info(
+        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
+        fn_stats["enriched"], n, fn_stats["skipped_budget"], fn_stats["failed"],
+    )
+    log.info(
+        "Product enriched: %d/%d, %d skipped (cached), %d failed",
+        product_stats["enriched"], n, product_stats["skipped_cached"], product_stats["failed"],
+    )
 
     if args.dry_run:
         for j in new_jobs:
@@ -2189,7 +2530,26 @@ def main() -> None:  # pragma: no cover
         return
 
     written = append_jobs(csv_path, new_jobs, header)
-    print(f"Scraper complete: {written} new jobs appended to {csv_path}")
+    print(f"Scraper complete: {written} new jobs appended to {csv_path} ({skipped_below_comp} skipped below comp threshold)")
+
+    run_manifest = {
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "sources_ok": sorted(set(
+            j.get("source", "") for j in all_jobs if j.get("source") and j.get("source") not in failed_sources
+        )),
+        "sources_failed": failed_sources,
+        "new_jobs": written,
+        "enriched_fit_notes": fn_stats["enriched"],
+        "enriched_product": product_stats["enriched"],
+        "skipped_below_comp": skipped_below_comp,
+    }
+    last_run_path = output_dir / "jobs-last-run.json"
+    try:
+        last_run_path.write_text(json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8")
+        log.info("Run manifest written to %s", last_run_path)
+    except OSError as exc:
+        log.warning("Could not write run manifest: %s", exc)
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))

@@ -218,8 +218,13 @@ SCRAPER="${SCRIPT_DIR}/scrape-jobs.py"
 scraper_exit=0
 if [[ -f "$SCRAPER" && -n "$PYTHON" ]]; then
   echo "Running job scraper..."
+  LOG_FILE="${SCRIPT_DIR}/../logs/gather-jobs.log"
+  # Rotate before appending so the log stays bounded at ~5MB per run
+  if [[ -f "$LOG_FILE" ]] && [[ $(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt 5242880 ]]; then
+    mv "$LOG_FILE" "${LOG_FILE}.1"
+  fi
   set +e
-  "$PYTHON" "$SCRAPER" --config "$CONFIG" 2>&1 | tee -a "${SCRIPT_DIR}/../logs/gather-jobs.log"
+  "$PYTHON" "$SCRAPER" --config "$CONFIG" 2>&1 | tee -a "$LOG_FILE"
   scraper_exit=${PIPESTATUS[0]}
   set -e
   if [[ $scraper_exit -ne 0 ]]; then
@@ -247,3 +252,9 @@ else
   osascript -e "display notification \"${notify_msg}\" with title \"Daily Job Search\" subtitle \"Review job-queue-${TODAY}.md\"" \
     || echo "WARNING: osascript notification failed" >&2
 fi
+
+# Rebuild pre-computed pipeline summary so the next session reads fresh data.
+# Runs regardless of scraper exit status to ensure partial results are captured.
+bash "${SCRIPT_DIR}/build-pipeline-summary.sh" || echo "WARNING: build-pipeline-summary failed (non-fatal)" >&2
+
+exit "${scraper_exit}"

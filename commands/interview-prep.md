@@ -3,6 +3,31 @@ name: interview-prep
 description: Interview preparation - practice questions and gather role context
 ---
 
+<!--
+## Interview State Schema
+
+Per-application state file written to:
+  {state_dir}/interview-state/{app-id}.yaml
+
+Fields:
+  app_id:               string   # matches tracker.yaml app_id
+  company:              string
+  role:                 string
+  last_session:         ISO8601  # timestamp of most recent prep session
+  round:                int      # interview round being prepped for
+  questions_practiced:           # questions covered in past sessions
+    - question:         string
+      date:             ISO8601
+      quality:          string   # "strong" | "ok" | "needs-work"
+  feedback_given:       string   # summary of verbal feedback given last session
+  open_gaps:                     # areas that still need work going into next session
+    - string
+  next_session_focus:   string   # one-line directive for the next prep session
+
+Written by: scripts/record-interview-state.sh (reads YAML from stdin)
+Read by: Step 1 of this command
+-->
+
 Prepare for an upcoming interview. Follow these steps in order.
 
 ## 0. Capture Current Time
@@ -11,7 +36,28 @@ Prepare for an upcoming interview. Follow these steps in order.
 echo "current_time=$(date +%H:%M) current_date=$(date +%Y-%m-%d)"
 ```
 
-## 1. Identify the Target Role
+## 1. Load Interview State
+
+Resolve the state directory and check for an existing interview-state file for this application.
+
+If `$ARGUMENTS` supplies an app_id (or can be matched to one after Step 2), run:
+
+```bash
+STATE_DIR=$(bash scripts/get-state-dir.sh)
+APP_ID="<app-id-from-step-2>"
+STATE_FILE="${STATE_DIR}/interview-state/${APP_ID}.yaml"
+if [[ -f "$STATE_FILE" ]]; then cat "$STATE_FILE"; else echo "NO_PRIOR_STATE"; fi
+```
+
+If the file exists, present a continuity summary before proceeding:
+
+> "Last session (<last_session date>): covered <count> questions. Open gaps: <open_gaps list>. Focus today: <next_session_focus>."
+
+If the file does not exist, note: "First interview prep for this application — no prior state."
+
+Note: app_id may not be known until Step 2 identifies the role. If `$ARGUMENTS` is ambiguous, complete Step 2 first, then return here to load the state file before starting the practice session.
+
+## 2. Identify the Target Role
 
 If `$ARGUMENTS` is set, use it as the company or role to prep for. Otherwise, gather applications and ask:
 
@@ -21,7 +67,7 @@ bash scripts/gather-applications.sh
 
 Show the active applications and ask: "Which company or role are you prepping for? You can paste a job title, company name, or application ID."
 
-## 2. Load Role Context
+## 3. Load Role Context
 
 Read recent notes to surface any prior prep or interview context for this role:
 
@@ -29,13 +75,21 @@ Read recent notes to surface any prior prep or interview context for this role:
 TODAY=$(date +%Y-%m-%d); DOW=$(date +%u); if [ "$DOW" = "1" ]; then SINCE=$(date -v-7d +%Y-%m-%d); else SINCE=$(date -v-3d +%Y-%m-%d); fi; bash scripts/gather-notes-range.sh "$SINCE" "$TODAY" all
 ```
 
-## 3. Read User Profile
+## 4. Read User Profile
 
 ```bash
 bash scripts/read-context.sh
 ```
 
-## 4. Practice Session
+## 5. Load Voice Profile
+
+```bash
+bash scripts/read-voice-profile.sh
+```
+
+Apply the voice patterns when drafting any written communication in this session (thank-you notes, follow-up emails, etc.).
+
+## 6. Practice Session
 
 Using the gathered context (role, company, notes, user background), run a focused interview prep session.
 
@@ -89,3 +143,27 @@ At the end of the session, output:
 - **Questions to ask them**: 3 smart questions for the user to ask the interviewer
 
 Output only to stdout. No file is saved unless the user explicitly asks.
+
+## 7. Record Interview State
+
+At the end of the practice session, emit a YAML block matching the interview-state schema (see schema comment at top of this file). Populate every field from this session:
+
+- `app_id`: the application ID confirmed in Step 2
+- `company` / `role`: from Step 2
+- `last_session`: current ISO8601 timestamp (`date -u +%Y-%m-%dT%H:%M:%SZ`)
+- `round`: ask "Which interview round is this prep for?" if not already established
+- `questions_practiced`: list every question asked this session with its quality rating
+- `feedback_given`: one-paragraph summary of the most important feedback given today
+- `open_gaps`: carry forward unresolved gaps from prior state, add new ones surfaced today
+- `next_session_focus`: one directive line for next time (e.g., "Tighten STAR structure on incident response answers")
+
+Show the YAML block to the user, then run:
+
+```bash
+bash scripts/record-interview-state.sh <<'YAML'
+<paste the emitted YAML block here>
+YAML
+```
+
+If the write succeeds, confirm: "Interview state saved for <app_id>."
+If it fails, show the error and offer to retry or let the user copy the YAML to save manually.

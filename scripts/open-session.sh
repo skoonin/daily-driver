@@ -41,10 +41,21 @@ if command -v yq &>/dev/null && [[ -f "$CONFIG" ]]; then
 fi
 
 open_session() {
-  local repo_dir session_name slash_cmd wid_file existing_wid new_wid
+  local repo_dir session_name slash_cmd wid_file existing_wid new_wid claude_session_args
   repo_dir="$(cd "${SCRIPT_DIR}/.." && pwd)"
   session_name="${COMMAND}-$(date +%Y-%m-%d-%H%M)"
   slash_cmd="/${COMMAND}"
+
+  # For check-in: resume the same-day day-start session when it exists so
+  # Claude already has the morning's planning context without re-reading the plan.
+  claude_session_args="-n '${session_name}'"
+  if [[ "$COMMAND" == "check-in" ]]; then
+    local day_start_name day_start_id
+    day_start_name="day-start-$(date +%Y-%m-%d)"
+    if day_start_id=$(bash "${SCRIPT_DIR}/find-session-id.sh" "$day_start_name" 2>/dev/null) && [[ -n "$day_start_id" ]]; then
+      claude_session_args="--resume '${day_start_id}'"
+    fi
+  fi
   # Reuse an existing iTerm window (opens new tab) to avoid window-spam across launchd triggers.
   # See memory: feedback_notifications.md -- windows open in background, additional sessions become tabs.
   wid_file="/tmp/iterm-daily-driver-wid"
@@ -87,7 +98,7 @@ tell application "iTerm"
     end tell
   end if
   tell current session of targetTab
-    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+    write text "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner ${claude_session_args} '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
   end tell
   return (id of targetWindow) as text
 end tell
@@ -104,7 +115,7 @@ EOF
   else
     if ! osascript 2>&1 <<EOF
 tell application "Terminal"
-  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner -n '${session_name}' '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
+  do script "echo \$\$ > '${repo_dir}/.session.lock' && cd '${repo_dir}' && CLAUDE_CODE_SUBAGENT_MODEL=${CLAUDE_SUBAGENT} claude --model ${CLAUDE_MODEL} --effort ${CLAUDE_EFFORT} --agent work-planner ${claude_session_args} '${slash_cmd}'; rm -f '${repo_dir}/.session.lock'"
 end tell
 EOF
     then

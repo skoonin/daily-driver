@@ -35,7 +35,15 @@ bash scripts/gather-applications.sh
 TODAY=$(date +%Y-%m-%d); DOW=$(date +%u); if [ "$DOW" = "1" ]; then YESTERDAY=$(date -v-3d +%Y-%m-%d); else YESTERDAY=$(date -v-1d +%Y-%m-%d); fi; bash scripts/gather-notes-range.sh "$YESTERDAY" "$TODAY" all
 ```
 
-## 5. Generate Prep Brief
+## 5. Load Voice Profile
+
+```bash
+bash scripts/read-voice-profile.sh
+```
+
+Apply the voice patterns when drafting any written communication in this session (talking points, follow-up email drafts, etc.).
+
+## 6. Generate Prep Brief
 
 Using the work-planner agent behavior, match the selected meeting topic to gathered context and generate a prep brief:
 
