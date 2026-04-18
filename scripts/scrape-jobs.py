@@ -312,7 +312,7 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
                     )
                 try:
                     result = subprocess.run(
-                        ["claude", "--bare", "--no-session-persistence", "-p", prompt],
+                        ["claude", "--no-session-persistence", "-p", prompt],
                         capture_output=True, text=True, timeout=enrich_timeout(config),
                     )
                     if result.returncode == 0:
@@ -469,7 +469,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
 
         try:
             result = subprocess.run(
-                ["claude", "--bare", "--no-session-persistence", "-p", prompt],
+                ["claude", "--no-session-persistence", "-p", prompt],
                 capture_output=True, text=True, timeout=enrich_timeout(config),
             )
             if result.returncode == 0:
@@ -1749,6 +1749,12 @@ _JOBSPY_INTERVAL_SUFFIX: dict[str, str] = {
 }
 
 
+def _jobspy_str(x: object, default: str = "") -> str:
+    # JobSpy's DataFrame emits NaN (float) for missing cells; NaN is truthy
+    # and breaks `.strip()`, so guard on isinstance(str) before coercion.
+    return x.strip() if isinstance(x, str) and x.strip() else default
+
+
 def _format_jobspy_comp(row: dict) -> str:
     """Build a display string from JobSpy's structured comp fields.
 
@@ -1758,8 +1764,8 @@ def _format_jobspy_comp(row: dict) -> str:
     """
     lo = row.get("min_amount")
     hi = row.get("max_amount")
-    currency = (row.get("currency") or "").strip().upper()
-    interval = (row.get("interval") or "").strip().lower()
+    currency = _jobspy_str(row.get("currency")).upper()
+    interval = _jobspy_str(row.get("interval")).lower()
 
     def _num(x) -> int | None:
         try:
@@ -1787,13 +1793,13 @@ def _format_jobspy_comp(row: dict) -> str:
 def normalize_jobspy_row(row: dict) -> dict:
     """Adapt a single JobSpy DataFrame record to the scraper dict shape."""
     return {
-        "company": row.get("company") or "",
-        "role": row.get("title") or "",
-        "location": row.get("location") or "",
-        "url": row.get("job_url") or "",
+        "company": _jobspy_str(row.get("company")),
+        "role": _jobspy_str(row.get("title")),
+        "location": _jobspy_str(row.get("location")),
+        "url": _jobspy_str(row.get("job_url")),
         # site field is the JobSpy source name (linkedin, indeed, glassdoor, google)
-        "source": row.get("site") or "jobspy",
-        "description": row.get("description") or "",
+        "source": _jobspy_str(row.get("site"), "jobspy"),
+        "description": _jobspy_str(row.get("description")),
         "comp": _format_jobspy_comp(row),
         "date_found": date.today().isoformat(),
     }
@@ -1830,10 +1836,9 @@ def scrape_jobspy(config: dict) -> list[dict]:
             country_code = country.upper()
             country_indeed = _JOBSPY_COUNTRY_MAP.get(country_code, default_country_indeed)
             location_name = COUNTRY_NAMES.get(country_code, [country])[0]
-            # Glassdoor only supports US searches in jobspy's free path
+            # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
+            # ("location not parsed") on every request and retries for minutes.
             sites = ["linkedin", "indeed", "google"]
-            if country_code == "US":
-                sites.append("glassdoor")
             try:
                 df = jobspy_scrape(
                     site_name=sites,
@@ -2394,10 +2399,11 @@ def main() -> None:  # pragma: no cover
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--dry-run", action="store_true", help="Print matches without writing to CSV")
     parser.add_argument("--backfill", action="store_true", help="Enrich empty fields in existing jobs.csv rows")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
     args = parser.parse_args()
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
         stream=sys.stdout,

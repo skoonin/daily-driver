@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed -- Scraper regressions from docs-implementation landing
+- `scrape-jobs.py`: Drop `--bare` from both Claude CLI enrichment calls. `--bare` skips keychain auth (only honors `ANTHROPIC_API_KEY`), which caused every enrichment subprocess to exit `rc=1` with empty stderr (0/138 enriched in the first post-landing run).
+- `scrape-jobs.py`: NaN-safe coercion for JobSpy DataFrame rows via module-level `_jobspy_str(x, default)`. Previous `row.get(k) or ""` returned float NaN (truthy) for missing cells, crashing `.strip()` in `_format_jobspy_comp`.
+- `scrape-jobs.py`: Disable Glassdoor in `scrape_jobspy`. JobSpy's Glassdoor path returns HTTP 400 on every request and internal retries cost ~22 minutes per run.
+- `scrape-jobs.py`: Add `--debug` CLI flag for DEBUG-level logging during troubleshooting.
+
 ### Changed -- Docs-implementation plan: state YAML builders, JobSpy, HN Algolia, comp threshold
 - State-dir YAML builders: new `scripts/build-session-delta.sh`, `scripts/build-pipeline-summary.sh`, `scripts/build-standup.sh` write structured YAML under `{state_dir}/`. Read-side helpers `scripts/read-session-delta.sh`, `scripts/show-pipeline-summary.sh` emit informational message + exit 0 when state is missing (commands treat absence as "nothing to report" rather than an error).
 - New `scripts/record-ruled-out.sh` and `scripts/list-ruled-out.sh` track companies/roles ruled out during research so the daily planner can avoid re-suggesting them. `scripts/record-interview-state.sh` captures interview outcomes into state YAML. `scripts/find-session-id.sh` and `scripts/read-voice-profile.sh` consolidate repeated inline shell.
