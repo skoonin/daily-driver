@@ -127,6 +127,9 @@ job_search:
       - "AU"
       - "ZA"
       - "US"
+      - "PT" # Portugal
+      - "ES" # Spain
+      - "NL" # Netherlands      -
     cities:
       - "Vancouver, BC"
       - "London, UK"
@@ -134,6 +137,8 @@ job_search:
       - "San Francisco, CA"
       - "Los Angeles, CA"
       - "Seattle, WA"
+      - "Cape Town, ZA"
+      -
 
   scraper:
     enabled: true
