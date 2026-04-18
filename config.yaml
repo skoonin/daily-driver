@@ -67,6 +67,11 @@ job_search:
   # Short role descriptor used in enrichment prompts (fit scoring, notes).
   persona: "SRE/Platform/Infra engineer"
 
+  # Minimum acceptable total comp (annual, USD). Roles whose parsed comp_max_usd
+  # falls below this are marked status=skipped in the CSV and skip enrichment.
+  # Roles with no parseable comp are left as-is (fail-open) for manual review.
+  min_comp_usd: 180000
+
   sources:
     boards:
       - id: linkedin
@@ -151,15 +156,22 @@ job_search:
       weworkremotely: true
       hn_who_is_hiring: true
       greenhouse: true
-      linkedin: true
-      indeed: true
-      wellfound: true
+      jobspy: true
+      wellfound: {enabled: true, type: playwright}
       apple: true
+    jobspy:
+      results_wanted_per_query: 50
+      hours_old: 168   # one week
+      country_indeed: "USA"
     # Greenhouse Job Board API slugs. Each slug corresponds to a company's
     # public board at boards-api.greenhouse.io/v1/boards/{slug}/jobs.
     # No auth required. Add any company that uses Greenhouse as their ATS.
     greenhouse_boards:
       - anthropic
+    wwr_categories:
+      - devops-sysadmin
+      - back-end-programming
+      - full-stack-programming
     hn_max_posts: 100
     # Max pages per (search-term x country) for paginated scrapers
     # (LinkedIn, Indeed). Higher = more coverage but slower + more bot risk.
@@ -179,6 +191,11 @@ job_search:
     enrich_notes: false
     max_enrich_notes: 50
     user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    playwright_delays:
+      wellfound:
+        # React hydration wait after domcontentloaded — networkidle never
+        # resolves on Wellfound's SPA so a fixed delay is required.
+        page_load_ms: 3000
 
   # Role patterns. Supports fnmatch-style '*' wildcards and '!'-prefixed
   # exclusions. Exclusions short-circuit matching and dominate over the

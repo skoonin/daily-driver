@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed -- Scraper regressions from docs-implementation landing
+- `scrape-jobs.py`: Drop `--bare` from both Claude CLI enrichment calls. `--bare` skips keychain auth (only honors `ANTHROPIC_API_KEY`), which caused every enrichment subprocess to exit `rc=1` with empty stderr (0/138 enriched in the first post-landing run).
+- `scrape-jobs.py`: NaN-safe coercion for JobSpy DataFrame rows via module-level `_jobspy_str(x, default)`. Previous `row.get(k) or ""` returned float NaN (truthy) for missing cells, crashing `.strip()` in `_format_jobspy_comp`.
+- `scrape-jobs.py`: Disable Glassdoor in `scrape_jobspy`. JobSpy's Glassdoor path returns HTTP 400 on every request and internal retries cost ~22 minutes per run.
+- `scrape-jobs.py`: Add `--debug` CLI flag for DEBUG-level logging during troubleshooting.
+
+### Changed -- Docs-implementation plan: state YAML builders, JobSpy, HN Algolia, comp threshold
+- State-dir YAML builders: new `scripts/build-session-delta.sh`, `scripts/build-pipeline-summary.sh`, `scripts/build-standup.sh` write structured YAML under `{state_dir}/`. Read-side helpers `scripts/read-session-delta.sh`, `scripts/show-pipeline-summary.sh` emit informational message + exit 0 when state is missing (commands treat absence as "nothing to report" rather than an error).
+- New `scripts/record-ruled-out.sh` and `scripts/list-ruled-out.sh` track companies/roles ruled out during research so the daily planner can avoid re-suggesting them. `scripts/record-interview-state.sh` captures interview outcomes into state YAML. `scripts/find-session-id.sh` and `scripts/read-voice-profile.sh` consolidate repeated inline shell.
+- `scripts/snapshot-tracker.sh` writes a tracker snapshot for cross-command consumption.
+- `scrape-jobs.py`: LinkedIn and Indeed scrapers replaced by JobSpy (`python-jobspy`). Single code path handles both via `scrape_jobspy(config)`. ISO country codes mapped to JobSpy's expected country names via `COUNTRY_NAMES`. Glassdoor included only for US searches (JobSpy limitation). `_non_headless_sources(config)` derives Phase 2 sources dynamically from `type: playwright` entries in `SCRAPERS`.
+- `scrape-jobs.py`: HN Who's Hiring switched from HTML scrape to Algolia JSON API (`hn.algolia.com/api/v1/search`). Reduces parsing brittleness; `nbHits` guard protects against unbounded responses.
+- `scrape-jobs.py`: Comp threshold filter (`comp_meets_threshold`) fails open when comp data is missing or unparseable. Jobs below threshold get `status: skipped` written to `jobs.csv` with a note, so the row persists (pattern data) without polluting the active queue.
+- `scrape-jobs.py`: `enrich_fit` and `enrich_notes` merged into single `enrich_fit_and_notes` that returns both fields in one Claude call (halves API cost for enrichment). Fit sentinel changed from 50 (would clamp to 10/10) to 5 (neutral midpoint) when insufficient info to assess.
+- `config.yaml`: Removed dead `min_comp_currency_assume` key.
+- `Makefile`: `deps` target probes `jobspy` import.
+- Tests: Rewrote `test_hn_scraper.py` for Algolia JSON contract. Replaced LinkedIn/Indeed Playwright tests with JobSpy fixtures. Combined `TestEnrichFit`/`TestEnrichNotes` into `TestEnrichFitAndNotes`. Added clamp and skipped-status coverage. 242 tests passing.
+
 ### Changed -- jobs.csv column reorder; status vocabulary; audit robustness
 - `jobs.csv` canonical column order changed to ergonomic triage layout: `Status, Notes, Company, Location, Role, Fit, Comp, Date Found, Date Applied, Link, Product/Purpose, GD Rating, Source`. High-signal fields first; existing migration logic handles rewriting on next run.
 - `scrape-jobs.py`: `CANONICAL_HEADER` updated to new order. All reads/writes use `DictReader`/`DictWriter` so no functional impact.

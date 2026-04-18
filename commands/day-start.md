@@ -3,6 +3,23 @@ name: day-start
 description: Morning planning - gather context and plan the day
 ---
 
+## RULED_OUT Protocol
+
+When you decide during this session that a job candidate is not a fit, emit **exactly one line** in this format:
+
+```
+RULED_OUT: {"job_key": "<company>|<role>|<link>", "reason": "<short reason>", "source": "day-start"}
+```
+
+- `job_key` is `company|role|link` (use `company|role` if link is missing).
+- Immediately after emitting the line, invoke:
+  ```bash
+  bash scripts/record-ruled-out.sh --line 'RULED_OUT: {"job_key":"...","reason":"...","source":"day-start"}'
+  ```
+- This persists the decision to `{state_dir}/ruled-out.yaml` so future sessions skip the entry.
+
+---
+
 Morning planning session. Follow these steps in order:
 
 ## 0. Capture Current Time
@@ -16,12 +33,22 @@ Use `current_time` as the earliest start for any planned work block. Time alread
 
 ## 1. Sync Repos
 
+Snapshot the tracker to capture pre-session state (delta computation at day-end will diff against this):
+```bash
+bash scripts/snapshot-tracker.sh
+```
+
 Run the sync script silently:
 ```bash
 bash scripts/sync-repos.sh
 ```
 
 ## 2. Gather Data
+
+Load the pre-built pipeline summary (avoids re-reading raw files each session):
+```bash
+bash scripts/show-pipeline-summary.sh
+```
 
 Run all gather scripts and collect their output:
 ```bash
@@ -32,6 +59,11 @@ bash scripts/gather-applications.sh
 ```
 
 ## 3. Check Carry-forward
+
+Display what changed since the last session (new apps, status moves, new jobs found):
+```bash
+bash scripts/read-session-delta.sh
+```
 
 Extract structured carry-forward items from yesterday's notes:
 ```bash
@@ -45,7 +77,15 @@ Read the user's work context:
 bash scripts/read-context.sh
 ```
 
-## 5. Personal Tasks
+## 5. Load Voice Profile
+
+```bash
+bash scripts/read-voice-profile.sh
+```
+
+Apply the voice patterns for any written communication drafted during or after this session (cover letters, follow-up emails, recruiter replies).
+
+## 6. Personal Tasks
 
 Pre-populate personal items as `plan_items` with `type: personal` from three sources:
 1. **Recurring** — items listed under "Recurring Tasks" in `context.md`. Add each as a plan_item with `type: personal`, `recurring: true`, `time_block: null`. Always present; do not ask about these.
@@ -61,7 +101,7 @@ If the user mentions a time but no duration, ask: "How long for that?" (needed f
 
 If no extra tasks, proceed.
 
-## 6. Plan the Day
+## 7. Plan the Day
 
 Using the work-planner agent behavior, present:
 
@@ -77,7 +117,7 @@ Then ask the user:
 - Anything to add or reprioritize?
 - Any known interrupts or blockers today?
 
-## 7. Save Plan
+## 8. Save Plan
 
 After the user confirms, save the plan to the daily-notes output directory:
 
@@ -93,7 +133,7 @@ Write the plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatte
 
 See the work-planner agent's "Plan File Frontmatter" section for the exact schema.
 
-## 8. Sync to Calendar
+## 9. Sync to Calendar
 
 Sync the confirmed plan's time blocks to macOS Calendar:
 ```bash

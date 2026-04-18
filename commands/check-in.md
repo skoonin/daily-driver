@@ -3,7 +3,38 @@ name: check-in
 description: Mid-day check-in - review progress against plan and update status
 ---
 
+## RULED_OUT Protocol
+
+When you decide during this session that a job candidate is not a fit, emit **exactly one line** in this format:
+
+```
+RULED_OUT: {"job_key": "<company>|<role>|<link>", "reason": "<short reason>", "source": "check-in"}
+```
+
+- `job_key` is `company|role|link` (use `company|role` if link is missing).
+- Immediately after emitting the line, invoke:
+  ```bash
+  bash scripts/record-ruled-out.sh --line 'RULED_OUT: {"job_key":"...","reason":"...","source":"check-in"}'
+  ```
+- This persists the decision to `{state_dir}/ruled-out.yaml` so future sessions skip the entry.
+
+---
+
+> If this session was resumed from day-start, planning context is already loaded; skip redundant plan re-reads in steps 1-2.
+
 Mid-day check-in session. Follow these steps in order:
+
+## Pre-session: Snapshot and Delta
+
+Snapshot the tracker (records pre-check-in state for delta tracking):
+```bash
+bash scripts/snapshot-tracker.sh
+```
+
+Display what changed since the last session:
+```bash
+bash scripts/read-session-delta.sh
+```
 
 ## 0. Capture Current Time
 
@@ -31,6 +62,11 @@ bash scripts/checkin-state.sh read
 ```
 
 ## 2. Gather Fresh Data
+
+Load the pre-built pipeline summary (avoids re-reading raw files each session):
+```bash
+bash scripts/show-pipeline-summary.sh
+```
 
 Collect calendar context, recent session activity, and git commits:
 ```bash

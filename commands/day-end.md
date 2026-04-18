@@ -91,6 +91,11 @@ If no: skip this step.
 
 ## 9. Save Notes
 
+Build the session delta so tomorrow's `/day-start` can surface what changed today:
+```bash
+bash scripts/build-session-delta.sh
+```
+
 After the user confirms, save to the daily-notes output directory:
 
 ```bash
@@ -122,3 +127,10 @@ Ask yourself:
 - Did you learn something about a tool, script, or integration that will affect future sessions? Save a `reference` or `project` memory.
 
 If nothing non-obvious emerged today, skip this step -- do not write memory entries for things that are self-evident or already in the codebase.
+
+## 12. Rebuild Pipeline Summary
+
+Rebuild the pre-computed pipeline state so tomorrow's session has fresh data at session open:
+```bash
+bash scripts/build-pipeline-summary.sh
+```

@@ -302,7 +302,7 @@ cmd_stats() {
     return 1
   fi
 
-  local total found researched applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week
+  local total found pending applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week
   local stats_json
   if ! stats_json=$(yq -o=json '.applications' "$TRACKER" 2>/dev/null); then
     echo "ERROR: tracker stats: yq failed reading tracker" >&2
@@ -312,7 +312,7 @@ cmd_stats() {
   if ! stats_line=$(echo "$stats_json" | jq -r --arg ws "$week_start" '[
     length,
     ([.[] | select(.status == "found")] | length),
-    ([.[] | select(.status == "researched")] | length),
+    ([.[] | select(.status == "pending")] | length),
     ([.[] | select(.status == "applied")] | length),
     ([.[] | select(.status == "screening")] | length),
     ([.[] | select(.status == "interviewing")] | length),
@@ -327,12 +327,12 @@ cmd_stats() {
     echo "ERROR: tracker stats: failed to compute stats" >&2
     return 1
   fi
-  IFS=$'\t' read -r total found researched applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week <<< "$stats_line"
+  IFS=$'\t' read -r total found pending applied screening interviewing offer skipped rejected ghosted withdrawn dropped this_week <<< "$stats_line"
 
   local active=$((applied + screening + interviewing + offer))
 
   echo "Total: ${total} | Active: ${active}"
-  echo "Funnel:   found=${found} researched=${researched}"
+  echo "Funnel:   found=${found} pending=${pending}"
   echo "Pipeline: applied=${applied} screening=${screening} interviewing=${interviewing} offer=${offer}"
   echo "Closed:   rejected=${rejected} ghosted=${ghosted} dropped=${dropped} skipped=${skipped} withdrawn=${withdrawn}"
   echo "Applied this week: ${this_week}"
@@ -401,9 +401,9 @@ with open(sys.argv[1], newline='', encoding='utf-8') as f:
     return 1
   fi
 
-  # Derive active rows from combined parse (include found/researched to catch top-of-funnel gaps)
+  # Derive active rows from combined parse (include found/pending to catch top-of-funnel gaps)
   local csv_active
-  csv_active=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing" || $4 == "offer" || $4 == "found" || $4 == "researched"' <<< "$csv_combined")
+  csv_active=$(awk -F'\t' '$4 == "applied" || $4 == "screening" || $4 == "interviewing" || $4 == "offer" || $4 == "found" || $4 == "pending"' <<< "$csv_combined")
 
   # Build CSV lookup as a JSON array for exact-match jq join
   local csv_json

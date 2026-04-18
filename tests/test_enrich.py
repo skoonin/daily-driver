@@ -547,11 +547,11 @@ class TestEnrichCompanyDescriptionsBudget:
         assert not jobs[0].get("gd_rating")
 
 
-# ── enrich_fit ────────────────────────────────────────────────────────────────
+# ── enrich_fit_and_notes ────────────────────────────────────────────────────
 
 
-class TestEnrichFit:
-    def _run_with_mock(self, jobs, config=None, stdout="7"):
+class TestEnrichFitAndNotes:
+    def _run_with_mock(self, jobs, config=None, stdout='{"fit": 7, "notes": "K8s, Go, remote OK"}'):
         if config is None:
             config = {
                 "job_search": {
@@ -569,18 +569,19 @@ class TestEnrichFit:
 
         with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
             with patch("scrape_jobs.subprocess.run", side_effect=_fake_run) as mock_run:
-                sj.enrich_fit(jobs, config)
+                sj.enrich_fit_and_notes(jobs, config)
         return mock_run
 
-    def test_populates_fit_for_job(self):
+    def test_populates_fit_and_notes_for_job(self):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Vancouver", "url": "https://x.com/1"}]
         self._run_with_mock(jobs)
         assert jobs[0]["fit"] == "7/10"
+        assert jobs[0]["notes"] == "K8s, Go, remote OK"
 
-    def test_parses_score_with_slash(self):
+    def test_clamps_fit_above_ten(self):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
-        self._run_with_mock(jobs, stdout="8/10")
-        assert jobs[0]["fit"] == "8/10"
+        self._run_with_mock(jobs, stdout='{"fit": 50, "notes": "n/a"}')
+        assert jobs[0]["fit"] == "10/10"
 
     def test_budget_limits_calls(self):
         jobs = [
@@ -591,8 +592,15 @@ class TestEnrichFit:
         mock_run = self._run_with_mock(jobs, config)
         assert mock_run.call_count == 2
 
-    def test_skips_jobs_with_existing_fit(self):
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1", "fit": "9/10"}]
+    def test_skips_jobs_with_existing_fit_and_notes(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1",
+                 "fit": "9/10", "notes": "done"}]
+        mock_run = self._run_with_mock(jobs)
+        assert mock_run.call_count == 0
+
+    def test_skips_jobs_with_skipped_status(self):
+        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1",
+                 "status": "skipped"}]
         mock_run = self._run_with_mock(jobs)
         assert mock_run.call_count == 0
 
@@ -602,14 +610,14 @@ class TestEnrichFit:
 
         with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
             with patch("scrape_jobs.subprocess.run") as mock_run:
-                sj.enrich_fit(jobs, config)
+                sj.enrich_fit_and_notes(jobs, config)
         assert mock_run.call_count == 0
 
     def test_claude_not_on_path(self):
         jobs = [{"company": "Acme", "role": "SRE", "location": "Remote", "url": "https://x.com/1"}]
         with patch("scrape_jobs.shutil.which", return_value=None):
             with patch("scrape_jobs.subprocess.run") as mock_run:
-                sj.enrich_fit(jobs, {"job_search": {"scraper": {}}, "output_dir": "/tmp"})
+                sj.enrich_fit_and_notes(jobs, {"job_search": {"scraper": {}}, "output_dir": "/tmp"})
         assert mock_run.call_count == 0
         assert not jobs[0].get("fit")
 
@@ -620,8 +628,9 @@ class TestEnrichFit:
 
         with patch("scrape_jobs.shutil.which", return_value="/usr/bin/claude"):
             with patch("scrape_jobs.subprocess.run", side_effect=subprocess.TimeoutExpired("claude", 15)):
-                sj.enrich_fit(jobs, config)
+                sj.enrich_fit_and_notes(jobs, config)
         assert not jobs[0].get("fit")
+        assert not jobs[0].get("notes")
 
 
 # ── Description text extraction ─────────────────────────────────────────────
@@ -691,69 +700,6 @@ class TestDescriptionTextExtraction:
             jobs = [{"company": "X", "role": "SRE", "url": "https://example.com/1"}]
             sj.enrich_job_details(jobs, {})
         assert jobs[0]["description_text"] == "Stack: K8s, Go"
-
-
-# ── enrich_notes ────────────────────────────────────────────────────────────
-
-
-class TestEnrichNotes:
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("subprocess.run")
-    def test_populates_notes_with_description(self, mock_run, _which):
-        mock_run.return_value = MagicMock(returncode=0, stdout="K8s, Go, remote US-only, no red flags\n")
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
-                 "description_text": "Build K8s platform using Go"}]
-        sj.enrich_notes(jobs, {})
-        assert jobs[0]["notes"] == "K8s, Go, remote US-only, no red flags"
-        # Prompt should include description text
-        prompt_arg = mock_run.call_args[0][0][-1]
-        assert "Build K8s platform using Go" in prompt_arg
-
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("subprocess.run")
-    def test_populates_notes_without_description(self, mock_run, _which):
-        mock_run.return_value = MagicMock(returncode=0, stdout="Infra platform, likely K8s/AWS\n")
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
-                 "product": "cloud IDE"}]
-        sj.enrich_notes(jobs, {})
-        assert jobs[0]["notes"] == "Infra platform, likely K8s/AWS"
-        prompt_arg = mock_run.call_args[0][0][-1]
-        assert "(cloud IDE)" in prompt_arg
-
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("subprocess.run")
-    def test_skips_existing_notes(self, mock_run, _which):
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote",
-                 "notes": "already filled"}]
-        sj.enrich_notes(jobs, {})
-        mock_run.assert_not_called()
-
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("subprocess.run")
-    def test_budget_cap(self, mock_run, _which):
-        mock_run.return_value = MagicMock(returncode=0, stdout="summary\n")
-        jobs = [{"company": f"Co{i}", "role": "SRE", "location": "Remote"} for i in range(5)]
-        sj.enrich_notes(jobs, {"job_search": {"scraper": {"max_enrich_notes": 2}}})
-        assert mock_run.call_count == 2
-
-    @patch("shutil.which", return_value=None)
-    def test_skips_when_no_claude(self, _which):
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
-        sj.enrich_notes(jobs, {})
-        assert "notes" not in jobs[0]
-
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    def test_disabled_via_config(self, _which):
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
-        sj.enrich_notes(jobs, {"job_search": {"scraper": {"enrich_notes": False}}})
-        assert "notes" not in jobs[0]
-
-    @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=15))
-    def test_timeout_handled(self, _run, _which):
-        jobs = [{"company": "Acme", "role": "SRE", "location": "Remote"}]
-        sj.enrich_notes(jobs, {})
-        assert "notes" not in jobs[0]
 
 
 class TestAppendJobsNotes:
