@@ -6,6 +6,229 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed -- robustness review follow-ups
+- `core/voice.py`: `apply_update` now refuses empty/whitespace-only content (raises `VoiceUpdateError`) so a failed `claude` call cannot blank the profile. Write is atomic via same-directory tempfile + `os.replace`; a mid-write crash leaves the original intact.
+- `cli/commands/voice_update.py`: catches `VoiceUpdateError` and exits 1 with a clear stderr message instead of crashing.
+- `core/scheduler.py` + `integrations/launchd.py`: `launchctl load` failures now raise typed `LaunchdLoadError` (carrying label, exit code, stderr) and `install_all` re-raises as `SchedulerError`. Previously surfaced as a bare `CalledProcessError`.
+- `gathers/calendar.py` + `gathers/git.py`: 30s timeouts on `icalbuddy` / `git log` subprocesses. On timeout, log a warning and return an empty list rather than hanging.
+- `core/scraper_status.py`: `load_last_run` validates the parsed JSON is a dict before returning; malformed manifests no longer leak non-dict types to callers.
+- `cli/commands/status.py`: route current time through `core.clock.now()` so freezegun-based tests can drive stalled-detection deterministically.
+
+### Changed -- internal typing + tooling
+- `cli/cli.py`: command modules typed via a `_CommandModule` Protocol; replaces `dict[str, object]`.
+- `core/workspace.py`: split discovery branches into a typed `root_path` to satisfy mypy with no behavior change.
+- `pyproject.toml`: scoped mypy `ignore_errors` for `daily_driver.scraper._impl` (vendored module).
+- `tox.ini`: invoke mypy as `{envpython} -m mypy` so the tox-managed interpreter is used.
+- `docs/developer.md` + CI workflow comments: drop stale references (bandit in lint, "Phase 0" install-smoke note).
+- `pyproject.toml`: scoped `warn_return_any = false` for `daily_driver.cli.commands.*` to silence stdlib-stub friction (argparse's `add_parser` and `Namespace` attributes return `Any`).
+- `cli/commands/doctor.py`, `cli/commands/_claude_session.py`, `cli/commands/focus.py`: filled in missing parameter/return type annotations to satisfy `disallow_untyped_defs`. `tox -e type` now passes.
+
+### Fixed -- materialize: separate ignore_drift from force_overwrite
+- `core/materialize.py`: split the overloaded `force` parameter into two orthogonal booleans — `ignore_drift` (skip the version-stamp fast-path) and `force_overwrite` (overwrite user-edited package-managed files). Previously both concerns shared one flag, making it impossible to re-materialize without also clobbering user edits.
+- `doctor --fix` now calls `materialize(ignore_drift=True, force_overwrite=False)`: always runs the materialize body (to repair contract violations even when the stamp is current) but preserves user edits to package-managed `.md` files.
+- `doctor --reset` calls `materialize(ignore_drift=True, force_overwrite=True)`: unconditional full overwrite — the nuclear option.
+- `materialize` (no args / default): still the normal drift-respecting, user-edit-preserving path.
+- When `force_overwrite=False`, stale files dropped from the package are cleaned up via a targeted `_remove_stale_files` helper that skips any file the user has edited. When `force_overwrite=True`, the subdirs are wiped before copy for a clean slate.
+- All call sites updated: `init` (which needs `ignore_drift=True, force_overwrite=True`), `test_materialize_contract.py`, and the `test_core/test_doctor.py` / `test_cli/test_doctor.py` spy assertions.
+
+### Added -- MVP Wave 3: init contract + doctor enforcement
+- `core/contract.py`: machine-readable specification of every artifact `daily-driver init` must produce. Validation kinds: `exists_file`, `exists_dir`, `parses_yaml`, `parses_config`, `json_valid`, `count_gte`.
+- `doctor` now runs `contract.check()` on the workspace root and surfaces each violation as a per-entry `contract:<path>` ERROR result with `--fix` hint.
+- `tests/test_core/test_materialize_contract.py`: regression suite that counts actual files on disk after `materialize(force=True)` — closes the broken-wheel gap that shipped in v0.1.0 (importability passed with zero `.md` files).
+- Init contract rationale and entry catalogue documented in `docs/developer.md`.
+- Package-data `summary.md` + `voice-update.md` slash commands under `source/daily_driver/commands/daily-driver/`.
+
+### Fixed -- MVP Wave 3 post-review
+- `doctor --fix` now re-materializes on `contract:*` ERROR results (previously only matched `name == "Workspace drift"`, silently no-op on contract failures). Round-trip regression test added in `tests/test_core/test_contract.py`.
+
+### Added -- MVP Wave 2b: voice-update + scrape-jobs status
+- New `daily-driver voice-update --from PATH... [--append | --replace] [--dry-run] [--no-clipboard]` command. Accepts files and directories (recurses `.md`/`.txt`). Binary and >500KB files silently skipped. `--replace` creates a `voice-profile.md.bak` before overwriting. Write is `file_lock`-guarded.
+- `core/voice.py`: `collect_source_files`, `build_prompt`, `apply_update` separate CLI from logic.
+- `scrape-jobs` converted to a parent with `run` and `status` subcommands.
+  - `daily-driver scrape-jobs run [--dry-run] [--backfill]` — prior flat behavior.
+  - `daily-driver scrape-jobs status [--json]` — surfaces `jobs-last-run.json` + `jobs.csv` counts. "Awaiting action" = jobs in `applied` or `interviewing`. Missing manifest emits "never run" and exits 0.
+- `core/scraper_status.py`: manifest + CSV aggregation.
+
+### Changed -- MVP Wave 2b
+- Launchd scheduler (`core/scheduler.py`) now invokes `daily-driver scrape-jobs run` instead of the flat form.
+- `cli/commands/read_.py`: `read voice-profile` warning now references `daily-driver voice-update --from <path>` (was stale `/voice-update` slash command).
+
+### Added -- MVP Wave 2a: summary command, scraper unification, user-safety split, bundled slash commands
+- New `daily-driver summary --range <spec> [--detail {low,med,high}] [--match <kw>]... [--json]` command. Single template, no modes; claude reads workspace files in-window and synthesizes. `--json` emits the gathered bundle without claude synthesis. Supersedes legacy `standup`.
+- Bundled slash commands shipped as package-data under `source/daily_driver/commands/daily-driver/`: `day-start.md`, `day-end.md`, `check-in.md`. All bodies rewritten to call `daily-driver` subcommands (not legacy `bash scripts/`).
+- Bundled `work-planner` agent shipped as package-data at `source/daily_driver/agents/daily-driver/work-planner.md`.
+- `JobSearchPlugin` pydantic model extended to absorb every scraper config key (`roles`, `domain_keywords`, `seniority_keywords`, `min_comp_usd`, `scraper` nested ScraperConfig + JobSpyConfig). `extra="forbid"` at plugin level and all nested models.
+- `core/manifest.py`: SHA-256 per-file manifest written to `.daily-driver/manifest.json`; used by `materialize` to detect user edits to package-managed files.
+- `materialize` preserves user-edited package-managed `.md` files unless called with `force=True` (warns listing the file paths).
+- `init` scaffolds `.claude/commands/user/` + `.claude/agents/user/` (user territory, never touched by future materialize).
+- New workspace-root `.gitignore` rendered from `templates/gitignore.j2` on init: ignores package-managed dirs + settings.local.json + ephemeral state; explicit `!` overrides for user dirs.
+
+### Changed -- MVP Wave 2a
+- `scrape-jobs` now reads `plugins.job_search` from `.dd-config.yaml` via the parsed pydantic Config. `--config` flag removed. Legacy `config.yaml` at workspace root produces a migration error pointing to `docs/usage/config-reference.md`.
+- `workspace.py` `_MINIMAL_CONFIG` replaced by a Jinja render of `templates/.dd-config.yaml.j2`.
+- `settings.json` → `settings.local.json` throughout (template renamed, materialize path updated). Settings merge logic: preserve user-added top-level keys; refresh package-owned keys on each materialize; `init --force` regenerates.
+
+### Removed -- MVP Wave 2a
+- `daily-driver standup` subcommand + `cli/commands/standup.py` + associated tests. Generate a 48h standup via `daily-driver summary --range 48h --detail low`.
+
+### Fixed -- MVP Wave 2a (post-review)
+- Removed dead `PlaywrightDelays` pydantic class (unreferenced).
+- `summary.py` docstring corrected (no longer falsely claims `zoneinfo` usage — range work is day-granular via `date`).
+- `_claude_session.py` docstring no longer references the removed `standup` command.
+
+### Added -- MVP Wave 1: polish + JSON parity + docs reframe
+- `--json` output on `tracker list`, `tracker stats`, `tracker follow-ups`, `focus status`, `paths`, `gather calendar|git|sessions|notes`. All query commands now emit `{"schema": 1, "data": <payload>}` envelope. `status --json` also wrapped in the same envelope (was raw payload; now versioned for future field additions).
+- `docs/usage/config-reference.md` — full catalogue of every `.dd-config.yaml` key derived from pydantic models with type/default/description/example per field and worked examples at the bottom.
+- `docs/usage/tracker.md` — tracker deep-dive with per-subcommand examples and custom-category definition walk-through.
+- `docs/developer/architecture/purpose.md` — product framing: ADHD-friendly personal assistant; program owns durable record; Claude is conversational layer; jobs is one plugin.
+- `docs/developer/architecture/decisions.md`: 8 new entries covering config-driven tracker categories, required-category rationale, pydantic retention, no-DB-for-MVP, plugin extension seam, macOS-only scope, lockfile deferral, and forward-looking `ui.terminal_app` config for any future scheduled interactive commands.
+
+### Changed -- MVP Wave 1
+- `CLAUDE.md`: reframed to lead with ADHD-friendly personal assistant purpose; command-surface section now lists all 16 shipped subcommands including the previously-omitted `read`, `paths`, `ensure-daily-dir`, `gather`, and `install-scheduler`/`uninstall-scheduler`.
+- `docs/usage/README.md`, `docs/usage/commands.md`: reframed as tasks-of-any-kind (jobs is one built-in category example, not the product framing).
+- Canonical Claude Code install URL unified across `doctor.py` and `_claude_session.py`: both now point to `https://claude.ai/download`.
+- `integrations/launchd.py` defines `LaunchdUnavailableError`; every public function checks darwin at entry and raises this class (previously raised generic `FileNotFoundError`). `core/scheduler.py` no longer duplicates the darwin check.
+
+### Fixed -- MVP Wave 1
+- `cli/commands/focus.py`: both `focus on` (write) and `focus off` (unlink) now wrapped in `core.locking.file_lock`. The focus lock was previously unguarded — a launchd-triggered `check-in` and a user-invoked `focus on` could produce a torn write.
+- `gathers/git.py`: guards against missing `git` binary via `shutil.which`; logs a warning and returns an empty list rather than raising `FileNotFoundError`.
+
+### Removed -- MVP Wave 1
+- Empty `source/daily_driver/plugins/` namespace (no loader shipped; directory restored when plugin loader lands).
+
+### Changed -- docs: restructure to mirror coregen-sk layout
+- `docs/` reorganized: `architecture/` moved under `developer/architecture/`; `jobs-pipeline-investigation.md` and `pipeline-build-vs-buy.md` moved under `developer/reference/`. New top-level `docs/README.md` and `docs/developer/README.md` split users from contributors.
+- New: `docs/developer/quick-start.md`, `docs/developer/contributing/{coding-standards,pre-commit,release-process,testing-guide,version-management}.md`.
+- `docs/usage/` rewritten against the actual v0.1.0 CLI: removed references to the un-shipped `summary` command, corrected `tracker add` flag shape (`--title`/`--category` not positional), removed non-existent `scrape-jobs --sources`, fixed `standup` default timeout to 180s, documented actual `paths <kind>` and `read <what>` positional subcommands, added `install-scheduler` / `uninstall-scheduler [--keep-state]` surface.
+- `docs/developer/architecture/` updated against source: corrected `Workspace.discover_or_fail(override=...)` classmethod signature and actual dataclass fields, replaced non-existent `launch_claude_session` with `register_interactive_launcher` / `launch_headless` from `_claude_session`, corrected scraper architecture to the flat `_impl.py` + `SCRAPERS` dict design, added scrape-jobs enrichment and scheduled-invocation data flows, added decisions for `extra="forbid"`, integrations/ subprocess funnel, and the flat scraper layout.
+- Root `CLAUDE.md`: corrected the command-surface section to describe the shipped `standup` subcommand instead of the un-shipped `summary` umbrella; removed `docs/developer/contributing/version-management.md` stale example that referenced `daily-driver summary --mode interview`.
+
+## [0.1.0] — 2026-04-21
+
+### Added -- Phase 8.1: `make release` / `make release-push`
+- `makefiles/release.mk`: `make release VERSION=X.Y.Z` runs the 7-step flow -- clean-tree check, tag-doesn't-exist check, tox py311+py312, local install-smoke in ephemeral venv, `python -m build`, y/N confirm, CHANGELOG `[Unreleased]` -> `[X.Y.Z] -- YYYY-MM-DD` rewrite, `__version__` bump, `release: vX.Y.Z` commit, annotated `vX.Y.Z` tag using the changelog section as the tag message. `make release-push` is a separate deliberate step that requires HEAD to already be tagged before it will push commit + tag to origin.
+
+### Removed -- Phase 8.3: teardown legacy surface
+- Deleted `scripts/` (all bash data-gathering + orchestration scripts + `scrape-jobs.py` -- logic now in `daily_driver.scraper._impl`), `commands/` (legacy slash-command markdown -- now shipped as package-data under `source/daily_driver/commands/daily-driver/`), `agents/` (legacy work-planner -- now shipped under `source/daily_driver/agents/daily-driver/`), `launchd/` (legacy hardcoded plists -- replaced by `source/daily_driver/launchd/*.plist.j2` Jinja templates rendered by `core.scheduler`), root `config.yaml` (superseded by in-workspace `.dd-config.yaml` with pydantic-validated `plugins.job_search:` block), `context.md.example` (template now shipped at `source/daily_driver/templates/context.md`), and `settings.json` / `settings.json.tmpl` (rendered from packaged Jinja template by `core.materialize` on init).
+- `Makefile`: removed 14 user-facing targets (day-start, day-end, check-in, focus, standup, week-end, month-end, prep, interview-prep, gather-jobs, scrape-jobs, backfill-jobs, voice-update, launchd-install/start/uninstall, install, uninstall). Only developer targets remain (`help`, `setup`, `deps`, `venv`, `status`, `test`, `test-cov`, `test-unit`, `test-cli`, `test-e2e`, `lint`, `format`, `type`, `pip-install`, `pip-uninstall`, `clean`, `distclean`, `build`, `release`, `release-push`).
+- `.pre-commit-config.yaml`: removed the `sync-claude-files` hook that called `make install` (no more repo-resident `commands/`/`agents/` to sync into `.claude/`).
+- Deleted 11 legacy test modules that depended on the removed `scripts/scrape-jobs.py` module: `test_anthropic_scraper.py`, `test_config.py`, `test_csv.py`, `test_dedup.py`, `test_enrich.py`, `test_hn_scraper.py`, `test_location_filter.py`, `test_matching.py`, `test_scrapers.py`, plus `tests/conftest.py` and `tests/fixtures.py` which only existed to bootstrap that module. Current suite: 346 passing (coverage for the live CLI surface lives under `tests/test_cli/`, `tests/test_core/`, `tests/test_gathers/`, `tests/test_integrations/`, `tests/test_scraper/`).
+- Updated `CLAUDE.md`, `README.md`, and `CONTRIBUTING.md` to reflect CLI-only architecture. Scraper in-source comments and user-facing error strings now reference `.dd-config.yaml` / `plugins.job_search.*` instead of the legacy root `config.yaml`.
+
+### Added -- Phase 8.5 + 8.6: end-user and architecture docs
+- `docs/usage/`: 7 files walking a new user from install through first run, commands, customizing, troubleshooting, upgrade (indexed by `README.md`). Covers prereqs (Homebrew vs pyenv, optional Playwright), drift detection and `doctor --fix`/`--reset` semantics, launchd debugging (`plutil -lint`, `launchctl list | grep daily-driver`), and the managed-vs-user-owned `.claude/` zones. Ships in-repo, not in the wheel.
+- `docs/architecture/`: 6 files documenting the package layout and layer responsibilities (`module-map.md`), per-invocation data flow including program-vs-Claude surface model (`data-flow.md`), load-bearing design choices (`decisions.md` -- argparse, copy-not-symlink, no migrations, no DB, flock, macOS-only scope), extension walkthroughs for pure-Python and Claude-CLI subcommands (`adding-a-subcommand.md`) and scraper sources (`adding-a-scraper-source.md` -- JobSpy vs native parser tradeoff, fixture conventions), and the forward-compat `plugins/` seam (`extensibility.md`).
+
+### Added -- Phase 5.2: scheduler + LaunchAgent install/uninstall (macOS)
+- `daily_driver.core.scheduler`: renders and installs launchd plists for `com.daily-driver.checkin` (multi-time StartCalendarInterval) and `com.daily-driver.scrape-jobs` (single time). Reads `scheduler:` block from `.dd-config.yaml`; falls back to package-shipped `templates/scheduler.default.yaml` (checkin 11:00/15:00, scrape-jobs 07:00). `install_all` is idempotent (unload → write → load each run, picks up env changes); `uninstall_all(keep_state=)` removes plists and optionally retains a mirrored copy under `.daily-driver/state/launchd/`. Plist `StandardOutPath`/`StandardErrorPath` land in `.daily-driver/state/logs/launchd-<job>.{out,err}`. Non-darwin platforms raise `SchedulerError("scheduler install/uninstall is macOS-only in v0.1.0")` rather than silently no-op.
+- `daily_driver.integrations.launchd`: thin subprocess wrapper around `launchctl load/unload/list` plus plist path resolution (`~/Library/LaunchAgents/<label>.plist`) and atomic file operations.
+- `daily_driver.launchd/{checkin,scrape-jobs}.plist.j2`: Jinja2 templates shipped in-package; `templates/scheduler.default.yaml` ships alongside.
+- `daily-driver install-scheduler` / `daily-driver uninstall-scheduler [--keep-state]`: new CLI subcommands. 27 new tests across `test_core/test_scheduler.py` (config merge, job build, plist XML parse, platform guard, launchctl-mocked install/uninstall round trip), `test_integrations/test_launchd.py` (path resolution, file write/remove, launchctl invocation), and `test_cli/test_scheduler_cli.py` (end-to-end CLI dispatch + platform-error path). Full suite: 588 passing.
+
+### Added -- Phase 7.2: scraper filter + parser tests
+- `tests/test_scraper/test_filters.py`: 38 new tests covering `comp_meets_threshold` (fails-open on unknown comp, 180k default), `location_matches` (remote + cities + countries + empty-location semantics), `matches_roles` (literal, wildcard, exclusion, tier-2 domain+seniority, tier-2b SRE/Platform standalone), `dedup_key` (case/whitespace normalization), `normalize_job` (remote alias collapse, role-suffix strip, Greenhouse board split, comp parsing, non-mutation), and `_parse_comp` (USD/CAD/ISO precedence, K-shorthand, period extraction, range swap).
+- `tests/test_scraper/test_parsers.py`: 15 new tests with small inline HTML / JSON-LD fixtures for `parse_linkedin_html` (compensation__salary div, description, missing comp, sidebar salary-info ignored), `parse_greenhouse_html` (Annual Salary prefix, K-shorthand, ignores unrelated $ amounts), and `parse_jsonld_jobposting` (baseSalary, @graph nesting, malformed JSON tolerance). Full suite: 561 passing.
+
+### Added -- Phase 7.3: materialization parity tests
+- `tests/test_core/test_materialize.py`: 3 new tests -- package-data resource importability (catches MANIFEST.in / package-data / `__init__.py` gaps that would break a built wheel); `settings.json` rendering from packaged Jinja template; dropped-command wipe on re-materialize (simulates a version-B release that removes a previously-shipped command, verifies the stale file on disk vanishes rather than silently coexisting with the new snapshot). Full suite: 508 passing.
+
+### Added -- Phase 7.4: doctor CLI tests
+- `tests/test_cli/test_doctor.py`: 9 new CLI-level tests for the `doctor` subcommand. Covers plain `doctor` (all-OK exit-0, drift WARNING exit-0, ERROR exit-1, missing-workspace graceful degrade), `doctor --fix` (materialize(force=True) dispatch, no-workspace noop), `doctor --reset` (materialize dispatch, no-workspace exit-1 with clear error), and `--fix`/`--reset` mutual exclusivity. Complements the check-logic coverage already present in `tests/test_core/test_doctor.py`. Full suite: 505 passing.
+
+### Fixed -- Review fixes (multi-agent /sk-review pass)
+- `integrations.claude_cli.invoke`: switched from `subprocess.run(timeout=)` to `Popen.communicate(timeout=)` with explicit `.kill()` + `.wait()` on `TimeoutExpired`. Prevents orphaned `claude` subprocesses on headless-invocation timeouts (#42).
+- `daily-driver tracker update --note`: appends to existing notes (joined with `\n`) instead of replacing them. Updates history is now preserved (#43).
+- `core.tracker.Tracker`: drops manual `output_dir` resolution in favour of `Workspace.output_dir` property. Tracker path now honours `~`-prefixed `output_dir` config values (#44).
+
+### Changed -- Review fixes: CLI structural cleanup
+- `cli.cli`: replaced 14 individual `try/except ImportError` blocks with a table-driven registration loop backed by `importlib.import_module`. Removed dead `TYPE_CHECKING` import and stub block. ImportError now propagates as a clear packaging-defect traceback (#45).
+- `cli.commands._claude_session`: introduced `register_interactive_launcher()` factory. `day_start`, `day_end`, `check_in` subcommand modules collapse to ~12 lines each and share the full body via the factory, while still registering distinct subcommand entry points (#46).
+- `cli.commands.init`: dropped the dead `--skip-browsers` flag (always ignored) and its test fixture references (#48).
+- `integrations.__init__`: removed all re-export aliases (`integrations.claude_cli` etc. now imported at their real paths). File contains only a module docstring (#47).
+
+### Changed -- Review fixes: style + consistency
+- `cli.commands._utils`: new module with shared `resolve_date(raw: str | None) -> date` helper. `paths`, `read`, `ensure-daily-dir` subcommands now delegate to it instead of each maintaining a local duplicate (#49).
+- `gathers.{calendar,git,sessions,notes}`: migrated `Optional[X]` → `X | None` and `List[X]` → `list[X]`; dropped the now-unused `typing` imports (#50).
+- `gathers.{calendar,git,sessions}`: 7 `log.warning(f"...")` calls converted to lazy `%`-style formatting (#51).
+- Misc cleanup (#52): `_claude_session.py` `raise exc` → bare `raise`; `standup.py` clipboard-copy bare `except: pass` now logs via `log.debug(...)` instead of silently swallowing; deleted phase-reference comments in `core/config_models.py`.
+
+### Added -- Phase 8c slice: nested-claude launchers (day-start / day-end / check-in / standup)
+- `daily_driver.integrations.claude_cli`: extended with `spawn_interactive(prompt, *, agent, session_name, add_dirs, model)` -- inherits stdin/stdout/stderr for TTY-attached sessions where the user drives the conversation. Shared `_build_args` helper composes the `claude` argv list for both `invoke` (headless) and `spawn_interactive` paths.
+- `daily_driver.cli.commands._claude_session`: internal helpers -- `resolve_workspace`, `require_claude_available`, `default_session_name`, `launch_interactive`, `launch_headless`, `handle_launch_exception`, plus a `SessionError` sentinel for uniform exit-1 handling.
+- `daily-driver day-start` / `day-end` / `check-in`: interactive launchers that spawn nested `claude` with `--agent work-planner`, the workspace `--add-dir`, a timestamped `-n` session name, and the matching slash-command prompt (`/day-start`, `/day-end`, `/check-in`). `--agent`, `--model`, `--session-name` all overridable.
+- `daily-driver standup`: headless launcher -- invokes `claude -p /standup` with `--agent work-planner --output-format text`, `--timeout` (default 120s), pipes stdout to `pbcopy` via `integrations.clipboard` when available (`--no-clipboard` to suppress). `subprocess.TimeoutExpired` maps to exit 1 with a stderr message.
+- Tests: 12 new -- 3 parameterized interactive-launcher happy paths (day-start/day-end/check-in prompt + agent + add_dirs + session-name), override-args coverage (`--agent`/`--model`/`--session-name`), missing-claude exit-1, missing-workspace exit-1, claude-exit-code propagation; 5 standup tests (stdout print, clipboard copy, `--no-clipboard`, `--timeout` → exit-1, missing-claude exit-1). Full suite now 490 passing (3 pre-existing multiprocessing pickling failures unchanged).
+- CLI now registers 14 subcommands end-to-end: `init`, `doctor`, `tracker`, `status`, `focus`, `scrape-jobs`, `paths`, `read`, `ensure-daily-dir`, `gather`, `day-start`, `day-end`, `check-in`, `standup`.
+
+### Added -- Phase 8b slice: gather nested subcommand (calendar / git / sessions / notes)
+- `daily-driver gather <what>`: thin CLI wrapper over `daily_driver.gathers.*` for downstream Claude-prompt pipelines. Subcommands:
+  - `calendar [--since --until --json]` -- macOS icalBuddy events, pretty or JSON.
+  - `git [--repo --since --until --json]` -- recent commits in a repo (default: CWD).
+  - `sessions [--since --until --json]` -- Claude Code sessions from `~/.claude/sessions-index.json`.
+  - `notes [--since --until]` -- note files under `{output_dir}/YYYY/MM/`.
+  - All subcommands default date ranges via `core.clock.today()`; invalid dates exit 2. Bare `daily-driver gather` prints usage and exits 2.
+- Tests: 12 new -- mocked text/JSON emission, empty-set placeholders, date-default wiring, usage-fallback, output_dir resolution. Full suite 478 passing (3 pre-existing multiprocessing pickling failures unchanged).
+
+### Added -- Phase 8a slice: filesystem-read subcommands (paths / read / ensure-daily-dir)
+- `Workspace.output_dir` property: resolves `daily_driver.output_dir` from config. Relative paths resolve against the workspace root; absolute paths pass through; `~` expands to `$HOME`. Replaces scattered `workspace.root / config.output_dir` arithmetic in downstream commands.
+- `daily-driver paths <kind> [--date YYYY-MM-DD]`: prints workspace-resolved paths. Kinds: `root`, `output`, `state`, `ephemeral`, `daily` (YYYY/MM dir), `daily-plan`, `daily-notes`. Unknown kind exits 2 via argparse choices.
+- `daily-driver read <what> [--date] [--frontmatter]`: prints workspace text files. Subcommands: `context` (fatal if missing; exit 1), `voice-profile` (warn to stderr, exit 0 if missing), `plan` (prints "(no plan found …)" if missing, exit 0; `--frontmatter` extracts only the leading YAML block). Bare `read` prints usage and exits 2. Invalid `--date` exits 2.
+- `daily-driver ensure-daily-dir [--date]`: creates `{output_dir}/YYYY/MM` (idempotent) and prints the plan path (`{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md`) for shell pipelines. Replaces `scripts/ensure-daily-dir.sh`.
+- Tests: 24 new — 4 `Workspace.output_dir` (default `.`, relative, absolute, `~`), 6 `paths` (output/state/daily-plan/daily-notes/missing-ws/unknown-kind), 9 `read` (context present/missing, voice-profile missing-warn/present, plan missing/present/frontmatter/invalid-date, bare-read usage), 5 `ensure-daily-dir` (create+plan-path, idempotent, explicit date, invalid date, missing workspace). Full suite now 466 passing (3 pre-existing multiprocessing pickling failures unchanged).
+
+### Changed -- Phase 7 slice: user-facing docs (README + CONTRIBUTING)
+- `README.md`: rewrote around the Python CLI. New install instructions (`pip install git+...`), commands table covering `init`/`doctor`/`tracker`/`status`/`focus`/`scrape-jobs`, workspace-layout diagram, configuration split (`.dd-config.yaml` for structured config vs legacy scraper `config.yaml`), project-layout map under `source/daily_driver/`, macOS-platform note, and an explicit 0.1.0-alpha status block calling out that the legacy bash + Claude Code harness in `scripts/`/`commands/` remains authoritative until v0.1.0 ships.
+- `CONTRIBUTING.md`: added. Covers dev setup (`pip install -e '.[dev]'`, `pre-commit install`, `playwright install chromium`), test invocation + marker reference, style-tool matrix (black/isort/flake8/mypy), commit discipline, subcommand-authoring checklist (add parser, register in deferred-import block, test scaffolding, changelog + README), release workflow, and the `.claude/` working-document convention.
+
+### Added -- Phase 6 slice: scraper port (CLI-accessible)
+- `daily_driver.scraper`: ported from `scripts/scrape-jobs.py`. Public API `run(config, output_dir, *, dry_run=False)` and `run_backfill(config, csv_path)` — pure functions that return process-style exit codes without `sys.exit()`. The large `_impl` module preserves the original eight sources (RemoteOK, WeWorkRemotely, HN Who's Hiring, Greenhouse, JobSpy, Wellfound, Apple), CSV header migration, role/location filtering, Claude-CLI enrichment (Product/GD/Fit/Notes), comp-threshold filter, and the run manifest (`jobs-last-run.json`).
+- `daily-driver scrape-jobs` CLI subcommand: `--config`, `--dry-run`, `--backfill`. Resolves `output_dir` from `.dd-config.yaml` via `Workspace`, defaults `--config` to `<workspace>/config.yaml`. Prints a clear hint and exits 0 when `job_search.scraper.enabled: false`.
+- Tests: 11 new — 4 package-import smoke tests (public-API, `_impl` loads without side effects, disabled-scraper short-circuit, YAML loader), 7 CLI tests (help, missing-workspace, missing-config, disabled-scraper, `--backfill` dispatch, `--dry-run` flag forwarding, default-config path). Full suite now 445 passing.
+
+### Added -- Phase 5 slice: gather modules + integration wrappers
+- `daily_driver.gathers`: typed, pure-function readers for external state.
+  - `git.gather_commits(repo_root, since, until=None)` → `list[GitCommit]`. `git log` with NUL-separated fields so commit subjects can contain anything. Returns `[]` for non-git dirs, raises `CalledProcessError` on other git errors.
+  - `calendar.gather_events(since, until)` → `list[CalendarEvent]`. macOS `icalBuddy` wrapper. Returns `[]` if icalBuddy not on PATH. Per-block defensive parsing — one malformed event block never crashes the gather.
+  - `sessions.gather_sessions(since, until=None)` → `list[ClaudeSession]`. Parses `~/.claude/sessions-index.json`; tolerates both list and `{"sessions": [...]}` shapes plus alternate field-name spellings.
+  - `notes.gather_note_paths(output_dir, since, until=None)` → sorted `list[Path]`. Globs `YYYY/MM/YYYY-MM-DD-*.md` and filters by filename-date.
+- `daily_driver.integrations`: thin subprocess wrappers with no hidden state.
+  - `clipboard.{available,copy,paste}` around `pbcopy`/`pbpaste`.
+  - `claude_cli.{available,invoke}` around the `claude` CLI; `invoke(prompt, *, agent, session_name, headless, input_text, timeout)` builds the args list deterministically. `ClaudeNotFoundError` raised when `claude` missing on PATH (including race where `which` succeeds but `subprocess.run` raises `FileNotFoundError`).
+- Tests: 34 new — 6 git, 4 calendar, 6 sessions, 4 notes, 5 clipboard, 9 claude_cli. All use `monkeypatch` to stub `subprocess.run`/`shutil.which`; no real external commands executed. Full suite 434 passing.
+
+### Added -- Phase 4 slice: focus command + CLI e2e tests
+- `daily_driver.cli.commands.focus`: `on --for DURATION [--reason TEXT]` / `off` / `status` subcommands. Duration parser accepts `30m`, `2h`, `1h30m`, bare minutes (`90`); invalid input exits 2 via `argparse.ArgumentTypeError`. Lock state lives at `{workspace.ephemeral_dir}/focus.lock` as JSON (`start_iso`, `end_iso`, `end_epoch`, `reason`). `status` auto-cleans expired locks. `on` overwrites an existing lock without erroring.
+- Tests: 14 unit tests for `focus` (on/off/status paths, expired-lock cleanup, duration parsing, argparse exit 2 on bad input); 12 subprocess-based CLI e2e tests in `tests/test_cli/test_e2e.py` covering `--version`, bare invocation, init/doctor, tracker add/list/update/filter/stats (including `--extra K=V` and JSON output), and `status --json` structure. Full suite now 400 passing.
+- E2E smoke: `daily-driver init $TMPDIR/x && cd $TMPDIR/x && daily-driver focus on --for 5m --reason test && daily-driver focus status && daily-driver focus off` all exit 0.
+
+### Added -- Phase 3 slice: Tracker core + tracker/status subcommands
+- `daily_driver.core.tracker`: generic `TrackerEntry` (pydantic, `extra="forbid"`), `TrackerFile`, `Tracker` facade bound to a `Workspace`. CRUD over `{output_dir}/tracker.yaml` with `clock.now()`-sourced timestamps, monotonic per-category IDs (`{cat}-NNN`), and an exclusive `flock` held across the full read-modify-write cycle in `add`/`update` (prevents lost writes under concurrency). Required-field validation inspects both direct parameters and `extras` so category plugins can satisfy requirements via the extras dict.
+- `daily_driver.cli.commands.tracker`: `add / update / list / follow-ups / stats` nested subcommands. Rich table on stdout, `--json` for pipelines. `--tags a,b`, `--extra KEY=VALUE` (repeatable), `--due YYYY-MM-DD`.
+- `daily_driver.cli.commands.status`: pure-Python Rich dashboard — tracker totals, stalled entries (>14d non-terminal), last 7 days of activity. `--json` available.
+- Tests: 12 core (ID monotonicity, frozen-time round-trip, atomicity, concurrent-write serialization, follow-up filters), 7 CLI tracker, 4 CLI status. Full suite now 374 passing.
+- E2E smoke: `daily-driver init $TMPDIR/x && cd $TMPDIR/x && daily-driver tracker add … && daily-driver tracker list && daily-driver status` all exit 0 with Rich table output.
+
+### Added -- Phase 2 CLI framework + init + doctor
+- `daily_driver.cli.cli.app(argv)`: argparse entry point with `--version`, `-v/--verbose`, `-q/--quiet` (mutually exclusive), `--no-color`, `--workspace PATH`. Deferred command-module imports tolerate missing subcommands during bootstrap. Bare invocation prints help and exits 2.
+- `daily_driver.__main__.main`: wires `app(sys.argv[1:])` to `sys.exit`; powers the `daily-driver` console script.
+- `daily_driver.cli.commands.init`: scaffolds `.dd-config.yaml` (from Jinja template), `context.md`, `voice-profile.md`, `.claude/`, and `.daily-driver/`, then materializes package data. `--force` renames the existing config to `.bak`, restores on failure, and removes on success (no TOCTOU window).
+- `daily_driver.cli.commands.doctor` + `daily_driver.core.doctor`: Python version, core dep presence, external CLI (`claude`), and workspace drift checks. Rich table rendered to stderr. `--fix` re-materializes on drift; `--reset` forces a clean re-copy. Explicit `--workspace` overrides that don't resolve warn instead of silently degrading.
+- `daily_driver.templates/{.dd-config.yaml.j2, context.md, voice-profile.md, settings.json.j2}`: seed content for fresh workspaces.
+- `pyproject.toml`: `templates/.*.j2` glob added to `package-data` so the dotfile Jinja template ships with the wheel.
+- Smoke test verified end-to-end: `daily-driver --version && daily-driver init $TMPDIR/x && cd $TMPDIR/x && daily-driver doctor` exits 0. 351 tests passing.
+
+### Added -- Phase 1 core modules (daily_driver package refactor)
+- `daily_driver.core.clock`: timezone-aware time utilities (`now`, `today`, `iso_week`, `month_bounds`) with `FROZEN_TIME` for test determinism.
+- `daily_driver.core.logging`: stdlib-backed logging with a Rich stderr handler, idempotent `configure(verbosity)`, and scoped `get_logger(name)`.
+- `daily_driver.core.locking`: `file_lock(path, *, shared, timeout)` context manager wrapping `fcntl.flock` with automatic parent-dir creation and optional timeout.
+- `daily_driver.core.config_models`: pydantic v2 models for `.dd-config.yaml` (12 submodels + top-level `Config` with `extra="forbid"` and cross-field validators).
+- `daily_driver.core.config`: `load(path) -> Config` using `yaml.safe_load`; empty files fall back to a minimal default config.
+- `daily_driver.core.workspace`: `Workspace` dataclass with `discover_or_fail()` (walks up from CWD for `.dd-config.yaml`) and `init()` (scaffolds a new workspace); exposes `ephemeral_dir` for lock/scratch paths separate from durable state.
+- `daily_driver.core.version_stamp`: atomic `read`/`write` and `is_drifted` over `{state_dir}/version` (stamp written last on materialize, so crashes leave it stale).
+- `daily_driver.core.materialize`: copies `daily_driver.commands/daily-driver/*.md` and `daily_driver.agents/daily-driver/*.md` into `.claude/` and renders `daily_driver.templates/settings.json.j2` into `.claude/settings.json`. Fast-path skips on matching stamp; otherwise acquires `materialize.lock` (double-checked), wipes only daily-driver-owned subdirs, copies atomically, and writes the stamp last. Rejects traversal / hidden entries in package data.
+- `tests/test_core/`: 83 unit tests covering all 8 modules (concurrent materialize, stamp-ordering invariant, YAML-injection safety, ISO-week boundaries, lock contention, etc.).
+- `pyproject.toml`: `pythonpath = ["source", "tests"]` so the legacy `tests/conftest.py` (which does `from fixtures import ...`) resolves without `--noconftest`.
+
 ### Fixed -- Scraper regressions from docs-implementation landing
 - `scrape-jobs.py`: Drop `--bare` from both Claude CLI enrichment calls. `--bare` skips keychain auth (only honors `ANTHROPIC_API_KEY`), which caused every enrichment subprocess to exit `rc=1` with empty stderr (0/138 enriched in the first post-landing run).
 - `scrape-jobs.py`: NaN-safe coercion for JobSpy DataFrame rows via module-level `_jobspy_str(x, default)`. Previous `row.get(k) or ""` returned float NaN (truthy) for missing cells, crashing `.strip()` in `_format_jobspy_comp`.
