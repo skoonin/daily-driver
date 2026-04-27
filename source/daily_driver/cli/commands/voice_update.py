@@ -1,0 +1,150 @@
+"""voice-update subcommand: update voice-profile.md from writing samples via claude."""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+from daily_driver.cli.commands._claude_session import (
+    default_session_name,
+    handle_launch_exception,
+    launch_headless,
+    require_claude_available,
+    resolve_workspace,
+)
+from daily_driver.core.locking import file_lock
+from daily_driver.core.voice import (
+    VoiceUpdateError,
+    apply_update,
+    build_prompt,
+    collect_source_files,
+)
+from daily_driver.integrations import clipboard
+
+log = logging.getLogger(__name__)
+
+
+def add_parser(
+    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
+    parents: list[argparse.ArgumentParser],
+) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "voice-update",
+        parents=parents,
+        help="Update voice-profile.md from writing samples via headless claude",
+    )
+    parser.add_argument(
+        "--from",
+        dest="sources",
+        metavar="PATH",
+        nargs="+",
+        required=True,
+        help="Source files or directories (.md/.txt). Directories are recursed.",
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--append",
+        dest="mode",
+        action="store_const",
+        const="append",
+        default="append",
+        help="Append new observations to the existing profile (default).",
+    )
+    mode_group.add_argument(
+        "--replace",
+        dest="mode",
+        action="store_const",
+        const="replace",
+        help="Replace the profile; backs up the original as voice-profile.md.bak.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Show what would be written without modifying any files.",
+    )
+    parser.add_argument(
+        "--no-clipboard",
+        action="store_true",
+        default=False,
+        help="Skip copying the updated profile to the clipboard.",
+    )
+    parser.add_argument(
+        "--session-name",
+        default=None,
+        help="Override the auto-generated claude session display name.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model alias or name (e.g., 'sonnet', 'opus').",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=180,
+        help="Seconds to wait for claude before failing (default: 180).",
+    )
+    return parser
+
+
+def run(args: argparse.Namespace) -> int:
+    source_paths = [Path(p) for p in args.sources]
+    mode = args.mode or "append"
+
+    try:
+        source_files = collect_source_files(source_paths)
+    except VoiceUpdateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        workspace = resolve_workspace(args)
+        require_claude_available()
+    except Exception as exc:  # noqa: BLE001
+        return handle_launch_exception(exc)
+
+    profile_path = workspace.output_dir / "voice-profile.md"
+    current_profile = (
+        profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
+    )
+
+    prompt = build_prompt(source_files, current_profile=current_profile, mode=mode)
+
+    try:
+        new_content = launch_headless(
+            slash_command=prompt,
+            workspace=workspace,
+            session_name=default_session_name("voice-update", args.session_name),
+            model=args.model,
+            timeout=args.timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return handle_launch_exception(exc)
+
+    # Normalize to a single trailing newline for consistent file formatting.
+    normalized = new_content.strip() + "\n"
+
+    if args.dry_run:
+        print(f"dry-run: would write {len(normalized)} chars to {profile_path}")
+        print(normalized, end="")
+        return 0
+
+    try:
+        with file_lock(profile_path):
+            apply_update(profile_path, new_content=normalized, mode=mode)
+    except VoiceUpdateError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    log.debug("voice-profile.md updated at %s", profile_path)
+
+    if not args.no_clipboard and clipboard.available():
+        try:
+            clipboard.copy(normalized.strip())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("clipboard unavailable: %s", exc)
+
+    return 0

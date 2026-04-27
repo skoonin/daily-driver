@@ -3,29 +3,32 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.daily-driver.checkin</string>
+  <string>{{ label }}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>PLACEHOLDER_REPO/scripts/open-session.sh</string>
-    <string>check-in</string>
+    {%- for arg in program_arguments %}
+    <string>{{ arg }}</string>
+    {%- endfor %}
   </array>
   <key>StartCalendarInterval</key>
-  <array>
-PLACEHOLDER_CHECKIN_INTERVALS
-  </array>
+  <dict>
+    <key>Hour</key>
+    <integer>{{ time.hour }}</integer>
+    <key>Minute</key>
+    <integer>{{ time.minute }}</integer>
+  </dict>
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>PLACEHOLDER_REPO/logs/checkin.log</string>
+  <string>{{ stdout_path }}</string>
   <key>StandardErrorPath</key>
-  <string>PLACEHOLDER_REPO/logs/checkin.log</string>
+  <string>{{ stderr_path }}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>PLACEHOLDER_BREW/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>{{ env_path }}</string>
     <key>HOME</key>
-    <string>PLACEHOLDER_HOME</string>
+    <string>{{ home }}</string>
   </dict>
 </dict>
 </plist>

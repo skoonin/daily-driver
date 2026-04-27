@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Job scraper: scrapes enabled sources and appends new rows to jobs.csv.
 Safe to re-run — deduplicates by URL and by (company, role) against existing rows.
@@ -15,25 +14,23 @@ Sources (Playwright — browser required):
   apple             — Playwright, search input + API response intercept
 """
 
-import argparse
 import copy
 import csv
 import json
 import logging
-import os
-import time
 import re
+import shutil
 import subprocess
 import sys
+import time
 import urllib.parse
 import warnings
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree as ET
-import shutil
 
 if sys.platform != "win32":
     import fcntl
@@ -42,6 +39,27 @@ import requests
 import yaml
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
+from daily_driver.core.clock import today
+from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
+from daily_driver.integrations import claude_cli
+
+
+class ScraperError(RuntimeError):
+    """Raised on unrecoverable scraper errors.
+
+    Library code raises this instead of calling sys.exit() so the CLI layer
+    can decide how to report and exit.
+    """
+
+
+def _to_int(x: object) -> int | None:
+    """Best-effort coerce an arbitrary value to int (via float). None on failure."""
+    try:
+        return int(float(x))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 log = logging.getLogger(__name__)
@@ -49,19 +67,33 @@ log = logging.getLogger(__name__)
 # Two-tier role matching: domain + optional seniority.
 # Defaults used when config keys are absent.
 _DEFAULT_DOMAIN_KEYWORDS = {
-    "sre", "site reliability", "platform engineer", "platform engineering",
-    "devops", "infrastructure", "cloud engineer", "cloud engineering",
-    "ci/cd", "build engineer", "release engineer", "production engineer",
+    "sre",
+    "site reliability",
+    "platform engineer",
+    "platform engineering",
+    "devops",
+    "infrastructure",
+    "cloud engineer",
+    "cloud engineering",
+    "ci/cd",
+    "build engineer",
+    "release engineer",
+    "production engineer",
 }
 _DEFAULT_SENIORITY_KEYWORDS = {"senior", "staff", "principal", "lead", "sr.", "sr "}
 
 # Seniority prefixes stripped when compressing 21 roles → ~10 search terms
 _SENIORITY_PREFIXES = (
-    "senior ", "staff ", "principal ", "lead ", "sr. ", "sr ",
+    "senior ",
+    "staff ",
+    "principal ",
+    "lead ",
+    "sr. ",
+    "sr ",
 )
 
 # Per-scraper parameters for each supported country. Add a row here when
-# introducing a new country code in config.yaml.
+# introducing a new country code in .dd-config.yaml.
 #
 # Keys:
 #   apple_locale          - path segment for jobs.apple.com/{locale}/search
@@ -116,74 +148,95 @@ COUNTRY_NAMES: dict[str, list[str]] = {
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-def load_config(config_path: Path) -> dict:
+
+def load_config(config_path: Path) -> dict[str, Any]:
     with open(config_path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        loaded: dict[str, Any] = yaml.safe_load(f) or {}
+        return loaded
 
 
-def resolve_output_dir(config: dict) -> Path:
-    raw = config.get("output_dir")
-    if not raw:
-        raise SystemExit("ERROR: output_dir not set in config.yaml")
-    return Path(raw).expanduser()
+# ── Config model helpers ─────────────────────────────────────────────────────
+#
+# The scraper receives a raw dict (shape: {"job_search": {...}}) from the CLI
+# so the tests can exercise it with literal dicts without constructing pydantic
+# models. We lift that dict into JobSearchPlugin once at each call site —
+# pydantic applies defaults, rejects unknown keys, and gives us typed attribute
+# access instead of the old .get("key", default) chain.
 
 
-def scraper_cfg(config: dict) -> dict:
-    return config.get("job_search", {}).get("scraper", {})
+def _model(config: dict[str, Any] | None) -> JobSearchPlugin:
+    return JobSearchPlugin.model_validate((config or {}).get("job_search") or {})
 
 
-def roles_list(config: dict) -> list[str]:
-    return config.get("job_search", {}).get("roles", [])
+def validate_config(config: dict[str, Any] | None) -> None:
+    """Fail fast on an invalid config before any scraping begins.
+
+    JobSearchPlugin has extra='forbid', so a typo'd field under job_search
+    would otherwise crash inside an enrichment loop after minutes of work.
+    Call once at run/backfill entry.
+    """
+    _model(config)
 
 
-def user_agent(config: dict) -> str:
-    return scraper_cfg(config).get(
-        "user_agent",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    )
+def min_comp_usd(config: dict[str, Any]) -> int:
+    """Compensation floor (USD) for the comp-threshold filter."""
+    return _model(config).min_comp_usd
 
 
-def timeout_seconds(config: dict) -> int:
-    return int(scraper_cfg(config).get("timeout", 30))
+def scraper_cfg(config: dict[str, Any] | None) -> ScraperConfig:
+    """Return the ScraperConfig pydantic model (with all defaults applied)."""
+    return _model(config).scraper
 
 
-def enrich_timeout(config: dict | None) -> int:
+def roles_list(config: dict[str, Any]) -> list[str]:
+    return list(_model(config).roles)
+
+
+def user_agent(config: dict[str, Any]) -> str:
+    return _model(config).scraper.user_agent
+
+
+def timeout_seconds(config: dict[str, Any]) -> int:
+    return _model(config).scraper.timeout
+
+
+def enrich_timeout(config: dict[str, Any] | None) -> int:
     """Timeout for Claude CLI enrichment calls (seconds)."""
-    cfg = scraper_cfg(config) if config else {}
-    return int(cfg.get("enrich_timeout", 30))
+    return _model(config).scraper.enrich_timeout
 
 
-def locations_config(config: dict) -> dict:
-    """Return the job_search.locations block, or {} if absent."""
-    return config.get("job_search", {}).get("locations", {})
+def locations_config(config: dict[str, Any]) -> Locations | None:
+    """Return the job_search.locations block as a Locations model, or None."""
+    return _model(config).locations
 
 
-def persona(config: dict) -> str:
+def persona(config: dict[str, Any]) -> str:
     """Return the job_search.persona string for enrichment prompts."""
-    return config.get("job_search", {}).get("persona", "SRE/Platform/Infra engineer")
+    return _model(config).persona or "SRE/Platform/Infra engineer"
 
 
-def home_city(config: dict) -> str:
+def home_city(config: dict[str, Any]) -> str:
     """Return the configured home city from locations block."""
-    return locations_config(config).get("home_city", "Vancouver, BC")
+    loc = locations_config(config)
+    return (loc.home_city if loc and loc.home_city else None) or "Vancouver, BC"
 
 
-def domain_keywords(config: dict) -> set[str]:
+def domain_keywords(config: dict[str, Any]) -> set[str]:
     """Return domain keywords for Tier 2 role matching."""
-    kws = config.get("job_search", {}).get("domain_keywords")
+    kws = _model(config).domain_keywords
     return set(kws) if kws else _DEFAULT_DOMAIN_KEYWORDS
 
 
-def seniority_keywords(config: dict) -> set[str]:
+def seniority_keywords(config: dict[str, Any]) -> set[str]:
     """Return seniority keywords for Tier 2 role matching."""
-    kws = config.get("job_search", {}).get("seniority_keywords")
+    kws = _model(config).seniority_keywords
     return set(kws) if kws else _DEFAULT_SENIORITY_KEYWORDS
 
 
-def countries_list(config: dict) -> list[str]:
+def countries_list(config: dict[str, Any]) -> list[str]:
     """Return the configured ISO country codes, defaulting to US + CA."""
-    return locations_config(config).get("countries", ["US", "CA"])
+    loc = locations_config(config)
+    return list(loc.countries) if loc and loc.countries else ["US", "CA"]
 
 
 def country_params(country: str) -> dict[str, str]:
@@ -209,22 +262,22 @@ def location_matches(job: dict, config: dict) -> bool:
     Returns True (accept) when no locations block is configured.
     """
     loc_cfg = locations_config(config)
-    if not loc_cfg:
+    if loc_cfg is None:
         return True
 
     loc = job.get("location", "").lower()
     if not loc:
         # Empty location implies remote-friendly; accept when remote is enabled
-        return loc_cfg.get("remote", True)
+        return loc_cfg.remote
 
-    if loc_cfg.get("remote", True) and "remote" in loc:
+    if loc_cfg.remote and "remote" in loc:
         return True
 
-    for city in loc_cfg.get("cities", []):
+    for city in loc_cfg.cities:
         if city.lower() in loc:
             return True
 
-    for code in loc_cfg.get("countries", []):
+    for code in loc_cfg.countries:
         for name in COUNTRY_NAMES.get(code.upper(), []):
             if name.lower() in loc:
                 return True
@@ -234,20 +287,26 @@ def location_matches(job: dict, config: dict) -> bool:
 
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
 
+
 def dedup_key(company: str, role: str) -> str:
     """Normalized dedup key for cross-site duplicate detection.
 
     Lowercases and collapses whitespace in both fields so the same job posted
     on RemoteOK and LinkedIn produces an identical key.
     """
+
     def _norm(s: str) -> str:
         return re.sub(r"\s+", " ", s.lower().strip())
+
     return f"{_norm(company)}::{_norm(role)}"
 
 
 # ── Company enrichment ───────────────────────────────────────────────────────
 
-def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *, budget: int = 0) -> dict:
+
+def enrich_company_descriptions(
+    jobs: list[dict], config: dict | None = None, *, budget: int = 0
+) -> dict:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
@@ -263,17 +322,21 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return stats
 
-    cfg = scraper_cfg(config) if config else {}
+    cfg = scraper_cfg(config)
     if budget <= 0:
-        budget = int(cfg.get("max_enrich_companies", 50))
-    include_gd = cfg.get("enrich_gd_rating", True)
+        budget = cfg.max_enrich_companies
+    include_gd = cfg.enrich_gd_rating
 
     unique_companies = {
         job.get("company", "").strip()
         for job in jobs
         if not job.get("product") and job.get("company", "").strip()
     }
-    log.info("[enrich] enriching up to %d companies (%d unique)...", budget, len(unique_companies))
+    log.info(
+        "[enrich] enriching up to %d companies (%d unique)...",
+        budget,
+        len(unique_companies),
+    )
 
     cache: dict[str, dict[str, str]] = {}
     calls_made = 0
@@ -289,13 +352,20 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
         if company not in cache:
             if calls_made >= budget:
                 if not budget_warned:
-                    remaining = len({
-                        j.get("company", "").strip() for j in jobs
-                        if not j.get("product")
-                        and j.get("company", "").strip()
-                        and j.get("company", "").strip() not in cache
-                    })
-                    log.warning("[enrich] budget reached (%d), %d companies unenriched", budget, remaining)
+                    remaining = len(
+                        {
+                            j.get("company", "").strip()
+                            for j in jobs
+                            if not j.get("product")
+                            and j.get("company", "").strip()
+                            and j.get("company", "").strip() not in cache
+                        }
+                    )
+                    log.warning(
+                        "[enrich] budget reached (%d), %d companies unenriched",
+                        budget,
+                        remaining,
+                    )
                     budget_warned = True
                 cache[company] = {"product": "", "gd_rating": ""}
             else:
@@ -311,43 +381,54 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
                         "Answer only, no preamble."
                     )
                 try:
-                    result = subprocess.run(
-                        ["claude", "--no-session-persistence", "-p", prompt],
-                        capture_output=True, text=True, timeout=enrich_timeout(config),
+                    stdout = claude_cli.invoke(
+                        prompt,
+                        headless=True,
+                        session_persistence=False,
+                        timeout=enrich_timeout(config),
                     )
-                    if result.returncode == 0:
-                        lines = [l for l in result.stdout.splitlines() if l.strip()]
-                        product = lines[0] if lines else ""
-                        gd_rating = ""
-                        if include_gd and len(lines) >= 2:
-                            raw = lines[1].strip().lower()
-                            if raw == "unknown":
-                                gd_rating = "unknown"
-                            else:
-                                try:
-                                    gd_rating = str(round(float(raw), 1))
-                                except ValueError:
-                                    # Claude occasionally returns prose; extract any float in 0.0-5.9 range.
-                                    m = re.search(r"([0-5]\.\d)", lines[1].strip())
-                                    if m:
-                                        gd_rating = m.group(1)
-                                        log.info("[enrich] GD rating fallback regex extracted %s for %s", gd_rating, company)
-                                    else:
-                                        gd_rating = ""
-                        cache[company] = {"product": product, "gd_rating": gd_rating}
-                    else:
-                        stderr_tail = (result.stderr or "").strip()[-200:]
-                        log.warning(
-                            "[enrich] company=%s rc=%d stderr=%r",
-                            company, result.returncode, stderr_tail,
-                        )
-                        cache[company] = {"product": "", "gd_rating": ""}
-                        stats["failed"] += 1
-                except subprocess.TimeoutExpired:
-                    log.warning("[enrich] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
+                    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+                    product = lines[0] if lines else ""
+                    gd_rating = ""
+                    if include_gd and len(lines) >= 2:
+                        raw = lines[1].strip().lower()
+                        if raw == "unknown":
+                            gd_rating = "unknown"
+                        else:
+                            try:
+                                gd_rating = str(round(float(raw), 1))
+                            except ValueError:
+                                # Claude occasionally returns prose; extract any float in 0.0-5.9 range.
+                                m = re.search(r"([0-5]\.\d)", lines[1].strip())
+                                if m:
+                                    gd_rating = m.group(1)
+                                    log.info(
+                                        "[enrich] GD rating fallback regex extracted %s for %s",
+                                        gd_rating,
+                                        company,
+                                    )
+                                else:
+                                    gd_rating = ""
+                    cache[company] = {"product": product, "gd_rating": gd_rating}
+                except subprocess.CalledProcessError as exc:
+                    stderr_tail = (exc.stderr or "").strip()[-200:]
+                    log.warning(
+                        "[enrich] company=%s rc=%d stderr=%r",
+                        company,
+                        exc.returncode,
+                        stderr_tail,
+                    )
                     cache[company] = {"product": "", "gd_rating": ""}
                     stats["failed"] += 1
-                except OSError as exc:
+                except subprocess.TimeoutExpired:
+                    log.warning(
+                        "[enrich] %s: claude CLI timed out after %ds",
+                        company,
+                        enrich_timeout(config),
+                    )
+                    cache[company] = {"product": "", "gd_rating": ""}
+                    stats["failed"] += 1
+                except (OSError, claude_cli.ClaudeNotFoundError) as exc:
                     log.warning("[enrich] %s lookup failed: %s", company, exc)
                     cache[company] = {"product": "", "gd_rating": ""}
                     stats["failed"] += 1
@@ -361,17 +442,18 @@ def enrich_company_descriptions(jobs: list[dict], config: dict | None = None, *,
     return stats
 
 
-def _location_summary(config: dict) -> str:
+def _location_summary(config: dict[str, Any]) -> str:
     loc_cfg = locations_config(config)
     parts = [f"Based in: {home_city(config)}"]
-    cities = loc_cfg.get("cities", [])
-    if cities:
-        parts.append("Preferred cities: " + ", ".join(cities))
-    codes = loc_cfg.get("countries", [])
-    if codes:
-        names = [COUNTRY_NAMES.get(c.upper(), [c])[0] for c in codes]
+    if loc_cfg is None:
+        parts.append("Remote: yes")
+        return "; ".join(parts)
+    if loc_cfg.cities:
+        parts.append("Preferred cities: " + ", ".join(loc_cfg.cities))
+    if loc_cfg.countries:
+        names = [COUNTRY_NAMES.get(c.upper(), [c])[0] for c in loc_cfg.countries]
         parts.append("Countries: " + ", ".join(names))
-    if loc_cfg.get("remote", True):
+    if loc_cfg.remote:
         parts.append("Remote: yes")
     return "; ".join(parts)
 
@@ -409,12 +491,12 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
         return stats
 
     cfg = scraper_cfg(config)
-    if not cfg.get("enrich_fit", True) or not cfg.get("enrich_notes", True):
+    if not cfg.enrich_fit or not cfg.enrich_notes:
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
         return stats
 
     if budget <= 0:
-        budget = int(cfg.get("max_enrich_fit", 50))
+        budget = cfg.max_enrich_fit
     loc_summary = _location_summary(config)
     role_persona = persona(config)
     hc = home_city(config)
@@ -427,10 +509,16 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
             continue
         if calls_made >= budget:
             remaining = sum(
-                1 for j in jobs[idx:]
-                if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+                1
+                for j in jobs[idx:]
+                if j.get("status") != "skipped"
+                and not (j.get("fit") and j.get("notes"))
             )
-            log.warning("[enrich-fit-notes] budget reached (%d), skipping %d jobs", budget, remaining)
+            log.warning(
+                "[enrich-fit-notes] budget reached (%d), skipping %d jobs",
+                budget,
+                remaining,
+            )
             stats["skipped_budget"] += remaining
             break
 
@@ -468,46 +556,58 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
         )
 
         try:
-            result = subprocess.run(
-                ["claude", "--no-session-persistence", "-p", prompt],
-                capture_output=True, text=True, timeout=enrich_timeout(config),
+            stdout = claude_cli.invoke(
+                prompt,
+                headless=True,
+                session_persistence=False,
+                timeout=enrich_timeout(config),
             )
-            if result.returncode == 0:
-                raw = result.stdout.strip()
-                try:
-                    parsed = json.loads(raw)
-                    fit_val = parsed.get("fit")
-                    notes_val = parsed.get("notes", "")
-                    if isinstance(fit_val, (int, float)):
-                        score = min(int(fit_val), 10)
-                        if not job.get("fit"):
-                            job["fit"] = f"{score}/10"
-                        if not job.get("notes") and isinstance(notes_val, str):
-                            job["notes"] = notes_val
-                        stats["enriched"] += 1
-                    else:
-                        log.warning(
-                            "[enrich-fit-notes] company=%s role=%s: JSON missing valid fit field: %r",
-                            company, role, raw[:200],
-                        )
-                        stats["failed"] += 1
-                except json.JSONDecodeError:
+            raw = stdout.strip()
+            try:
+                parsed = json.loads(raw)
+                fit_val = parsed.get("fit")
+                notes_val = parsed.get("notes", "")
+                if isinstance(fit_val, (int, float)):
+                    score = min(int(fit_val), 10)
+                    if not job.get("fit"):
+                        job["fit"] = f"{score}/10"
+                    if not job.get("notes") and isinstance(notes_val, str):
+                        job["notes"] = notes_val
+                    stats["enriched"] += 1
+                else:
                     log.warning(
-                        "[enrich-fit-notes] company=%s role=%s: non-JSON response: %r",
-                        company, role, raw[:200],
+                        "[enrich-fit-notes] company=%s role=%s: JSON missing valid fit field: %r",
+                        company,
+                        role,
+                        raw[:200],
                     )
                     stats["failed"] += 1
-            else:
-                stderr_tail = (result.stderr or "").strip()[-200:]
+            except json.JSONDecodeError:
                 log.warning(
-                    "[enrich-fit-notes] company=%s role=%s rc=%d stderr=%r",
-                    company, role, result.returncode, stderr_tail,
+                    "[enrich-fit-notes] company=%s role=%s: non-JSON response: %r",
+                    company,
+                    role,
+                    raw[:200],
                 )
                 stats["failed"] += 1
-        except subprocess.TimeoutExpired:
-            log.warning("[enrich-fit-notes] %s: claude CLI timed out after %ds", company, enrich_timeout(config))
+        except subprocess.CalledProcessError as exc:
+            stderr_tail = (exc.stderr or "").strip()[-200:]
+            log.warning(
+                "[enrich-fit-notes] company=%s role=%s rc=%d stderr=%r",
+                company,
+                role,
+                exc.returncode,
+                stderr_tail,
+            )
             stats["failed"] += 1
-        except OSError as exc:
+        except subprocess.TimeoutExpired:
+            log.warning(
+                "[enrich-fit-notes] %s: claude CLI timed out after %ds",
+                company,
+                enrich_timeout(config),
+            )
+            stats["failed"] += 1
+        except (OSError, claude_cli.ClaudeNotFoundError) as exc:
             log.warning("[enrich-fit-notes] %s failed: %s", company, exc)
             stats["failed"] += 1
         calls_made += 1
@@ -557,13 +657,7 @@ def _format_comp(base_salary: dict) -> str:
         single = value
         unit = (base_salary.get("unitText") or "").strip().upper()
 
-    def _num(x) -> int | None:
-        try:
-            return int(float(x))
-        except (TypeError, ValueError):
-            return None
-
-    lo, hi, mid = _num(min_v), _num(max_v), _num(single)
+    lo, hi, mid = _to_int(min_v), _to_int(max_v), _to_int(single)
     if lo is not None and hi is not None and lo != hi:
         amount = f"{lo:,}\u2013{hi:,}"
     elif mid is not None:
@@ -615,7 +709,7 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     """
     cache: dict[str, dict] = {}
     cfg = scraper_cfg(config)
-    delay = float(cfg.get("detail_delay_seconds", 0.5))
+    delay = cfg.detail_delay_seconds
     timeout_s = timeout_seconds(config)
     headers = {"User-Agent": user_agent(config)}
 
@@ -659,7 +753,9 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
 
     log.info(
         "[detail] fetched %d pages, enriched %d of %d jobs",
-        fetched_count, enriched_count, len(jobs),
+        fetched_count,
+        enriched_count,
+        len(jobs),
     )
 
 
@@ -674,7 +770,7 @@ _LINKEDIN_RANGE_RE = re.compile(
     r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
     r"(?P<min>[\d,]+)(?:\.\d+)?"
     r"(?P<u>/\w+)"
-    r"\s*[-\u2013\u2014]\s*"       # accept -, en-dash, em-dash
+    r"\s*[-\u2013\u2014]\s*"  # accept -, en-dash, em-dash
     r"(?P=p)(?P<max>[\d,]+)(?:\.\d+)?(?P=u)$"
 )
 
@@ -740,9 +836,8 @@ def parse_linkedin_html(html: str) -> dict:
     out = {}
 
     # Job description text for downstream Notes enrichment.
-    desc_div = (
-        soup.find("div", class_="show-more-less-html__markup")
-        or soup.find("div", class_="description__text")
+    desc_div = soup.find("div", class_="show-more-less-html__markup") or soup.find(
+        "div", class_="description__text"
     )
     if desc_div:
         out["description_text"] = desc_div.get_text(" ", strip=True)
@@ -786,23 +881,22 @@ def parse_greenhouse_html(html: str) -> dict:
         return {}
     try:
         soup = BeautifulSoup(html, "html.parser")
-    except Exception:
+    except Exception as exc:  # pragma: no cover - defensive only
+        log.debug("[enrich] BeautifulSoup failed (greenhouse): %s", exc)
         return {}
 
     out = {}
 
     # Job description text for downstream Notes enrichment.
-    desc_div = (
-        soup.find("div", id="content")
-        or soup.find("div", class_="job-description")
+    desc_div = soup.find("div", id="content") or soup.find(
+        "div", class_="job-description"
     )
     if desc_div:
         out["description_text"] = desc_div.get_text(" ", strip=True)
 
     text = soup.get_text(" ", strip=True)
     m = re.search(
-        r"Annual Salary:\s*"
-        r"(?P<p>\$|US\$|CA\$|[A-Z]{3}\s?)"
+        r"Annual Salary:\s*" r"(?P<p>\$|US\$|CA\$|[A-Z]{3}\s?)"
         # K/M suffix: Greenhouse boards like Anthropic post "$150K" shorthand
         r"(?P<mraw>[\d,]+[KkMm]?)"
         r"\s*[-\u2013\u2014]\s*"
@@ -817,7 +911,9 @@ def parse_greenhouse_html(html: str) -> dict:
         if lo is not None and hi is not None:
             currency_suffix = f" {m['cur']}" if m["cur"] else ""
             max_prefix = m["p2"] or m["p"]
-            out["comp"] = f"{m['p']}{lo:,}\u2013{max_prefix}{hi:,}/yr{currency_suffix}".strip()
+            out["comp"] = (
+                f"{m['p']}{lo:,}\u2013{max_prefix}{hi:,}/yr{currency_suffix}".strip()
+            )
 
     return out
 
@@ -889,9 +985,7 @@ def parse_jsonld_jobposting(html: str) -> dict:
             # "Competitive" string, or a MonetaryAmount we don't understand).
             # Log so a future site format change is diagnosable — callers
             # treat a missing "comp" key as "no data".
-            log.debug(
-                "[enrich] baseSalary present but unparseable: %r", base_salary
-            )
+            log.debug("[enrich] baseSalary present but unparseable: %r", base_salary)
 
     posted = posting.get("datePosted")
     if isinstance(posted, str) and posted:
@@ -907,9 +1001,9 @@ def parse_jsonld_jobposting(html: str) -> dict:
 
     desc_html = posting.get("description", "")
     if desc_html:
-        out["description_text"] = BeautifulSoup(
-            desc_html, "html.parser"
-        ).get_text(" ", strip=True)
+        out["description_text"] = BeautifulSoup(desc_html, "html.parser").get_text(
+            " ", strip=True
+        )
 
     return out
 
@@ -917,9 +1011,19 @@ def parse_jsonld_jobposting(html: str) -> dict:
 # ── CSV helpers ───────────────────────────────────────────────────────────────
 
 CANONICAL_HEADER = [
-    "Status", "Notes", "Company", "Location", "Role", "Fit", "Comp",
-    "Date Found", "Date Applied", "Link", "Product/Purpose",
-    "GD Rating", "Source",
+    "Status",
+    "Notes",
+    "Company",
+    "Location",
+    "Role",
+    "Fit",
+    "Comp",
+    "Date Found",
+    "Date Applied",
+    "Link",
+    "Product/Purpose",
+    "GD Rating",
+    "Source",
 ]
 
 
@@ -940,7 +1044,10 @@ def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[st
         rows = list(csv.DictReader(f))
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
-            f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+            f,
+            fieldnames=CANONICAL_HEADER,
+            quoting=csv.QUOTE_MINIMAL,
+            extrasaction="ignore",
         )
         writer.writeheader()
         for row in rows:
@@ -966,8 +1073,9 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
             except StopIteration:
                 return set(), set(), []
             if "Link" not in header:
-                log.error("jobs.csv is missing required 'Link' column — cannot deduplicate")
-                sys.exit(1)
+                raise ScraperError(
+                    "jobs.csv is missing required 'Link' column — cannot deduplicate"
+                )
             link_idx = header.index("Link")
             company_idx = header.index("Company") if "Company" in header else None
             role_idx = header.index("Role") if "Role" in header else None
@@ -978,21 +1086,34 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
                     continue
                 if link_idx < len(row) and row[link_idx]:
                     known_urls.add(row[link_idx].strip())
-                company = row[company_idx].strip() if company_idx is not None and company_idx < len(row) else ""
-                role = row[role_idx].strip() if role_idx is not None and role_idx < len(row) else ""
+                company = (
+                    row[company_idx].strip()
+                    if company_idx is not None and company_idx < len(row)
+                    else ""
+                )
+                role = (
+                    row[role_idx].strip()
+                    if role_idx is not None and role_idx < len(row)
+                    else ""
+                )
                 if company or role:
                     known_keys.add(dedup_key(company, role))
     except OSError as exc:
-        log.error("Cannot read %s: %s", csv_path, exc)
-        sys.exit(1)
+        raise ScraperError(f"Cannot read {csv_path}: {exc}") from exc
     return known_urls, known_keys, header
 
 
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
 # so downstream consumers see one canonical value.
-_REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset({
-    "", "anywhere", "worldwide", "remote - anywhere", "remote, worldwide",
-})
+_REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
+    {
+        "",
+        "anywhere",
+        "worldwide",
+        "remote - anywhere",
+        "remote, worldwide",
+    }
+)
 
 # Role-title suffixes appended by some scrapers to signal remote eligibility.
 # Stripped here so dedup and display see clean titles.
@@ -1030,9 +1151,12 @@ _COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
 
 # Period tokens found as suffixes like "/yr", "/mo", "/hr".
 _COMP_PERIOD_MAP: dict[str, str] = {
-    "yr": "year", "year": "year",
-    "mo": "month", "month": "month",
-    "hr": "hour", "hour": "hour",
+    "yr": "year",
+    "year": "year",
+    "mo": "month",
+    "month": "month",
+    "hr": "hour",
+    "hour": "hour",
 }
 
 
@@ -1092,7 +1216,9 @@ def _parse_comp(comp_str: str) -> dict:
             if code:
                 currencies_found.append(code.upper())
             elif sym:
-                currencies_found.append(_COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD"))
+                currencies_found.append(
+                    _COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD")
+                )
             pos = cm.end()
             while pos < len(s) and s[pos] == " ":
                 pos += 1
@@ -1145,7 +1271,7 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     Fails open when comp_max_usd is absent or zero so roles with no listed
     comp reach CSV for manual review rather than being silently dropped.
     """
-    threshold = int(config.get("job_search", {}).get("min_comp_usd", 180000))
+    threshold = min_comp_usd(config)
     cmax = job.get("comp_max_usd")
     if not cmax:
         return (True, "")
@@ -1202,7 +1328,7 @@ def normalize_job(raw: dict, source: str) -> dict:
     src = source or job.get("source", "")
     if src.startswith("Greenhouse (") and src.endswith(")"):
         job["source_canonical"] = "greenhouse"
-        job["source_board"] = src[len("Greenhouse ("):-1]
+        job["source_board"] = src[len("Greenhouse (") : -1]
     else:
         job["source_canonical"] = src.split("/")[0].lower() if src else ""
         job["source_board"] = ""
@@ -1228,12 +1354,14 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
             for job in jobs:
                 row = {col: "" for col in header}
                 row["Company"] = job.get("company", "")
-                row["Product/Purpose"] = job.get("product", "(auto-scraped -- needs fill)")
+                row["Product/Purpose"] = job.get(
+                    "product", "(auto-scraped -- needs fill)"
+                )
                 row["Role"] = job.get("role", "")
                 row["Comp"] = job.get("comp", "")
                 row["Location"] = job.get("location", "")
                 row["Source"] = job.get("source", "")
-                row["Date Found"] = job.get("date_found", date.today().isoformat())
+                row["Date Found"] = job.get("date_found", today().isoformat())
                 row["Status"] = job.get("status") or "found"
                 row["Link"] = job.get("url", "")
                 row["Fit"] = job.get("fit", "")
@@ -1242,12 +1370,12 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 writer.writerow(row)
                 written += 1
     except OSError as exc:
-        log.error("Cannot open %s for writing: %s", csv_path, exc)
-        sys.exit(1)
+        raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
     return written
 
 
 # ── Role matching ─────────────────────────────────────────────────────────────
+
 
 def _split_roles(roles: list[str]) -> tuple[list[str], list[str]]:
     """Partition roles into (include, exclude). '!'-prefixed entries are
@@ -1315,13 +1443,17 @@ def matches_roles(title: str, roles: list[str], config: dict | None = None) -> b
     # that the senior-only filter is delegated to config exclusions
     # ("!Junior *", "!*Internship*", "!*Manager*", etc.). Broader terms
     # (DevOps, Infrastructure) still require a seniority qualifier via Tier 2.
-    if any(kw in title_lower for kw in {"sre", "platform engineer", "site reliability engineer"}):
+    if any(
+        kw in title_lower
+        for kw in {"sre", "platform engineer", "site reliability engineer"}
+    ):
         return True
 
     return False
 
 
 # ── Search term helpers ───────────────────────────────────────────────────────
+
 
 def _compress_search_terms(roles: list[str]) -> list[str]:
     """Deduplicate 21 roles → ~10 base types by stripping seniority prefixes.
@@ -1342,7 +1474,7 @@ def _compress_search_terms(roles: list[str]) -> list[str]:
         base = role
         for prefix in _SENIORITY_PREFIXES:
             if lower.startswith(prefix):
-                base = role[len(prefix):]
+                base = role[len(prefix) :]
                 break
         key = base.lower()
         if key not in seen:
@@ -1356,9 +1488,9 @@ def _search_terms(config: dict) -> list[str]:
 
     Override by setting job_search.scraper.search_terms in config.
     """
-    explicit = scraper_cfg(config).get("search_terms")
+    explicit = scraper_cfg(config).search_terms
     if explicit:
-        return explicit
+        return list(explicit)
     return _compress_search_terms(roles_list(config))
 
 
@@ -1391,9 +1523,11 @@ def _api_get(
 
 # ── Playwright helpers ────────────────────────────────────────────────────────
 
+
 def _has_playwright() -> bool:
     try:
         import playwright  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -1408,18 +1542,23 @@ def _playwright_browser(config: dict):
     Set job_search.scraper.headless: true in config to run headless.
     """
     if not _has_playwright():
-        raise ImportError("playwright not installed — run: pip install playwright && playwright install chromium")
+        raise ImportError(
+            "playwright not installed — run: pip install playwright && playwright install chromium"
+        )
 
-    from playwright.sync_api import sync_playwright, Error as PWError
+    from playwright.sync_api import Error as PWError
+    from playwright.sync_api import sync_playwright
 
-    headless = scraper_cfg(config).get("headless", False)
+    headless = scraper_cfg(config).headless
     ua = user_agent(config)
 
     with sync_playwright() as pw:
         try:
             browser = pw.chromium.launch(headless=headless)
         except (PWError, OSError) as exc:
-            log.error("browser launch failed (run: playwright install chromium): %s", exc)
+            log.error(
+                "browser launch failed (run: playwright install chromium): %s", exc
+            )
             raise
         ctx = browser.new_context(
             user_agent=ua,
@@ -1435,6 +1574,7 @@ def _playwright_browser(config: dict):
 
 
 # ── Scrapers ──────────────────────────────────────────────────────────────────
+
 
 def scrape_remoteok(config: dict) -> list[dict]:
     """Fetch jobs from RemoteOK's public JSON API.
@@ -1477,7 +1617,7 @@ def scrape_remoteok(config: dict) -> list[dict]:
             "location": item.get("location", "") or "Remote",
             "url": item.get("url", ""),
             "source": "RemoteOK",
-            "date_found": date.today().isoformat(),
+            "date_found": today().isoformat(),
         }
         if comp:
             job["comp"] = comp
@@ -1492,7 +1632,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
 
     WWR publishes per-category RSS at
     /categories/remote-{category}-jobs.rss. Categories are configured under
-    job_search.scraper.wwr_categories in config.yaml.
+    plugins.job_search.scraper.wwr_categories in .dd-config.yaml.
     No auth or browser required.
     """
     roles = roles_list(config)
@@ -1500,7 +1640,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
-    categories = config.get("job_search", {}).get("scraper", {}).get("wwr_categories", [])
+    categories = scraper_cfg(config).wwr_categories
     if not categories:
         log.warning("[weworkremotely] no wwr_categories configured; skipping")
         return jobs
@@ -1535,14 +1675,16 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
             if link:
                 seen_urls.add(link)
 
-            jobs.append({
-                "company": company,
-                "role": role,
-                "location": region,
-                "url": link,
-                "source": "We Work Remotely",
-                "date_found": date.today().isoformat(),
-            })
+            jobs.append(
+                {
+                    "company": company,
+                    "role": role,
+                    "location": region,
+                    "url": link,
+                    "source": "We Work Remotely",
+                    "date_found": today().isoformat(),
+                }
+            )
 
     log.info("[weworkremotely] %d jobs matched", len(jobs))
     return jobs
@@ -1556,10 +1698,10 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     HN's HTML comment tree, which breaks on markup changes.
     Comment headline format (convention): "Company | Role | Location | ..."
     """
-    max_posts = scraper_cfg(config).get("hn_max_posts", 100)
+    max_posts = scraper_cfg(config).hn_max_posts
     roles = roles_list(config)
     session = _http_session(config)
-    current_month_str = date.today().strftime("%B %Y")
+    current_month_str = today().strftime("%B %Y")
 
     index_resp = _api_get(
         session,
@@ -1584,14 +1726,18 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
             break
 
     if not thread_id:
-        log.warning("[hn_who_is_hiring] could not find thread for %s", current_month_str)
+        log.warning(
+            "[hn_who_is_hiring] could not find thread for %s", current_month_str
+        )
         return []
 
     algolia_url = (
         f"https://hn.algolia.com/api/v1/search"
         f"?tags=comment,story_{thread_id}&hitsPerPage=1000"
     )
-    algolia_resp = _api_get(session, algolia_url, config, label="hn_who_is_hiring_algolia")
+    algolia_resp = _api_get(
+        session, algolia_url, config, label="hn_who_is_hiring_algolia"
+    )
     if not algolia_resp:
         return []
 
@@ -1600,7 +1746,8 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     total = data.get("nbHits", len(hits))
     if isinstance(total, int) and total > 1000:
         log.warning(
-            "[hn_who_is_hiring] thread has %d comments; only first 1000 retrieved", total
+            "[hn_who_is_hiring] thread has %d comments; only first 1000 retrieved",
+            total,
         )
 
     # Strip HTML tags from Algolia comment_text (simple tag-only removal;
@@ -1651,19 +1798,26 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
                 break
 
         comment_id = hit.get("objectID", "")
-        url = f"https://news.ycombinator.com/item?id={comment_id}" if comment_id else thread_url
+        url = (
+            f"https://news.ycombinator.com/item?id={comment_id}"
+            if comment_id
+            else thread_url
+        )
 
-        jobs.append({
-            "company": company,
-            "role": role,
-            "location": location,
-            "url": url,
-            "source": "HN Who's Hiring",
-            "date_found": date.today().isoformat(),
-        })
+        jobs.append(
+            {
+                "company": company,
+                "role": role,
+                "location": location,
+                "url": url,
+                "source": "HN Who's Hiring",
+                "date_found": today().isoformat(),
+            }
+        )
 
     log.info("[hn_who_is_hiring] %d jobs matched", len(jobs))
     return jobs
+
 
 def scrape_greenhouse(config: dict) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
@@ -1674,12 +1828,14 @@ def scrape_greenhouse(config: dict) -> list[dict]:
     which returns all jobs with full HTML descriptions in a single request.
     """
     roles = roles_list(config)
-    boards = scraper_cfg(config).get("greenhouse_boards", ["anthropic"])
+    boards = scraper_cfg(config).greenhouse_boards
     session = _http_session(config)
     jobs: list[dict] = []
 
     for board in boards:
-        api_url = f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
+        api_url = (
+            f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
+        )
         resp = _api_get(session, api_url, config, label=f"greenhouse/{board}")
         if not resp:
             continue
@@ -1705,23 +1861,28 @@ def scrape_greenhouse(config: dict) -> list[dict]:
             desc_html = entry.get("content", "")
             desc_text = ""
             if desc_html:
-                desc_text = BeautifulSoup(
-                    desc_html, "html.parser"
-                ).get_text(" ", strip=True)
+                desc_text = BeautifulSoup(desc_html, "html.parser").get_text(
+                    " ", strip=True
+                )
 
-            jobs.append({
-                "company": company_name,
-                "role": title,
-                "location": location or "Remote",
-                "url": absolute_url,
-                "source": f"Greenhouse ({board})",
-                "date_found": date.today().isoformat(),
-                "description_text": desc_text,
-            })
+            jobs.append(
+                {
+                    "company": company_name,
+                    "role": title,
+                    "location": location or "Remote",
+                    "url": absolute_url,
+                    "source": f"Greenhouse ({board})",
+                    "date_found": today().isoformat(),
+                    "description_text": desc_text,
+                }
+            )
 
-        log.info("[greenhouse] %s: %d jobs matched out of %d listed",
-                 board, sum(1 for j in jobs if j["source"] == f"Greenhouse ({board})"),
-                 len(board_jobs))
+        log.info(
+            "[greenhouse] %s: %d jobs matched out of %d listed",
+            board,
+            sum(1 for j in jobs if j["source"] == f"Greenhouse ({board})"),
+            len(board_jobs),
+        )
 
     return jobs
 
@@ -1767,13 +1928,7 @@ def _format_jobspy_comp(row: dict) -> str:
     currency = _jobspy_str(row.get("currency")).upper()
     interval = _jobspy_str(row.get("interval")).lower()
 
-    def _num(x) -> int | None:
-        try:
-            return int(float(x))
-        except (TypeError, ValueError):
-            return None
-
-    lo_i, hi_i = _num(lo), _num(hi)
+    lo_i, hi_i = _to_int(lo), _to_int(hi)
     if lo_i is None and hi_i is None:
         return ""
 
@@ -1801,7 +1956,7 @@ def normalize_jobspy_row(row: dict) -> dict:
         "source": _jobspy_str(row.get("site"), "jobspy"),
         "description": _jobspy_str(row.get("description")),
         "comp": _format_jobspy_comp(row),
-        "date_found": date.today().isoformat(),
+        "date_found": today().isoformat(),
     }
 
 
@@ -1816,14 +1971,16 @@ def scrape_jobspy(config: dict) -> list[dict]:
     try:
         from jobspy import scrape_jobs as jobspy_scrape
     except ImportError:
-        log.warning("[jobspy] python-jobspy not installed — run: pip install python-jobspy")
+        log.warning(
+            "[jobspy] python-jobspy not installed — run: pip install python-jobspy"
+        )
         return []
 
     cfg = scraper_cfg(config)
-    jobspy_cfg = cfg.get("jobspy", {})
-    results_wanted = int(jobspy_cfg.get("results_wanted_per_query", 50))
-    hours_old = int(jobspy_cfg.get("hours_old", 168))
-    default_country_indeed = jobspy_cfg.get("country_indeed", "USA")
+    jobspy_cfg = cfg.jobspy
+    results_wanted = jobspy_cfg.results_wanted_per_query
+    hours_old = jobspy_cfg.hours_old
+    default_country_indeed = jobspy_cfg.country_indeed
 
     roles = roles_list(config)
     terms = _search_terms(config)
@@ -1834,7 +1991,9 @@ def scrape_jobspy(config: dict) -> list[dict]:
     for term in terms:
         for country in countries:
             country_code = country.upper()
-            country_indeed = _JOBSPY_COUNTRY_MAP.get(country_code, default_country_indeed)
+            country_indeed = _JOBSPY_COUNTRY_MAP.get(
+                country_code, default_country_indeed
+            )
             location_name = COUNTRY_NAMES.get(country_code, [country])[0]
             # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
             # ("location not parsed") on every request and retries for minutes.
@@ -1849,7 +2008,9 @@ def scrape_jobspy(config: dict) -> list[dict]:
                     hours_old=hours_old,
                 )
             except Exception as exc:
-                log.warning("[jobspy] scrape failed for %r / %s: %s", term, country, exc)
+                log.warning(
+                    "[jobspy] scrape failed for %r / %s: %s", term, country, exc
+                )
                 continue
 
             if df is None or df.empty:
@@ -1859,7 +2020,9 @@ def scrape_jobspy(config: dict) -> list[dict]:
             records = df.to_dict("records")
             for row in records:
                 normalized = normalize_jobspy_row(row)
-                if not normalized["role"] or not matches_roles(normalized["role"], roles, config):
+                if not normalized["role"] or not matches_roles(
+                    normalized["role"], roles, config
+                ):
                     continue
                 url = normalized["url"]
                 if url and url in seen_urls:
@@ -1872,8 +2035,13 @@ def scrape_jobspy(config: dict) -> list[dict]:
                 normalized["description_text"] = normalized.pop("description", "")
                 jobs.append(normalized)
 
-            log.debug("[jobspy] %s / %s: %d records, %d matched after role filter",
-                      term, country, len(records), sum(1 for j in jobs if j.get("date_found") == date.today().isoformat()))
+            log.debug(
+                "[jobspy] %s / %s: %d records, %d matched after role filter",
+                term,
+                country,
+                len(records),
+                sum(1 for j in jobs if j.get("date_found") == today().isoformat()),
+            )
 
     log.info("[jobspy] %d jobs matched across all terms and countries", len(jobs))
     return jobs
@@ -1889,11 +2057,7 @@ def scrape_wellfound(config: dict) -> list[dict]:
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
-    wf_delays = (
-        scraper_cfg(config)
-        .get("playwright_delays", {})
-        .get("wellfound", {})
-    )
+    wf_delays = scraper_cfg(config).playwright_delays.get("wellfound", {})
     page_load_ms = int(wf_delays.get("page_load_ms", 3000))
     jobs: list[dict] = []
     seen_urls: set[str] = set()
@@ -1926,10 +2090,9 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             or card.query_selector("h2")
                             or card.query_selector("h3")
                         )
-                        company_el = (
-                            card.query_selector("[class*='companyName']")
-                            or card.query_selector("[class*='startupName']")
-                        )
+                        company_el = card.query_selector(
+                            "[class*='companyName']"
+                        ) or card.query_selector("[class*='startupName']")
                         # Location: Wellfound cards surface location near the role
                         # title with hashed class names containing 'location'.
                         loc_el = (
@@ -1973,7 +2136,7 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             "location": location,
                             "url": href,
                             "source": "Wellfound",
-                            "date_found": date.today().isoformat(),
+                            "date_found": today().isoformat(),
                         }
                         if comp:
                             job["comp"] = comp
@@ -2006,7 +2169,7 @@ def scrape_apple(config: dict) -> list[dict]:
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
-    max_pages = int(cfg.get("max_pages", 3))
+    max_pages = cfg.max_pages
     jobs: list[dict] = []
     seen_positions: set[str] = set()
     base_url = "https://jobs.apple.com"
@@ -2063,7 +2226,9 @@ def scrape_apple(config: dict) -> list[dict]:
                         # Scroll to trigger additional API pages
                         for _ in range(max_pages - 1):
                             prev_count = len(api_results)
-                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            page.evaluate(
+                                "window.scrollTo(0, document.body.scrollHeight)"
+                            )
                             page.wait_for_timeout(2000)
                             if len(api_results) == prev_count:
                                 break
@@ -2080,32 +2245,41 @@ def scrape_apple(config: dict) -> list[dict]:
                             title = item.get("postingTitle", "")
                             if not title or not matches_roles(title, roles, config):
                                 continue
-                            position_id = item.get("positionId", "") or item.get("id", "")
+                            position_id = item.get("positionId", "") or item.get(
+                                "id", ""
+                            )
                             if not position_id:
                                 continue
                             if position_id in seen_positions:
                                 continue
                             seen_positions.add(position_id)
                             locs = item.get("locations", [])
-                            location = locs[0].get("name", "Various") if locs else "Various"
+                            location = (
+                                locs[0].get("name", "Various") if locs else "Various"
+                            )
                             job_id = item.get("id", position_id)
                             slug = item.get("transformedPostingTitle", "")
                             detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
-                            jobs.append({
-                                "company": "Apple",
-                                "role": title,
-                                "location": location,
-                                "url": detail_url,
-                                "source": "Apple Careers",
-                                "date_found": date.today().isoformat(),
-                            })
+                            jobs.append(
+                                {
+                                    "company": "Apple",
+                                    "role": title,
+                                    "location": location,
+                                    "url": detail_url,
+                                    "source": "Apple Careers",
+                                    "date_found": today().isoformat(),
+                                }
+                            )
                         except Exception as exc:
                             log.debug("[apple] parse error on result: %s", exc)
                             continue
 
                     log.debug(
                         "[apple] %s/%s: %d API results, %d matched",
-                        locale, term, len(api_results), len(jobs),
+                        locale,
+                        term,
+                        len(api_results),
+                        len(jobs),
                     )
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
@@ -2126,13 +2300,14 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "apple": scrape_apple,
 }
 
+
 def _non_headless_sources(config: dict) -> frozenset[str]:
     """Derive the set of sources that require a visible browser from config.
 
     A source entry with type: playwright in job_search.scraper.sources signals
     that it must run in non-headless mode. Plain bool entries default to headless.
     """
-    sources = scraper_cfg(config).get("sources", {})
+    sources = scraper_cfg(config).sources
     return frozenset(
         sid
         for sid, entry in sources.items()
@@ -2221,8 +2396,9 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
     both URL and company+role key so the same job appearing on multiple boards
     is only kept once (first scraper wins).
     """
-    source_cfg = scraper_cfg(config).get("sources", {})
-    workers = int(scraper_cfg(config).get("parallel_workers", 4))
+    cfg = scraper_cfg(config)
+    source_cfg = cfg.sources
+    workers = cfg.parallel_workers
 
     def _is_enabled(entry) -> bool:
         if isinstance(entry, dict):
@@ -2272,6 +2448,7 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
 
 # ── Notification ─────────────────────────────────────────────────────────────
 
+
 def _notify_new_jobs(count: int, csv_path: Path) -> None:
     title = "Job Scraper"
     message = f"{count} new jobs found"
@@ -2279,13 +2456,24 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 
     if shutil.which("terminal-notifier"):
         subprocess.run(
-            ["terminal-notifier", "-title", title, "-message", message, "-open", file_url],
+            [
+                "terminal-notifier",
+                "-title",
+                title,
+                "-message",
+                message,
+                "-open",
+                file_url,
+            ],
             check=False,
         )
     else:
         subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{message}" with title "{title}" subtitle "{csv_path.name}"'],
+            [
+                "osascript",
+                "-e",
+                f'display notification "{message}" with title "{title}" subtitle "{csv_path.name}"',
+            ],
             check=False,
         )
 
@@ -2336,9 +2524,9 @@ def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
 
 def backfill(config: dict, csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
+    validate_config(config)
     if not csv_path.exists():
-        log.error("jobs.csv not found at %s", csv_path)
-        sys.exit(1)
+        raise ScraperError(f"jobs.csv not found at {csv_path}")
 
     # Hold LOCK_EX for the entire read-enrich-write cycle to prevent a
     # concurrent scrape run from appending rows that get dropped by our rewrite.
@@ -2359,7 +2547,11 @@ def backfill(config: dict, csv_path: Path) -> None:
 
         log.info(
             "[backfill] %d rows: %d need Product, %d need GD, %d need Fit, %d need Notes",
-            len(jobs), needs_product, needs_gd, needs_fit, needs_notes,
+            len(jobs),
+            needs_product,
+            needs_gd,
+            needs_fit,
+            needs_notes,
         )
 
         if not (needs_product or needs_fit or needs_gd or needs_notes):
@@ -2378,7 +2570,10 @@ def backfill(config: dict, csv_path: Path) -> None:
         tmp_path = csv_path.with_suffix(".csv.tmp")
         with open(tmp_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(
-                f, fieldnames=list(header), quoting=csv.QUOTE_MINIMAL, extrasaction="ignore",
+                f,
+                fieldnames=list(header),
+                quoting=csv.QUOTE_MINIMAL,
+                extrasaction="ignore",
             )
             writer.writeheader()
             for job in jobs:
@@ -2389,181 +2584,9 @@ def backfill(config: dict, csv_path: Path) -> None:
     filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
     filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))
     filled_gd = needs_gd - sum(1 for j in jobs if not j.get("gd_rating"))
-    print(f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, +{filled_fit} Fit")
+    print(
+        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, +{filled_fit} Fit"
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
-
-def main() -> None:  # pragma: no cover
-    parser = argparse.ArgumentParser(description="Scrape job boards and append to jobs.csv")
-    parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--dry-run", action="store_true", help="Print matches without writing to CSV")
-    parser.add_argument("--backfill", action="store_true", help="Enrich empty fields in existing jobs.csv rows")
-    parser.add_argument("--debug", action="store_true", help="Enable DEBUG-level logging")
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.debug else logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    log.info("PATH=%s", os.environ.get("PATH", ""))
-
-    started_at = datetime.now(timezone.utc)
-
-    config_path = (
-        Path(args.config) if args.config
-        else Path(__file__).parent.parent / "config.yaml"
-    )
-    if not config_path.exists():
-        log.error("config.yaml not found at %s", config_path)
-        sys.exit(1)
-
-    try:
-        config = load_config(config_path)
-    except yaml.YAMLError as exc:
-        log.error("config.yaml is malformed: %s", exc)
-        sys.exit(1)
-    except OSError as exc:
-        log.error("Cannot read config.yaml at %s: %s", config_path, exc)
-        sys.exit(1)
-
-    output_dir = resolve_output_dir(config)
-    csv_path = output_dir / "jobs.csv"
-
-    if args.backfill:
-        backfill(config, csv_path)
-        return
-
-    if not scraper_cfg(config).get("enabled", False):
-        print("Scraper disabled. Set job_search.scraper.enabled: true in config.yaml")
-        sys.exit(0)
-
-    known_urls, known_keys, header = load_existing_jobs(csv_path)
-
-    if not header:
-        header = CANONICAL_HEADER
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow(header)
-        except OSError as exc:
-            log.error("Cannot initialize %s: %s", csv_path, exc)
-            sys.exit(1)
-    else:
-        header = _migrate_legacy_header(csv_path, header)
-
-    log.info(
-        "Loaded %d existing URLs, %d existing keys from %s",
-        len(known_urls), len(known_keys), csv_path,
-    )
-
-    all_jobs, failed_sources = run_all_scrapers(config)
-
-    # Dedup against existing DB by both URL and company+role key
-    new_jobs = [
-        j for j in all_jobs
-        if (not j.get("url") or j["url"] not in known_urls)
-        and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
-    ]
-
-    # Drop jobs with no URL — can't dedup on future runs
-    urlless = [j for j in new_jobs if not j.get("url")]
-    if urlless:
-        log.warning("Dropping %d jobs with no URL (cannot dedup on future runs)", len(urlless))
-    new_jobs = [j for j in new_jobs if j.get("url")]
-
-    log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
-
-    pre_filter = len(new_jobs)
-    new_jobs = [j for j in new_jobs if location_matches(j, config)]
-    filtered = pre_filter - len(new_jobs)
-    if filtered:
-        log.info("Filtered %d jobs by location preferences", filtered)
-
-    if failed_sources:
-        log.warning("Failed sources: %s", ", ".join(failed_sources))
-
-    enrich_job_details(new_jobs, config)
-
-    # normalize_job runs before threshold filter so comp_max_usd is populated
-    new_jobs = [normalize_job(j, j.get("source", "")) for j in new_jobs]
-
-    skipped_below_comp = 0
-    for job in new_jobs:
-        if job.get("status") == "skipped":
-            continue
-        ok, reason = comp_meets_threshold(job, config)
-        if ok:
-            continue
-        job["status"] = "skipped"
-        existing_notes = (job.get("notes") or "").strip()
-        job["notes"] = f"{existing_notes}; {reason}" if existing_notes else reason
-        skipped_below_comp += 1
-        log.info(
-            "[comp-filter] skipped: %s | %s | comp=%r",
-            job.get("company", "?"),
-            job.get("role", "?"),
-            job.get("comp", ""),
-        )
-    log.info(
-        "Comp-threshold filter: %d skipped below $%d USD",
-        skipped_below_comp,
-        int(config.get("job_search", {}).get("min_comp_usd", 180000)),
-    )
-
-    product_stats = enrich_company_descriptions(new_jobs, config)
-    fn_stats = enrich_fit_and_notes(new_jobs, config)
-
-    n = len(new_jobs)
-    log.info(
-        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
-        fn_stats["enriched"], n, fn_stats["skipped_budget"], fn_stats["failed"],
-    )
-    log.info(
-        "Product enriched: %d/%d, %d skipped (cached), %d failed",
-        product_stats["enriched"], n, product_stats["skipped_cached"], product_stats["failed"],
-    )
-
-    if args.dry_run:
-        for j in new_jobs:
-            print(f"  [{j['source']:22s}] {j['company']:30s} | {j['role']:45s} | {j['location']}")
-            print(f"    {j['url']}")
-        print(f"\n{len(new_jobs)} new jobs (dry-run, nothing written)")
-        if failed_sources:
-            sys.exit(1)
-        return
-
-    written = append_jobs(csv_path, new_jobs, header)
-    print(f"Scraper complete: {written} new jobs appended to {csv_path} ({skipped_below_comp} skipped below comp threshold)")
-
-    run_manifest = {
-        "started_at": started_at.isoformat(),
-        "finished_at": datetime.now(timezone.utc).isoformat(),
-        "sources_ok": sorted(set(
-            j.get("source", "") for j in all_jobs if j.get("source") and j.get("source") not in failed_sources
-        )),
-        "sources_failed": failed_sources,
-        "new_jobs": written,
-        "enriched_fit_notes": fn_stats["enriched"],
-        "enriched_product": product_stats["enriched"],
-        "skipped_below_comp": skipped_below_comp,
-    }
-    last_run_path = output_dir / "jobs-last-run.json"
-    try:
-        last_run_path.write_text(json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8")
-        log.info("Run manifest written to %s", last_run_path)
-    except OSError as exc:
-        log.warning("Could not write run manifest: %s", exc)
-
-    if failed_sources:
-        log.error("Scraper failures: %s", ", ".join(failed_sources))
-        sys.exit(1)
-
-    if written > 0:
-        _notify_new_jobs(written, csv_path)
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()
