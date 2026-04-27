@@ -1,305 +1,56 @@
+# Daily Driver — ADHD-aware personal productivity assistant
+# Requires Python 3.11+ and macOS (arm64 target for v0.1.0)
+
+.ONESHELL:
 SHELL := /bin/bash
 .SHELLFLAGS := -o pipefail -c
-.ONESHELL:
-.PHONY: help deps install uninstall launchd-install launchd-uninstall launchd-start setup status \
-       test test-cov \
-       day-start day-end check-in standup week-end month-end prep focus interview-prep voice-update \
-       gather-jobs scrape-jobs backfill-jobs
+.DEFAULT_GOAL := help
+
+# Single-source version from source/daily_driver/__init__.py
+VERSION := $(shell grep '^__version__' source/daily_driver/__init__.py 2>/dev/null | cut -d'"' -f2)
+
+# Platform detection
+OS_NAME ?= $(strip $(shell uname -s | tr '[:upper:]' '[:lower:]'))
+RAW_ARCH := $(strip $(shell uname -m | tr '[:upper:]' '[:lower:]'))
+ifeq ($(RAW_ARCH),x86_64)
+    ARCH := amd64
+else ifeq ($(RAW_ARCH),aarch64)
+    ARCH := arm64
+else
+    ARCH := $(RAW_ARCH)
+endif
+
+# Python detection: prefer .venv, then detect-python.sh, then python3
+PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; \
+    else .ci-tools/detect-python.sh 2>/dev/null || echo python3; fi)
+PIP := $(PYTHON) -m pip
 
 PROJ_DIR := $(shell pwd)
 
-# Claude invocation: read model/effort from config.yaml, fall back to sonnet/medium
-CLAUDE_MODEL  = $(shell yq '.claude.model // "sonnet"' config.yaml 2>/dev/null || echo sonnet)
-CLAUDE_EFFORT = $(shell yq '.claude.effort // "medium"' config.yaml 2>/dev/null || echo medium)
-CLAUDE_SUBAGENT = $(shell yq '.claude.subagent_model // "sonnet"' config.yaml 2>/dev/null || echo sonnet)
-CLDE  = CLAUDE_CODE_SUBAGENT_MODEL=$(CLAUDE_SUBAGENT) claude --model $(CLAUDE_MODEL) --effort $(CLAUDE_EFFORT)
-CLDELT = CLAUDE_CODE_SUBAGENT_MODEL=haiku claude --model $(CLAUDE_MODEL) --effort low
-CLAUDE_DIR := $(PROJ_DIR)/.claude
+include makefiles/clean.mk
+include makefiles/install.mk
+include makefiles/setup.mk
+include makefiles/testing.mk
+include makefiles/release.mk
 
-##@ Getting Started
+# -----------------------------------------------------------------
+# Help target
+# -----------------------------------------------------------------
 
-help:  ## Display this help
+.PHONY: help
+help: ## Show this help
 	@echo ""
-	@printf "\033[1mDaily Driver\033[0m - Job search planning and daily accountability\n"
+	@echo "Daily Driver (v$(VERSION))"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@echo "Powered by Claude Code. Tracks applications, follow-ups, and calendar"
-	@echo "to help you plan your day, stay on track, and report progress."
+	@printf "  %-18s %s\n" "Version:"  "$(VERSION)"
+	@printf "  %-18s %s\n" "Platform:" "$(OS_NAME)-$(ARCH)"
+	@printf "  %-18s %s\n" "Python:"   "$(PYTHON)"
 	@echo ""
-	@printf "\033[1mQuick Start\033[0m\n"
-	@echo "  1. make setup          Install deps, link commands, verify auth"
-	@echo "  2. make day-start      Plan your day (run each morning)"
-	@echo "  3. make check-in       Review progress (auto-triggered via launchd)"
-	@echo "  4. make day-end        Summarize the day (run before signing off)"
+	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@printf "\033[1mTypical Day\033[0m\n"
-	@echo "  09:00  make day-start     Gather context, build plan, block calendar"
-	@echo "  11:00  make check-in      Review progress, check follow-ups"
-	@echo "  13:00  make focus ARGS=90 Suppress check-ins for 90 min deep work"
-	@echo "  14:30  (auto check-in)    iTerm2 opens with /check-in after focus ends"
-	@echo "  16:30  make day-end       Compare plan vs actual, write daily notes"
-	@echo "  Fri    make week-end      Weekly rollup summary"
+	@echo "Available targets:"
+	@awk 'BEGIN {FS = ":.*##"} \
+		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5)} \
+		/^[a-zA-Z0-9_-]+:.*?##/ {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ""
-	@printf "\033[1mNotes\033[0m\n"
-	@echo "  - All commands also work as /slash-commands inside Claude Code"
-	@echo "  - Sessions are named for easy /resume (e.g. day-start-2026-04-02)"
-	@echo "  - make standup and make focus run headless (sonnet, low effort)"
-	@echo ""
-	@printf "\033[1mConfiguration\033[0m: config.yaml  (tracker settings, calendar, check-in times)\n"
-	@printf "\033[1mOutput\033[0m:        %s\n" "$$(yq '.output_dir // "~/git/daily-notes"' config.yaml 2>/dev/null)"
-	@echo ""
-	@awk 'BEGIN {FS = ":.*##"; printf "\033[1mTargets\033[0m\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) } ' $(MAKEFILE_LIST)
-
-BREW_DEPS := jq yq ical-buddy terminal-notifier
-
-status:  ## Check installation status of all dependencies and services
-	@echo "=== Dependencies ==="
-	@for pkg in jq yq; do \
-		if command -v "$$pkg" &>/dev/null; then \
-			printf "  \033[32m%-20s\033[0m %s\n" "$$pkg" "$$($$pkg --version 2>&1 | head -1)"; \
-		else \
-			printf "  \033[31m%-20s\033[0m %s\n" "$$pkg" "not installed"; \
-		fi; \
-	done
-	@if command -v icalBuddy &>/dev/null; then \
-		printf "  \033[32m%-20s\033[0m %s\n" "icalBuddy" "installed"; \
-	else \
-		printf "  \033[31m%-20s\033[0m %s\n" "icalBuddy" "not installed"; \
-	fi
-	@if command -v claude &>/dev/null; then \
-		printf "  \033[32m%-20s\033[0m %s\n" "claude" "$$(claude --version 2>&1 | head -1)"; \
-	else \
-		printf "  \033[31m%-20s\033[0m %s\n" "claude" "not installed"; \
-	fi
-	@echo ""
-	@echo "=== Symlinks ==="
-	@if [ -L "$(CLAUDE_DIR)/commands/day-start.md" ]; then echo "  commands: linked"; else echo "  commands: not linked (run make install)"; fi
-	@if [ -L "$(CLAUDE_DIR)/settings.local.json" ]; then echo "  settings.local.json: linked"; else echo "  settings.local.json: not linked (run make install)"; fi
-	@echo ""
-	@echo "=== LaunchAgents ==="
-	@for agent in day-start checkin day-end gather-jobs; do \
-		plist_name="com.daily-driver.$${agent}"; \
-		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
-		if [ -f "$$plist_file" ]; then \
-			if launchctl list "$${plist_name}" &>/dev/null; then \
-				printf "  \033[32m%-24s\033[0m %s\n" "$$agent" "installed and running"; \
-			else \
-				printf "  \033[33m%-24s\033[0m %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
-			fi; \
-		else \
-			printf "  \033[31m%-24s\033[0m %s\n" "$$agent" "not installed (run make launchd-install)"; \
-		fi; \
-	done
-
-deps:  ## Install all dependencies (Homebrew + claude)
-	@echo "=== Homebrew packages ==="
-	@for pkg in $(BREW_DEPS); do \
-		if brew list "$$pkg" &>/dev/null; then \
-			echo "  $$pkg: already installed"; \
-		else \
-			echo "  $$pkg: installing..."; \
-			brew install "$$pkg"; \
-		fi; \
-	done
-	@echo ""
-	@echo "=== Python packages ==="
-	@if python3 -c "import requests, bs4, lxml, yaml, jobspy" 2>/dev/null; then \
-		echo "  python deps: already installed"; \
-	else \
-		echo "  python deps: installing from pyproject.toml..."; \
-		pip install -e .; \
-	fi
-	@if python3 -c "import playwright" 2>/dev/null; then \
-		echo "  playwright: already installed"; \
-	else \
-		echo "  playwright: installing browser..."; \
-		pip install playwright && playwright install chromium; \
-	fi
-	@echo ""
-	@echo "=== Claude Code ==="
-	@if command -v claude &>/dev/null; then \
-		echo "  claude: already installed ($$(claude --version 2>&1 | head -1))"; \
-	else \
-		echo "  claude: installing via official installer..."; \
-		curl -fsSL https://claude.ai/install.sh | bash; \
-	fi
-
-setup: deps install  ## Full setup: install deps, symlink commands, verify auth
-	@echo ""
-	@echo "=== Calendar (icalBuddy) ==="
-	@if command -v icalBuddy &>/dev/null; then \
-		icalBuddy calendars 2>&1 | head -20 || echo "  calendar access failed"; \
-	else \
-		echo "  icalBuddy not installed"; \
-	fi
-	@echo ""
-	@echo "=== Output Directory ==="
-	@OUTPUT_DIR=$$(yq '.output_dir' config.yaml); \
-	OUTPUT_DIR="$${OUTPUT_DIR/#\~/$${HOME}}"; \
-	if [ -d "$$OUTPUT_DIR" ]; then \
-		echo "  $$OUTPUT_DIR: OK"; \
-	else \
-		echo "  $$OUTPUT_DIR: creating..."; \
-		mkdir -p "$$OUTPUT_DIR"; \
-		git -C "$$OUTPUT_DIR" init 2>/dev/null; \
-	fi
-	@echo ""
-	@echo "=== Sync Repos ==="
-	@yq '.sync_repos[]' config.yaml 2>/dev/null | while IFS= read -r repo; do \
-		repo="$${repo/#\~/$${HOME}}"; \
-		if [ -d "$$repo/.git" ]; then \
-			printf "  %-40s %s\n" "$$repo:" "OK"; \
-		else \
-			printf "  %-40s %s\n" "$$repo:" "NOT FOUND"; \
-		fi; \
-	done
-	@echo ""
-	@echo "=== LaunchAgents ==="
-	@for agent in day-start checkin day-end gather-jobs; do \
-		plist_name="com.daily-driver.$${agent}"; \
-		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
-		if launchctl list "$${plist_name}" &>/dev/null 2>&1; then \
-			printf "  %-24s %s\n" "$$agent" "running"; \
-		elif [ -f "$$plist_file" ]; then \
-			printf "  %-24s %s\n" "$$agent" "installed but not loaded (run make launchd-start)"; \
-		else \
-			printf "  %-24s %s\n" "$$agent" "not installed (run make launchd-install)"; \
-		fi; \
-	done
-	@echo ""
-	@$(MAKE) launchd-start || echo "Some agents not running. Use 'make launchd-start' to load them."
-	@echo "Setup complete. Run 'make day-start' to begin."
-
-install:  ## Symlink commands and agents into .claude/ for Claude Code
-	@command -v yq &>/dev/null || { echo "ERROR: yq not installed. Run: make deps"; exit 1; }
-	@mkdir -p $(CLAUDE_DIR)/commands $(CLAUDE_DIR)/agents
-	@for f in $(PROJ_DIR)/commands/*.md; do \
-		name=$$(basename "$$f"); \
-		ln -sf "$$f" "$(CLAUDE_DIR)/commands/$$name"; \
-		echo "  linked commands/$$name"; \
-	done
-	@for f in $(PROJ_DIR)/agents/*.md; do \
-		name=$$(basename "$$f"); \
-		ln -sf "$$f" "$(CLAUDE_DIR)/agents/$$name"; \
-		echo "  linked agents/$$name"; \
-	done
-	@STATE_DIR=$$(yq '.state_dir // "~/.local/share/daily-driver"' config.yaml 2>/dev/null); \
-	STATE_DIR="$${STATE_DIR/#\~/$${HOME}}"; \
-	STATE_DIR="$${STATE_DIR//&/\\&}"; \
-	OUTPUT_DIR=$$(yq '.output_dir' config.yaml 2>/dev/null); \
-	if [ -z "$$OUTPUT_DIR" ] || [ "$$OUTPUT_DIR" = "null" ]; then \
-		echo "ERROR: output_dir not set in config.yaml"; exit 1; \
-	fi; \
-	OUTPUT_DIR="$${OUTPUT_DIR/#\~/$${HOME}}"; \
-	OUTPUT_DIR="$${OUTPUT_DIR//&/\\&}"; \
-	HOME_ESC="$${HOME//&/\\&}"; \
-	sed -e "s|PLACEHOLDER_HOME|$${HOME_ESC}|g" \
-	    -e "s|PLACEHOLDER_STATE_DIR|$${STATE_DIR}|g" \
-	    -e "s|PLACEHOLDER_OUTPUT_DIR|$${OUTPUT_DIR}|g" \
-		$(PROJ_DIR)/settings.json.tmpl > $(PROJ_DIR)/settings.json
-	@ln -sf $(PROJ_DIR)/settings.json $(CLAUDE_DIR)/settings.local.json
-	@echo "  generated settings.json from template"
-	@echo "Install complete. Commands and agents are now available in Claude Code."
-
-uninstall:  ## Remove symlinks from .claude/
-	@for f in $(PROJ_DIR)/commands/*.md; do \
-		rm -f "$(CLAUDE_DIR)/commands/$$(basename $$f)"; \
-	done
-	@for f in $(PROJ_DIR)/agents/*.md; do \
-		rm -f "$(CLAUDE_DIR)/agents/$$(basename $$f)"; \
-	done
-	@rm -f $(CLAUDE_DIR)/CLAUDE.md $(CLAUDE_DIR)/settings.local.json
-	@echo "Uninstalled. Symlinks removed from .claude/"
-
-##@ Daily Workflow (run these every day)
-
-day-start:  ## Morning planning — gather context, build plan, block calendar
-	@$(CLDE) --agent work-planner -n "day-start-$$(date +%Y-%m-%d)" '/day-start'
-
-check-in:  ## Mid-day review — progress against plan, flag overruns
-	@day_start_session="day-start-$$(date +%Y-%m-%d)"; \
-	if session_id=$$(bash scripts/find-session-id.sh "$$day_start_session" 2>/dev/null) && [[ -n "$$session_id" ]]; then \
-		$(CLDE) --agent work-planner --resume "$$session_id" '/check-in'; \
-	else \
-		$(CLDE) --agent work-planner -n "check-in-$$(date +%Y-%m-%d-%H%M)" '/check-in'; \
-	fi
-
-day-end:  ## Evening wrap-up — plan vs actual, write daily notes
-	@$(CLDE) --agent work-planner -n "day-end-$$(date +%Y-%m-%d)" '/day-end'
-
-focus:  ## Suppress check-ins for deep work (usage: make focus ARGS="90")
-	@$(CLDELT) -p '/focus $(ARGS)'
-
-##@ Reporting
-
-standup:  ## Standup summary (Yesterday/Today/Blockers) copied to clipboard
-	@EXIT=0; bash scripts/build-standup.sh || EXIT=$$?; \
-	if [ "$$EXIT" -eq 2 ]; then \
-		echo ""; \
-		echo "Ambiguous items detected. Resolving via Claude..."; \
-		bash scripts/build-standup.sh --ambiguous | $(CLDELT) -p "Normalise each item under AMBIGUOUS_ITEMS to a one-line completed action. Return only the corrected lines, one per bullet."; \
-	elif [ "$$EXIT" -ne 0 ]; then \
-		echo "build-standup.sh failed (exit $$EXIT)" >&2; exit $$EXIT; \
-	fi
-
-week-end:  ## Friday rollup — daily notes into weekly summary
-	@$(CLDE) --agent work-planner -n "week-end-$$(date +%Y-W%V)" '/week-end'
-
-month-end:  ## Monthly rollup — weekly summaries into monthly report
-	@$(CLDE) --agent work-planner -n "month-end-$$(date +%Y-%m)" '/month-end'
-
-prep:  ## Meeting prep — application context for upcoming meeting
-	@$(CLDE) --agent work-planner -n "prep-$$(date +%Y-%m-%d-%H%M)" '/prep $(ARGS)'
-
-interview-prep:  ## Practice questions for a target role (usage: make interview-prep ARGS="Company")
-	@$(CLDE) --agent work-planner -n "interview-prep-$$(date +%Y-%m-%d-%H%M)" '/interview-prep $(ARGS)'
-
-##@ Job Discovery
-
-gather-jobs:  ## Full pipeline — queue, scrape all sources, enrich with Claude
-	@bash scripts/gather-jobs.sh
-
-scrape-jobs:  ## Scraper only (usage: make scrape-jobs ARGS="--dry-run")
-	@python3 scripts/scrape-jobs.py --config config.yaml $(ARGS)
-
-backfill-jobs:  ## Re-enrich rows missing Fit/GD/Product/Notes in jobs.csv
-	@python3 scripts/scrape-jobs.py --config config.yaml --backfill $(ARGS)
-
-##@ Writing
-
-voice-update:  ## Update voice profile from sample (usage: make voice-update ARGS="/path/to/file.md")
-	@$(CLDE) -n "voice-update-$$(date +%Y-%m-%d)" '/voice-update $(ARGS)'
-
-##@ Automation (LaunchAgents)
-
-launchd-install:  ## Install all LaunchAgents (day-start, check-in, day-end)
-	@bash scripts/launchd-install.sh install
-
-launchd-start:  ## Load agents that are installed but not running
-	@any_missing=0; \
-	for agent in day-start checkin day-end gather-jobs; do \
-		plist_name="com.daily-driver.$${agent}"; \
-		plist_file="$$HOME/Library/LaunchAgents/$${plist_name}.plist"; \
-		if [ ! -f "$$plist_file" ]; then \
-			echo "  $${agent}: not installed (run make launchd-install)"; \
-			any_missing=1; \
-		elif launchctl list "$${plist_name}" &>/dev/null; then \
-			echo "  $${agent}: already running"; \
-		else \
-			launchctl bootstrap "gui/$$(id -u)" "$$plist_file"; \
-			echo "  $${agent}: loaded"; \
-		fi; \
-	done; \
-	[ "$$any_missing" -eq 0 ] || exit 1
-
-launchd-uninstall:  ## Remove all LaunchAgents
-	@bash scripts/launchd-install.sh uninstall
-
-##@ Development
-
-test:  ## Run tests
-	pytest
-
-test-cov:  ## Run tests with coverage report
-	pytest --cov=scripts --cov-report=term-missing
-
-

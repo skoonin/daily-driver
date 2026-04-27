@@ -1,58 +1,167 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel", "build"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "daily-driver"
-version = "0.1.0"
+dynamic = ["version"]
+description = "Daily Driver: ADHD-aware personal productivity assistant. Durable data record + Claude conversational layer for daily planning, tracking, and job search."
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Shawn Koonin" }]
+keywords = ["productivity", "adhd", "cli", "daily-planning", "job-search"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Scheduling",
+]
 dependencies = [
-    "requests>=2.31",
-    "beautifulsoup4>=4.13",
-    "lxml>=5.0",
-    "playwright>=1.56",
+    "pydantic>=2.5,<3",
     "pyyaml>=6.0",
-    "python-jobspy>=1.1.0,<2.0.0",
+    "rich>=13.7.0",
+    "jinja2>=3.1.0",
+    "python-jobspy>=1.1.70",
+    "httpx>=0.27.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "tox>=4.0",
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+    "pytest-html>=4.0.0",
+    "pytest-xdist>=3.0.0",
+    "pytest-timeout>=2.0.0",
+    "black>=25.1.0",
+    "isort>=6.0.1",
+    "flake8>=7.3.0",
+    "Flake8-pyproject>=1.2.3",
+    "mypy>=1.17.1",
+    "tox>=4.0.0",
+    "pre-commit>=3.0.0",
+    "types-PyYAML>=6.0.0",
+    "types-setuptools>=68.0.0",
+    "build>=1.0.0",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[project.scripts]
+daily-driver = "daily_driver.__main__:main"
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["tests"]
-addopts = ["--import-mode=importlib", "-p", "no:warnings", "-v", "--tb=short"]
+[project.urls]
+Homepage = "https://github.com/skoonin/daily-driver"
+Issues = "https://github.com/skoonin/daily-driver/issues"
+Changelog = "https://github.com/skoonin/daily-driver/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "daily_driver.__version__" }
+
+[tool.setuptools.package-dir]
+"" = "source"
+
+[tool.setuptools.packages.find]
+where = ["source"]
+include = ["daily_driver*"]
+
+[tool.setuptools.package-data]
+daily_driver = [
+    "py.typed",
+    "agents/daily-driver/*.md",
+    "commands/daily-driver/*.md",
+    "launchd/*.j2",
+    "templates/*.j2",
+    "templates/.*.j2",
+    "templates/*.md",
+    "templates/*.yaml",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["daily_driver"]
+known_third_party = ["pydantic", "yaml", "jinja2", "rich", "jobspy", "httpx", "pytest"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "source"
+explicit_package_bases = true
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_generics = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["jobspy.*"]
+ignore_missing_imports = true
+
+# argparse stubs return Any from add_parser() and Namespace attributes;
+# strict mode's warn_return_any fires on every CLI command. Scope it off
+# for this subpackage rather than annotating around stdlib friction.
+[[tool.mypy.overrides]]
+module = ["daily_driver.cli.commands.*"]
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["daily_driver.scraper._impl"]
+ignore_errors = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.flake8]
+# Line length is enforced by black (see [tool.black]); E501 stays ignored.
+# Keeping max-line-length aligned with black avoids spurious diffs if E501 is
+# ever re-enabled.
+max-line-length = 88
+extend-ignore = ["E203", "E501", "W503"]
+exclude = [".git", "__pycache__", ".venv", "build", "dist", ".tox"]
 
 [tool.coverage.run]
-source = ["scripts"]
+source = ["source"]
 branch = true
-omit = ["*/tests/*"]
+omit = ["source/daily_driver/cli/*"]
 
 [tool.coverage.report]
-fail_under = 79
 show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
 
-[tool.tox]
-legacy_tox_ini = """
-[tox]
-envlist = py311
-isolated_build = false
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -p no:warnings -p no:cacheprovider"
+pythonpath = ["source", "tests"]
+testpaths = ["tests"]
+markers = [
+    "platform_macos: tests requiring macOS",
+    "needs_claude: tests requiring claude CLI",
+    "needs_icalbuddy: tests requiring icalBuddy",
+    "needs_jobspy: tests requiring python-jobspy",
+    "needs_browser: tests requiring playwright browser",
+    "slow: slow tests",
+    "integration: integration tests",
+    "e2e: end-to-end tests",
+    "unit: unit tests",
+]
 
-[testenv]
-skip_install = true
-deps =
-    pytest>=8.0
-    pytest-cov>=5.0
-    requests>=2.31
-    beautifulsoup4>=4.13
-    lxml>=5.0
-    pyyaml>=6.0
-    playwright>=1.56
-    python-jobspy>=1.1.0,<2.0.0
-commands =
-    pytest --cov=scripts --cov-report=term-missing {posargs}
-"""
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", ".tox"]
