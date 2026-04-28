@@ -1,0 +1,342 @@
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+from pydantic import ValidationError
+
+from daily_driver.core.config_models import (
+    Compensation,
+    Config,
+    DailyDriverConfig,
+    JobSearchPlugin,
+    JobSpyConfig,
+    Locations,
+    PluginsConfig,
+    RecurringTask,
+    RoleFilters,
+    ScraperConfig,
+    TrackerCategoryConfig,
+    TrackerConfig,
+    UserProfile,
+    VoiceProfile,
+)
+
+# ---------------------------------------------------------------------------
+# DailyDriverConfig
+# ---------------------------------------------------------------------------
+
+
+def test_daily_driver_config_defaults():
+    m = DailyDriverConfig()
+    assert m.output_dir == "."
+
+
+def test_daily_driver_config_custom():
+    m = DailyDriverConfig(output_dir="/home/user/notes")
+    assert m.output_dir == "/home/user/notes"
+
+
+def test_daily_driver_config_rejects_extra():
+    with pytest.raises(ValidationError):
+        DailyDriverConfig(output_dir=".", bogus_field=True)
+
+
+# ---------------------------------------------------------------------------
+# UserProfile
+# ---------------------------------------------------------------------------
+
+
+def test_user_profile_defaults():
+    m = UserProfile()
+    assert m.name is None
+    assert m.citizenship == []
+    assert m.work_auth == {}
+    assert m.timezone is None
+    assert m.seeking_since is None
+
+
+def test_user_profile_full():
+    m = UserProfile(
+        name="Alice",
+        citizenship=["US", "CA"],
+        work_auth={"US": "citizen"},
+        timezone="America/Vancouver",
+        seeking_since="2026-01-01",
+    )
+    assert m.name == "Alice"
+    assert m.seeking_since == date(2026, 1, 1)
+
+
+def test_user_profile_seeking_since_native_date():
+    # Unquoted YAML loads as a date object — validator must pass it through
+    m = UserProfile(seeking_since=date(2026, 3, 15))
+    assert m.seeking_since == date(2026, 3, 15)
+
+
+# ---------------------------------------------------------------------------
+# RecurringTask
+# ---------------------------------------------------------------------------
+
+
+def test_recurring_task_daily_no_day():
+    m = RecurringTask(name="Standup", cadence="daily")
+    assert m.cadence == "daily"
+    assert m.day is None
+
+
+def test_recurring_task_weekly_with_day():
+    m = RecurringTask(name="Review", cadence="weekly", day="Monday")
+    assert m.day == "Monday"
+
+
+def test_recurring_task_day_rejected_for_daily():
+    with pytest.raises(ValidationError, match="only valid when cadence is 'weekly'"):
+        RecurringTask(name="X", cadence="daily", day="Monday")
+
+
+def test_recurring_task_day_rejected_for_monthly():
+    with pytest.raises(ValidationError):
+        RecurringTask(name="X", cadence="monthly", day="Monday")
+
+
+def test_recurring_task_invalid_cadence():
+    with pytest.raises(ValidationError):
+        RecurringTask(name="X", cadence="hourly")
+
+
+# ---------------------------------------------------------------------------
+# VoiceProfile
+# ---------------------------------------------------------------------------
+
+
+def test_voice_profile_defaults():
+    m = VoiceProfile()
+    assert m.formality is None
+    assert m.avoid_words == []
+
+
+def test_voice_profile_full():
+    m = VoiceProfile(
+        formality="professional-casual",
+        sentence_length="medium",
+        avoid_words=["leverage"],
+        preferred_signoff="Thanks,\nAlice",
+    )
+    assert m.formality == "professional-casual"
+
+
+def test_voice_profile_invalid_formality():
+    with pytest.raises(ValidationError):
+        VoiceProfile(formality="ultra-formal")
+
+
+# ---------------------------------------------------------------------------
+# TrackerConfig
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_config_valid():
+    m = TrackerConfig(
+        default_category="task",
+        categories={"task": TrackerCategoryConfig(required=["title"])},
+    )
+    assert m.default_category == "task"
+
+
+def test_tracker_config_default_category_missing_from_categories():
+    with pytest.raises(ValidationError, match="must be a key in categories"):
+        TrackerConfig(
+            default_category="job",
+            categories={"task": TrackerCategoryConfig()},
+        )
+
+
+def test_tracker_category_config_defaults():
+    m = TrackerCategoryConfig()
+    assert m.required == []
+
+
+# ---------------------------------------------------------------------------
+# Compensation
+# ---------------------------------------------------------------------------
+
+
+def test_compensation_valid():
+    m = Compensation(currency="USD", minimum=150000, target=200000)
+    assert m.currency == "USD"
+    assert m.current is None
+
+
+def test_compensation_invalid_currency():
+    with pytest.raises(ValidationError):
+        Compensation(currency="JPY", minimum=100, target=200)
+
+
+# ---------------------------------------------------------------------------
+# Locations
+# ---------------------------------------------------------------------------
+
+
+def test_locations_defaults():
+    m = Locations()
+    assert m.remote is False
+    assert m.countries == []
+
+
+# ---------------------------------------------------------------------------
+# RoleFilters
+# ---------------------------------------------------------------------------
+
+
+def test_role_filters_defaults():
+    m = RoleFilters()
+    assert m.exclude_management is False
+
+
+# ---------------------------------------------------------------------------
+# JobSearchPlugin
+# ---------------------------------------------------------------------------
+
+
+def test_job_search_plugin_minimal():
+    m = JobSearchPlugin()
+    assert m.persona is None
+    assert m.sources == {}
+    assert m.roles == []
+    assert m.domain_keywords == []
+    assert m.seniority_keywords == []
+    assert m.min_comp_usd == 180000
+    assert isinstance(m.scraper, ScraperConfig)
+
+
+def test_job_search_plugin_with_sources():
+    m = JobSearchPlugin(sources={"linkedin": {"max_pages": 3}})
+    assert m.sources["linkedin"]["max_pages"] == 3
+
+
+def test_job_search_plugin_full():
+    m = JobSearchPlugin(
+        persona="Staff SRE",
+        roles=["Senior SRE", "Staff Platform Engineer"],
+        domain_keywords=["kubernetes", "terraform"],
+        seniority_keywords=["staff", "senior"],
+        min_comp_usd=200000,
+        scraper=ScraperConfig(enabled=True, timeout=60, parallel_workers=2),
+    )
+    assert m.persona == "Staff SRE"
+    assert m.roles == ["Senior SRE", "Staff Platform Engineer"]
+    assert m.min_comp_usd == 200000
+    assert m.scraper.enabled is True
+    assert m.scraper.timeout == 60
+    assert m.scraper.parallel_workers == 2
+
+
+def test_job_search_plugin_rejects_extra():
+    with pytest.raises(ValidationError):
+        JobSearchPlugin(nonexistent_key="oops")
+
+
+# ---------------------------------------------------------------------------
+# ScraperConfig
+# ---------------------------------------------------------------------------
+
+
+def test_scraper_config_defaults():
+    m = ScraperConfig()
+    assert m.enabled is False
+    assert m.timeout == 30
+    assert m.enrich_timeout == 30
+    assert m.max_enrich_companies == 50
+    assert m.enrich_gd_rating is True
+    assert m.enrich_fit is True
+    assert m.enrich_notes is True
+    assert m.max_enrich_fit == 50
+    assert m.detail_delay_seconds == 0.5
+    assert m.search_terms is None
+    assert m.headless is False
+    assert m.wwr_categories == []
+    assert m.hn_max_posts == 100
+    assert m.greenhouse_boards == ["anthropic"]
+    assert isinstance(m.jobspy, JobSpyConfig)
+    assert m.playwright_delays == {}
+    assert m.sources == {}
+    assert m.parallel_workers == 4
+    assert m.max_pages == 3
+
+
+def test_scraper_config_rejects_extra():
+    with pytest.raises(ValidationError):
+        ScraperConfig(unknown_flag=True)
+
+
+def test_scraper_config_sources_dict():
+    m = ScraperConfig(sources={"remoteok": True, "jobspy": False})
+    assert m.sources["remoteok"] is True
+    assert m.sources["jobspy"] is False
+
+
+# ---------------------------------------------------------------------------
+# JobSpyConfig
+# ---------------------------------------------------------------------------
+
+
+def test_jobspy_config_defaults():
+    m = JobSpyConfig()
+    assert m.results_wanted_per_query == 50
+    assert m.hours_old == 168
+    assert m.country_indeed == "USA"
+
+
+def test_jobspy_config_custom():
+    m = JobSpyConfig(results_wanted_per_query=100, hours_old=72, country_indeed="CA")
+    assert m.results_wanted_per_query == 100
+    assert m.country_indeed == "CA"
+
+
+def test_jobspy_config_rejects_extra():
+    with pytest.raises(ValidationError):
+        JobSpyConfig(bad_key="x")
+
+
+# ---------------------------------------------------------------------------
+# PluginsConfig
+# ---------------------------------------------------------------------------
+
+
+def test_plugins_config_empty():
+    m = PluginsConfig()
+    assert m.job_search is None
+
+
+def test_plugins_config_rejects_unknown_plugin():
+    with pytest.raises(ValidationError):
+        PluginsConfig(ticket_system={"url": "https://jira.example.com"})
+
+
+# ---------------------------------------------------------------------------
+# Top-level Config
+# ---------------------------------------------------------------------------
+
+
+def test_config_minimal_valid():
+    m = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
+    assert m.daily_driver.output_dir == "."
+    assert m.user_profile.name is None
+    assert m.plugins.job_search is None
+
+
+def test_config_rejects_extra_top_level():
+    with pytest.raises(ValidationError):
+        Config(
+            tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
+            unknown_section={"foo": "bar"},
+        )
+
+
+def test_config_rejects_extra_in_plugins():
+    with pytest.raises(ValidationError):
+        Config(
+            tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
+            plugins={"job_search": None, "mystery_plugin": {}},
+        )

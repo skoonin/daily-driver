@@ -1,14 +1,14 @@
 *.log
 *.tmp
-.claude/*.md
-.claude/settings.local.json
-.claude/commands/
-.claude/agents/
+!**/claude_cli.py
+!**/test_claude_cli.py
+!**/_claude_session.py
+!**/test_claude_launchers.py
 .playwright-mcp/
 .mcp.json
 .session.lock
-settings.json
-context.md
+# settings.json
+# context.md
 coverage.json
 .coverage
 .tox/

@@ -1,144 +1,85 @@
 # Daily Driver
 
-Work planning and reporting system for SRE daily workflow, powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+ADHD-aware personal productivity assistant. A durable data layer for daily planning, tracking, and job search with a Claude-powered conversational layer on top.
 
-## What It Does
+> **Status: v0.1.0.** Pure-Python CLI installable from source (macOS arm64).
 
-Daily Driver provides Claude Code slash commands for structured daily work management:
+## What it does
 
-### Daily Workflow
-- **`/day-start`** -- Morning planning: syncs repos, gathers calendar/Jira/RFC/PR data, reviews carry-forward from yesterday, asks about personal tasks, and produces a time-blocked plan with YAML frontmatter
-- **`/day-end`** -- End of day: collects session data and git activity, runs ticket status sweep, compares plan vs actual, builds carry-forward for tomorrow, writes daily notes, and auto-commits
-- **`/check-in`** -- Mid-day review: re-reads morning plan, captures progress on planned items, flags overruns (task running 2x longer than planned), reminds about Jira ticket status updates
-- **`/focus`** -- Toggle focus mode: suppresses check-in triggers for a set duration
+Daily Driver keeps the unglamorous parts of a focused workweek out of your head and in structured files:
 
-### Reporting
-- **`/standup`** -- Generate async standup summary (Yesterday/Today/Blockers) and copy to clipboard for Slack
-- **`/week-end`** -- Weekly rollup: aggregates the week's daily notes into a manager-friendly summary
-- **`/prep`** -- Meeting prep: pulls Jira/PR context relevant to an upcoming calendar meeting
+- **Workspace** — one directory holds plans, notes, tracker, config. `daily-driver init .` scaffolds it.
+- **Tracker** — YAML-backed list of anything you follow up on (applications, tasks, chores, contacts). Categories are config-driven and extensible via `--extra key=value`.
+- **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
+- **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
+- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, Greenhouse, JobSpy for LinkedIn/Indeed/Glassdoor/Google, Wellfound, Apple), dedup, filter, and Claude-CLI enrichment.
+- **Gather modules** — typed readers for git history, macOS Calendar (icalBuddy), Claude Code sessions, daily notes.
+- **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
 
-### Setup
-- **`/setup`** -- One-time: verifies tool installation, checks authentication, validates configuration
+## Install
 
-All configuration lives in `config.yaml`.
-
-## Prerequisites
-
-| Tool | Purpose | Install |
-|------|---------|---------|
-| `claude` | Claude Code CLI | [docs.anthropic.com](https://docs.anthropic.com/en/docs/claude-code) |
-| `acli` | Atlassian CLI for Jira | [acli docs](https://acli.dev) |
-| `gh` | GitHub CLI | `brew install gh` |
-| `icalBuddy` | macOS Calendar access | `brew install ical-buddy` |
-| `jq` | JSON processing | `brew install jq` |
-| `yq` | YAML processing | `brew install yq` |
-| `terminal-notifier` | Fallback notifications (optional) | `brew install terminal-notifier` |
-
-## Setup
+Requires Python 3.11+ and macOS. See [docs/install.md](docs/install.md) for the full prerequisites and Playwright notes.
 
 ```bash
-git clone <repo-url> ~/git/daily-driver
-cd ~/git/daily-driver
-make setup
+pip install 'git+https://github.com/skoonin/daily-driver.git@v0.1.0'
+daily-driver --version
 ```
 
-`make setup` runs `make deps` (installs all dependencies), `make install` (symlinks commands and agents into `.claude/`), and verifies tool authentication. Edit `config.yaml` to match your environment after cloning.
-
-Run `make status` at any time to check installation state.
-
-## Configuration
-
-All settings are in `config.yaml`. Key sections:
-
-- **output_dir** -- Where plans and notes are saved
-- **sync_repos** -- Repos to pull at day-start
-- **jira** -- Jira instances with project keys, RFC projects, and ticket patterns
-- **github_orgs** -- GitHub organizations for PR queries
-- **calendar** -- macOS Calendar sync settings (calendar name, enable/disable)
-- **checkin** -- Automated check-in interval, work hours for iTerm2 check-in triggers
-- **planning** -- Carry-forward stale threshold
-- **reporting** -- Standup format (slack/plain), weekly save directory
-
-## Usage
-
-### Make targets (primary workflow)
-
-Run from any terminal without an active Claude Code session:
+## Quick start
 
 ```bash
-make day-start    # Morning planning
-make check-in     # Mid-day review
-make day-end      # EOD review and notes
-make standup      # Headless standup -- copies result to clipboard
-make focus ARGS="90 SRE-123"  # Focus mode for 90 minutes, linked to ticket
-make help         # Full target list
+daily-driver init ~/daily-driver-workspace
+cd ~/daily-driver-workspace
+daily-driver doctor
+daily-driver tracker add --category task --title "Write phase 7 tests"
+daily-driver status
 ```
 
-### Slash commands (inside Claude Code session)
+Full walkthrough in [docs/quick-start.md](docs/quick-start.md).
+
+## Workspace layout
 
 ```
-/day-start    /day-end    /check-in
-/standup      /week-end   /prep       /focus
+<workspace>/
+  .dd-config.yaml          # workspace marker + structured config
+  context.md               # your profile (seeded once, edit freely)
+  voice-profile.md         # writing voice (ditto)
+  tracker.yaml             # tracker entries (CLI-managed)
+  jobs.csv                 # scraper output (plugin-managed)
+  .daily-driver/
+    version                # version stamp
+    manifest.json          # SHA-256 manifest of managed .claude/ files
+    state/                 # ephemeral: locks, logs
+  .claude/
+    commands/daily-driver/ # shipped slash commands (re-materialized on drift)
+    agents/daily-driver/   # shipped agents (ditto)
+    commands/*.md          # your custom commands (untouched)
+    agents/*.md            # your custom agents (untouched)
+  <YYYY>/<MM>/             # daily plans + notes
 ```
 
-## Plan File Format
+Workspace discovery walks up from CWD looking for `.dd-config.yaml`. Override with `--workspace PATH`.
 
-Plan and notes files use YAML frontmatter for structured data (carry-forward items, plan items with status, personal tasks) followed by a human-readable markdown body. This allows machine parsing for features like calendar sync, check-in, and reporting while keeping files readable.
+## Documentation
 
-## Output
+| Doc | Audience |
+|-----|----------|
+| [install.md](docs/install.md) | Install, upgrade, Playwright |
+| [quick-start.md](docs/quick-start.md) | First-run walkthrough |
+| [commands.md](docs/commands.md) | All subcommands and non-obvious flags |
+| [configuration.md](docs/configuration.md) | `.dd-config.yaml` reference |
+| [customization.md](docs/customization.md) | `.claude/` ownership, custom commands/agents |
+| [troubleshooting.md](docs/troubleshooting.md) | doctor errors, launchd, flock, Playwright |
+| [developer.md](docs/developer.md) | Architecture, runtime flow, materialize, init contract |
+| [extending.md](docs/extending.md) | Adding subcommands and scraper sources |
+| [releasing.md](docs/releasing.md) | Release workflow, semver, CHANGELOG |
 
-```
-{output_dir}/
-  2026/
-    03/
-      2026-03-31-plan.md       # Morning plan (frontmatter + markdown)
-      2026-03-31-notes.md      # EOD notes (frontmatter + markdown)
-  weekly/
-    2026/
-      2026-W14-week.md         # Weekly rollup
-```
-
-## Project Structure
-
-```
-daily-driver/
-  config.yaml                  # Central configuration
-  context.md                   # User work profile and preferences
-  CLAUDE.md                    # Claude Code project instructions
-  Makefile                     # deps, install, status, launchd, and workflow targets
-  commands/
-    day-start.md               # Morning planning workflow
-    day-end.md                 # EOD review workflow
-    check-in.md                # Mid-day check-in
-    focus.md                   # Focus mode toggle
-    standup.md                 # Async standup generator
-    week-end.md                # Weekly rollup
-    prep.md                    # Meeting prep
-    setup.md                   # One-time setup verification
-  agents/
-    work-planner.md            # Planning behavior instructions
-  scripts/
-    gather-calendar.sh         # macOS Calendar via icalBuddy
-    gather-jira.sh             # Jira tickets via acli
-    gather-rfcs.sh             # RFC project queries via acli
-    gather-prs.sh              # GitHub PRs via gh
-    gather-sessions.sh         # Claude Code session summaries
-    gather-git-activity.sh     # Today's git commits
-    gather-carryforward.sh     # Structured carry-forward from yesterday
-    gather-notes-range.sh      # Read notes/plans for a date range
-    gather-ticket-status.sh    # Bulk Jira ticket status lookup
-    extract-jira-refs.sh       # Extract ticket keys from text
-    calendar-sync.sh           # Write plan time blocks to macOS Calendar
-    sync-repos.sh              # Pull tracked repos
-    focus-mode.sh              # Focus lock file management
-    check-in-notify.sh         # launchd trigger: opens iTerm2 window with claude /check-in (falls back to Terminal.app)
-    checkin-state.sh           # Runtime state management
-    launchd-install.sh         # LaunchAgent install/uninstall
-    launch-day-end.sh          # iTerm2 automation for EOD trigger
-  launchd/
-    com.daily-driver.checkin.plist  # LaunchAgent template
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and commit conventions.
 
 ## Platform
 
-macOS only. Relies on macOS-specific tools (icalBuddy, BSD date, AppleScript, launchd, osascript).
+macOS only for v0.1.0. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
+
+## License
+
+MIT.
