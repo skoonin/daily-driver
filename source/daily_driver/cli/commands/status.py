@@ -174,5 +174,5 @@ def run(args: argparse.Namespace) -> int:
 def _to_utc(dt: datetime.datetime) -> datetime.datetime:
     # Normalize naive datetimes (assumed UTC) to offset-aware for comparison.
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.replace(tzinfo=datetime.UTC)
     return dt

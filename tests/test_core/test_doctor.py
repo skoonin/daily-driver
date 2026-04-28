@@ -31,7 +31,7 @@ class _FakeWorkspace:
         return self.state_dir / "state"
 
     @classmethod
-    def make(cls, root: Path, version: str = "1.0.0") -> "_FakeWorkspace":
+    def make(cls, root: Path, version: str = "1.0.0") -> _FakeWorkspace:
         state_dir = root / ".daily-driver"
         state_dir.mkdir(parents=True, exist_ok=True)
         return cls(

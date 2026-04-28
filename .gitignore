@@ -15,3 +15,33 @@ coverage.json
 __pycache__/
 *.pyc
 logs/
+
+# Test / coverage artifacts
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+test_reports/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Packaging artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+
+# Editor noise
+*.swp
+*.swo
+*~
+.idea/
+.ipynb_checkpoints/

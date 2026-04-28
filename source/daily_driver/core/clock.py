@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime
-from typing import Optional
 
 # Not thread-safe: tests that set this must not run in parallel (pytest -n auto / xdist).
-FROZEN_TIME: Optional[datetime] = None
+FROZEN_TIME: datetime | None = None
 
 
 def now() -> datetime:

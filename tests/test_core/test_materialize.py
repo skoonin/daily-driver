@@ -28,7 +28,7 @@ class _FakeWorkspace:
         return self.state_dir / "state"
 
     @classmethod
-    def make(cls, root: Path, version: str = "1.0.0") -> "_FakeWorkspace":
+    def make(cls, root: Path, version: str = "1.0.0") -> _FakeWorkspace:
         state_dir = root / ".daily-driver"
         state_dir.mkdir(parents=True, exist_ok=True)
         return cls(
@@ -133,7 +133,7 @@ def test_stale_files_wiped_before_copy(tmp_path: Path) -> None:
     assert stale_dir.is_dir(), "destination dir must be recreated"
 
 
-def _worker(root: Path, version: str, results: "multiprocessing.Queue[str]") -> None:  # type: ignore[type-arg]
+def _worker(root: Path, version: str, results: multiprocessing.Queue[str]) -> None:  # type: ignore[type-arg]
     try:
         from daily_driver.core import materialize
         from tests.test_core.test_materialize import _FakeWorkspace

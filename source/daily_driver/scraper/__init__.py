@@ -182,11 +182,11 @@ def run(
         "started_at": started_at.isoformat(),
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "sources_ok": sorted(
-            set(
+            {
                 j.get("source", "")
                 for j in all_jobs
                 if j.get("source") and j.get("source") not in failed_sources
-            )
+            }
         ),
         "sources_failed": failed_sources,
         "new_jobs": written,

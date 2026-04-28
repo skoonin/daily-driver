@@ -9,7 +9,7 @@ import importlib.metadata
 import shutil
 import sys
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from daily_driver.core import version_stamp
 from daily_driver.core.workspace import Workspace
@@ -27,7 +27,7 @@ class CheckResult:
     name: str
     status: Status
     detail: str
-    fix_hint: Optional[str] = None
+    fix_hint: str | None = None
     fixable: bool = False  # can --fix attempt a fix?
 
 
@@ -140,7 +140,7 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
     return results
 
 
-def run_checks(workspace: Optional[Workspace] = None) -> list[CheckResult]:
+def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     """Run all doctor checks. If workspace is None, skip workspace-specific checks."""
     results: list[CheckResult] = []
     results.append(_check_python_version())
@@ -153,7 +153,7 @@ def run_checks(workspace: Optional[Workspace] = None) -> list[CheckResult]:
 
 
 def fix(
-    results: list[CheckResult], workspace: Optional[Workspace] = None
+    results: list[CheckResult], workspace: Workspace | None = None
 ) -> list[CheckResult]:
     """Attempt to fix all fixable failing checks. Return post-fix re-run results.
 

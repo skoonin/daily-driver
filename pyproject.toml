@@ -162,6 +162,3 @@ markers = [
     "e2e: end-to-end tests",
     "unit: unit tests",
 ]
-
-[tool.bandit]
-exclude_dirs = ["tests", ".venv", ".tox"]
