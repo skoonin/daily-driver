@@ -11,9 +11,9 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Callable
 
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.integrations import claude_cli

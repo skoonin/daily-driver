@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed -- developer tooling (port from coregen-sk)
+- `make setup` now delegates to `.ci-tools/setup-venv.sh` via a touchfile sentinel (`.venv/touchfile: pyproject.toml`). The script invokes `.venv/bin/pip` directly, bypassing PEP 668 errors on Homebrew system Python that previously broke a fresh `make setup`.
+- `makefiles/setup.mk`: split `setup` (basic) from `setup-dev` (basic + pre-commit hooks); added `setup-force`, `deps-update`, `clean-venv`, `status` targets.
+- `makefiles/install.mk`: new `make install` target performs `pip install --user git+file://<repo>` for daily personal use, distinct from the editable `pip-install` dev target. Refuses to run inside an active venv; resolves host Python via `.ci-tools/detect-python.sh` to avoid PEP 668.
+- `.pre-commit-config.yaml`: added `check-json`, `check-docstring-first`, `debug-statements`, `check-merge-conflict`, `check-case-conflict`, `autoflake` (imports only), and `pyupgrade --py311-plus` hooks. `tracker.py` is excluded from pyupgrade because its `Tracker.list` method intentionally shadows the builtin under `from __future__ import annotations`.
+- Source/test files: pyupgrade auto-modernized typing syntax across 13 files (`Optional[X]` → `X | None`, `List[X]` → `list[X]`, `datetime.timezone.utc` → `datetime.UTC`, etc.). Semantics-preserving on Python 3.11+.
+- `.gitignore`: appended sections for test/coverage artifacts, environment files, packaging output, and editor noise.
+- `pyproject.toml`: removed orphaned `[tool.bandit]` block (no bandit dep, hook, or invocation references it).
+
 ### Fixed -- robustness review follow-ups
 - `core/voice.py`: `apply_update` now refuses empty/whitespace-only content (raises `VoiceUpdateError`) so a failed `claude` call cannot blank the profile. Write is atomic via same-directory tempfile + `os.replace`; a mid-write crash leaves the original intact.
 - `cli/commands/voice_update.py`: catches `VoiceUpdateError` and exits 1 with a clear stderr message instead of crashing.

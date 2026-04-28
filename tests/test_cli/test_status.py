@@ -135,7 +135,7 @@ def test_status_stalled_detection(
     terminal = tracker.add(category="task", title="Done task", status="done")
 
     # Backdate stale entry's updated_at to 20 days ago
-    now = datetime.datetime.now(tz=datetime.timezone.utc)
+    now = datetime.datetime.now(tz=datetime.UTC)
     stale_ts = now - datetime.timedelta(days=20)
     # Also backdate terminal entry — it should NOT appear in stalled (terminal status)
     terminal_ts = now - datetime.timedelta(days=30)

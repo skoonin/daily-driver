@@ -38,7 +38,7 @@ class _FakeWorkspace:
         return self.state_dir / "state"
 
     @classmethod
-    def make(cls, root: Path, scheduler_cfg: dict | None = None) -> "_FakeWorkspace":
+    def make(cls, root: Path, scheduler_cfg: dict | None = None) -> _FakeWorkspace:
         return cls(
             root=root,
             state_dir=root / ".daily-driver",

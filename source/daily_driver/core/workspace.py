@@ -70,7 +70,7 @@ class Workspace:
         return path
 
     @classmethod
-    def discover_or_fail(cls, override: Path | None = None) -> "Workspace":
+    def discover_or_fail(cls, override: Path | None = None) -> Workspace:
         """Walk up from CWD to find workspace root, or use override."""
         if override is not None:
             marker = override / _MARKER
@@ -108,7 +108,7 @@ class Workspace:
         )
 
     @classmethod
-    def init(cls, root: Path) -> "Workspace":
+    def init(cls, root: Path) -> Workspace:
         """Scaffold a new workspace at root; raises if already initialized."""
         marker = root / _MARKER
         if marker.exists():
