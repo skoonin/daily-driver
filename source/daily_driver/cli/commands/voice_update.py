@@ -60,6 +60,7 @@ def add_parser(
         help="Replace the profile; backs up the original as voice-profile.md.bak.",
     )
     parser.add_argument(
+        "-n",
         "--dry-run",
         action="store_true",
         default=False,
