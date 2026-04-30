@@ -32,7 +32,7 @@ def add_parser(
     p_voice = nested.add_parser(
         "voice-profile",
         parents=[],
-        help="Print voice-profile.md (warns if missing, exits 0)",
+        help="Print voice-profile.md; prints '(no voice profile ...)' marker on missing/empty",
     )
     p_voice.set_defaults(func=_run_voice_profile)
 
@@ -92,18 +92,18 @@ def _run_context(args: argparse.Namespace, workspace: Workspace) -> int:
 
 
 def _run_voice_profile(args: argparse.Namespace, workspace: Workspace) -> int:
+    # Empty-state contract matches `gather`: exit 0, print a stable
+    # `(no voice profile ...)` marker to stdout. Skills branch on the marker
+    # without breaking bash chains in shipped slash commands.
     profile = workspace.output_dir / "voice-profile.md"
     if not profile.is_file():
-        print(
-            f"warning: voice-profile.md not found at {profile} -- skipping",
-            file=sys.stderr,
-        )
-        print(
-            "         Run: daily-driver voice-update --from <path-to-writing-sample>",
-            file=sys.stderr,
-        )
+        print(f"(no voice profile found at {profile})")
         return 0
-    sys.stdout.write(profile.read_text(encoding="utf-8"))
+    text = profile.read_text(encoding="utf-8")
+    if not text.strip():
+        print(f"(no voice profile found at {profile} — file is empty)")
+        return 0
+    sys.stdout.write(text)
     return 0
 
 
@@ -115,7 +115,10 @@ def _run_plan(args: argparse.Namespace, workspace: Workspace) -> int:
         return 2
     plan = _plan_path(workspace, when)
     if not plan.is_file():
-        print("(no plan found for today -- run /day-start first)")
+        # Same empty-state contract as `gather` and `read voice-profile`:
+        # exit 0 + stdout marker, so shipped slash-command bash chains
+        # don't abort when day-start hasn't run yet.
+        print(f"(no plan found at {plan} — run /day-start first)")
         return 0
     text = plan.read_text(encoding="utf-8")
     if args.frontmatter:

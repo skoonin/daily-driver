@@ -47,9 +47,14 @@ def test_read_context_missing_exits_1_with_helpful_message(
     assert "context.md not found" in captured.err
 
 
-def test_read_voice_profile_missing_warns_exits_0(
+def test_read_voice_profile_missing_prints_marker_exits_0(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Empty-state contract: exit 0, stdout marker (matches `gather`).
+
+    Skills running `daily-driver read voice-profile` in bash chains must
+    not abort the chain when the profile doesn't exist yet.
+    """
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
@@ -58,7 +63,23 @@ def test_read_voice_profile_missing_warns_exits_0(
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert "voice-profile.md not found" in captured.err
+    assert "no voice profile found" in captured.out
+
+
+def test_read_voice_profile_empty_prints_marker_exits_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    (ws / "voice-profile.md").write_text("\n   \n")
+
+    rc = app(["--workspace", str(ws), "read", "voice-profile"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "no voice profile found" in captured.out
+    assert "empty" in captured.out
 
 
 def test_read_voice_profile_prints_when_present(
@@ -76,7 +97,7 @@ def test_read_voice_profile_prints_when_present(
     assert "Terse." in out
 
 
-def test_read_plan_missing_prints_friendly_message(
+def test_read_plan_missing_prints_marker_exits_0(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
@@ -85,9 +106,9 @@ def test_read_plan_missing_prints_friendly_message(
 
     rc = app(["--workspace", str(ws), "read", "plan"])
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     assert rc == 0
-    assert "no plan found" in out
+    assert "no plan found" in captured.out
 
 
 def test_read_plan_prints_plan_body(
