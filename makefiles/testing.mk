@@ -1,7 +1,11 @@
 ##@ Testing & Quality
 
 .PHONY: test
-test: ## Run the full test suite
+test: ## Run the full tox envlist (lint + type + py311 + py312 + coverage), matches CI
+	@.venv/bin/tox
+
+.PHONY: test-quick
+test-quick: ## Run pytest under py311 only — fast inner loop
 	@.venv/bin/tox -e py311
 
 .PHONY: test-cov
