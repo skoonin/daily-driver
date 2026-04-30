@@ -6,72 +6,26 @@ Handles range parsing and prompt rendering. Range windows use `date` (not
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from daily_driver.core import dates as _dates
+
 _TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 _SUMMARY_TEMPLATE = "summary.md.j2"
-
-# Named range keywords
-_NAMED_RANGES = ("today", "yesterday", "week", "month")
 
 
 def parse_range(spec: str) -> tuple[date, date]:
     """Parse a range specifier into (start, end) dates, inclusive.
 
-    Accepted forms:
-      today | yesterday | week | month
-      YYYY-MM-DD               (single day)
-      YYYY-MM-DD:YYYY-MM-DD    (explicit range)
-
-    Raises ValueError for unrecognised or inverted specs.
+    Thin delegate to :func:`daily_driver.core.dates.parse_range` so summary's
+    grammar matches every other date-accepting flag (today/yesterday/tomorrow,
+    week/month/quarter/year, Nd|Nw|Nm|Ny, ISO single, ISO range).
     """
-    today = date.today()
-
-    if spec == "today":
-        return today, today
-
-    if spec == "yesterday":
-        yesterday = today - timedelta(days=1)
-        return yesterday, yesterday
-
-    if spec == "week":
-        # ISO week: Monday to today (or Sunday if today is Sunday)
-        weekday = today.weekday()  # 0=Mon, 6=Sun
-        start = today - timedelta(days=weekday)
-        return start, today
-
-    if spec == "month":
-        start = today.replace(day=1)
-        return start, today
-
-    if ":" in spec:
-        parts = spec.split(":", 1)
-        try:
-            start = date.fromisoformat(parts[0])
-            end = date.fromisoformat(parts[1])
-        except ValueError:
-            raise ValueError(
-                f"invalid range spec: {spec!r}; expected YYYY-MM-DD:YYYY-MM-DD"
-            )
-        if start > end:
-            raise ValueError(f"start date {start} must not be after end date {end}")
-        return start, end
-
-    # Try as a single ISO date
-    try:
-        d = date.fromisoformat(spec)
-        return d, d
-    except ValueError:
-        pass
-
-    raise ValueError(
-        f"unrecognised range spec: {spec!r}; "
-        f"expected one of {_NAMED_RANGES} or YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD"
-    )
+    return _dates.parse_range(spec)
 
 
 def render_prompt(
