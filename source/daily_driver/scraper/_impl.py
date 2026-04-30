@@ -2057,8 +2057,12 @@ def scrape_wellfound(config: dict) -> list[dict]:
     roles = roles_list(config)
     terms = _search_terms(config)
     timeout_ms = timeout_seconds(config) * 1000
-    wf_delays = scraper_cfg(config).playwright_delays.get("wellfound", {})
-    page_load_ms = int(wf_delays.get("page_load_ms", 3000))
+    from daily_driver.core.config_models import PlaywrightDelays
+
+    wf_delays = scraper_cfg(config).playwright_delays.get(
+        "wellfound", PlaywrightDelays()
+    )
+    page_load_ms = wf_delays.page_load_ms
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
@@ -2400,13 +2404,12 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
     source_cfg = cfg.sources
     workers = cfg.parallel_workers
 
-    def _is_enabled(entry) -> bool:
-        if isinstance(entry, dict):
-            return bool(entry.get("enabled", False))
-        return bool(entry)
+    def _is_enabled(sid: str) -> bool:
+        toggle = source_cfg.get(sid)
+        return toggle.enabled if toggle is not None else False
 
-    enabled = [sid for sid in SCRAPERS if _is_enabled(source_cfg.get(sid, False))]
-    disabled = [sid for sid in SCRAPERS if not _is_enabled(source_cfg.get(sid, False))]
+    enabled = [sid for sid in SCRAPERS if _is_enabled(sid)]
+    disabled = [sid for sid in SCRAPERS if not _is_enabled(sid)]
     for sid in disabled:
         log.info("[%s] disabled in config, skipping", sid)
 
