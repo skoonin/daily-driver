@@ -26,6 +26,22 @@ Team Sync
 UNPARSEABLE BLOCK WITH NO DATE OR TIME AT ALL
 """
 
+_USAGE_TEXT = """\
+USAGE: icalBuddy  [options]  <command>
+
+Where <command> is one of the following:
+
+    eventsToday
+    eventsNow
+    eventsFrom:<start date> to:<end date>
+    uncompletedTasks
+    tasksDueBefore:<date>
+
+See the icalBuddy man page for more info.
+Version 1.10.1
+Originally by Ali Rantakari, ali.rantakari.fi
+"""
+
 
 def _make_run_stub(stdout="", rc=0):
     def _run(args, **kw):
@@ -85,6 +101,103 @@ def test_gather_events_skips_malformed_block(monkeypatch):
 
     assert len(events) == 1
     assert events[0].title == "Team Sync"
+
+
+def test_gather_events_invocation_uses_joined_to_arg(monkeypatch):
+    """Regression: `to:` and the end date must be a single arg, not separate args.
+
+    Previously we emitted three args (`eventsFrom:DATE`, `to:`, `DATE`),
+    which icalBuddy doesn't recognize → it printed usage text that we then
+    fed into the event parser. The correct invocation is two args:
+    `eventsFrom:DATE` and `to:DATE`.
+    """
+    captured: dict[str, list[str]] = {}
+
+    def _capture(args, **kw):
+        captured["args"] = args
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "daily_driver.gathers.calendar.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr("daily_driver.gathers.calendar.subprocess.run", _capture)
+
+    gather_events(_SINCE, _UNTIL)
+
+    args = captured["args"]
+    assert (
+        "to:" not in args
+    ), "bare `to:` arg with no date is the regression we're fixing"
+    joined = [a for a in args if a.startswith("to:")]
+    assert len(joined) == 1, f"expected exactly one `to:DATE` arg, got args={args!r}"
+    assert joined[0] == "to:2026-04-22", f"unexpected to-arg shape: {joined[0]!r}"
+    assert any(a.startswith("eventsFrom:") for a in args)
+
+
+def _attach_caplog_to_dd_logger(caplog):
+    """The daily_driver logger sets propagate=False once configure() runs in any
+    prior test, which breaks pytest's root-level caplog. Attach the handler
+    directly to the daily_driver logger so we capture records regardless."""
+    import logging as _logging
+
+    dd_logger = _logging.getLogger("daily_driver")
+    dd_logger.addHandler(caplog.handler)
+    dd_logger.setLevel(_logging.WARNING)
+    return dd_logger
+
+
+def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
+    """When icalBuddy emits its own usage/help text, fail loud rather than
+    feeding the help text through the event-block parser."""
+    dd_logger = _attach_caplog_to_dd_logger(caplog)
+    monkeypatch.setattr(
+        "daily_driver.gathers.calendar.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.gathers.calendar.subprocess.run",
+        _make_run_stub(stdout=_USAGE_TEXT),
+    )
+
+    try:
+        result = gather_events(_SINCE, _UNTIL)
+    finally:
+        dd_logger.removeHandler(caplog.handler)
+
+    assert result == []
+    messages = [rec.getMessage() for rec in caplog.records]
+    assert any(
+        "usage" in m.lower() or "invocation" in m.lower() for m in messages
+    ), f"expected a single clear error about icalBuddy invocation; got {messages!r}"
+    # The bug symptom: per-block parse warnings spammed for usage-text lines.
+    block_warnings = [m for m in messages if "could not parse event block" in m]
+    assert (
+        block_warnings == []
+    ), f"should not spam per-block parse warnings on usage text; got {block_warnings!r}"
+
+
+def test_gather_events_nonzero_exit_returns_empty(monkeypatch, caplog):
+    """Non-zero icalBuddy exit should be surfaced, not silently ignored."""
+    dd_logger = _attach_caplog_to_dd_logger(caplog)
+    monkeypatch.setattr(
+        "daily_driver.gathers.calendar.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.gathers.calendar.subprocess.run",
+        _make_run_stub(stdout="", rc=1),
+    )
+
+    try:
+        result = gather_events(_SINCE, _UNTIL)
+    finally:
+        dd_logger.removeHandler(caplog.handler)
+
+    assert result == []
+    assert any("icalbuddy" in rec.getMessage().lower() for rec in caplog.records)
 
 
 def test_gather_events_zero_results(monkeypatch):

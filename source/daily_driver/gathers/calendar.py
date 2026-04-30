@@ -16,6 +16,20 @@ _DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})")
 # Matches standalone HH:MM time lines (for icalBuddy's "-tf %H:%M" output)
 _TIME_RE = re.compile(r"^\s*(\d{2}:\d{2})\s*(?:-\s*(\d{2}:\d{2}))?\s*$")
 
+# Markers that strongly suggest icalBuddy printed its usage banner instead of
+# parseable event data. "USAGE:" is anchored to the very start of output
+# (after lstrip) to avoid matching events that happen to mention "USAGE:" in
+# their title or body. The other two markers are distinctive enough to be
+# unambiguous wherever they appear.
+_USAGE_BODY_MARKERS = ("icalBuddy man page", "Originally by Ali Rantakari")
+
+
+def _looks_like_usage_text(stdout: str) -> bool:
+    if stdout.lstrip().startswith("USAGE:"):
+        return True
+    head = stdout[:1024]
+    return any(marker in head for marker in _USAGE_BODY_MARKERS)
+
 
 class CalendarEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -101,8 +115,7 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
         "-tf",
         "%H:%M",
         f"eventsFrom:{since.strftime('%Y-%m-%d')}",
-        "to:",
-        until.strftime("%Y-%m-%d"),
+        f"to:{until.strftime('%Y-%m-%d')}",
     ]
     try:
         result = subprocess.run(
@@ -110,6 +123,22 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
         )
     except subprocess.TimeoutExpired:
         log.warning("calendar: icalbuddy timed out after 30s; returning no events")
+        return []
+
+    if result.returncode != 0:
+        log.warning(
+            "calendar: icalBuddy exited %d; stderr=%r",
+            result.returncode,
+            (result.stderr or "").strip()[:200],
+        )
+        return []
+
+    if _looks_like_usage_text(result.stdout):
+        log.warning(
+            "calendar: icalBuddy returned usage/help text — invocation is wrong; "
+            "got: %r",
+            result.stdout.strip().splitlines()[0][:120] if result.stdout else "",
+        )
         return []
 
     events: list[CalendarEvent] = []
