@@ -24,7 +24,8 @@ def configure(verbosity: Literal["quiet", "normal", "verbose"]) -> None:
     logger = stdlog.getLogger("daily_driver")
 
     for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
+        if isinstance(handler, RichHandler):
+            logger.removeHandler(handler)
 
     handler = RichHandler(
         console=Console(stderr=True),

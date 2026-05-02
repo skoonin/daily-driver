@@ -137,22 +137,9 @@ def test_gather_events_invocation_uses_joined_to_arg(monkeypatch):
     assert any(a.startswith("eventsFrom:") for a in args)
 
 
-def _attach_caplog_to_dd_logger(caplog):
-    """The daily_driver logger sets propagate=False once configure() runs in any
-    prior test, which breaks pytest's root-level caplog. Attach the handler
-    directly to the daily_driver logger so we capture records regardless."""
-    import logging as _logging
-
-    dd_logger = _logging.getLogger("daily_driver")
-    dd_logger.addHandler(caplog.handler)
-    dd_logger.setLevel(_logging.WARNING)
-    return dd_logger
-
-
 def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
     """When icalBuddy emits its own usage/help text, fail loud rather than
     feeding the help text through the event-block parser."""
-    dd_logger = _attach_caplog_to_dd_logger(caplog)
     monkeypatch.setattr(
         "daily_driver.gathers.calendar.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
@@ -162,17 +149,13 @@ def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
         _make_run_stub(stdout=_USAGE_TEXT),
     )
 
-    try:
-        result = gather_events(_SINCE, _UNTIL)
-    finally:
-        dd_logger.removeHandler(caplog.handler)
+    result = gather_events(_SINCE, _UNTIL)
 
     assert result == []
     messages = [rec.getMessage() for rec in caplog.records]
     assert any(
         "usage" in m.lower() or "invocation" in m.lower() for m in messages
     ), f"expected a single clear error about icalBuddy invocation; got {messages!r}"
-    # The bug symptom: per-block parse warnings spammed for usage-text lines.
     block_warnings = [m for m in messages if "could not parse event block" in m]
     assert (
         block_warnings == []
@@ -181,7 +164,6 @@ def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
 
 def test_gather_events_nonzero_exit_returns_empty(monkeypatch, caplog):
     """Non-zero icalBuddy exit should be surfaced, not silently ignored."""
-    dd_logger = _attach_caplog_to_dd_logger(caplog)
     monkeypatch.setattr(
         "daily_driver.gathers.calendar.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
@@ -191,10 +173,7 @@ def test_gather_events_nonzero_exit_returns_empty(monkeypatch, caplog):
         _make_run_stub(stdout="", rc=1),
     )
 
-    try:
-        result = gather_events(_SINCE, _UNTIL)
-    finally:
-        dd_logger.removeHandler(caplog.handler)
+    result = gather_events(_SINCE, _UNTIL)
 
     assert result == []
     assert any("icalbuddy" in rec.getMessage().lower() for rec in caplog.records)

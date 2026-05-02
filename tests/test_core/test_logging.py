@@ -46,9 +46,6 @@ def test_get_logger_namespace() -> None:
 
 
 def test_log_message_captured() -> None:
-    # caplog can't capture here because daily_driver.propagate=False keeps
-    # messages off the root logger. Instead verify the handler receives records
-    # by attaching a MemoryHandler directly to the daily_driver logger.
     configure("normal")
     lg = get_logger("memory_test")
     records: list[logging.LogRecord] = []
@@ -66,3 +63,14 @@ def test_log_message_captured() -> None:
         parent.removeHandler(cap)
 
     assert any("hello from test" in r.getMessage() for r in records)
+
+
+def test_caplog_captures_daily_driver_records(caplog) -> None:
+    """The root conftest installs an autouse fixture that mirrors caplog's
+    handler onto the `daily_driver` logger. Without it, pytest's caplog
+    misses records because `configure()` sets `propagate=False`."""
+    configure("normal")
+    caplog.set_level(logging.INFO, logger="daily_driver")
+    lg = get_logger("caplog_test")
+    lg.info("captured via caplog")
+    assert any("captured via caplog" in r.getMessage() for r in caplog.records)
