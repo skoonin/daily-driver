@@ -1945,18 +1945,62 @@ def _format_jobspy_comp(row: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def normalize_jobspy_row(row: dict) -> dict:
-    """Adapt a single JobSpy DataFrame record to the scraper dict shape."""
+def jobspy_row_to_raw(row: dict[str, Any]) -> "RawScrapedJob | None":  # noqa: F821
+    """Validate a JobSpy DataFrame row through RawScrapedJob (Q15: extra='ignore').
+
+    Returns None when the role is empty (jobspy yields these for ads / non-job
+    cards); pydantic would otherwise reject NonEmptyStr role.
+    """
+    # Local import: models.py uses deferred imports from this module
+    # (`_parse_comp`, `_REMOTE_*`); top-level import would cycle until K4/K9.
+    from daily_driver.scraper.models import RawScrapedJob
+
+    role = _jobspy_str(row.get("title"))
+    if not role:
+        return None
+    return RawScrapedJob.model_validate(
+        {
+            "company": _jobspy_str(row.get("company")),
+            "role": role,
+            "location": _jobspy_str(row.get("location")),
+            "url": _jobspy_str(row.get("job_url")),
+            # JobSpy "site" is the upstream source name (linkedin, indeed, ...).
+            "source": _jobspy_str(row.get("site"), "jobspy"),
+            "comp_display": _format_jobspy_comp(row),
+            "date_found": today(),
+        }
+    )
+
+
+def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a single JobSpy DataFrame record to the scraper dict shape.
+
+    Validates through RawScrapedJob at the boundary (Q15) and dumps back to
+    the legacy dict shape for the dict-based pipeline. Carries `description`
+    separately because RawScrapedJob does not model enrichment fields.
+    """
+    raw = jobspy_row_to_raw(row)
+    description = _jobspy_str(row.get("description"))
+    if raw is None:
+        return {
+            "company": _jobspy_str(row.get("company")),
+            "role": "",
+            "location": _jobspy_str(row.get("location")),
+            "url": _jobspy_str(row.get("job_url")),
+            "source": _jobspy_str(row.get("site"), "jobspy"),
+            "description": description,
+            "comp": _format_jobspy_comp(row),
+            "date_found": today().isoformat(),
+        }
     return {
-        "company": _jobspy_str(row.get("company")),
-        "role": _jobspy_str(row.get("title")),
-        "location": _jobspy_str(row.get("location")),
-        "url": _jobspy_str(row.get("job_url")),
-        # site field is the JobSpy source name (linkedin, indeed, glassdoor, google)
-        "source": _jobspy_str(row.get("site"), "jobspy"),
-        "description": _jobspy_str(row.get("description")),
-        "comp": _format_jobspy_comp(row),
-        "date_found": today().isoformat(),
+        "company": raw.company,
+        "role": raw.role,
+        "location": raw.location,
+        "url": raw.url,
+        "source": raw.source,
+        "description": description,
+        "comp": raw.comp_display,
+        "date_found": raw.date_found.isoformat(),
     }
 
 
