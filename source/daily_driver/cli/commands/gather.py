@@ -122,7 +122,6 @@ def _run_calendar(args: argparse.Namespace, workspace: Workspace) -> int:
 
 
 def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
-    del workspace
     try:
         since_d = _parse_date(args.since, today() - timedelta(days=1))
         until_d = _parse_date(args.until, today() + timedelta(days=1))
@@ -130,18 +129,43 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
         print(f"error: invalid date: {exc}", file=sys.stderr)
         return 2
 
-    repo = args.repo or Path.cwd()
-    commits = gather_git.gather_commits(repo, _as_dt(since_d), _as_dt(until_d))
+    since_dt = _as_dt(since_d)
+    until_dt = _as_dt(until_d)
+
+    if args.repo is not None:
+        repos: list[Path] = [args.repo]
+    else:
+        configured = list(workspace.config.gather.git.search_paths)
+        if configured:
+            from daily_driver.core.git_discovery import discover_repos
+
+            expanded = [Path(p).expanduser() for p in configured]
+            repos = discover_repos(expanded)
+            if not repos:
+                print(
+                    "(no git repos discovered under configured search_paths: "
+                    f"{', '.join(str(p) for p in expanded)})"
+                )
+                return 0
+        else:
+            repos = [Path.cwd()]
+
+    commits: list[gather_git.GitCommit] = []
+    for repo in repos:
+        commits.extend(gather_git.gather_commits(repo, since_dt, until_dt))
+    commits.sort(key=lambda c: c.timestamp)
 
     if args.json:
         payload = {
             "commits": [c.model_dump(mode="json") for c in commits],
             "count": len(commits),
+            "repos": [str(r) for r in repos],
         }
         print(json.dumps({"schema": 1, "data": payload}, indent=2))
     else:
         if not commits:
-            print(f"(no commits in {repo})")
+            scanned = ", ".join(str(r) for r in repos)
+            print(f"(no commits in {scanned})")
             return 0
         for c in commits:
             print(f"{c.sha}  {c.timestamp.strftime('%Y-%m-%d %H:%M')}  {c.subject}")

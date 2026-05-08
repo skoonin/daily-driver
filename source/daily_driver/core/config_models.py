@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -193,6 +194,18 @@ class PluginsConfig(BaseModel):
     job_search: JobSearchPlugin | None = None
 
 
+class GatherGitConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    search_paths: list[Path] = []
+
+
+class GatherConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    git: GatherGitConfig = GatherGitConfig()
+
+
 class Config(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -202,4 +215,5 @@ class Config(BaseModel):
     scheduler: dict[str, Any] | None = None
     voice_profile: VoiceProfile = VoiceProfile()
     tracker: TrackerConfig
+    gather: GatherConfig = GatherConfig()
     plugins: PluginsConfig = PluginsConfig()
