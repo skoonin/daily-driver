@@ -32,8 +32,6 @@ from pydantic import (
     model_validator,
 )
 
-from daily_driver.core.config_models import ScraperConfig
-
 
 class JobStatus(str, Enum):
     FOUND = "found"
@@ -471,11 +469,15 @@ class EnrichedJob(BaseModel):
 class Source(Protocol):
     """Protocol for a scraper source callable.
 
-    Q16: ``SOURCE_REGISTRY: dict[str, Source]`` lands in K9 — explicit dict,
-    no dynamic dispatch.
+    Q16: ``SOURCE_REGISTRY: dict[str, Source]`` is the explicit dispatch dict.
+
+    Note: signature takes the raw config dict rather than ``ScraperConfig`` —
+    the live scraper layer threads the unmodelled top-level dict (it carries
+    plugin-namespaced settings beyond ``ScraperConfig``). Migration to
+    ``ScraperConfig`` is post-WS-K work.
     """
 
-    def __call__(self, config: ScraperConfig) -> list[RawScrapedJob]: ...
+    def __call__(self, config: dict[str, Any]) -> list[RawScrapedJob]: ...
 
 
 __all__ = [
