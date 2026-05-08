@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - `core/config_models.py`: `ScraperConfig.playwright_delays` is now `dict[str, PlaywrightDelays]` and `sources` is `dict[str, SourceToggle]` (auto-coerces legacy `bool` values via a `field_validator`). Replaces ad-hoc dict access in `scraper/_impl.py`.
 
+### Fixed -- doctor (W11)
+- `cli/commands/doctor.py`: running `daily-driver doctor` (or `--fix` / `--reset`) without a discoverable workspace now exits 1 with a clear `error: no workspace at <path> (run 'daily-driver init <path>' to scaffold one)` message instead of silently reporting only dependency checks. Resolves review-2026-04-23 #10.
+- `core/contract.py`: dropped `.claude/commands/user` and `.claude/agents/user` from the init-contract check. These dirs are user territory — `materialize` never writes to them, so reporting their absence as a fixable ERROR produced a stuck state where `doctor --fix` could not clear the violation. Resolves review-2026-04-23 #11. Hard break (per MVP no-compat): a workspace missing only the user-territory dirs now passes the contract check. **Behavior change:** the `paths` returned by `contract.check()` no longer include these two entries.
+
 ### Fixed
 - `gathers/calendar.py`: corrected icalBuddy invocation — `to:DATE` is now a single argument (was split into two, producing a usage banner). Added a usage-text guard that detects `USAGE:` / man-page markers in stdout and returns `[]` with a clear log warning instead of attempting to parse the help text as events.
 
