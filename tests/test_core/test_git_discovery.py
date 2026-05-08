@@ -28,15 +28,26 @@ def test_discover_repos_finds_repos_under_root(tmp_path):
     assert {p.name for p in found} == {"a", "b"}
 
 
-def test_discover_repos_respects_max_depth(tmp_path):
-    # Repo at depth 5 from root; with max_depth=4, should be missed.
+def test_discover_repos_caps_walk_depth(tmp_path):
+    # _MAX_DEPTH=4: a repo at depth 5 from root should be missed.
     deep = tmp_path / "a" / "b" / "c" / "d" / "deep-repo"
     _make_repo(deep)
-    # Repo at depth 1: should be found at max_depth=4.
     shallow = _make_repo(tmp_path / "shallow")
-    found = discover_repos([tmp_path], max_depth=4)
+    found = discover_repos([tmp_path])
     assert shallow.resolve() in found
     assert deep.resolve() not in found
+
+
+def test_discover_repos_finds_linked_worktrees(tmp_path):
+    # `git worktree add` creates a `.git` *file* (not directory) pointing at the
+    # parent repo's gitdir. Discovery must treat these as repos too.
+    worktree = tmp_path / "wt-feature"
+    worktree.mkdir()
+    (worktree / ".git").write_text(
+        "gitdir: /Users/me/git/main/.git/worktrees/feature\n"
+    )
+    found = discover_repos([tmp_path])
+    assert found == [worktree.resolve()]
 
 
 def test_discover_repos_does_not_descend_into_repo(tmp_path):

@@ -25,30 +25,16 @@ def _projects_root() -> Path:
     return Path.home() / ".claude" / "projects"
 
 
-def _normalize_for_compare(dt: datetime, ref: datetime) -> datetime:
-    """Match dt's timezone-awareness to ref's so they can be compared.
+def _scan_session_file(path: Path) -> tuple[datetime | None, str | None]:
+    """Return (started_at, cwd) by reading lines until both are populated.
 
-    The CLI hands us naive datetimes (date + time.min); JSONL timestamps are
-    typically aware (ISO with Z). Coerce to ref's awareness rather than
-    failing the comparison.
-    """
-    if ref.tzinfo is None and dt.tzinfo is not None:
-        return dt.astimezone().replace(tzinfo=None)
-    if ref.tzinfo is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=ref.tzinfo)
-    return dt
-
-
-def _scan_session_file(path: Path) -> tuple[datetime | None, str | None, int]:
-    """Return (started_at, cwd, message_count) by walking the JSONL.
-
-    started_at = first line carrying a `timestamp` field.
-    cwd        = first line carrying a `cwd` field.
-    message_count = count of lines with a top-level `role` key.
+    started_at comes from the first JSONL line carrying a ``timestamp``;
+    cwd from the first line carrying a ``cwd``. Real Claude Code session
+    files put both on the first user-input line, so the scan terminates
+    after a handful of lines rather than reading the whole file.
     """
     started_at: datetime | None = None
     cwd: str | None = None
-    message_count = 0
 
     try:
         with path.open("r", encoding="utf-8") as fp:
@@ -73,13 +59,13 @@ def _scan_session_file(path: Path) -> tuple[datetime | None, str | None, int]:
                     val = obj.get("cwd")
                     if val is not None:
                         cwd = str(val)
-                if "role" in obj:
-                    message_count += 1
+                if started_at is not None and cwd is not None:
+                    break
     except OSError as exc:
         log.warning("sessions: could not read %s: %s", path, exc)
-        return (None, None, 0)
+        return (None, None)
 
-    return (started_at, cwd, message_count)
+    return (started_at, cwd)
 
 
 def gather_sessions(
@@ -100,21 +86,23 @@ def gather_sessions(
     sessions: list[ClaudeSession] = []
 
     for jsonl in root.glob("*/*.jsonl"):
-        session_id = jsonl.stem
-        started_at, cwd, message_count = _scan_session_file(jsonl)
+        started_at, cwd = _scan_session_file(jsonl)
         if started_at is None:
             continue
 
-        ref_started = _normalize_for_compare(started_at, since)
-        if not (since <= ref_started < cutoff):
+        # CLI passes naive local datetimes; JSONL timestamps are aware (Z).
+        # Convert aware -> local naive to match the comparison frame.
+        if since.tzinfo is None and started_at.tzinfo is not None:
+            started_at = started_at.astimezone().replace(tzinfo=None)
+
+        if not (since <= started_at < cutoff):
             continue
 
         sessions.append(
             ClaudeSession(
-                session_id=session_id,
-                started_at=ref_started,
+                session_id=jsonl.stem,
+                started_at=started_at,
                 cwd=cwd,
-                message_count=message_count,
             )
         )
 

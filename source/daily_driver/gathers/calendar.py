@@ -132,27 +132,11 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
         return []
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        hint = ""
-        low = stderr.lower()
-        if "preference" in low or "plist" in low or "configuration" in low:
-            hint = (
-                " -- looks like a configuration problem; check that "
-                "~/Library/Preferences/com.hasseg.icalBuddy.plist exists and "
-                "the terminal has Calendar access. See docs/developer.md "
-                "'Calendar (icalBuddy) setup'."
-            )
-        elif "not authorized" in low or "permission" in low or "tcc" in low:
-            hint = (
-                " -- looks like a permissions problem; grant the terminal "
-                "Calendar access in System Settings -> Privacy & Security -> "
-                "Calendars."
-            )
         log.warning(
-            "calendar: icalBuddy exited %d; stderr=%r%s",
+            "calendar: icalBuddy exited %d; stderr=%r. See docs/developer.md "
+            "'Calendar (icalBuddy) setup' for plist + permission steps.",
             result.returncode,
-            stderr[:200],
-            hint,
+            (result.stderr or "").strip()[:200],
         )
         return []
 

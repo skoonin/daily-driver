@@ -17,7 +17,6 @@ def _write_session(
     *,
     timestamp: str | None = "2026-04-15T10:00:00Z",
     cwd: str | None = "/home/user/proj",
-    role_lines: int = 0,
     extra_pre_lines: list[dict] | None = None,
 ) -> Path:
     """Write a JSONL session file mirroring Claude Code's on-disk format."""
@@ -25,9 +24,7 @@ def _write_session(
     project_dir.mkdir(parents=True, exist_ok=True)
     path = project_dir / f"{session_id}.jsonl"
 
-    lines: list[dict] = []
-    # Mimic the real format: a few setup lines without timestamp/cwd come first.
-    lines.extend(extra_pre_lines or [])
+    lines: list[dict] = list(extra_pre_lines or [])
     if timestamp is not None or cwd is not None:
         entry: dict = {"type": "user", "sessionId": session_id}
         if timestamp is not None:
@@ -35,8 +32,6 @@ def _write_session(
         if cwd is not None:
             entry["cwd"] = cwd
         lines.append(entry)
-    for _ in range(role_lines):
-        lines.append({"role": "assistant", "content": "hi"})
 
     with path.open("w", encoding="utf-8") as fp:
         for line in lines:
@@ -166,17 +161,11 @@ def test_gather_sessions_tolerates_malformed_jsonl_lines(monkeypatch, tmp_path):
     assert sessions[0].cwd == "/x"
 
 
-def test_gather_sessions_counts_role_lines_for_message_count(monkeypatch, tmp_path):
+def test_gather_sessions_message_count_defaults_to_zero(monkeypatch, tmp_path):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    _write_session(
-        tmp_path,
-        "-Users-me-proj",
-        "sess-msgs",
-        timestamp="2026-04-15T10:00:00Z",
-        role_lines=4,
-    )
+    _write_session(tmp_path, "-Users-me-proj", "sess", timestamp="2026-04-15T10:00:00Z")
 
     sessions = gather_sessions(_SINCE, _UNTIL)
 
     assert len(sessions) == 1
-    assert sessions[0].message_count == 4
+    assert sessions[0].message_count == 0

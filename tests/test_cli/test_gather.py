@@ -121,6 +121,31 @@ def test_gather_git_text_mode(
     assert "Add widget" in out
 
 
+def test_gather_git_falls_back_to_cwd_when_no_repo_and_no_search_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+
+    ws = _init_workspace(tmp_path)
+    seen: list[Path] = []
+
+    def fake_gather(repo, since, until):
+        seen.append(repo)
+        return []
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+    monkeypatch.chdir(tmp_path)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+
+    capsys.readouterr()
+    assert rc == 0
+    assert seen == [Path.cwd()]
+
+
 def test_gather_git_uses_search_paths_when_no_repo_arg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
