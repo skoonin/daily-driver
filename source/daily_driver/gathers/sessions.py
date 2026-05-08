@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,85 +21,101 @@ class ClaudeSession(BaseModel):
     message_count: int = 0
 
 
-def _extract(obj: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in obj:
-            return obj[key]
-    return default
+def _projects_root() -> Path:
+    return Path.home() / ".claude" / "projects"
+
+
+def _normalize_for_compare(dt: datetime, ref: datetime) -> datetime:
+    """Match dt's timezone-awareness to ref's so they can be compared.
+
+    The CLI hands us naive datetimes (date + time.min); JSONL timestamps are
+    typically aware (ISO with Z). Coerce to ref's awareness rather than
+    failing the comparison.
+    """
+    if ref.tzinfo is None and dt.tzinfo is not None:
+        return dt.astimezone().replace(tzinfo=None)
+    if ref.tzinfo is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=ref.tzinfo)
+    return dt
+
+
+def _scan_session_file(path: Path) -> tuple[datetime | None, str | None, int]:
+    """Return (started_at, cwd, message_count) by walking the JSONL.
+
+    started_at = first line carrying a `timestamp` field.
+    cwd        = first line carrying a `cwd` field.
+    message_count = count of lines with a top-level `role` key.
+    """
+    started_at: datetime | None = None
+    cwd: str | None = None
+    message_count = 0
+
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for line in fp:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict):
+                    continue
+                if started_at is None and "timestamp" in obj:
+                    try:
+                        started_at = datetime.fromisoformat(
+                            str(obj["timestamp"]).replace("Z", "+00:00")
+                        )
+                    except (ValueError, TypeError):
+                        pass
+                if cwd is None and "cwd" in obj:
+                    val = obj.get("cwd")
+                    if val is not None:
+                        cwd = str(val)
+                if "role" in obj:
+                    message_count += 1
+    except OSError as exc:
+        log.warning("sessions: could not read %s: %s", path, exc)
+        return (None, None, 0)
+
+    return (started_at, cwd, message_count)
 
 
 def gather_sessions(
     since: datetime, until: datetime | None = None
 ) -> list[ClaudeSession]:
-    """Parse ~/.claude/sessions-index.json for sessions in window. [] if file missing."""
-    path = Path.home() / ".claude" / "sessions-index.json"
-    if not path.exists():
-        return []
+    """Return Claude Code sessions whose start falls in [since, until).
 
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        log.warning("sessions: could not load sessions-index.json: %s", exc)
-        return []
-
-    # Accept both a bare list and {"sessions": [...]}
-    if isinstance(raw, dict):
-        entries = raw.get("sessions", [])
-    elif isinstance(raw, list):
-        entries = raw
-    else:
-        log.warning("sessions: unexpected sessions-index.json format")
+    Walks ``~/.claude/projects/*/*.jsonl`` — the on-disk session store
+    Claude Code writes one file per session to. Returns ``[]`` if the
+    directory does not exist.
+    """
+    root = _projects_root()
+    if not root.is_dir():
         return []
 
     cutoff = until if until is not None else now()
     sessions: list[ClaudeSession] = []
 
-    for entry in entries:
-        if not isinstance(entry, dict):
-            log.warning("sessions: skipping non-dict entry: %r", str(entry)[:80])
+    for jsonl in root.glob("*/*.jsonl"):
+        session_id = jsonl.stem
+        started_at, cwd, message_count = _scan_session_file(jsonl)
+        if started_at is None:
             continue
 
-        try:
-            session_id = _extract(entry, "session_id", "id", "sessionId", default=None)
-            if session_id is None:
-                log.warning(
-                    "sessions: entry missing id field, skipping: %r", str(entry)[:80]
-                )
-                continue
-
-            raw_ts = _extract(
-                entry,
-                "started_at",
-                "startedAt",
-                "created_at",
-                "timestamp",
-                default=None,
-            )
-            if raw_ts is None:
-                log.warning(
-                    "sessions: entry missing timestamp for %r, skipping", session_id
-                )
-                continue
-
-            started_at = datetime.fromisoformat(str(raw_ts))
-            cwd = _extract(entry, "cwd", "workingDirectory", default=None)
-            message_count = int(
-                _extract(entry, "message_count", "messageCount", default=0) or 0
-            )
-        except Exception as exc:
-            log.warning("sessions: malformed session entry, skipping: %s", exc)
-            continue
-
-        if not (since <= started_at < cutoff):
+        ref_started = _normalize_for_compare(started_at, since)
+        if not (since <= ref_started < cutoff):
             continue
 
         sessions.append(
             ClaudeSession(
-                session_id=str(session_id),
-                started_at=started_at,
-                cwd=str(cwd) if cwd is not None else None,
+                session_id=session_id,
+                started_at=ref_started,
+                cwd=cwd,
                 message_count=message_count,
             )
         )
 
+    sessions.sort(key=lambda s: s.started_at)
     return sessions

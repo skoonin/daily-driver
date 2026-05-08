@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `core/contract.py`: dropped `.claude/commands/user` and `.claude/agents/user` from the init-contract check. These dirs are user territory — `materialize` never writes to them, so reporting their absence as a fixable ERROR produced a stuck state where `doctor --fix` could not clear the violation. Resolves review-2026-04-23 #11. Hard break (per MVP no-compat): a workspace missing only the user-territory dirs now passes the contract check. **Behavior change:** the `paths` returned by `contract.check()` no longer include these two entries.
 
 ### Fixed
+- `gathers/sessions.py`: rewrote to walk `~/.claude/projects/*/*.jsonl` (Claude Code's actual on-disk session format) instead of reading the non-existent `~/.claude/sessions-index.json`. Session id is derived from the filename stem; `started_at` and `cwd` come from the first JSONL line carrying each field. Fixes #7 (false-negative empty results when sessions exist on disk).
 - `gathers/calendar.py`: corrected icalBuddy invocation — `to:DATE` is now a single argument (was split into two, producing a usage banner). Added a usage-text guard that detects `USAGE:` / man-page markers in stdout and returns `[]` with a clear log warning instead of attempting to parse the help text as events.
 
 ### Changed -- developer tooling (port from coregen-sk)
