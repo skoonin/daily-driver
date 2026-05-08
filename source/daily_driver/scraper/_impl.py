@@ -288,17 +288,32 @@ def location_matches(job: dict, config: dict) -> bool:
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
 
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _dedup_norm(s: str) -> str:
+    return _WHITESPACE_RE.sub(" ", s.lower().strip())
+
+
 def dedup_key(company: str, role: str) -> str:
     """Normalized dedup key for cross-site duplicate detection.
 
     Lowercases and collapses whitespace in both fields so the same job posted
     on RemoteOK and LinkedIn produces an identical key.
+
+    For typed callers, prefer ``dedup_key_for(job: NormalizedJob)``.
     """
+    return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
 
-    def _norm(s: str) -> str:
-        return re.sub(r"\s+", " ", s.lower().strip())
 
-    return f"{_norm(company)}::{_norm(role)}"
+def dedup_key_for(job: "NormalizedJob") -> str:  # noqa: F821
+    """Typed dedup key (K5): operates directly on NormalizedJob.
+
+    Equivalent to ``dedup_key(job.company, job.role)`` but skips the dict-key
+    plumbing in the orchestrator. Both forms must produce identical keys —
+    test_dedup_typed_matches_legacy guards that invariant.
+    """
+    return f"{_dedup_norm(job.company)}::{_dedup_norm(job.role)}"
 
 
 # ── Company enrichment ───────────────────────────────────────────────────────
