@@ -39,11 +39,15 @@ def _build_args(
         args.extend(["--model", model])
     if output_format:
         args.extend(["--output-format", output_format])
+    # Prompt MUST come before --add-dir: claude's --add-dir is variadic and
+    # silently absorbs trailing positionals as extra directories, leaving the
+    # prompt empty. Symptom (review §8): "Input must be provided either through
+    # stdin or as a prompt argument when using --print".
+    if prompt is not None:
+        args.append(prompt)
     if add_dirs:
         args.append("--add-dir")
         args.extend(str(p) for p in add_dirs)
-    if prompt is not None:
-        args.append(prompt)
     return args
 
 

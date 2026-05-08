@@ -1,7 +1,10 @@
 """CLI entry point for daily-driver.
 
-Builds the argparse tree, defers command imports so --version and --help
-work even when Stream B/C command modules are not yet present.
+Builds the argparse tree and dispatches subcommands. Global flags
+(`-v/-q/--no-color/--workspace`) live on `cli._common.GLOBAL_PARSER` and are
+applied to both the top-level parser and every leaf via `parents=[...]`,
+so they work in either position: `daily-driver -v tracker list` and
+`daily-driver tracker list -v` both parse.
 """
 
 from __future__ import annotations
@@ -9,12 +12,11 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
-import os
 import sys
 from typing import Protocol, cast
 
 import daily_driver
-import daily_driver.core.logging as dd_logging
+from daily_driver.cli._common import GLOBAL_PARSER, configure
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -50,38 +52,6 @@ class _CommandModule(Protocol):
     def run(self, args: argparse.Namespace) -> int: ...
 
 
-def _build_parent_parser() -> argparse.ArgumentParser:
-    parent = argparse.ArgumentParser(add_help=False)
-    verbosity = parent.add_mutually_exclusive_group()
-    verbosity.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        default=False,
-        help="Enable debug-level logging.",
-    )
-    verbosity.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        default=False,
-        help="Suppress all output below WARNING.",
-    )
-    parent.add_argument(
-        "--no-color",
-        action="store_true",
-        default=False,
-        help="Disable Rich color/formatting output.",
-    )
-    parent.add_argument(
-        "--workspace",
-        metavar="PATH",
-        default=None,
-        help="Path to daily-driver workspace root.",
-    )
-    return parent
-
-
 def app(argv: list[str] | None = None) -> int:
     """Build parser, parse argv, dispatch. Returns exit code.
 
@@ -89,12 +59,10 @@ def app(argv: list[str] | None = None) -> int:
     Bare `daily-driver` (no subcommand) prints help and returns 2.
     `daily-driver --version` prints version string and returns 0.
     """
-    parent = _build_parent_parser()
-
     parser = argparse.ArgumentParser(
         prog="daily-driver",
         description="Daily Driver — job search planning and accountability CLI.",
-        parents=[parent],
+        parents=[GLOBAL_PARSER],
     )
     parser.add_argument(
         "--version",
@@ -111,22 +79,13 @@ def app(argv: list[str] | None = None) -> int:
     _cmd_map: dict[str, _CommandModule] = {}
     for cmd_name, module_path in _COMMANDS:
         module = cast(_CommandModule, importlib.import_module(module_path))
-        module.add_parser(subparsers, [])
+        module.add_parser(subparsers, [GLOBAL_PARSER])
         _cmd_map[cmd_name] = module
 
     # parse_args() raises SystemExit for --version, --help, or bad flags.
     args = parser.parse_args(argv)
 
-    # Apply verbosity before dispatching so commands inherit the level.
-    if args.verbose:
-        dd_logging.configure("verbose")
-    elif args.quiet:
-        dd_logging.configure("quiet")
-    else:
-        dd_logging.configure("normal")
-
-    if args.no_color:
-        os.environ["NO_COLOR"] = "1"
+    configure(args)
 
     if args.cmd is None:
         parser.print_help(sys.stderr)
@@ -140,7 +99,7 @@ def app(argv: list[str] | None = None) -> int:
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
         logger = logging.getLogger("daily_driver")
-        if args.verbose:
+        if getattr(args, "verbose", False):
             logger.exception("unhandled error in %r", args.cmd)
         else:
             print(f"error: {exc}", file=sys.stderr)

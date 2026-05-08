@@ -194,7 +194,10 @@ class PluginsConfig(BaseModel):
 
 
 class Config(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Root model is extra="allow" so users can stash workspace-local keys
+    # (e.g., notes for their own slash commands) without a schema bump.
+    # Nested plugin schemas remain extra="forbid" — typos there are real bugs.
+    model_config = ConfigDict(extra="allow")
 
     daily_driver: DailyDriverConfig = DailyDriverConfig()
     user_profile: UserProfile = UserProfile()

@@ -280,18 +280,18 @@ class TestInstallUninstall:
         }
         assert not (ws.ephemeral_dir / "launchd").exists()
 
-    def test_uninstall_keep_state_retains_mirror(
+    def test_uninstall_always_removes_state_mirror(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """The --keep-state flag was removed in v0.1.x; mirror is always cleaned up."""
         monkeypatch.setattr(sys, "platform", "darwin")
         ws = _FakeWorkspace.make(tmp_path)
         self._patch_launchd(monkeypatch, tmp_path)
 
         scheduler.install_all(ws)
-        scheduler.uninstall_all(ws, keep_state=True)
+        scheduler.uninstall_all(ws)
 
         state_dir = ws.ephemeral_dir / "launchd"
-        assert state_dir.is_dir()
-        assert (state_dir / "com.daily-driver.checkin.plist").exists()
+        assert not state_dir.exists()

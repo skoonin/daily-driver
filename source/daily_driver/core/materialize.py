@@ -218,6 +218,7 @@ def materialize(
             _manifest.record(workspace.state_dir, workspace.root, all_written)
 
         _render_settings(workspace)
+        _copy_hooks(workspace)
 
         # Stamp written last — crash before here = stamp stays stale = redo on next run.
         version_stamp.write(workspace.state_dir, workspace.version)
@@ -251,6 +252,27 @@ def _merge_settings(existing_text: str, rendered_text: str) -> str:
         if key not in defaults:
             merged[key] = value
     return json.dumps(merged, indent=2)
+
+
+def _copy_hooks(workspace: Workspace) -> None:
+    """Copy package-managed hook scripts into <workspace>/.claude/hooks/."""
+    hooks_dest = workspace.root / ".claude" / "hooks"
+    hooks_dest.mkdir(parents=True, exist_ok=True)
+    try:
+        hooks_pkg = importlib.resources.files("daily_driver.templates").joinpath(
+            "hooks"
+        )
+    except (FileNotFoundError, ModuleNotFoundError):
+        return
+    for entry in hooks_pkg.iterdir():
+        if not entry.name.endswith(".sh"):
+            continue
+        dest = hooks_dest / entry.name
+        dest.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
+        try:
+            dest.chmod(0o755)
+        except OSError:
+            pass
 
 
 def _render_settings(workspace: Workspace) -> None:

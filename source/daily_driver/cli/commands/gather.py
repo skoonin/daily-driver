@@ -31,14 +31,16 @@ def add_parser(
     )
     nested = parser.add_subparsers(dest="gather_what", metavar="<what>")
 
-    p_cal = nested.add_parser("calendar", parents=[], help="Read macOS Calendar events")
+    p_cal = nested.add_parser(
+        "calendar", parents=parents, help="Read macOS Calendar events"
+    )
     p_cal.add_argument("--since", default=None, help="ISO date (default: today)")
     p_cal.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
     p_cal.add_argument("--json", action="store_true", help="Emit JSON")
     p_cal.set_defaults(func=_run_calendar)
 
     p_git = nested.add_parser(
-        "git", parents=[], help="Read recent git commits from a repo"
+        "git", parents=parents, help="Read recent git commits from a repo"
     )
     p_git.add_argument(
         "--repo",
@@ -55,14 +57,16 @@ def add_parser(
     p_git.add_argument("--json", action="store_true", help="Emit JSON")
     p_git.set_defaults(func=_run_git)
 
-    p_sess = nested.add_parser("sessions", parents=[], help="Read Claude Code sessions")
+    p_sess = nested.add_parser(
+        "sessions", parents=parents, help="Read Claude Code sessions"
+    )
     p_sess.add_argument("--since", default=None, help="ISO date (default: today)")
     p_sess.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
     p_sess.add_argument("--json", action="store_true", help="Emit JSON")
     p_sess.set_defaults(func=_run_sessions)
 
     p_notes = nested.add_parser(
-        "notes", parents=[], help="List note file paths in a date range"
+        "notes", parents=parents, help="List note file paths in a date range"
     )
     p_notes.add_argument("--since", default=None, help="ISO date (default: 7d ago)")
     p_notes.add_argument("--until", default=None, help="ISO date (default: tomorrow)")

@@ -68,6 +68,7 @@ def _list_args(workspace_path: Path, **kwargs: Any) -> argparse.Namespace:
         category=kwargs.get("category", None),
         status=kwargs.get("status", None),
         tag=kwargs.get("tag", None),
+        since=kwargs.get("since", None),
         json=kwargs.get("json", False),
     )
 
@@ -254,3 +255,64 @@ def test_update_note_appends_not_replaces(workspace: Workspace) -> None:
 
     updated = Tracker(workspace).list(category="task")[0]
     assert updated.notes == "first note\nsecond note"
+
+
+# ---------------------------------------------------------------------------
+# 9. tracker list --since SPEC filters by updated_at
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spec,expected_titles",
+    [
+        ("today", {"recent"}),
+        ("7d", {"recent", "five-days-ago"}),
+        ("month", {"recent", "five-days-ago"}),
+    ],
+)
+def test_list_since_filters_by_updated_at(
+    workspace: Workspace, spec: str, expected_titles: set[str]
+) -> None:
+    """--since uses parse_since grammar; filters on updated_at >= parsed date."""
+    from datetime import datetime, timedelta, timezone
+
+    from daily_driver.core.tracker import Tracker
+
+    tracker = Tracker(workspace)
+    tracker.add(category="task", title="recent")
+    tracker.add(category="task", title="five-days-ago")
+    tracker.add(category="task", title="long-ago")
+
+    # Backdate two entries by mutating the YAML directly via tracker.save.
+    state = tracker.load()
+    now = datetime.now(timezone.utc)
+    for entry in state.entries:
+        if entry.title == "five-days-ago":
+            entry.updated_at = now - timedelta(days=5)
+        elif entry.title == "long-ago":
+            entry.updated_at = now - timedelta(days=120)
+    tracker.save(state)
+
+    args = _list_args(workspace.root, since=spec, json=True)
+    import io
+    import sys as _sys
+
+    buf = io.StringIO()
+    _sys.stdout, orig = buf, _sys.stdout
+    try:
+        rc = run(args)
+    finally:
+        _sys.stdout = orig
+
+    assert rc == 0
+    parsed = json.loads(buf.getvalue())
+    titles = {e["title"] for e in parsed["data"]["entries"]}
+    assert titles == expected_titles
+
+
+def test_list_since_invalid_spec_exits_2(
+    workspace: Workspace, capsys: pytest.CaptureFixture
+) -> None:
+    args = _list_args(workspace.root, since="not-a-spec")
+    assert run(args) == 2
+    assert "invalid date spec" in capsys.readouterr().err

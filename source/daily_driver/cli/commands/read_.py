@@ -26,17 +26,17 @@ def add_parser(
     )
     nested = parser.add_subparsers(dest="read_what", metavar="<what>")
 
-    p_context = nested.add_parser("context", parents=[], help="Print context.md")
+    p_context = nested.add_parser("context", parents=parents, help="Print context.md")
     p_context.set_defaults(func=_run_context)
 
     p_voice = nested.add_parser(
         "voice-profile",
-        parents=[],
+        parents=parents,
         help="Print voice-profile.md; prints '(no voice profile ...)' marker on missing/empty",
     )
     p_voice.set_defaults(func=_run_voice_profile)
 
-    p_plan = nested.add_parser("plan", parents=[], help="Print a daily plan file")
+    p_plan = nested.add_parser("plan", parents=parents, help="Print a daily plan file")
     p_plan.add_argument(
         "--date",
         default=None,

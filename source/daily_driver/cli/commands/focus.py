@@ -48,7 +48,7 @@ def add_parser(
 
     nested = parser.add_subparsers(dest="focus_action", metavar="<action>")
 
-    p_on = nested.add_parser("on", parents=[], help="Start focus mode")
+    p_on = nested.add_parser("on", parents=parents, help="Start focus mode")
     p_on.add_argument(
         "--for",
         dest="duration",
@@ -65,10 +65,12 @@ def add_parser(
     )
     p_on.set_defaults(func=_run_on)
 
-    p_off = nested.add_parser("off", parents=[], help="End focus mode")
+    p_off = nested.add_parser("off", parents=parents, help="End focus mode")
     p_off.set_defaults(func=_run_off)
 
-    p_status = nested.add_parser("status", parents=[], help="Show focus mode state")
+    p_status = nested.add_parser(
+        "status", parents=parents, help="Show focus mode state"
+    )
     p_status.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )

@@ -279,6 +279,34 @@ def test_voice_update_dry_run_does_not_write(
     assert "dry-run" in out.lower() or "dry run" in out.lower()
 
 
+def test_voice_update_dry_run_does_not_invoke_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--dry-run must short-circuit before claude (review §9)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "letter.md", "Sample text")
+
+    invoked = {"count": 0}
+
+    def _boom(**kw):
+        invoked["count"] += 1
+        raise AssertionError("claude must not be invoked under --dry-run")
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "invoke", _boom)
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(
+        ["--workspace", str(ws), "voice-update", "--from", str(sample), "--dry-run"]
+    )
+    assert rc == 0
+    assert invoked["count"] == 0
+
+
 def test_voice_update_replace_creates_bak(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

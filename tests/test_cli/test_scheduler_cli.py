@@ -75,7 +75,23 @@ def test_uninstall_scheduler_reports_no_op_when_nothing_installed(
     assert "No launchd agents" in combined
 
 
-def test_uninstall_scheduler_keep_state_flag(
+def test_uninstall_scheduler_rejects_removed_keep_state_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--keep-state was removed in v0.1.x; passing it now is a parse error."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        app(["--workspace", str(ws), "uninstall-scheduler", "--keep-state"])
+    assert exc_info.value.code == 2
+
+
+def test_uninstall_scheduler_always_removes_state_mirror(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -86,16 +102,11 @@ def test_uninstall_scheduler_keep_state_flag(
     _patch_launchd(monkeypatch, tmp_path)
 
     app(["--workspace", str(ws), "install-scheduler"])
-    rc = app(["--workspace", str(ws), "uninstall-scheduler", "--keep-state"])
+    rc = app(["--workspace", str(ws), "uninstall-scheduler"])
 
-    out = capsys.readouterr()
-    combined = out.out + out.err
     assert rc == 0
-    # State mirror must remain.
     state_dir = ws / ".daily-driver" / "state" / "launchd"
-    assert state_dir.is_dir()
-    assert (state_dir / "com.daily-driver.checkin.plist").exists()
-    assert "retained" in combined.lower()
+    assert not state_dir.exists(), "state mirror must be removed unconditionally"
 
 
 def test_install_scheduler_errors_on_non_darwin(

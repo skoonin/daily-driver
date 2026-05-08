@@ -195,6 +195,7 @@ class Tracker:
         category: str | None = None,
         status: str | None = None,
         tag: str | None = None,
+        since: date | None = None,
     ) -> list[TrackerEntry]:
         entries = self.load().entries
         if category is not None:
@@ -203,6 +204,8 @@ class Tracker:
             entries = [e for e in entries if e.status == status]
         if tag is not None:
             entries = [e for e in entries if tag in e.tags]
+        if since is not None:
+            entries = [e for e in entries if e.updated_at.date() >= since]
         return entries
 
     # NOTE: `List[TrackerEntry]` (not `list[TrackerEntry]`) — the Tracker class
