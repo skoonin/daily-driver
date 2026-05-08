@@ -1280,6 +1280,130 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     return written
 
 
+def _enriched_to_dict(job: "EnrichedJob") -> dict[str, Any]:  # noqa: F821
+    """Project an EnrichedJob into the legacy working-dict shape.
+
+    Used by typed enricher wrappers so existing dict-based enricher bodies
+    (which mutate in place) can run unchanged. K9 collapses these wrappers.
+    """
+    return {
+        "company": job.company,
+        "role": job.role,
+        "location": job.location,
+        "url": job.url,
+        "source": job.source,
+        "source_canonical": job.source_canonical,
+        "source_board": job.source_board,
+        "comp": str(job.comp),
+        "date_found": job.date_found.isoformat(),
+        "product": job.product,
+        "gd_rating": job.gd_rating,
+        "fit": "" if job.fit is None else job.fit,
+        "notes": job.notes,
+        "description_text": job.description_text,
+        "status": job.status.value,
+    }
+
+
+def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
+    """Pick the enricher-mutated fields out of the working dict.
+
+    Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
+    """
+    from daily_driver.scraper.models import Comp, JobStatus
+
+    updates: dict[str, Any] = {}
+    if "product" in d:
+        updates["product"] = d["product"]
+    if "gd_rating" in d:
+        updates["gd_rating"] = d["gd_rating"]
+    if "fit" in d:
+        f = d["fit"]
+        updates["fit"] = (
+            int(f)
+            if isinstance(f, int) or (isinstance(f, str) and f.isdigit())
+            else None
+        )
+    if "notes" in d:
+        updates["notes"] = d["notes"]
+    if "description_text" in d:
+        updates["description_text"] = d["description_text"]
+    if "status" in d and d["status"]:
+        updates["status"] = JobStatus(d["status"])
+    if "skip_reason" in d:
+        updates["skip_reason"] = d["skip_reason"]
+    if "comp" in d and isinstance(d["comp"], str) and d["comp"]:
+        # Re-parse only when the enricher updated the display string.
+        new_comp = Comp.parse(d["comp"])
+        updates["comp"] = new_comp
+    return updates
+
+
+def enrich_company_descriptions_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any] | None = None,
+    *,
+    budget: int = 0,
+) -> tuple["list[EnrichedJob]", dict[str, int]]:  # noqa: F821
+    """Typed wrapper around ``enrich_company_descriptions`` (K8).
+
+    Round-trips through a working-dict list because the legacy body mutates
+    in place; returns a fresh list of frozen EnrichedJob instances built via
+    ``model_copy(update=...)``.
+    """
+    working = [_enriched_to_dict(j) for j in jobs]
+    stats = enrich_company_descriptions(working, config, budget=budget)
+    out = [
+        j.model_copy(update=_dict_to_enriched_updates(d))
+        for j, d in zip(jobs, working, strict=True)
+    ]
+    return out, stats
+
+
+def enrich_fit_and_notes_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any],
+    *,
+    budget: int = 0,
+) -> tuple["list[EnrichedJob]", dict[str, int]]:  # noqa: F821
+    """Typed wrapper around ``enrich_fit_and_notes`` (K8)."""
+    working = [_enriched_to_dict(j) for j in jobs]
+    stats = enrich_fit_and_notes(working, config, budget=budget)
+    out = [
+        j.model_copy(update=_dict_to_enriched_updates(d))
+        for j, d in zip(jobs, working, strict=True)
+    ]
+    return out, stats
+
+
+def enrich_job_details_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any],
+) -> "list[EnrichedJob]":  # noqa: F821
+    """Typed wrapper around ``enrich_job_details`` (K8).
+
+    The legacy ``enrich_job_details`` returns ``None`` and mutates in place;
+    this wrapper produces a fresh list with each job's description_text /
+    posted_date / comp populated where the detail fetch supplied them.
+    """
+    import datetime as dt
+
+    working = [_enriched_to_dict(j) for j in jobs]
+    enrich_job_details(working, config)
+    out: list[Any] = []
+    for j, d in zip(jobs, working, strict=True):
+        updates = _dict_to_enriched_updates(d)
+        # Detail enricher may also write posted_date as ISO string.
+        if d.get("posted_date") and isinstance(d["posted_date"], str):
+            try:
+                updates["posted_date"] = dt.date.fromisoformat(d["posted_date"])
+            except ValueError:
+                pass
+        # Comp from JSON-LD comes back via "comp" string; already handled.
+        out.append(j.model_copy(update=updates))
+    return out
+
+
 def append_jobs_typed(
     csv_path: Path,
     jobs: "list[EnrichedJob]",  # noqa: F821
