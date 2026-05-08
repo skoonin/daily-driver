@@ -101,7 +101,12 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     """Read macOS Calendar via icalBuddy. Returns [] if icalBuddy is missing."""
     log_query_window(log, "calendar", since, until)
     if shutil.which("icalBuddy") is None:
-        log.warning("calendar: icalBuddy not found; skipping calendar gather")
+        log.warning(
+            "calendar: icalBuddy not found on PATH; skipping calendar gather. "
+            "Install via `brew install ical-buddy` and grant the terminal "
+            "Calendar access (System Settings -> Privacy & Security -> "
+            "Calendars). See docs/developer.md 'Calendar (icalBuddy) setup'."
+        )
         return []
 
     cmd = [
@@ -127,10 +132,27 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
         return []
 
     if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        hint = ""
+        low = stderr.lower()
+        if "preference" in low or "plist" in low or "configuration" in low:
+            hint = (
+                " -- looks like a configuration problem; check that "
+                "~/Library/Preferences/com.hasseg.icalBuddy.plist exists and "
+                "the terminal has Calendar access. See docs/developer.md "
+                "'Calendar (icalBuddy) setup'."
+            )
+        elif "not authorized" in low or "permission" in low or "tcc" in low:
+            hint = (
+                " -- looks like a permissions problem; grant the terminal "
+                "Calendar access in System Settings -> Privacy & Security -> "
+                "Calendars."
+            )
         log.warning(
-            "calendar: icalBuddy exited %d; stderr=%r",
+            "calendar: icalBuddy exited %d; stderr=%r%s",
             result.returncode,
-            (result.stderr or "").strip()[:200],
+            stderr[:200],
+            hint,
         )
         return []
 

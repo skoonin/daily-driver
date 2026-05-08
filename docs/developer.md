@@ -148,3 +148,39 @@ make test
 | `make clean` / `distclean` | Remove build artifacts (and `.venv` for distclean) |
 
 See [releasing.md](releasing.md) for the release workflow and [extending.md](extending.md) for adding subcommands or scraper sources.
+
+## Calendar (icalBuddy) setup
+
+`daily-driver gather calendar` shells out to `icalBuddy` to read macOS
+Calendar events. It needs three things to return data:
+
+1. **Binary on PATH.** `brew install ical-buddy`. Check with `which icalBuddy`.
+2. **Calendar access for the terminal.** macOS gates Calendar access per
+   parent process. Open *System Settings -> Privacy & Security -> Calendars*
+   and toggle on the terminal you launch `daily-driver` from (Terminal,
+   iTerm2, VS Code, etc.). The first run after granting access may require
+   restarting the terminal.
+3. **icalBuddy preference plist** (optional but recommended). Without a
+   plist, icalBuddy will read all calendars including spammy subscribed
+   ones. Create `~/Library/Preferences/com.hasseg.icalBuddy.plist` to scope
+   the calendars and time format. Minimal example:
+
+   ```bash
+   /usr/libexec/PlistBuddy -c \
+     "Add :includeCals array" \
+     ~/Library/Preferences/com.hasseg.icalBuddy.plist
+   /usr/libexec/PlistBuddy -c \
+     "Add :includeCals: string 'Work'" \
+     ~/Library/Preferences/com.hasseg.icalBuddy.plist
+   ```
+
+   List your calendars with `icalBuddy calendars` and substitute their
+   names. See `man icalBuddy` for the full key reference.
+
+If `gather calendar` is silent or warns about a non-zero exit, run the
+underlying command directly to see the raw error -- the gather code surfaces
+icalBuddy's stderr but elides multi-line output:
+
+```bash
+icalBuddy -nc -df '%Y-%m-%d' -tf '%H:%M' eventsToday
+```
