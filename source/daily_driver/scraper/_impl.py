@@ -1280,6 +1280,20 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
 
 
+def normalize_typed(raw: "RawScrapedJob") -> "NormalizedJob":  # noqa: F821
+    """Typed normalizer: ``RawScrapedJob -> NormalizedJob``.
+
+    Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
+    ``daily_driver.scraper`` without crossing into the model layer directly.
+    The legacy dict-based ``normalize_job`` below remains for callers that
+    pass partial dicts through ``__init__.py``'s orchestrator; it will be
+    collapsed into this typed entry point at K9.
+    """
+    from daily_driver.scraper.models import NormalizedJob
+
+    return NormalizedJob.from_raw(raw)
+
+
 def normalize_job(raw: dict, source: str) -> dict:
     """Canonicalize a scraped job dict before it is written to CSV.
 
