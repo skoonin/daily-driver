@@ -194,7 +194,7 @@ def _run_notes(args: argparse.Namespace, workspace: Workspace) -> int:
         print(json.dumps({"schema": 1, "data": payload}, indent=2))
         return 0
     if not paths:
-        print("(no notes in window)")
+        print(f"(no notes in window; scanned {workspace.output_dir})")
         return 0
     for p in paths:
         print(p)

@@ -21,6 +21,7 @@ def gather_note_paths(
         datetime.combine(since_date, datetime.min.time()),
         datetime.combine(until_date, datetime.min.time()),
     )
+    log.debug("notes: scanning %s for *.md under YYYY/MM/", output_dir)
 
     results: list[Path] = []
     for p in output_dir.glob("*/*/*.md"):
