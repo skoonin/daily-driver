@@ -139,12 +139,19 @@ def test_check_detects_missing_agents(tmp_path: Path) -> None:
     assert ".claude/agents/daily-driver" in _paths(check(tmp_path))
 
 
-def test_check_detects_missing_user_command_dir(tmp_path: Path) -> None:
+def test_check_ignores_missing_user_territory_dirs(tmp_path: Path) -> None:
+    """User-territory dirs (.claude/commands/user, .claude/agents/user) are
+    not package-managed; their absence must not produce a contract violation
+    because `doctor --fix` cannot regenerate them (materialize never writes
+    user territory). See review-2026-04-23.md #11."""
     _scaffold_valid_workspace(tmp_path)
     import shutil
 
     shutil.rmtree(tmp_path / ".claude" / "commands" / "user")
-    assert ".claude/commands/user" in _paths(check(tmp_path))
+    shutil.rmtree(tmp_path / ".claude" / "agents" / "user")
+    paths = _paths(check(tmp_path))
+    assert ".claude/commands/user" not in paths
+    assert ".claude/agents/user" not in paths
 
 
 def test_check_detects_missing_gitignore(tmp_path: Path) -> None:

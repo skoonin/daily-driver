@@ -125,26 +125,44 @@ def test_doctor_exits_1_when_required_dep_missing(
     assert rc == 1
 
 
-def test_doctor_missing_workspace_degrades_gracefully(
+def test_doctor_on_empty_dir_errors_with_no_workspace(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--workspace pointing to a non-existent path warns but still runs checks."""
+    """doctor in an empty dir errors clearly with 'no workspace at <path>'."""
     from daily_driver.cli.cli import app
 
-    # Run from tmp_path so workspace discovery from CWD also fails.
     monkeypatch.chdir(tmp_path)
 
-    rc = app(["--workspace", str(tmp_path / "nope"), "doctor"])
+    rc = app(["doctor"])
 
     captured = capsys.readouterr()
-    combined = captured.out + captured.err
-    assert "not usable" in combined.lower() or "warning" in combined.lower()
-    assert "Python version" in combined
-    # No workspace drift check when workspace is None.
-    assert "Workspace drift" not in combined
-    assert rc in (0, 1)
+    assert rc == 1
+    assert "no workspace at" in captured.err
+    assert str(tmp_path) in captured.err
+    assert "daily-driver init" in captured.err
+    # No check table is rendered — error short-circuits before checks.
+    assert "Python version" not in captured.out + captured.err
+
+
+def test_doctor_with_bad_workspace_override_errors_with_no_workspace(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--workspace pointing to a non-existent path errors with that path."""
+    from daily_driver.cli.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    bad_path = tmp_path / "nope"
+
+    rc = app(["--workspace", str(bad_path), "doctor"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "no workspace at" in captured.err
+    assert str(bad_path) in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -193,12 +211,12 @@ def test_doctor_fix_rematerializes_drifted_workspace(
     assert "After fix" in combined
 
 
-def test_doctor_fix_without_workspace_is_noop(
+def test_doctor_fix_without_workspace_errors_with_no_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--fix without a workspace still runs checks but has nothing to materialize."""
+    """--fix without a discoverable workspace errors clearly; nothing to fix."""
     import daily_driver.core.materialize as mat_module
     from daily_driver.cli.cli import app
 
@@ -208,18 +226,49 @@ def test_doctor_fix_without_workspace_is_noop(
     monkeypatch.setattr(
         mat_module,
         "materialize",
-        lambda workspace, *, force=False: calls.append({"force": force}),
+        lambda workspace, *, ignore_drift=False, force_overwrite=False: calls.append(
+            {"ignore_drift": ignore_drift, "force_overwrite": force_overwrite}
+        ),
     )
 
-    # No workspace override, no CWD workspace — workspace resolves to None.
     rc = app(["doctor", "--fix"])
 
     captured = capsys.readouterr()
-    # Without a workspace there is no drift check to fix, so materialize isn't called.
+    assert rc == 1
     assert calls == []
-    # rc is 0 unless a non-workspace check ERRORs (deps should be OK in test env).
-    assert rc in (0, 1)
-    assert "After fix" in captured.out + captured.err
+    assert "no workspace at" in captured.err
+    assert "daily-driver init" in captured.err
+
+
+def test_doctor_fix_with_bad_workspace_override_errors_without_calling_materialize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--fix with --workspace pointing nowhere must error before materialize runs.
+    Guards against a regression where materialize is invoked on a None workspace."""
+    import daily_driver.core.materialize as mat_module
+    from daily_driver.cli.cli import app
+
+    monkeypatch.chdir(tmp_path)
+    bad_path = tmp_path / "nope"
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        mat_module,
+        "materialize",
+        lambda workspace, *, ignore_drift=False, force_overwrite=False: calls.append(
+            {"ignore_drift": ignore_drift, "force_overwrite": force_overwrite}
+        ),
+    )
+
+    rc = app(["--workspace", str(bad_path), "doctor", "--fix"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert calls == []
+    assert "no workspace at" in captured.err
+    assert str(bad_path) in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +325,8 @@ def test_doctor_reset_without_workspace_exits_1(
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "requires a workspace" in captured.err
+    assert "no workspace at" in captured.err
+    assert "daily-driver init" in captured.err
 
 
 # ---------------------------------------------------------------------------

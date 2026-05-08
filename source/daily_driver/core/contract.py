@@ -105,10 +105,11 @@ def check(workspace_root: Path) -> list[ContractViolation]:
         MIN_AGENTS,
     )
 
-    # User-territory directories — init creates them and never overwrites.
-    for rel in (".claude/commands/user", ".claude/agents/user"):
-        if not (workspace_root / rel).is_dir():
-            v.append(ContractViolation(rel, "missing directory"))
+    # .claude/commands/user and .claude/agents/user are user territory:
+    # init seeds the dirs but materialize never writes there, so a missing
+    # dir cannot be repaired by `doctor --fix` and reporting it as ERROR
+    # produces a stuck state. Per CLAUDE.md these are intentionally not
+    # package-managed — they are excluded from the contract entirely.
 
     return v
 

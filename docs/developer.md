@@ -73,7 +73,8 @@ Key invariants:
 | `context.md`, `voice-profile.md`, `.gitignore` | `exists_file` |
 | `.claude/commands/daily-driver/` | `count_gte >= 5` |
 | `.claude/agents/daily-driver/` | `count_gte >= 1` |
-| `.claude/commands/user/`, `.claude/agents/user/` | `exists_dir` |
+
+`.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `materialize` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
 
 Validation kinds: `exists_file`, `exists_dir`, `parses_yaml`, `parses_config`, `json_valid`, `count_gte`.
 

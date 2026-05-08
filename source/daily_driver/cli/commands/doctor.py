@@ -61,26 +61,24 @@ def run(args: argparse.Namespace) -> int:
 
     console = Console(stderr=True)
 
-    # Discover workspace, gracefully degrading if not found.
     workspace = None
     workspace_override = getattr(args, "workspace", None)
     workspace_path = Path(workspace_override) if workspace_override else None
     try:
         workspace = Workspace.discover_or_fail(override=workspace_path)
-    except WorkspaceError as exc:
-        if workspace_override is not None:
-            console.print(
-                f"[yellow]warning:[/yellow] --workspace {workspace_override!r} not usable: {exc}"
-            )
+    except WorkspaceError:
         workspace = None
 
+    if workspace is None:
+        attempted = workspace_path if workspace_path is not None else Path.cwd()
+        print(
+            f"error: no workspace at {attempted} "
+            f"(run 'daily-driver init {attempted}' to scaffold one)",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.reset:
-        if workspace is None:
-            print(
-                "error: doctor --reset requires a workspace (run 'daily-driver init' first)",
-                file=sys.stderr,
-            )
-            return 1
         reset(workspace)
         console.print("[green]✓[/green] workspace re-materialized from package data")
         return 0
