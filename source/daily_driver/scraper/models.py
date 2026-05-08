@@ -11,6 +11,7 @@ stage's instance.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from enum import Enum
 from typing import (
     Annotated,
@@ -59,6 +60,52 @@ def _fx(currency: CurrencyCode | None) -> float:
     if currency is None:
         return 1.0
     return _FX_TABLE.get(currency, 1.0)
+
+
+_COMP_SYMBOL_TO_CURRENCY: dict[str, CurrencyCode] = {
+    "£": "GBP",
+    "€": "EUR",
+    "ca$": "CAD",
+}
+
+_COMP_CURRENCY_RE = re.compile(
+    r"""
+    (?:
+        (?P<code>USD|CAD|GBP|EUR)\s*
+        |
+        (?P<sym>CA\$|£|€|\$)
+    )
+    """,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+_COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
+
+_COMP_PERIOD_MAP: dict[str, CompPeriod] = {
+    "yr": "year",
+    "year": "year",
+    "mo": "month",
+    "month": "month",
+    "hr": "hour",
+    "hour": "hour",
+}
+
+
+def _parse_k_salary(s: str) -> int | None:
+    """Parse a salary amount that may use K/M shorthand into a plain integer.
+
+    Greenhouse boards (e.g. Anthropic) post "$150K-$200K" instead of full numbers.
+    Returns None on unrecognized input so callers leave comp blank.
+    """
+    s = s.replace(",", "").strip()
+    try:
+        if s.upper().endswith("K"):
+            return int(float(s[:-1]) * 1_000)
+        if s.upper().endswith("M"):
+            return int(float(s[:-1]) * 1_000_000)
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
 
 
 class Comp(BaseModel):
@@ -127,34 +174,82 @@ class Comp(BaseModel):
 
     @classmethod
     def parse(cls, display: str) -> Comp:
-        # Deferred import: _parse_comp moves into this class in K-later;
-        # for K1 we wrap the legacy parser so callers can adopt Comp first.
-        from daily_driver.scraper._impl import _parse_comp
+        """Parse a free-form comp display string into a Comp.
 
-        parsed = _parse_comp(display)
-        if parsed["comp_min_native"] is None:
+        Currency detection precedence: explicit ISO code > symbol (CA$ > $ > £ > €).
+        Bare ``$`` defaults to USD. Returns an unknown ``Comp`` (preserving
+        ``raw_display``) on unparseable input.
+
+        Examples::
+            >>> Comp.parse("$150,000-$200,000").currency
+            'USD'
+            >>> Comp.parse("CAD 120,000-160,000/yr").currency
+            'CAD'
+            >>> Comp.parse("unpublished").is_known
+            False
+        """
+        if not display or not display.strip():
             return cls(raw_display=display)
-        period_raw = parsed["comp_period"] or "year"
-        period: CompPeriod = (
-            "hour"
-            if period_raw == "hour"
-            else "month" if period_raw == "month" else "year"
-        )
-        currency_raw = parsed["comp_currency"] or None
-        currency: CurrencyCode | None
-        if currency_raw == "USD":
-            currency = "USD"
-        elif currency_raw == "CAD":
-            currency = "CAD"
-        elif currency_raw == "GBP":
-            currency = "GBP"
-        elif currency_raw == "EUR":
-            currency = "EUR"
-        else:
-            currency = None
+
+        s = display.strip()
+
+        period: CompPeriod = "year"
+        period_match = re.search(r"/\s*(yr|year|mo|month|hr|hour)\b", s, re.IGNORECASE)
+        if period_match:
+            period = _COMP_PERIOD_MAP.get(period_match.group(1).lower(), "year")
+            s = s[: period_match.start()]
+
+        currencies_found: list[CurrencyCode] = []
+        amounts_found: list[int] = []
+
+        pos = 0
+        while pos < len(s):
+            cm = _COMP_CURRENCY_RE.match(s, pos)
+            if cm:
+                code = cm.group("code")
+                sym = cm.group("sym")
+                if code:
+                    upper = code.upper()
+                    if upper in ("USD", "CAD", "GBP", "EUR"):
+                        currencies_found.append(upper)  # type: ignore[arg-type]
+                elif sym:
+                    currencies_found.append(
+                        _COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD")
+                    )
+                pos = cm.end()
+                while pos < len(s) and s[pos] == " ":
+                    pos += 1
+                am = _COMP_AMOUNT_RE.match(s, pos)
+                if am:
+                    val = _parse_k_salary(am.group())
+                    if val is not None:
+                        amounts_found.append(val)
+                    pos = am.end()
+            elif s[pos] in "-–— ,":
+                pos += 1
+            else:
+                am = _COMP_AMOUNT_RE.match(s, pos)
+                if am:
+                    val = _parse_k_salary(am.group())
+                    if val is not None:
+                        amounts_found.append(val)
+                    pos = am.end()
+                else:
+                    pos += 1
+
+        if not amounts_found:
+            return cls(raw_display=display)
+
+        currency: CurrencyCode = currencies_found[0] if currencies_found else "USD"
+
+        comp_min = amounts_found[0]
+        comp_max = amounts_found[1] if len(amounts_found) >= 2 else amounts_found[0]
+        if comp_min > comp_max:
+            comp_min, comp_max = comp_max, comp_min
+
         return cls(
-            min_native=parsed["comp_min_native"],
-            max_native=parsed["comp_max_native"],
+            min_native=comp_min,
+            max_native=comp_max,
             currency=currency,
             period=period,
             raw_display=display,

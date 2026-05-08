@@ -140,6 +140,45 @@ class TestComp:
         ok, reason = c.meets_threshold(150_000)
         assert ok and reason == ""
 
+    # K4: comp parsing moved into Comp.parse; cover currency/range edge cases
+    # that previously lived in test_filters.py's TestCompParsing.
+    @pytest.mark.parametrize(
+        "display, currency, min_native, max_native",
+        [
+            ("$150K-$200K", "USD", 150_000, 200_000),  # K shorthand
+            ("$1.5M", "USD", 1_500_000, 1_500_000),  # M shorthand, single
+            ("USD 150,000", "USD", 150_000, 150_000),  # ISO code prefix, single
+            ("CA$120,000-CA$160,000", "CAD", 120_000, 160_000),  # CA$ symbol
+            ("€80,000-€100,000", "EUR", 80_000, 100_000),
+            ("£90K-£110K", "GBP", 90_000, 110_000),
+            ("200,000-150,000", "USD", 150_000, 200_000),  # swap min>max
+        ],
+    )
+    def test_parse_currency_and_amount_variants(
+        self,
+        display: str,
+        currency: str,
+        min_native: int,
+        max_native: int,
+    ) -> None:
+        c = Comp.parse(display)
+        assert c.is_known
+        assert c.currency == currency
+        assert c.min_native == min_native
+        assert c.max_native == max_native
+
+    def test_parse_iso_code_takes_precedence_over_symbol(self) -> None:
+        # When both an ISO code and a symbol appear, ISO wins.
+        c = Comp.parse("$150,000 USD")
+        assert c.currency == "USD"
+        c = Comp.parse("CAD $120,000")
+        assert c.currency == "CAD"
+
+    def test_parse_em_dash_separator(self) -> None:
+        c = Comp.parse("$150,000–$200,000")
+        assert c.is_known
+        assert c.min_native == 150_000 and c.max_native == 200_000
+
 
 # --------------------------------------------------------------------------- #
 # RawScrapedJob — Q15: extra="ignore"

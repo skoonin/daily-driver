@@ -852,21 +852,8 @@ def parse_linkedin_html(html: str) -> dict:
     return out
 
 
-def _parse_k_salary(s: str) -> int | None:
-    """Parse a salary amount that may use K/M shorthand into a plain integer.
-
-    Greenhouse boards (e.g. Anthropic) post "$150K-$200K" instead of full numbers.
-    Returns None on unrecognized input so callers leave comp blank.
-    """
-    s = s.replace(",", "").strip()
-    try:
-        if s.upper().endswith("K"):
-            return int(float(s[:-1]) * 1_000)
-        if s.upper().endswith("M"):
-            return int(float(s[:-1]) * 1_000_000)
-        return int(float(s))
-    except (ValueError, TypeError):
-        return None
+# K4: salary parsing now lives in models._parse_k_salary.
+from daily_driver.scraper.models import _parse_k_salary  # noqa: E402
 
 
 def parse_greenhouse_html(html: str) -> dict:
@@ -1119,149 +1106,34 @@ _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
 # Stripped here so dedup and display see clean titles.
 _REMOTE_ROLE_SUFFIXES: tuple[str, ...] = (" (remote)", "(remote)", " - remote")
 
-# Static FX table; refreshed manually — not worth an API call for rough filtering.
-_FX_TO_USD: dict[str, float] = {
-    "USD": 1.0,
-    "CAD": 0.73,
-    "GBP": 1.26,
-    "EUR": 1.09,
-}
-
-# Symbols that unambiguously signal a non-USD currency when bare $ is absent.
-_COMP_SYMBOL_TO_CURRENCY: dict[str, str] = {
-    "£": "GBP",
-    "€": "EUR",
-    "ca$": "CAD",
-}
-
-# Matches a currency token at the start of a comp segment.
-_COMP_CURRENCY_RE = re.compile(
-    r"""
-    (?:
-        (?P<code>USD|CAD|GBP|EUR)\s*      # explicit ISO code (USD 150K)
-        |
-        (?P<sym>CA\$|£|€|\$)              # currency symbol (CA$ before bare $)
-    )
-    """,
-    re.VERBOSE | re.IGNORECASE,
-)
-
-# Matches a single monetary amount with optional commas and K/M suffix.
-_COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
-
-# Period tokens found as suffixes like "/yr", "/mo", "/hr".
-_COMP_PERIOD_MAP: dict[str, str] = {
-    "yr": "year",
-    "year": "year",
-    "mo": "month",
-    "month": "month",
-    "hr": "hour",
-    "hour": "hour",
-}
-
 
 def _parse_comp(comp_str: str) -> dict:
-    """Parse a free-form comp display string into structured fields.
+    """Legacy dict-shape wrapper around ``Comp.parse``.
 
-    Returns a dict with keys: comp_min_native, comp_max_native, comp_currency,
-    comp_period, comp_min_usd, comp_max_usd. All values are None/"" on
-    unparseable input so callers can safely access without KeyError.
-
-    Currency detection precedence: explicit ISO code > symbol (CA$ > $ > £ > €).
-    A bare $ with no other signal defaults to USD.
-
-    Does NOT convert hourly/monthly amounts to annual equivalents — the caller
-    is responsible for that. comp_period signals which unit native values are in.
-
-    Examples::
-        >>> r = _parse_comp("$150,000-$200,000")
-        >>> r["comp_min_native"], r["comp_max_native"], r["comp_currency"]
-        (150000, 200000, 'USD')
-        >>> r = _parse_comp("CAD 120,000-160,000/yr")
-        >>> r["comp_currency"], r["comp_min_native"]
-        ('CAD', 120000)
-        >>> _parse_comp("unpublished")["comp_min_native"] is None
-        True
+    Kept for the dict-based pipeline and ``comp_meets_threshold``. Returns
+    ``comp_min_native``, ``comp_max_native``, ``comp_currency``, ``comp_period``,
+    ``comp_min_usd``, ``comp_max_usd``. All ``None`` / ``""`` on unparseable input.
+    Collapses into ``Comp.parse`` direct calls at K8/K9.
     """
-    empty: dict = {
-        "comp_min_native": None,
-        "comp_max_native": None,
-        "comp_currency": "",
-        "comp_period": "",
-        "comp_min_usd": None,
-        "comp_max_usd": None,
-    }
-    if not comp_str or not comp_str.strip():
-        return empty
+    from daily_driver.scraper.models import Comp
 
-    s = comp_str.strip()
-
-    # Extract period suffix before stripping it.
-    period = "year"  # default for yearly-ish numbers; overridden when explicit
-    period_match = re.search(r"/\s*(yr|year|mo|month|hr|hour)\b", s, re.IGNORECASE)
-    if period_match:
-        period = _COMP_PERIOD_MAP.get(period_match.group(1).lower(), "year")
-        s = s[: period_match.start()]
-
-    # Walk left-to-right consuming (optional currency token)(amount) pairs.
-    currencies_found: list[str] = []
-    amounts_found: list[int] = []
-
-    pos = 0
-    while pos < len(s):
-        cm = _COMP_CURRENCY_RE.match(s, pos)
-        if cm:
-            code = cm.group("code")
-            sym = cm.group("sym")
-            if code:
-                currencies_found.append(code.upper())
-            elif sym:
-                currencies_found.append(
-                    _COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD")
-                )
-            pos = cm.end()
-            while pos < len(s) and s[pos] == " ":
-                pos += 1
-            am = _COMP_AMOUNT_RE.match(s, pos)
-            if am:
-                val = _parse_k_salary(am.group())
-                if val is not None:
-                    amounts_found.append(val)
-                pos = am.end()
-        elif s[pos] in "-\u2013\u2014 ,":
-            pos += 1
-        else:
-            am = _COMP_AMOUNT_RE.match(s, pos)
-            if am:
-                val = _parse_k_salary(am.group())
-                if val is not None:
-                    amounts_found.append(val)
-                pos = am.end()
-            else:
-                pos += 1
-
-    if not amounts_found:
-        return empty
-
-    # First explicit ISO code wins; fall back to first symbol; default USD.
-    currency = currencies_found[0] if currencies_found else "USD"
-    if currency not in _FX_TO_USD:
-        currency = "USD"
-
-    comp_min = amounts_found[0]
-    comp_max = amounts_found[1] if len(amounts_found) >= 2 else amounts_found[0]
-
-    if comp_min > comp_max:
-        comp_min, comp_max = comp_max, comp_min
-
-    fx = _FX_TO_USD[currency]
+    c = Comp.parse(comp_str)
+    if not c.is_known:
+        return {
+            "comp_min_native": None,
+            "comp_max_native": None,
+            "comp_currency": "",
+            "comp_period": "",
+            "comp_min_usd": None,
+            "comp_max_usd": None,
+        }
     return {
-        "comp_min_native": comp_min,
-        "comp_max_native": comp_max,
-        "comp_currency": currency,
-        "comp_period": period,
-        "comp_min_usd": int(comp_min * fx),
-        "comp_max_usd": int(comp_max * fx),
+        "comp_min_native": c.min_native,
+        "comp_max_native": c.max_native,
+        "comp_currency": c.currency or "",
+        "comp_period": c.period,
+        "comp_min_usd": c.min_usd,
+        "comp_max_usd": c.max_usd,
     }
 
 
