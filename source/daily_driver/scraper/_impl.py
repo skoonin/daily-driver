@@ -29,8 +29,15 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
+
+if TYPE_CHECKING:
+    from daily_driver.scraper.models import (
+        EnrichedJob,
+        NormalizedJob,
+        RawScrapedJob,
+    )
 
 if sys.platform != "win32":
     import fcntl
@@ -690,7 +697,7 @@ def _format_comp(base_salary: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def _find_jobposting(node) -> dict | None:
+def _find_jobposting(node: Any) -> dict | None:
     """Walk a parsed JSON-LD payload and return the first JobPosting dict."""
     if isinstance(node, dict):
         node_type = node.get("@type")
@@ -1594,7 +1601,7 @@ def _has_playwright() -> bool:
 
 
 @contextmanager
-def _playwright_browser(config: dict):
+def _playwright_browser(config: dict) -> Any:
     """Yield a Playwright Page with non-headless Chromium and realistic settings.
 
     Non-headless by default — avoids most bot-detection heuristics on LinkedIn,
@@ -1778,7 +1785,8 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     for a_tag in index_soup.find_all("a"):
         text = a_tag.get_text(strip=True)
         if "Who is hiring?" in text and current_month_str in text:
-            href = a_tag.get("href", "")
+            href_raw = a_tag.get("href", "")
+            href = href_raw if isinstance(href_raw, str) else ""
             if href.startswith("item?id="):
                 thread_id = href.split("=", 1)[1]
             elif "item?id=" in href:
@@ -1814,7 +1822,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     # avoids pulling in a new dependency for this narrow use case).
     _strip_tags = re.compile(r"<[^>]+>")
 
-    jobs = []
+    jobs: list[dict[str, Any]] = []
     thread_url = f"https://news.ycombinator.com/item?id={thread_id}"
 
     for hit in hits:
@@ -2302,9 +2310,9 @@ def scrape_apple(config: dict) -> list[dict]:
                 for term in terms:
                     # Fresh list each iteration; closure captures the name, not
                     # the value, so each _capture_response writes to its own list.
-                    api_results = []
+                    api_results: list[Any] = []
 
-                    def _capture_response(response):
+                    def _capture_response(response: Any) -> None:
                         if "jobs.apple.com/api/v1/search" in response.url:
                             try:
                                 body = response.json()
