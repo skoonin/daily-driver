@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from daily_driver.core.logging import get_logger
+from daily_driver.core.logging import get_logger, log_query_window
 
 log = get_logger(__name__)
 
@@ -99,6 +99,7 @@ def _parse_event_block(block: str, event_date: str) -> CalendarEvent | None:
 
 def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     """Read macOS Calendar via icalBuddy. Returns [] if icalBuddy is missing."""
+    log_query_window(log, "calendar", since, until)
     if shutil.which("icalBuddy") is None:
         log.warning("calendar: icalBuddy not found; skipping calendar gather")
         return []

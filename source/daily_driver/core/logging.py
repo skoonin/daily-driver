@@ -8,6 +8,7 @@ prior handlers are removed before each setup so levels don't stack.
 from __future__ import annotations
 
 import logging as stdlog
+from datetime import datetime
 from typing import Literal
 
 from rich.console import Console
@@ -41,3 +42,20 @@ def configure(verbosity: Literal["quiet", "normal", "verbose"]) -> None:
 def get_logger(name: str) -> stdlog.Logger:
     """Return a child logger under the daily_driver namespace."""
     return stdlog.getLogger(f"daily_driver.{name}")
+
+
+def _fmt_dt(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        return dt.isoformat() + " (naive)"
+    return dt.isoformat()
+
+
+def log_query_window(
+    logger: stdlog.Logger, label: str, since: datetime, until: datetime
+) -> None:
+    """Emit a debug-level line describing the resolved gather window.
+
+    Visible only at ``-v`` (verbose). Helps diagnose empty-result false
+    negatives where the bug is in window math rather than data extraction.
+    """
+    logger.debug("%s: window since=%s until=%s", label, _fmt_dt(since), _fmt_dt(until))

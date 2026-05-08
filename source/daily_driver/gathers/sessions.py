@@ -7,7 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict
 
 from daily_driver.core.clock import now
-from daily_driver.core.logging import get_logger
+from daily_driver.core.logging import get_logger, log_query_window
 
 log = get_logger(__name__)
 
@@ -91,11 +91,12 @@ def gather_sessions(
     Claude Code writes one file per session to. Returns ``[]`` if the
     directory does not exist.
     """
+    cutoff = until if until is not None else now()
+    log_query_window(log, f"sessions ({_projects_root()})", since, cutoff)
     root = _projects_root()
     if not root.is_dir():
         return []
 
-    cutoff = until if until is not None else now()
     sessions: list[ClaudeSession] = []
 
     for jsonl in root.glob("*/*.jsonl"):
