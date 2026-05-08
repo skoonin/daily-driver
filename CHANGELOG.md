@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- `core/dates.py`: unified `parse_since` / `parse_range` parser shared by `summary` and `gather`. Grammar: `today|yesterday|tomorrow`, `week|month|quarter|year`, `Nd|Nw|Nm|Ny`, `YYYY-MM-DD`, `YYYY-MM-DD:YYYY-MM-DD`. Month math clamps to last day (`Jan 31 - 1m → Dec 31`).
+- CLI short flags: `-f` for `--force` (`init`), `-n` for `--dry-run` (`scrape-jobs run`, `voice-update`).
+- `make test-quick` target — py311 only, fast inner loop. `make test` now runs the full tox envlist (matches CI).
+- `docs/cli-tree.md`: snapshot of the v0.1.x CLI command surface (subcommands, flags, parent-parser inheritance gap). Planning reference for the upcoming `parents=[GLOBAL_PARSER]` migration.
+
+### Changed
+- `core/config_models.py`: `ScraperConfig.playwright_delays` is now `dict[str, PlaywrightDelays]` and `sources` is `dict[str, SourceToggle]` (auto-coerces legacy `bool` values via a `field_validator`). Replaces ad-hoc dict access in `scraper/_impl.py`.
+
+### Fixed
+- `gathers/calendar.py`: corrected icalBuddy invocation — `to:DATE` is now a single argument (was split into two, producing a usage banner). Added a usage-text guard that detects `USAGE:` / man-page markers in stdout and returns `[]` with a clear log warning instead of attempting to parse the help text as events.
+
 ### Changed -- developer tooling (port from coregen-sk)
 - `make setup` now delegates to `.ci-tools/setup-venv.sh` via a touchfile sentinel (`.venv/touchfile: pyproject.toml`). The script invokes `.venv/bin/pip` directly, bypassing PEP 668 errors on Homebrew system Python that previously broke a fresh `make setup`.
 - `makefiles/setup.mk`: split `setup` (basic) from `setup-dev` (basic + pre-commit hooks); added `setup-force`, `deps-update`, `clean-venv`, `status` targets.

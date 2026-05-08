@@ -22,7 +22,7 @@ errands, project milestones, support tickets, job applications. See
 
 ```bash
 make setup    # .venv + pip install -e .[dev] + pre-commit hooks
-make test     # tox -e py311
+make test     # full tox envlist (matches CI: lint + type + py311 + py312 + coverage)
 ```
 
 ## Command surface
@@ -81,7 +81,8 @@ Key conventions:
 
 ## Testing
 
-- `make test` — tox py311.
+- `make test` — full tox envlist (matches CI).
+- `make test-quick` — py311 only, fast inner loop.
 - `make test-unit` / `test-cli` / `test-e2e` — scoped suites.
 - `make lint` / `make format` / `make type` — black + isort + flake8 + mypy.
 

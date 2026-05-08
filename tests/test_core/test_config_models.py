@@ -270,10 +270,35 @@ def test_scraper_config_rejects_extra():
         ScraperConfig(unknown_flag=True)
 
 
-def test_scraper_config_sources_dict():
+def test_scraper_config_sources_legacy_bool_coerced():
+    """Legacy YAML form `sources: {remoteok: true}` migrates to SourceToggle."""
+    from daily_driver.core.config_models import SourceToggle
+
     m = ScraperConfig(sources={"remoteok": True, "jobspy": False})
-    assert m.sources["remoteok"] is True
-    assert m.sources["jobspy"] is False
+    assert isinstance(m.sources["remoteok"], SourceToggle)
+    assert m.sources["remoteok"].enabled is True
+    assert m.sources["jobspy"].enabled is False
+
+
+def test_scraper_config_sources_typed_form():
+    from daily_driver.core.config_models import SourceToggle
+
+    m = ScraperConfig(sources={"linkedin": SourceToggle(enabled=True)})
+    assert m.sources["linkedin"].enabled is True
+
+
+def test_scraper_config_playwright_delays_typed():
+    from daily_driver.core.config_models import PlaywrightDelays
+
+    m = ScraperConfig(playwright_delays={"wellfound": {"page_load_ms": 5000}})
+    assert isinstance(m.sources, dict)
+    assert isinstance(m.playwright_delays["wellfound"], PlaywrightDelays)
+    assert m.playwright_delays["wellfound"].page_load_ms == 5000
+
+
+def test_scraper_config_playwright_delays_rejects_unknown_key():
+    with pytest.raises(ValidationError):
+        ScraperConfig(playwright_delays={"wellfound": {"bogus_key": 1}})
 
 
 # ---------------------------------------------------------------------------

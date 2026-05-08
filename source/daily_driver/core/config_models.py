@@ -111,6 +111,24 @@ class JobSpyConfig(BaseModel):
     country_indeed: str = "USA"
 
 
+class PlaywrightDelays(BaseModel):
+    """Per-source Playwright timing knobs (milliseconds)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page_load_ms: int = 3000
+    interaction_ms: int = 500
+    settle_ms: int = 250
+
+
+class SourceToggle(BaseModel):
+    """Per-source enable/disable plus optional source-specific options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+
+
 class ScraperConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -133,10 +151,25 @@ class ScraperConfig(BaseModel):
     hn_max_posts: int = 100
     greenhouse_boards: list[str] = ["anthropic"]
     jobspy: JobSpyConfig = JobSpyConfig()
-    playwright_delays: dict[str, Any] = {}
-    sources: dict[str, Any] = {}
+    playwright_delays: dict[str, PlaywrightDelays] = {}
+    sources: dict[str, SourceToggle] = {}
     parallel_workers: int = 4
     max_pages: int = 3
+
+    @field_validator("sources", mode="before")
+    @classmethod
+    def _coerce_sources(cls, v: Any) -> Any:
+        # Migrate legacy `sources: {linkedin: true}` form to the typed
+        # SourceToggle model. Accepts bool, dict, or already-typed instances.
+        if not isinstance(v, dict):
+            return v
+        out: dict[str, Any] = {}
+        for key, val in v.items():
+            if isinstance(val, bool):
+                out[key] = SourceToggle(enabled=val)
+            else:
+                out[key] = val
+        return out
 
 
 class JobSearchPlugin(BaseModel):

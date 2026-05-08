@@ -28,6 +28,7 @@ def add_parser(
         help="Target directory (default: current directory).",
     )
     parser.add_argument(
+        "-f",
         "--force",
         action="store_true",
         default=False,

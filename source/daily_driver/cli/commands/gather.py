@@ -74,9 +74,17 @@ def add_parser(
 
 
 def _parse_date(raw: str | None, default: date) -> date:
+    """Resolve a gather --since/--until value.
+
+    Accepts the full grammar of ``daily_driver.core.dates.parse_since``
+    (today/yesterday/tomorrow, week/month/quarter/year, Nd|Nw|Nm|Ny,
+    YYYY-MM-DD). ``None`` returns the supplied default.
+    """
     if raw is None:
         return default
-    return date.fromisoformat(raw)
+    from daily_driver.core.dates import parse_since
+
+    return parse_since(raw)
 
 
 def _as_dt(d: date) -> datetime:

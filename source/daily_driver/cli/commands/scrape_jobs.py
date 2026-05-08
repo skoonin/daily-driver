@@ -23,6 +23,7 @@ def add_parser(
 
     p_run = nested.add_parser("run", parents=[], help="Scrape enabled job boards")
     p_run.add_argument(
+        "-n",
         "--dry-run",
         action="store_true",
         help="Print matches without writing to CSV",
