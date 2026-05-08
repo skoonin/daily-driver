@@ -1240,7 +1240,12 @@ def normalize_job(raw: dict, source: str) -> dict:
 
 
 def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
-    """Append new jobs to CSV. Returns count of rows written."""
+    """Append new jobs to CSV. Returns count of rows written.
+
+    Legacy dict-based entry point. Typed callers should use
+    ``append_jobs_typed`` (K6) which routes through
+    ``EnrichedJob.to_csv_row()``.
+    """
     if not jobs:
         return 0
 
@@ -1269,6 +1274,36 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["GD Rating"] = job.get("gd_rating", "")
                 row["Notes"] = job.get("notes", "")
                 writer.writerow(row)
+                written += 1
+    except OSError as exc:
+        raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
+    return written
+
+
+def append_jobs_typed(
+    csv_path: Path,
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    header: list[str],
+) -> int:
+    """Typed CSV writer (K6): one row per ``EnrichedJob.to_csv_row()``.
+
+    Header is still passed in so callers can pin the column order to whatever
+    is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
+    Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
+    """
+    if not jobs:
+        return 0
+
+    written = 0
+    try:
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            if sys.platform != "win32":
+                fcntl.flock(f, fcntl.LOCK_EX)
+            writer = csv.DictWriter(
+                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+            )
+            for job in jobs:
+                writer.writerow(job.to_csv_row())
                 written += 1
     except OSError as exc:
         raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
