@@ -42,9 +42,8 @@ End-user reference: `docs/commands.md`. Short list:
   prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of
   `voice-profile.md` from writing samples.
-- `daily-driver scrape-jobs {run,status}` — `run [--dry-run | --backfill]`
-  for multi-source job scraping + Claude enrichment; `status` shows last-run
-  metadata.
+- `daily-driver jobs {run,status,prune}` — search the configured job
+  boards, show last-run metadata, or archive stale rows from `jobs.csv`.
 - `daily-driver paths [<kind>] [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
 - `daily-driver read {context,voice-profile,plan}` — print workspace text

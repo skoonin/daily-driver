@@ -28,7 +28,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "gather",
         parents=parents,
-        help="Read external state (calendar, git, sessions, notes)",
+        help="Pull data from calendar, git, Claude sessions, or notes",
     )
     nested = parser.add_subparsers(dest="gather_what", metavar="<what>")
 

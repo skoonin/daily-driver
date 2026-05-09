@@ -32,7 +32,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "paths",
         parents=parents,
-        help="Print workspace-resolved paths (output, state, daily plan/notes)",
+        help="Print resolved workspace paths (output, state, daily plan/notes)",
     )
     parser.add_argument(
         "kind",

@@ -27,13 +27,13 @@ def add_parser(
         "--fix",
         action="store_true",
         default=False,
-        help="Attempt to fix fixable problems.",
+        help="Repair detected problems (preserves local edits).",
     )
     mode.add_argument(
         "--reset",
         action="store_true",
         default=False,
-        help="Force regenerate .claude/ from package data.",
+        help="Force regenerate the managed .claude/ files (overwrites local edits).",
     )
     add_global_flags(p)
     p.set_defaults(func=run)

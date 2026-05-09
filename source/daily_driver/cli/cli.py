@@ -62,7 +62,10 @@ def app(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         prog="daily-driver",
-        description="Daily Driver — job search planning and accountability CLI.",
+        description=(
+            "Daily Driver — ADHD-friendly daily planning, focus, and "
+            "task tracking. Drives professional work, job search, and errands."
+        ),
     )
     parser.add_argument(
         "--version",

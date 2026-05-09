@@ -70,17 +70,18 @@ def register_interactive_launcher(
     parser.add_argument(
         "--session-name",
         default=None,
-        help="Override the auto-generated session display name",
+        help="Custom name for this Claude session (defaults to a timestamped name)",
     )
     parser.add_argument(
         "--agent",
         default="work-planner",
-        help="Agent to load (default: work-planner)",
+        help="Claude agent to load (default: work-planner)",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model alias or name (e.g., 'sonnet', 'opus')",
+        choices=["sonnet", "opus", "haiku"],
+        help="Claude model to use.",
     )
     add_global_flags(parser)
     parser.set_defaults(func=_build_run(slash_command, session_prefix))

@@ -298,15 +298,21 @@ def _run_stats(args: argparse.Namespace, tracker: Any) -> int:
         return 0
     console = Console(stderr=False)
     table = Table(show_header=True, header_style="bold", title="Tracker Stats")
-    table.add_column("Dimension")
-    table.add_column("Key")
+    table.add_column("Group")
+    table.add_column("Value")
     table.add_column("Count")
+    _DIMENSION_LABELS = {
+        "total": "Total",
+        "by_category": "By category",
+        "by_status": "By status",
+    }
     for dimension, counts in stats.items():
+        label = _DIMENSION_LABELS.get(dimension, dimension)
         if isinstance(counts, dict):
             for key, count in counts.items():
-                table.add_row(dimension, str(key), str(count))
+                table.add_row(label, str(key), str(count))
         else:
-            table.add_row(dimension, "", str(counts))
+            table.add_row(label, "", str(counts))
     console.print(table)
     return 0
 

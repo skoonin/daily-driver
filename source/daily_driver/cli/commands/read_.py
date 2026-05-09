@@ -34,7 +34,7 @@ def add_parser(
     p_voice = nested.add_parser(
         "voice-profile",
         parents=parents,
-        help="Print voice-profile.md; prints '(no voice profile ...)' marker on missing/empty",
+        help="Print voice-profile.md (prints a marker if missing or empty)",
     )
     add_global_flags(p_voice)
     p_voice.set_defaults(func=_run_voice_profile)

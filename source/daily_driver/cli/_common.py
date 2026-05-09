@@ -45,7 +45,7 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
         "--workspace",
         metavar="PATH",
         default=argparse.SUPPRESS,
-        help="Path to daily-driver workspace root.",
+        help="Path to your daily-driver workspace directory.",
     )
 
 

@@ -34,7 +34,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "voice-update",
         parents=parents,
-        help="Update voice-profile.md from writing samples via headless claude",
+        help="Update voice-profile.md from writing samples (uses Claude)",
     )
     parser.add_argument(
         "--from",
@@ -76,18 +76,19 @@ def add_parser(
     parser.add_argument(
         "--session-name",
         default=None,
-        help="Override the auto-generated claude session display name.",
+        help="Custom name for this Claude session (defaults to a timestamped name).",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model alias or name (e.g., 'sonnet', 'opus').",
+        choices=["sonnet", "opus", "haiku"],
+        help="Claude model to use.",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=180,
-        help="Seconds to wait for claude before failing (default: 180).",
+        help="Seconds to wait for Claude before giving up (default: 180).",
     )
     add_global_flags(parser)
     return parser

@@ -20,7 +20,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "init",
         parents=parents,
-        help="Scaffold a new daily-driver workspace",
+        help="Create a new daily-driver workspace",
     )
     parser.add_argument(
         "path",
