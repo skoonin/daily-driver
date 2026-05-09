@@ -78,7 +78,7 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     known_urls  — set of Link column values, for URL-based dedup.
     known_keys  — set of dedup_key(company, role) strings, for cross-site dedup.
     """
-    from daily_driver.scraper._impl import ScraperError, dedup_key
+    from daily_driver.scraper.runner import ScraperError, dedup_key
 
     if not csv_path.exists():
         return set(), set(), []
@@ -127,7 +127,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     ``append_jobs_typed`` (K6) which routes through
     ``EnrichedJob.to_csv_row()``.
     """
-    from daily_driver.scraper._impl import ScraperError
+    from daily_driver.scraper.runner import ScraperError
 
     if not jobs:
         return 0
@@ -175,7 +175,7 @@ def append_jobs_typed(
     is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
     Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
     """
-    from daily_driver.scraper._impl import ScraperError
+    from daily_driver.scraper.runner import ScraperError
 
     if not jobs:
         return 0
@@ -299,12 +299,11 @@ def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
 
 def backfill(config: dict, csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
-    from daily_driver.scraper._impl import (
-        ScraperError,
+    from daily_driver.scraper.enrichment import (
         enrich_company_descriptions,
         enrich_fit_and_notes,
-        validate_config,
     )
+    from daily_driver.scraper.runner import ScraperError, validate_config
 
     validate_config(config)
     if not csv_path.exists():

@@ -22,7 +22,7 @@ def test_registry_entries_satisfy_source_protocol() -> None:
 def test_typed_wrapper_validates_rows(monkeypatch: Any) -> None:
     """A wrapped scraper returns list[RawScrapedJob] when the underlying scraper
     yields well-formed dict rows."""
-    from daily_driver.scraper import _impl
+    from daily_driver.scraper import sources
 
     fake_rows = [
         {
@@ -41,10 +41,10 @@ def test_typed_wrapper_validates_rows(monkeypatch: Any) -> None:
             "source": "remoteok",
         },
     ]
-    monkeypatch.setattr(_impl, "scrape_remoteok", lambda _cfg: fake_rows)
+    monkeypatch.setattr(sources, "scrape_remoteok", lambda _cfg: fake_rows)
 
     # Re-build registry with the patched scraper.
-    fn = _impl._typed_source(_impl.scrape_remoteok)
+    fn = sources._typed_source(sources.scrape_remoteok)
     out = fn({})
     assert len(out) == 2
     assert all(isinstance(r, RawScrapedJob) for r in out)
@@ -54,7 +54,7 @@ def test_typed_wrapper_validates_rows(monkeypatch: Any) -> None:
 
 def test_typed_wrapper_drops_unparseable_rows() -> None:
     """Malformed rows are skipped, not raised."""
-    from daily_driver.scraper import _impl
+    from daily_driver.scraper import sources
 
     def fake_scraper(_cfg: dict[str, Any]) -> list[dict[str, Any]]:
         return [
@@ -62,7 +62,7 @@ def test_typed_wrapper_drops_unparseable_rows() -> None:
             {"company": "BAD", "role": "", "url": "u2", "source": ""},  # role empty
         ]
 
-    fn = _impl._typed_source(fake_scraper)
+    fn = sources._typed_source(fake_scraper)
     out = fn({})
     # First row passes; second is rejected silently.
     assert len(out) == 1

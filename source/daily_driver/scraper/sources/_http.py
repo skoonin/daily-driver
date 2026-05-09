@@ -80,7 +80,7 @@ def country_params(country: str) -> dict[str, str]:
 
 def _http_session(config: dict) -> requests.Session:
     """Build a reusable requests.Session from scraper config."""
-    from daily_driver.scraper._impl import user_agent
+    from daily_driver.scraper.runner import user_agent
 
     session = requests.Session()
     session.headers["User-Agent"] = user_agent(config)
@@ -95,7 +95,7 @@ def _api_get(
     label: str = "",
 ) -> requests.Response | None:
     """GET a URL, log + return None on failure instead of raising."""
-    from daily_driver.scraper._impl import timeout_seconds
+    from daily_driver.scraper.runner import timeout_seconds
 
     try:
         resp = session.get(url, timeout=timeout_seconds(config))
@@ -123,7 +123,7 @@ def _playwright_browser(config: dict) -> Any:
     Indeed, and Wellfound without requiring a logged-in session.
     Set job_search.scraper.headless: true in config to run headless.
     """
-    from daily_driver.scraper._impl import scraper_cfg, user_agent
+    from daily_driver.scraper.runner import scraper_cfg, user_agent
 
     if not _has_playwright():
         raise ImportError(

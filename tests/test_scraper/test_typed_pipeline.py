@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from daily_driver.scraper._impl import jobspy_row_to_raw, normalize_typed
 from daily_driver.scraper.models import NormalizedJob, RawScrapedJob
+from daily_driver.scraper.runner import normalize_typed
+from daily_driver.scraper.sources.jobspy import jobspy_row_to_raw
 
 
 def _row(**overrides: object) -> dict[str, object]:
@@ -69,7 +70,7 @@ def test_normalize_typed_is_pure() -> None:
 
 def test_dedup_typed_matches_legacy() -> None:
     """K5: dedup_key_for(NormalizedJob) == dedup_key(company, role)."""
-    from daily_driver.scraper._impl import dedup_key, dedup_key_for
+    from daily_driver.scraper.runner import dedup_key, dedup_key_for
 
     raw = RawScrapedJob(
         company="  Acme  Corp ",
@@ -83,7 +84,7 @@ def test_dedup_typed_matches_legacy() -> None:
 
 
 def test_dedup_typed_collapses_whitespace_and_case() -> None:
-    from daily_driver.scraper._impl import dedup_key_for
+    from daily_driver.scraper.runner import dedup_key_for
 
     a = normalize_typed(RawScrapedJob(company="ACME", role="SRE", url="u1", source="s"))
     b = normalize_typed(

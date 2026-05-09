@@ -34,7 +34,7 @@ def enrich_company_descriptions(
 
     Returns a stats dict with keys: enriched, skipped_cached, failed.
     """
-    from daily_driver.scraper._impl import enrich_timeout, scraper_cfg
+    from daily_driver.scraper.runner import enrich_timeout, scraper_cfg
 
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
     if shutil.which("claude") is None:
@@ -162,7 +162,8 @@ def enrich_company_descriptions(
 
 
 def _location_summary(config: dict[str, Any]) -> str:
-    from daily_driver.scraper._impl import COUNTRY_NAMES, home_city, locations_config
+    from daily_driver.scraper.runner import home_city, locations_config
+    from daily_driver.scraper.sources._http import COUNTRY_NAMES
 
     loc_cfg = locations_config(config)
     parts = [f"Based in: {home_city(config)}"]
@@ -206,7 +207,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
 
     Returns a stats dict: {"enriched": N, "skipped_budget": N, "skipped_no_desc": 0, "failed": N}.
     """
-    from daily_driver.scraper._impl import (
+    from daily_driver.scraper.runner import (
         enrich_timeout,
         home_city,
         persona,
@@ -351,7 +352,7 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     are swallowed — missing data is the expected outcome for boards that don't
     expose JSON-LD, not an error worth aborting the run for.
     """
-    from daily_driver.scraper._impl import (
+    from daily_driver.scraper.runner import (
         scraper_cfg,
         timeout_seconds,
         user_agent,

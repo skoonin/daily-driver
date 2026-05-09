@@ -105,7 +105,7 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     Fails open when comp_max_usd is absent or zero so roles with no listed
     comp reach CSV for manual review rather than being silently dropped.
     """
-    from daily_driver.scraper._impl import min_comp_usd
+    from daily_driver.scraper.runner import min_comp_usd
 
     threshold = min_comp_usd(config)
     cmax = job.get("comp_max_usd")
@@ -124,7 +124,7 @@ def currency_matches_primary(job: dict, config: dict) -> bool:
     empty/missing currency (unparseable comp) also pass — currency=None is the
     sentinel for "couldn't read", not "doesn't match".
     """
-    from daily_driver.scraper._impl import _model
+    from daily_driver.scraper.runner import _model
 
     primary = _model(config).primary_currency
     if primary is None:

@@ -122,7 +122,15 @@ warn_return_any = false
 # bare-dict annotations (helper utilities, not the typed RawScrapedJob /
 # NormalizedJob / EnrichedJob hot path) and BeautifulSoup attribute access.
 # Adapter rewrite to native list[RawScrapedJob] returns is post-WS-K (W7).
-module = ["daily_driver.scraper._impl"]
+module = [
+    "daily_driver.scraper.runner",
+    "daily_driver.scraper.csv_io",
+    "daily_driver.scraper.enrichment",
+    "daily_driver.scraper.parsing",
+    "daily_driver.scraper.comp",
+    "daily_driver.scraper.sources",
+    "daily_driver.scraper.sources.*",
+]
 disallow_any_generics = false
 warn_return_any = false
 

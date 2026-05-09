@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from daily_driver.scraper import _impl
+from daily_driver.scraper.sources.jobspy import scrape_jobspy
+from daily_driver.scraper.sources.remoteok import scrape_remoteok
 
 
 @pytest.mark.smoke
@@ -34,7 +35,7 @@ def test_remoteok_live_returns_list_with_expected_fields() -> None:
             },
         }
     }
-    jobs = _impl.scrape_remoteok(config)
+    jobs = scrape_remoteok(config)
     assert isinstance(jobs, list)
     if not jobs:
         pytest.skip("remoteok returned no rows (transient or no matches)")
@@ -64,5 +65,5 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
             },
         }
     }
-    jobs = _impl.scrape_jobspy(config)
+    jobs = scrape_jobspy(config)
     assert isinstance(jobs, list)

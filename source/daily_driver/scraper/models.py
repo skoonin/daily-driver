@@ -292,7 +292,7 @@ class NormalizedJob(BaseModel):
 
     @classmethod
     def from_raw(cls, raw: RawScrapedJob) -> NormalizedJob:
-        from daily_driver.scraper._impl import (
+        from daily_driver.scraper.runner import (
             _REMOTE_LOCATION_ALIASES,
             _REMOTE_ROLE_SUFFIXES,
         )

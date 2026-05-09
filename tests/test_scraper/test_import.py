@@ -22,14 +22,14 @@ def test_package_exports_public_api() -> None:
 
 
 def test_impl_module_loads_without_side_effects() -> None:
-    """The ported _impl module must import without kicking off I/O."""
-    from daily_driver.scraper import _impl
+    """The runner module must import without kicking off I/O."""
+    from daily_driver.scraper import csv_io, runner
 
-    assert callable(_impl.run_all_scrapers)
-    assert callable(_impl.load_existing_jobs)
-    assert callable(_impl.normalize_job)
-    assert hasattr(_impl, "CANONICAL_HEADER")
-    assert isinstance(_impl.CANONICAL_HEADER, list)
+    assert callable(runner.run_all_scrapers)
+    assert callable(csv_io.load_existing_jobs)
+    assert callable(runner.normalize_job)
+    assert hasattr(csv_io, "CANONICAL_HEADER")
+    assert isinstance(csv_io.CANONICAL_HEADER, list)
 
 
 def test_load_config_file_reads_yaml(tmp_path: Path) -> None:

@@ -25,7 +25,7 @@ def scrape_apple(config: dict) -> list[dict]:
 
     Iterates each configured country's locale x search term.
     """
-    from daily_driver.scraper._impl import (
+    from daily_driver.scraper.runner import (
         _known_urls_from_config,
         _search_terms,
         countries_list,

@@ -19,7 +19,7 @@ def scrape_wellfound(config: dict) -> list[dict]:
     CSS class names are hashed so multiple selectors are tried.
     """
     from daily_driver.core.config_models import PlaywrightDelays
-    from daily_driver.scraper._impl import (
+    from daily_driver.scraper.runner import (
         _known_urls_from_config,
         _search_terms,
         location_matches,

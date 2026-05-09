@@ -22,7 +22,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     HN's HTML comment tree, which breaks on markup changes.
     Comment headline format (convention): "Company | Role | Location | ..."
     """
-    from daily_driver.scraper._impl import matches_roles, roles_list, scraper_cfg
+    from daily_driver.scraper.runner import matches_roles, roles_list, scraper_cfg
 
     max_posts = scraper_cfg(config).hn_max_posts
     roles = roles_list(config)

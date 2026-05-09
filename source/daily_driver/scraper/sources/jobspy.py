@@ -137,7 +137,7 @@ def scrape_jobspy(config: dict) -> list[dict]:
     installed — only this scraper fails in that case, not the whole pipeline.
     JobSpy handles its own HTTP session and returns a pandas DataFrame.
     """
-    from daily_driver.scraper._impl import (
+    from daily_driver.scraper.runner import (
         _search_terms,
         countries_list,
         matches_roles,

@@ -19,7 +19,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
     plugins.job_search.scraper.wwr_categories in .dd-config.yaml.
     No auth or browser required.
     """
-    from daily_driver.scraper._impl import matches_roles, roles_list, scraper_cfg
+    from daily_driver.scraper.runner import matches_roles, roles_list, scraper_cfg
 
     roles = roles_list(config)
     session = _http_session(config)

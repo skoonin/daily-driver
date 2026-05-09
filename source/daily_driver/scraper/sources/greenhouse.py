@@ -20,7 +20,7 @@ def scrape_greenhouse(config: dict) -> list[dict]:
     https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
     which returns all jobs with full HTML descriptions in a single request.
     """
-    from daily_driver.scraper._impl import matches_roles, roles_list, scraper_cfg
+    from daily_driver.scraper.runner import matches_roles, roles_list, scraper_cfg
 
     roles = roles_list(config)
     boards = scraper_cfg(config).greenhouse_boards

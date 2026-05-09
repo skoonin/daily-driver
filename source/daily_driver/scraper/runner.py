@@ -1,45 +1,32 @@
-"""
-Job scraper: scrapes enabled sources and appends new rows to jobs.csv.
-Safe to re-run — deduplicates by URL and by (company, role) against existing rows.
+"""Scraper orchestration: config helpers, role/dedup logic, run() / run_backfill()."""
 
-Sources (API — no browser required):
-  remoteok          — requests, public JSON API (/api)
-  weworkremotely    — requests, public RSS feeds (/categories/*.rss)
-  hn_who_is_hiring  — requests + BeautifulSoup (static HTML)
-  greenhouse        — requests, public JSON API (boards-api.greenhouse.io)
-  jobspy            — python-jobspy library (LinkedIn, Indeed, Glassdoor, Google)
-
-Sources (Playwright — browser required):
-  wellfound         — Playwright, public search (non-headless, best-effort)
-  apple             — Playwright, search input + API response intercept
-"""
+from __future__ import annotations
 
 import copy
+import csv
+import json
 import logging
 import re
 import shutil
 import subprocess
-import sys
 import time
-import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from daily_driver.scraper.models import (
-        NormalizedJob,
-        RawScrapedJob,
-    )
-
-if sys.platform != "win32":
-    pass
-
 import requests
 import yaml
-from bs4 import XMLParsedAsHTMLWarning
 
 from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
+from daily_driver.scraper.comp import _parse_comp
+from daily_driver.scraper.sources import SCRAPERS
+from daily_driver.scraper.sources._http import COUNTRY_NAMES
+
+if TYPE_CHECKING:
+    from daily_driver.scraper.models import NormalizedJob, RawScrapedJob
+
+log = logging.getLogger(__name__)
 
 
 class ScraperError(RuntimeError):
@@ -50,81 +37,13 @@ class ScraperError(RuntimeError):
     """
 
 
-from daily_driver.scraper.comp import (  # noqa: E402,F401
-    _COMP_CURRENCY_PREFIX,
-    _COMP_UNIT_SUFFIX,
-    _format_comp,
-    _parse_comp,
-    _to_int,
-    comp_meets_threshold,
-    currency_matches_primary,
-)
-from daily_driver.scraper.csv_io import (  # noqa: E402,F401
-    _CSV_TO_DICT,
-    _DICT_TO_CSV,
-    _PLACEHOLDER_PRODUCT,
-    CANONICAL_HEADER,
-    _dict_to_enriched_updates,
-    _dict_to_row,
-    _enriched_to_dict,
-    _migrate_legacy_header,
-    _row_to_dict,
-    append_jobs,
-    append_jobs_typed,
-    backfill,
-    load_existing_jobs,
-)
-from daily_driver.scraper.enrichment import (  # noqa: E402,F401
-    _location_summary,
-    enrich_company_descriptions,
-    enrich_company_descriptions_typed,
-    enrich_fit_and_notes,
-    enrich_fit_and_notes_typed,
-    enrich_job_details,
-    enrich_job_details_typed,
-)
-from daily_driver.scraper.parsing import (  # noqa: E402,F401
-    _find_jobposting,
-    _fix_mojibake,
-    _parse_detail_page,
-    parse_greenhouse_html,
-    parse_jsonld_jobposting,
-)
-from daily_driver.scraper.sources import (  # noqa: E402,F401
-    SCRAPERS,
-    SOURCE_REGISTRY,
-    _typed_source,
-)
-from daily_driver.scraper.sources._http import (  # noqa: E402,F401
-    COUNTRY_MAP,
-    COUNTRY_NAMES,
-    _api_get,
-    _has_playwright,
-    _http_session,
-    _playwright_browser,
-    country_params,
-)
-from daily_driver.scraper.sources.apple import scrape_apple  # noqa: E402,F401
-from daily_driver.scraper.sources.greenhouse import scrape_greenhouse  # noqa: E402,F401
-from daily_driver.scraper.sources.hn_who_is_hiring import (  # noqa: E402,F401
-    scrape_hn_who_is_hiring,
-)
-from daily_driver.scraper.sources.jobspy import (  # noqa: E402,F401
-    _format_jobspy_comp,
-    _jobspy_str,
-    jobspy_row_to_raw,
-    normalize_jobspy_row,
-    scrape_jobspy,
-)
-from daily_driver.scraper.sources.remoteok import scrape_remoteok  # noqa: E402,F401
-from daily_driver.scraper.sources.wellfound import scrape_wellfound  # noqa: E402,F401
-from daily_driver.scraper.sources.weworkremotely import (  # noqa: E402,F401
-    scrape_weworkremotely,
-)
+def _to_int(x: object) -> int | None:
+    """Best-effort coerce an arbitrary value to int (via float). None on failure."""
+    try:
+        return int(float(x))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
-warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-
-log = logging.getLogger(__name__)
 
 # Two-tier role matching: domain + optional seniority.
 # Defaults used when config keys are absent.
@@ -312,7 +231,7 @@ def dedup_key(company: str, role: str) -> str:
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
 
 
-def dedup_key_for(job: "NormalizedJob") -> str:  # noqa: F821
+def dedup_key_for(job: NormalizedJob) -> str:  # noqa: F821
     """Typed dedup key (K5): operates directly on NormalizedJob.
 
     Equivalent to ``dedup_key(job.company, job.role)`` but skips the dict-key
@@ -339,7 +258,7 @@ _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
 _REMOTE_ROLE_SUFFIXES: tuple[str, ...] = (" (remote)", "(remote)", " - remote")
 
 
-def normalize_typed(raw: "RawScrapedJob") -> "NormalizedJob":  # noqa: F821
+def normalize_typed(raw: RawScrapedJob) -> NormalizedJob:  # noqa: F821
     """Typed normalizer: ``RawScrapedJob -> NormalizedJob``.
 
     Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
@@ -722,4 +641,331 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
         )
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Public entry points ──────────────────────────────────────────────────────
+
+
+def load_config_file(config_path: Path) -> dict[str, Any]:
+    """Load a YAML config file into the raw-dict shape the scraper expects.
+
+    Raises ValueError when the caller points at a legacy ``config.yaml``.
+    All scraper settings now
+    belong under ``plugins.job_search`` in ``.dd-config.yaml``.
+    See docs/configuration.md for the current schema.
+    """
+    if config_path.name == "config.yaml":
+        raise ValueError(
+            f"{config_path} is a legacy config file. "
+            "All scraper settings have moved to plugins.job_search in .dd-config.yaml. "
+            "See docs/configuration.md for the current schema."
+        )
+    return load_config(config_path)
+
+
+def run_backfill(config: dict[str, Any], csv_path: Path) -> None:
+    """Re-enrich empty fields in an existing jobs.csv."""
+    from daily_driver.scraper.csv_io import backfill
+
+    backfill(config, csv_path)
+
+
+def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
+    """Render a Rich table summary of dry-run matches."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from daily_driver.scraper.parsing import _fix_mojibake
+
+    console = Console(stderr=False)
+    if not jobs:
+        console.print("[dim]Dry-run: no new jobs matched.[/dim]")
+        return
+
+    table = Table(
+        title=f"Dry-run preview ({len(jobs)} new jobs)",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("Source")
+    table.add_column("Company")
+    table.add_column("Role")
+    table.add_column("Location")
+    table.add_column("URL", overflow="fold")
+    for j in jobs:
+        table.add_row(
+            _fix_mojibake(str(j.get("source", ""))),
+            _fix_mojibake(str(j.get("company", ""))),
+            _fix_mojibake(str(j.get("role", ""))),
+            _fix_mojibake(str(j.get("location", ""))),
+            str(j.get("url", "")),
+        )
+    console.print(table)
+    console.print(
+        f"[dim]{len(jobs)} new jobs (dry-run, nothing written).[/dim]",
+    )
+
+
+def run(
+    config: dict[str, Any],
+    output_dir: Path,
+    *,
+    dry_run: bool = False,
+    sources_override: list[str] | None = None,
+) -> int:
+    """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
+
+    Returns the process-style exit code (0 success, 1 on failed sources /
+    I/O error). Mirrors the behavior of the legacy ``scripts/scrape-jobs.py``
+    ``main()`` without performing argparse or ``sys.exit()`` — the CLI layer
+    is responsible for exit handling.
+    """
+    from daily_driver.scraper.comp import comp_meets_threshold, currency_matches_primary
+    from daily_driver.scraper.csv_io import (
+        CANONICAL_HEADER,
+        _migrate_legacy_header,
+        append_jobs,
+        load_existing_jobs,
+    )
+    from daily_driver.scraper.enrichment import (
+        enrich_company_descriptions,
+        enrich_fit_and_notes,
+        enrich_job_details,
+    )
+
+    started_at = datetime.now(timezone.utc)
+    csv_path = output_dir / "jobs.csv"
+
+    validate_config(config)
+
+    if not scraper_cfg(config).enabled:
+        print(
+            "Scraper disabled. Set plugins.job_search.scraper.enabled: true "
+            "in .dd-config.yaml"
+        )
+        return 0
+
+    known_urls, known_keys, header = load_existing_jobs(csv_path)
+
+    # Union archive-table dedup state so triaged listings (pruned to
+    # jobs.archive.csv) are never re-discovered.
+    from daily_driver.core.jobs_archive import load_archive_dedup
+
+    archive_urls, archive_keys = load_archive_dedup(csv_path)
+    known_urls |= archive_urls
+    known_keys |= archive_keys
+
+    if not header:
+        header = CANONICAL_HEADER
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(header)
+        except OSError as exc:
+            log.error("Cannot initialize %s: %s", csv_path, exc)
+            return 1
+    else:
+        header = _migrate_legacy_header(csv_path, header)
+
+    log.info(
+        "Loaded %d existing URLs, %d existing keys from %s",
+        len(known_urls),
+        len(known_keys),
+        csv_path,
+    )
+
+    # Stuff the merged dedup set into the config dict so adapters that build
+    # their URL deterministically (Apple, Wellfound) can short-circuit during
+    # pagination instead of waiting for the post-scrape filter below.
+    config["_known_urls"] = known_urls
+
+    all_jobs, failed_sources = run_all_scrapers(
+        config, sources_override=sources_override
+    )
+
+    new_jobs = [
+        j
+        for j in all_jobs
+        if (not j.get("url") or j["url"] not in known_urls)
+        and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
+    ]
+
+    urlless = [j for j in new_jobs if not j.get("url")]
+    if urlless:
+        log.warning(
+            "Dropping %d jobs with no URL (cannot dedup on future runs)",
+            len(urlless),
+        )
+    new_jobs = [j for j in new_jobs if j.get("url")]
+
+    log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
+
+    pre_filter = len(new_jobs)
+    new_jobs = [j for j in new_jobs if location_matches(j, config)]
+    filtered = pre_filter - len(new_jobs)
+    if filtered:
+        log.info("Filtered %d jobs by location preferences", filtered)
+
+    if failed_sources:
+        log.warning("Failed sources: %s", ", ".join(failed_sources))
+
+    if not dry_run:
+        enrich_job_details(new_jobs, config)
+    else:
+        log.info("[dry-run] skipping enrich_job_details (claude calls)")
+    new_jobs = [normalize_job(j, j.get("source", "")) for j in new_jobs]
+
+    skipped_below_comp = 0
+    for job in new_jobs:
+        if job.get("status") == "skipped":
+            continue
+        ok, reason = comp_meets_threshold(job, config)
+        if ok:
+            continue
+        job["status"] = "skipped"
+        existing_notes = (job.get("notes") or "").strip()
+        job["notes"] = f"{existing_notes}; {reason}" if existing_notes else reason
+        skipped_below_comp += 1
+        log.info(
+            "[comp-filter] skipped: %s | %s | comp=%r",
+            job.get("company", "?"),
+            job.get("role", "?"),
+            job.get("comp", ""),
+        )
+    log.info(
+        "Comp-threshold filter: %d skipped below $%d USD",
+        skipped_below_comp,
+        min_comp_usd(config),
+    )
+
+    pre_currency = len(new_jobs)
+    new_jobs = [j for j in new_jobs if currency_matches_primary(j, config)]
+    skipped_currency = pre_currency - len(new_jobs)
+    if skipped_currency:
+        log.info(
+            "Primary-currency filter: %d dropped (not matching %s)",
+            skipped_currency,
+            _model(config).primary_currency,
+        )
+
+    if dry_run:
+        log.info(
+            "[dry-run] skipping enrich_company_descriptions and enrich_fit_and_notes (claude calls)"
+        )
+        product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
+        fn_stats = {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "skipped_no_desc": 0,
+            "failed": 0,
+        }
+    else:
+        product_stats = enrich_company_descriptions(new_jobs, config)
+        fn_stats = enrich_fit_and_notes(new_jobs, config)
+
+    n = len(new_jobs)
+    log.info(
+        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
+        fn_stats["enriched"],
+        n,
+        fn_stats["skipped_budget"],
+        fn_stats["failed"],
+    )
+    log.info(
+        "Product enriched: %d/%d, %d skipped (cached), %d failed",
+        product_stats["enriched"],
+        n,
+        product_stats["skipped_cached"],
+        product_stats["failed"],
+    )
+
+    if dry_run:
+        _print_dry_run_table(new_jobs)
+        return 1 if failed_sources else 0
+
+    written = append_jobs(csv_path, new_jobs, header)
+    print(
+        f"Scraper complete: {written} new jobs appended to {csv_path} "
+        f"({skipped_below_comp} skipped below comp threshold)"
+    )
+
+    run_manifest = {
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "sources_ok": sorted(
+            {
+                j.get("source", "")
+                for j in all_jobs
+                if j.get("source") and j.get("source") not in failed_sources
+            }
+        ),
+        "sources_failed": failed_sources,
+        "new_jobs": written,
+        "enriched_fit_notes": fn_stats["enriched"],
+        "enriched_product": product_stats["enriched"],
+        "skipped_below_comp": skipped_below_comp,
+    }
+    last_run_path = output_dir / "jobs-last-run.json"
+    try:
+        last_run_path.write_text(
+            json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        log.info("Run manifest written to %s", last_run_path)
+    except OSError as exc:
+        log.warning("Could not write run manifest: %s", exc)
+
+    if failed_sources:
+        log.error("Scraper failures: %s", ", ".join(failed_sources))
+        return 1
+
+    if written > 0:
+        _notify_new_jobs(written, csv_path)
+    return 0
+
+
+__all__ = [
+    "ScraperError",
+    "_to_int",
+    "_DEFAULT_DOMAIN_KEYWORDS",
+    "_DEFAULT_SENIORITY_KEYWORDS",
+    "_SENIORITY_PREFIXES",
+    "load_config",
+    "_model",
+    "validate_config",
+    "min_comp_usd",
+    "scraper_cfg",
+    "roles_list",
+    "user_agent",
+    "timeout_seconds",
+    "enrich_timeout",
+    "locations_config",
+    "persona",
+    "home_city",
+    "domain_keywords",
+    "seniority_keywords",
+    "countries_list",
+    "_known_urls_from_config",
+    "location_matches",
+    "_WHITESPACE_RE",
+    "_dedup_norm",
+    "dedup_key",
+    "dedup_key_for",
+    "_REMOTE_LOCATION_ALIASES",
+    "_REMOTE_ROLE_SUFFIXES",
+    "normalize_typed",
+    "normalize_job",
+    "_split_roles",
+    "_role_pattern",
+    "_role_matches",
+    "matches_roles",
+    "_compress_search_terms",
+    "_search_terms",
+    "_non_headless_sources",
+    "_config_with_headless",
+    "_run_one",
+    "_merge_and_dedup",
+    "run_all_scrapers",
+    "_notify_new_jobs",
+    "load_config_file",
+    "run_backfill",
+    "_print_dry_run_table",
+    "run",
+]
