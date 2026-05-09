@@ -113,6 +113,38 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
     )
 
 
+def _check_daily_state_writable(workspace: Workspace) -> CheckResult:
+    """Daily-state YAML lives at <ephemeral_dir>/daily/; verify the dir is writable."""
+    import tempfile
+
+    daily_dir = workspace.ephemeral_dir / "daily"
+    try:
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        # NamedTemporaryFile cleans up via context manager even if write/close
+        # raises mid-flight, so the probe never leaks a stray dotfile on the
+        # error path.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix=".doctor-write-probe-",
+            dir=daily_dir,
+            delete=True,
+        ):
+            pass
+    except OSError as exc:
+        return CheckResult(
+            name="Daily-state writable",
+            status="ERROR",
+            detail=f"{daily_dir} is not writable: {exc}",
+            fix_hint=f"Check filesystem permissions on {daily_dir}",
+            fixable=False,
+        )
+    return CheckResult(
+        name="Daily-state writable",
+        status="OK",
+        detail=f"{daily_dir} is writable",
+    )
+
+
 def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
     """Verify every entry in the init contract is satisfied on disk."""
     from daily_driver.core.contract import check as contract_check
@@ -148,6 +180,7 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     results.extend(_check_optional_clis())
     if workspace is not None:
         results.append(_check_workspace_drift(workspace))
+        results.append(_check_daily_state_writable(workspace))
         results.extend(_check_init_contract(workspace))
     return results
 

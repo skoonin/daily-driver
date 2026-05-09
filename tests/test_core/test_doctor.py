@@ -138,6 +138,42 @@ def test_workspace_drift_warning_when_no_stamp(tmp_path: Path) -> None:
     assert "doctor --fix" in (drift.fix_hint or "")
 
 
+def test_daily_state_writable_ok_in_fresh_workspace(tmp_path: Path) -> None:
+    ws = _FakeWorkspace.make(tmp_path)
+    results = run_checks(ws)  # type: ignore[arg-type]
+    check = next((r for r in results if r.name == "Daily-state writable"), None)
+    assert check is not None
+    assert check.status == "OK"
+    # Probe must clean up after itself.
+    assert not (ws.state_dir / "state" / "daily" / ".doctor-write-probe").exists()
+
+
+def test_daily_state_writable_error_when_unwritable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pathlib
+
+    ws = _FakeWorkspace.make(tmp_path)
+
+    real_mkdir = pathlib.Path.mkdir
+
+    def selective_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == "daily" and self.parent.name == "state":
+            raise PermissionError("simulated permission denied")
+        real_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pathlib.Path, "mkdir", selective_mkdir)
+
+    results = run_checks(ws)  # type: ignore[arg-type]
+    check = next((r for r in results if r.name == "Daily-state writable"), None)
+    assert check is not None
+    assert check.status == "ERROR"
+    assert (
+        "permission denied" in check.detail.lower()
+        or "not writable" in check.detail.lower()
+    )
+
+
 # ---------------------------------------------------------------------------
 # 4. After materialize(workspace), drift check is OK
 # ---------------------------------------------------------------------------

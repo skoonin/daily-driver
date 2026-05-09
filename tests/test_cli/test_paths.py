@@ -81,6 +81,49 @@ def test_paths_daily_notes_with_explicit_date(
     assert Path(out) == ws.resolve() / "2026" / "01" / "2026-01-15-notes.md"
 
 
+def test_paths_daily_state_with_explicit_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(["--workspace", str(ws), "paths", "daily-state", "--date", "2026-05-08"])
+
+    out = capsys.readouterr().out.strip()
+    assert rc == 0
+    assert (
+        Path(out)
+        == ws.resolve() / ".daily-driver" / "state" / "daily" / "2026-05-08.yaml"
+    )
+
+
+def test_paths_json_includes_daily_state(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json as _json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "paths",
+            "daily-plan",
+            "--date",
+            "2026-05-08",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = _json.loads(capsys.readouterr().out)["data"]
+    assert "daily_state" in payload
+    assert payload["daily_state"].endswith("/.daily-driver/state/daily/2026-05-08.yaml")
+
+
 def test_paths_without_workspace_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
