@@ -264,6 +264,49 @@ def test_read_state_raises_dailystate_error_on_schema_violation(
     assert str(target) in str(exc.value)
 
 
+def test_is_late_day_with_schedule_configured(tmp_path: Path) -> None:
+    """F4: schedule.day_start='07:00' → late after 09:00 (07:00 + 2h grace).
+
+    Also exercises the YAML-int coercion: unquoted `07:00` in YAML parses as
+    int 420 (= 7 * 60); the field validator must round-trip it to '07:00'.
+    """
+    from datetime import datetime, timezone
+
+    from daily_driver.core.daily_state import is_late_day
+
+    ws_root = _init_workspace(tmp_path)
+    cfg = ws_root / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text() + "\nschedule:\n  day_start: 07:00\n", encoding="utf-8"
+    )
+    ws = Workspace.discover_or_fail(override=ws_root)
+
+    on_time = datetime(2026, 5, 8, 8, 30, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 5, 8, 9, 0, tzinfo=timezone.utc)
+    late = datetime(2026, 5, 8, 9, 1, tzinfo=timezone.utc)
+
+    assert is_late_day(ws, on_time) is False
+    assert is_late_day(ws, cutoff) is False  # exactly at +2h grace, not yet late
+    assert is_late_day(ws, late) is True
+
+
+def test_is_late_day_fallback_no_schedule(tmp_path: Path) -> None:
+    """F4: with no schedule.day_start configured, fallback is 11:00 absolute."""
+    from datetime import datetime, timezone
+
+    from daily_driver.core.daily_state import is_late_day
+
+    ws = _ws(tmp_path)
+
+    morning = datetime(2026, 5, 8, 10, 59, tzinfo=timezone.utc)
+    cutoff = datetime(2026, 5, 8, 11, 0, tzinfo=timezone.utc)
+    afternoon = datetime(2026, 5, 8, 13, 0, tzinfo=timezone.utc)
+
+    assert is_late_day(ws, morning) is False
+    assert is_late_day(ws, cutoff) is False
+    assert is_late_day(ws, afternoon) is True
+
+
 def test_state_yaml_is_human_readable(tmp_path: Path) -> None:
     from daily_driver.core.daily_state import DailyState, state_path, write_state
 

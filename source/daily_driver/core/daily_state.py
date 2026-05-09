@@ -13,14 +13,21 @@ from __future__ import annotations
 
 import os
 import tempfile
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from daily_driver.core import clock
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
+
+# Q11: 2 hours past schedule.day_start counts as "late". Hardcoded — YAGNI on a
+# per-user knob until someone asks. Fallback (no schedule.day_start configured)
+# is "after 11:00 absolute".
+LATE_DAY_GRACE = timedelta(hours=2)
+LATE_DAY_FALLBACK_TIME = time(11, 0)
 
 
 class DailyStateError(RuntimeError):
@@ -35,6 +42,10 @@ class DailyState(BaseModel):
     last_day_start_at: datetime | None = None
     last_check_in_at: datetime | None = None
     plan_summary: str = ""
+    # F4 informational metadata: True when day-start ran more than
+    # LATE_DAY_GRACE past the configured schedule.day_start (or after
+    # LATE_DAY_FALLBACK_TIME absolute when no schedule is configured).
+    late_day: bool = False
 
 
 def state_path(workspace: Workspace, day: date) -> Path:
@@ -101,9 +112,30 @@ def write_state(workspace: Workspace, state: DailyState) -> None:
             raise
 
 
+def is_late_day(workspace: Workspace, now: datetime | None = None) -> bool:
+    """Return True iff the current time is past the late-day cutoff.
+
+    Single source of truth: `config.schedule.day_start` (HH:MM). When set,
+    the cutoff is `day_start + LATE_DAY_GRACE`. When unset, the cutoff is
+    `LATE_DAY_FALLBACK_TIME` absolute. Q11 spec.
+    """
+    current = now if now is not None else clock.now()
+    schedule_day_start = workspace.config.schedule.day_start
+    if schedule_day_start is None:
+        return current.time() > LATE_DAY_FALLBACK_TIME
+    hh, mm = schedule_day_start.split(":")
+    scheduled = datetime.combine(
+        current.date(), time(int(hh), int(mm)), tzinfo=current.tzinfo
+    )
+    return current > scheduled + LATE_DAY_GRACE
+
+
 __all__ = [
     "DailyState",
     "DailyStateError",
+    "LATE_DAY_FALLBACK_TIME",
+    "LATE_DAY_GRACE",
+    "is_late_day",
     "read_state",
     "state_path",
     "write_state",

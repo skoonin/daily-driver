@@ -219,6 +219,41 @@ def test_day_start_does_not_clobber_existing_plan(
     assert plan_path.read_text(encoding="utf-8") == user_content
 
 
+def test_day_start_writes_late_day_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4: day-start records late_day=True when run past schedule.day_start + 2h."""
+    from datetime import datetime, timezone
+
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import read_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    cfg = ws_root / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text() + "\nschedule:\n  day_start: '07:00'\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
+
+    fake_now = datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc)  # 3h past 07:00
+    monkeypatch.setattr(clock, "FROZEN_TIME", fake_now)
+    try:
+        rc = app(["--workspace", str(ws_root), "day-start"])
+    finally:
+        monkeypatch.setattr(clock, "FROZEN_TIME", None)
+    assert rc == 0
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    state = read_state(ws, fake_now.date())
+    assert state is not None
+    assert state.late_day is True
+
+
 def test_day_start_preserves_prior_check_in_in_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

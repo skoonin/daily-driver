@@ -25,7 +25,12 @@ from daily_driver.cli.commands._claude_session import (
     resolve_workspace,
 )
 from daily_driver.core import clock
-from daily_driver.core.daily_state import DailyState, read_state, write_state
+from daily_driver.core.daily_state import (
+    DailyState,
+    is_late_day,
+    read_state,
+    write_state,
+)
 from daily_driver.core.workspace import Workspace
 from daily_driver.integrations import claude_cli
 
@@ -93,18 +98,21 @@ def _write_plan_stub_if_absent(path: Path, day: date_cls) -> None:
 def _record_day_start(workspace: Workspace, day: date_cls, session_id: str) -> None:
     """Merge a new day-start into today's state, preserving prior fields."""
     started_at = clock.now()
+    late = is_late_day(workspace, started_at)
     existing = read_state(workspace, day)
     if existing is None:
         state = DailyState(
             date=day,
             last_day_start_session_id=session_id,
             last_day_start_at=started_at,
+            late_day=late,
         )
     else:
         state = existing.model_copy(
             update={
                 "last_day_start_session_id": session_id,
                 "last_day_start_at": started_at,
+                "late_day": late,
             }
         )
     write_state(workspace, state)

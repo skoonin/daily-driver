@@ -15,6 +15,14 @@ echo "current_time=$(date +%H:%M) current_date=$(date +%Y-%m-%d) day_of_week=$(d
 
 Use `current_time` as the earliest start for any planned work block. Time already past is gone — do not schedule work in time that has already elapsed.
 
+Also read today's daily-state to detect a late start:
+
+```bash
+daily-driver paths daily-state
+```
+
+Read the YAML at that path. If the file is missing or `late_day` is unset, treat it as `false` and continue. If `late_day: true`, frame the agenda as a late-day partial plan: prioritize what's still actionable in the remaining hours, defer non-urgent items to tomorrow, and flag the late start at the top of the rendered plan ("Late-day start at HH:MM — partial plan only"). Do NOT block the flow on late_day; it is informational metadata only.
+
 ## 1. Gather Context
 
 Read the workspace's context and voice profile:

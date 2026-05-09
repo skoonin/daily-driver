@@ -20,8 +20,19 @@ from daily_driver.core import scheduler
 
 
 @dataclass
+class _FakeSchedule:
+    day_start: str | None = None
+    day_end: str | None = None
+
+
+@dataclass
 class _FakeConfig:
     scheduler: dict | None = None
+    schedule: _FakeSchedule = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.schedule is None:
+            self.schedule = _FakeSchedule()
 
 
 @dataclass
@@ -38,11 +49,18 @@ class _FakeWorkspace:
         return self.state_dir / "state"
 
     @classmethod
-    def make(cls, root: Path, scheduler_cfg: dict | None = None) -> _FakeWorkspace:
+    def make(
+        cls,
+        root: Path,
+        scheduler_cfg: dict | None = None,
+        schedule: _FakeSchedule | None = None,
+    ) -> _FakeWorkspace:
         return cls(
             root=root,
             state_dir=root / ".daily-driver",
-            config=_FakeConfig(scheduler=scheduler_cfg),
+            config=_FakeConfig(
+                scheduler=scheduler_cfg, schedule=schedule or _FakeSchedule()
+            ),
         )
 
 
@@ -110,6 +128,39 @@ class TestBuildJobs:
             tmp_path, scheduler_cfg={"scrape_jobs": {"time": "07:00"}}
         )
         with pytest.raises(scheduler.SchedulerError, match="renamed to scheduler.jobs"):
+            scheduler.build_jobs(ws)
+
+    def test_schedule_day_start_emits_day_start_job(self, tmp_path: Path) -> None:
+        """F4: schedule.day_start present -> com.daily-driver.day-start plist."""
+        ws = _FakeWorkspace.make(tmp_path, schedule=_FakeSchedule(day_start="07:30"))
+        jobs = scheduler.build_jobs(ws)
+        labels = [j.label for j in jobs]
+        assert "com.daily-driver.day-start" in labels
+        ds = next(j for j in jobs if j.label == "com.daily-driver.day-start")
+        assert ds.context["times"] == [{"hour": 7, "minute": 30}]
+        assert "day-start" in ds.context["program_arguments"]
+
+    def test_schedule_day_end_emits_day_end_job(self, tmp_path: Path) -> None:
+        """F4: schedule.day_end present -> com.daily-driver.day-end plist."""
+        ws = _FakeWorkspace.make(tmp_path, schedule=_FakeSchedule(day_end="17:30"))
+        jobs = scheduler.build_jobs(ws)
+        labels = [j.label for j in jobs]
+        assert "com.daily-driver.day-end" in labels
+        de = next(j for j in jobs if j.label == "com.daily-driver.day-end")
+        assert de.context["times"] == [{"hour": 17, "minute": 30}]
+        assert "day-end" in de.context["program_arguments"]
+
+    def test_schedule_omits_unset_entries(self, tmp_path: Path) -> None:
+        """F4: schedule.day_start unset -> no day-start plist (no breaking change)."""
+        ws = _FakeWorkspace.make(tmp_path)  # default schedule = both None
+        jobs = scheduler.build_jobs(ws)
+        labels = [j.label for j in jobs]
+        assert "com.daily-driver.day-start" not in labels
+        assert "com.daily-driver.day-end" not in labels
+
+    def test_schedule_invalid_hhmm_raises(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(tmp_path, schedule=_FakeSchedule(day_start="9:99"))
+        with pytest.raises(scheduler.SchedulerError):
             scheduler.build_jobs(ws)
 
 

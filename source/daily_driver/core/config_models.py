@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -199,6 +200,39 @@ class PluginsConfig(BaseModel):
     job_search: JobSearchPlugin | None = None
 
 
+_HHMM_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
+
+
+class ScheduleConfig(BaseModel):
+    """Single source of truth for daily-driver's scheduled times.
+
+    Drives BOTH the launchd plist install (`install-scheduler` builds plists
+    from these) AND `is_late_day` evaluation (so prompts can frame the agenda
+    when the user starts late). HH:MM strings; 24-hour clock.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    day_start: str | None = None
+    day_end: str | None = None
+
+    @field_validator("day_start", "day_end", mode="before")
+    @classmethod
+    def _validate_hhmm(cls, v: Any) -> Any:
+        if v is None:
+            return v
+        # PyYAML pitfall: unquoted `HH:MM` parses as base-60 int (e.g. 17:30 → 1050).
+        # Round-trip integers back to "HH:MM" so users don't have to remember
+        # to quote times in .dd-config.yaml.
+        if isinstance(v, int):
+            hh, mm = divmod(v, 60)
+            if 0 <= hh <= 23 and 0 <= mm <= 59:
+                v = f"{hh:02d}:{mm:02d}"
+        if not isinstance(v, str) or not _HHMM_RE.match(v):
+            raise ValueError(f"expected HH:MM time string, got {v!r}")
+        return v
+
+
 class ClaudeConfig(BaseModel):
     """Knobs for how daily-driver invokes the `claude` CLI."""
 
@@ -237,4 +271,5 @@ class Config(BaseModel):
     tracker: TrackerConfig
     gather: GatherConfig = GatherConfig()
     claude: ClaudeConfig = ClaudeConfig()
+    schedule: ScheduleConfig = ScheduleConfig()
     plugins: PluginsConfig = PluginsConfig()
