@@ -112,7 +112,7 @@ def _resolve_output_dir(workspace) -> Path:  # type: ignore[no-untyped-def]
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.scraper import run as run_scrape
     from daily_driver.scraper import run_backfill
-    from daily_driver.scraper._impl import SCRAPERS
+    from daily_driver.scraper.sources import SCRAPERS
 
     if getattr(args, "list_sources", False):
         for sid in sorted(SCRAPERS):

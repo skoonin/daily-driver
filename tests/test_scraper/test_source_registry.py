@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from daily_driver.scraper._impl import SCRAPERS, SOURCE_REGISTRY
 from daily_driver.scraper.models import RawScrapedJob, Source
+from daily_driver.scraper.sources import SCRAPERS, SOURCE_REGISTRY
 
 
 def test_registry_keys_match_legacy_scrapers() -> None:
