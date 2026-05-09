@@ -97,6 +97,39 @@ def test_invoke_builds_full_args(monkeypatch):
     ]
 
 
+def test_invoke_prompt_precedes_add_dir(monkeypatch):
+    """Regression: --add-dir is variadic; trailing prompt was absorbed.
+
+    Symptom (review §8): summary --range week errored "Input must be provided
+    either through stdin or as a prompt argument when using --print" because
+    the prompt landed AFTER --add-dir and got eaten as another directory.
+    """
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    from pathlib import Path
+
+    invoke("PROMPT", headless=True, add_dirs=[Path("/tmp/ws")])
+
+    args = captured["args"]
+    assert "PROMPT" in args
+    assert "--add-dir" in args
+    # Prompt index must come BEFORE --add-dir so claude doesn't absorb it.
+    assert args.index("PROMPT") < args.index("--add-dir")
+
+
 def test_invoke_passes_input_text(monkeypatch):
     monkeypatch.setattr(
         "daily_driver.integrations.claude_cli.shutil.which",

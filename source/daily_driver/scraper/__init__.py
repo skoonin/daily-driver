@@ -70,6 +70,14 @@ def run(
 
     known_urls, known_keys, header = _impl.load_existing_jobs(csv_path)
 
+    # Union archive-table dedup state so triaged listings (pruned to
+    # jobs.archive.csv) are never re-discovered.
+    from daily_driver.core.jobs_archive import load_archive_dedup
+
+    archive_urls, archive_keys = load_archive_dedup(csv_path)
+    known_urls |= archive_urls
+    known_keys |= archive_keys
+
     if not header:
         header = _impl.CANONICAL_HEADER
         csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +125,10 @@ def run(
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
-    _impl.enrich_job_details(new_jobs, config)
+    if not dry_run:
+        _impl.enrich_job_details(new_jobs, config)
+    else:
+        log.info("[dry-run] skipping enrich_job_details (claude calls)")
     new_jobs = [_impl.normalize_job(j, j.get("source", "")) for j in new_jobs]
 
     skipped_below_comp = 0
@@ -143,8 +154,20 @@ def run(
         _impl.min_comp_usd(config),
     )
 
-    product_stats = _impl.enrich_company_descriptions(new_jobs, config)
-    fn_stats = _impl.enrich_fit_and_notes(new_jobs, config)
+    if dry_run:
+        log.info(
+            "[dry-run] skipping enrich_company_descriptions and enrich_fit_and_notes (claude calls)"
+        )
+        product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
+        fn_stats = {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "skipped_no_desc": 0,
+            "failed": 0,
+        }
+    else:
+        product_stats = _impl.enrich_company_descriptions(new_jobs, config)
+        fn_stats = _impl.enrich_fit_and_notes(new_jobs, config)
 
     n = len(new_jobs)
     log.info(

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -18,12 +20,7 @@ def add_parser(
         parents=parents,
         help="Remove launchd scheduler plists (macOS only)",
     )
-    parser.add_argument(
-        "--keep-state",
-        action="store_true",
-        default=False,
-        help="Retain mirrored plists under .daily-driver/state/launchd/",
-    )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 
@@ -43,7 +40,7 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        removed = uninstall_all(workspace, keep_state=args.keep_state)
+        removed = uninstall_all(workspace)
     except SchedulerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -55,8 +52,4 @@ def run(args: argparse.Namespace) -> int:
     console.print("[green]Removed launchd agents:[/green]")
     for label in removed:
         console.print(f"  • {label}")
-    if args.keep_state:
-        console.print(
-            "[dim]Mirrored plists retained under .daily-driver/state/launchd/[/dim]"
-        )
     return 0

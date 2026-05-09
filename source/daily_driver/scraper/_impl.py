@@ -1028,6 +1028,10 @@ CANONICAL_HEADER = [
     "Fit",
     "Comp",
     "Date Found",
+    # Date Last Seen drives `scrape-jobs prune --older-than`. Today scraper
+    # only sets it on insert (defaults to Date Found); the upsert-on-rescan
+    # path is owned by W5/W6 — until then prune ages from first-discovery.
+    "Date Last Seen",
     "Date Applied",
     "Link",
     "Product/Purpose",
@@ -1275,6 +1279,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["Location"] = job.get("location", "")
                 row["Source"] = job.get("source", "")
                 row["Date Found"] = job.get("date_found", today().isoformat())
+                row["Date Last Seen"] = job.get("date_last_seen", row["Date Found"])
                 row["Status"] = job.get("status") or "found"
                 row["Link"] = job.get("url", "")
                 row["Fit"] = job.get("fit", "")

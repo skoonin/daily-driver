@@ -8,6 +8,8 @@ import logging
 import sys
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -21,7 +23,7 @@ def add_parser(
 
     nested = parser.add_subparsers(dest="scrape_action", metavar="<action>")
 
-    p_run = nested.add_parser("run", parents=[], help="Scrape enabled job boards")
+    p_run = nested.add_parser("run", parents=parents, help="Scrape enabled job boards")
     p_run.add_argument(
         "-n",
         "--dry-run",
@@ -33,10 +35,11 @@ def add_parser(
         action="store_true",
         help="Re-enrich empty fields in existing jobs.csv rows",
     )
+    add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
 
     p_status = nested.add_parser(
-        "status", parents=[], help="Show last-run metadata and job counts"
+        "status", parents=parents, help="Show last-run metadata and job counts"
     )
     p_status.add_argument(
         "--json",
@@ -44,7 +47,41 @@ def add_parser(
         default=False,
         help="Emit JSON output wrapped in {schema, data}",
     )
+    add_global_flags(p_status)
     p_status.set_defaults(func=_run_status)
+
+    p_prune = nested.add_parser(
+        "prune",
+        parents=parents,
+        help="Move stale rows from jobs.csv to jobs.archive.csv",
+    )
+    p_prune.add_argument(
+        "--older-than",
+        required=True,
+        metavar="SPEC",
+        help=(
+            "Prune rows last seen before SPEC "
+            "(today, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
+        ),
+    )
+    p_prune.add_argument(
+        "--status",
+        action="append",
+        default=None,
+        metavar="STATUS",
+        help=(
+            "Status to prune (repeatable). Default: dropped, rejected, closed. "
+            "Use --status active to nuke stale active rows."
+        ),
+    )
+    p_prune.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print prune candidates without writing to disk",
+    )
+    add_global_flags(p_prune)
+    p_prune.set_defaults(func=_run_prune)
 
     parser.set_defaults(func=run)
     return parser
@@ -104,6 +141,59 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     return run_scrape(config, output_dir, dry_run=args.dry_run)
 
 
+def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from rich.console import Console
+    from rich.table import Table
+
+    from daily_driver.core.dates import parse_since
+    from daily_driver.core.jobs_archive import DEFAULT_PRUNE_STATUSES, prune
+
+    try:
+        cutoff = parse_since(args.older_than)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.status:
+        statuses = tuple(s.strip().lower() for s in args.status if s.strip())
+    else:
+        statuses = DEFAULT_PRUNE_STATUSES
+
+    output_dir = _resolve_output_dir(workspace)
+    csv_path = output_dir / "jobs.csv"
+
+    candidates, archived = prune(
+        csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run
+    )
+
+    console = Console(stderr=False)
+    if not candidates:
+        console.print("[dim]No rows match prune criteria.[/dim]")
+        return 0
+
+    table = Table(
+        title=f"Prune candidates ({'dry-run' if args.dry_run else 'archived'})",
+        show_header=True,
+    )
+    table.add_column("Company")
+    table.add_column("Status")
+    table.add_column("Date Last Seen")
+    table.add_column("Role")
+    for row in candidates:
+        table.add_row(
+            row.get("Company", ""),
+            row.get("Status", ""),
+            row.get("Date Last Seen", "") or row.get("Date Found", ""),
+            row.get("Role", ""),
+        )
+    console.print(table)
+    if args.dry_run:
+        console.print(f"[yellow]Dry-run: {len(candidates)} would be pruned.[/yellow]")
+    else:
+        console.print(f"[green]Archived {archived} rows to jobs.archive.csv.[/green]")
+    return 0
+
+
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from rich.console import Console
     from rich.table import Table
@@ -154,7 +244,7 @@ def run(args: argparse.Namespace) -> int:
 
     if not hasattr(args, "func") or args.func is run:
         print("usage: daily-driver scrape-jobs <action> ...", file=sys.stderr)
-        print("actions: run, status", file=sys.stderr)
+        print("actions: run, status, prune", file=sys.stderr)
         return 2
 
     workspace_override = getattr(args, "workspace", None)

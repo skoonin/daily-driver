@@ -10,6 +10,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -33,6 +35,7 @@ def add_parser(
         default=False,
         help="Force re-materialize .claude/ from package data.",
     )
+    add_global_flags(p)
     p.set_defaults(func=run)
     return p
 

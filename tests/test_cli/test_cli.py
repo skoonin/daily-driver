@@ -173,3 +173,26 @@ def test_verbose_flag_sets_debug_level(monkeypatch):
     result = app(["-v", "doctor"])
     assert result == 0
     assert DoctorStub.captured_level == logging.DEBUG
+
+
+# ---------------------------------------------------------------------------
+# 7. Global flags accept on either side of the subcommand (Q5 migration)
+# ---------------------------------------------------------------------------
+
+
+def test_verbose_after_subcommand_sets_debug(tmp_path):
+    """`daily-driver doctor -v` was a parse error pre-Q5; now valid."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    # doctor on missing-but-creatable path returns 1 — we only care about parse.
+    rc = app(["doctor", "-v", "--workspace", str(ws)])
+    # Either 0 (passes) or 1 (workspace not initialized) — must not be 2 (parse error).
+    assert rc != 2
+
+
+def test_workspace_after_subcommand(tmp_path):
+    """`--workspace PATH` after the subcommand name parses correctly."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    rc = app(["doctor", "--workspace", str(ws)])
+    assert rc != 2

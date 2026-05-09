@@ -12,6 +12,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -26,7 +28,7 @@ def add_parser(
     nested = parser.add_subparsers(dest="tracker_action", metavar="<action>")
 
     # --- add ---
-    p_add = nested.add_parser("add", parents=[], help="Add a new tracker entry")
+    p_add = nested.add_parser("add", parents=parents, help="Add a new tracker entry")
     p_add.add_argument(
         "--category", required=True, metavar="CAT", help="Entry category"
     )
@@ -58,10 +60,13 @@ def add_parser(
         metavar="KEY=VALUE",
         help="Extra key=value pairs (repeatable)",
     )
+    add_global_flags(p_add)
     p_add.set_defaults(func=_run_add)
 
     # --- update ---
-    p_update = nested.add_parser("update", parents=[], help="Update an existing entry")
+    p_update = nested.add_parser(
+        "update", parents=parents, help="Update an existing entry"
+    )
     p_update.add_argument("id", metavar="ID", help="Entry ID to update")
     p_update.add_argument("--status", default=None, metavar="STATUS", help="New status")
     p_update.add_argument("--note", default=None, metavar="TEXT", help="Append note")
@@ -81,10 +86,11 @@ def add_parser(
         metavar="KEY=VALUE",
         help="Extra key=value pairs (repeatable, merged into existing)",
     )
+    add_global_flags(p_update)
     p_update.set_defaults(func=_run_update)
 
     # --- list ---
-    p_list = nested.add_parser("list", parents=[], help="List tracker entries")
+    p_list = nested.add_parser("list", parents=parents, help="List tracker entries")
     p_list.add_argument(
         "--category", default=None, metavar="CAT", help="Filter by category"
     )
@@ -93,13 +99,23 @@ def add_parser(
     )
     p_list.add_argument("--tag", default=None, metavar="TAG", help="Filter by tag")
     p_list.add_argument(
+        "--since",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "Only list entries updated on/after SPEC "
+            "(today, yesterday, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
+        ),
+    )
+    p_list.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_list)
     p_list.set_defaults(func=_run_list)
 
     # --- follow-ups ---
     p_fu = nested.add_parser(
-        "follow-ups", parents=[], help="List entries with follow-up actions"
+        "follow-ups", parents=parents, help="List entries with follow-up actions"
     )
     p_fu.add_argument(
         "--overdue",
@@ -110,13 +126,17 @@ def add_parser(
     p_fu.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_fu)
     p_fu.set_defaults(func=_run_follow_ups)
 
     # --- stats ---
-    p_stats = nested.add_parser("stats", parents=[], help="Show tracker statistics")
+    p_stats = nested.add_parser(
+        "stats", parents=parents, help="Show tracker statistics"
+    )
     p_stats.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_stats)
     p_stats.set_defaults(func=_run_stats)
 
     parser.set_defaults(func=run)
@@ -229,10 +249,20 @@ def _run_update(args: argparse.Namespace, tracker: Any) -> int:
 
 
 def _run_list(args: argparse.Namespace, tracker: Any) -> int:
+    since = None
+    if args.since is not None:
+        from daily_driver.core.dates import parse_since
+
+        try:
+            since = parse_since(args.since)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     entries = tracker.list(
         category=args.category,
         status=args.status,
         tag=args.tag,
+        since=since,
     )
     if getattr(args, "json", False):
         payload = {

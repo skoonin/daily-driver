@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
@@ -83,6 +84,7 @@ def add_parser(
         default=180,
         help="Seconds to wait for claude before failing (default: 180)",
     )
+    add_global_flags(parser)
     return parser
 
 

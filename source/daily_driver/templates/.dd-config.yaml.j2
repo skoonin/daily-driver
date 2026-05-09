@@ -1,29 +1,71 @@
 # daily-driver workspace configuration
-# Structured settings live here; narrative prose stays in Markdown files.
+#
+# Structured settings live here; narrative prose stays in Markdown files
+# (context.md, voice-profile.md). Top-level keys not listed below are
+# preserved on parse — the root model is `extra="allow"` so you can stash
+# workspace-local notes without a schema bump. Plugin schemas are strict
+# (`extra="forbid"`); typos there are real errors.
+
+# Required: workspace settings.
 daily_driver:
+  # Where command output (jobs.csv, daily/, etc.) lives. Relative paths
+  # resolve against the workspace root.
   output_dir: .
 
-# Optional: uncomment and fill in for personal context
+# Optional: personal context surfaced into Claude prompts.
 # user_profile:
 #   name: ""
-#   timezone: ""
+#   citizenship: []           # ["US", "CA"]
+#   work_auth: {}             # {"US": "citizen", "CA": "PR"}
+#   timezone: ""              # "America/Vancouver"
+#   seeking_since: 2026-04-06  # YYYY-MM-DD when active job search began
 
+# Required: tracker configuration.
 tracker:
   default_category: task
   categories:
     task:
       required: [title]
+    # Add more categories as you need them. `required` lists fields that
+    # must be set on `tracker add`.
+    # errand:
+    #   required: [title]
+    # ticket:
+    #   required: [title, link]
 
-# Optional: recurring daily/weekly items
-# recurring_tasks: []
+# Optional: recurring tasks surfaced into day-start planning.
+# recurring_tasks:
+#   - name: "Review tracker follow-ups"
+#     cadence: daily            # daily | weekly | monthly
+#     estimated_minutes: 10
+#   - name: "Weekly retro"
+#     cadence: weekly
+#     day: friday               # only valid when cadence is weekly
 
-# Optional: job-search plugin — see docs/configuration.md
+# Optional: voice profile hints used by `voice-update` and summary outputs.
+# voice_profile:
+#   formality: professional-casual    # formal | professional-casual | casual
+#   sentence_length: medium           # short | medium | long
+#   avoid_words: []
+#   preferred_signoff: "—"
+
+# Optional: scheduler config (consumed by install-scheduler).
+# scheduler:
+#   check_in:
+#     hour: 14
+#     minute: 0
+#   scrape_jobs:
+#     hour: 8
+#     minute: 30
+
+# Optional: plugins. Each plugin schema is strict — typos error out.
 # plugins:
 #   job_search:
 #     persona: "Senior SRE / Platform Engineer"
-#     roles: []
-#     domain_keywords: []
-#     seniority_keywords: []
+#     home_city: "Vancouver, BC"
+#     roles: []                     # ["SRE", "Platform Engineer"]
+#     domain_keywords: []           # ["kubernetes", "observability"]
+#     seniority_keywords: []        # ["senior", "staff", "principal"]
 #     min_comp_usd: 180000
 #     locations:
 #       home_city: "Vancouver, BC"
@@ -31,7 +73,7 @@ tracker:
 #       countries: [CA, US]
 #       cities: []
 #     compensation:
-#       currency: USD
+#       currency: USD               # USD | CAD | EUR | GBP
 #       minimum: 180000
 #       target: 240000
 #     role_filters:

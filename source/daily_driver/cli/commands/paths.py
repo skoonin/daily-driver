@@ -8,6 +8,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._utils import resolve_date
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -47,6 +48,7 @@ def add_parser(
         default=False,
         help="Emit all paths as JSON instead of a single path",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 

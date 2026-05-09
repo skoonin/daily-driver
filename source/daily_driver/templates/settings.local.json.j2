@@ -6,6 +6,18 @@
       "Write(//{{ workspace.root }}/**)"
     ]
   },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"{{ workspace.root }}/.claude/hooks/hook-current-time.sh\""
+          }
+        ]
+      }
+    ]
+  },
   "metadata": {
     "daily_driver_version": "{{ workspace.version }}"
   }

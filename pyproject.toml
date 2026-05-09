@@ -78,6 +78,7 @@ daily_driver = [
     "templates/.*.j2",
     "templates/*.md",
     "templates/*.yaml",
+    "templates/hooks/*.sh",
 ]
 
 [tool.black]

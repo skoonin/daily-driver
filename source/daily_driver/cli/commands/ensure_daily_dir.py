@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._utils import resolve_date
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -24,6 +25,7 @@ def add_parser(
         default=None,
         help="ISO date (YYYY-MM-DD); defaults to today",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 

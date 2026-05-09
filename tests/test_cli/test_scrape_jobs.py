@@ -258,3 +258,200 @@ def test_scrape_jobs_status_missing_workspace_exits_1(
     rc = app(["--workspace", str(tmp_path / "missing"), "scrape-jobs", "status"])
 
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# prune subcommand
+# ---------------------------------------------------------------------------
+
+
+def _seed_jobs_csv(ws: Path, rows: list[dict]) -> Path:
+    import csv
+
+    from daily_driver.scraper._impl import CANONICAL_HEADER
+
+    p = ws / "jobs.csv"
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(
+            f,
+            fieldnames=CANONICAL_HEADER,
+            quoting=csv.QUOTE_MINIMAL,
+            extrasaction="ignore",
+        )
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+    return p
+
+
+def test_prune_dry_run_lists_candidates_without_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    csv_path = _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "OldCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/1",
+            },
+            {
+                "Status": "applied",
+                "Company": "ActiveCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/2",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "scrape-jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "OldCo" in out
+    assert "ActiveCo" not in out
+    # File untouched.
+    assert "OldCo" in csv_path.read_text()
+    assert not (ws / "jobs.archive.csv").exists()
+
+
+def test_prune_moves_rows_to_archive(tmp_path: Path) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "OldCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/1",
+            },
+            {
+                "Status": "applied",
+                "Company": "ActiveCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/2",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "scrape-jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+        ]
+    )
+    assert rc == 0
+    assert (ws / "jobs.archive.csv").exists()
+    assert "OldCo" in (ws / "jobs.archive.csv").read_text()
+    csv_text = (ws / "jobs.csv").read_text()
+    assert "OldCo" not in csv_text
+    assert "ActiveCo" in csv_text
+
+
+def test_prune_status_filter(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "applied",
+                "Company": "OldApplied",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/1",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "scrape-jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--status",
+            "applied",
+            "--dry-run",
+        ]
+    )
+    assert rc == 0
+    assert "OldApplied" in capsys.readouterr().out
+
+
+def test_prune_invalid_spec_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, [])
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "scrape-jobs",
+            "prune",
+            "--older-than",
+            "garbage",
+        ]
+    )
+    assert rc == 2
+    assert "invalid date spec" in capsys.readouterr().err
+
+
+def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
+    """load_archive_dedup unions URLs/keys from jobs.archive.csv."""
+    from daily_driver.core.jobs_archive import load_archive_dedup
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    csv_path = ws / "jobs.csv"
+    archive = ws / "jobs.archive.csv"
+
+    import csv
+
+    from daily_driver.scraper._impl import CANONICAL_HEADER
+
+    with open(archive, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL)
+        w.writeheader()
+        w.writerow(
+            {
+                "Status": "rejected",
+                "Company": "Pruned",
+                "Role": "SRE",
+                "Link": "https://archived/1",
+            }
+        )
+
+    urls, keys = load_archive_dedup(csv_path)
+    assert "https://archived/1" in urls
+    assert any("pruned" in k for k in keys)

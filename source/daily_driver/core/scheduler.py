@@ -186,7 +186,7 @@ def install_all(workspace: Workspace) -> list[str]:
         # Log directory must exist before launchd tries to open StandardOutPath.
         Path(job.stdout_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # Mirror the plist into workspace state so uninstall --keep-state can preserve it.
+        # Mirror the plist into workspace state for inspection / debugging.
         state_dir = _state_launchd_dir(workspace)
         state_dir.mkdir(parents=True, exist_ok=True)
         (state_dir / f"{job.label}.plist").write_text(content, encoding="utf-8")
@@ -202,12 +202,10 @@ def install_all(workspace: Workspace) -> list[str]:
     return installed
 
 
-def uninstall_all(workspace: Workspace, keep_state: bool = False) -> list[str]:
+def uninstall_all(workspace: Workspace) -> list[str]:
     """Unload + remove plists for all known job labels.
 
-    --keep-state retains the mirrored copy under `.daily-driver/state/launchd/`;
-    otherwise the mirror is also removed.
-
+    Always also removes the mirrored copy under `.daily-driver/state/launchd/`.
     Returns the list of labels that had plists present and were removed.
     """
     try:
@@ -222,10 +220,10 @@ def uninstall_all(workspace: Workspace, keep_state: bool = False) -> list[str]:
             removed.append(label)
 
     state_dir = _state_launchd_dir(workspace)
-    if state_dir.exists() and not keep_state:
-        for child in state_dir.iterdir():
-            child.unlink()
-        state_dir.rmdir()
+    if state_dir.exists():
+        # rmtree handles non-empty trees and is idempotent under ignore_errors —
+        # safer than iterdir + unlink which crashes if a non-plist subdir lands here.
+        shutil.rmtree(state_dir, ignore_errors=True)
 
     return removed
 

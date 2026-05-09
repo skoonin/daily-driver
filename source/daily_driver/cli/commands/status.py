@@ -12,6 +12,7 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.core import clock
 
 # Statuses considered terminal — entries in these are excluded from "stalled".
@@ -38,6 +39,7 @@ def add_parser(
         default=False,
         help="Emit JSON output instead of Rich tables",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 

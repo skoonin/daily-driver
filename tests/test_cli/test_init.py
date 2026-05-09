@@ -63,6 +63,23 @@ def test_init_settings_json_contains_version(tmp_path: Path) -> None:
     assert parsed["metadata"]["daily_driver_version"] == daily_driver.__version__
 
 
+def test_init_scaffolds_time_hook(tmp_path: Path) -> None:
+    """init must drop hook-current-time.sh into .claude/hooks/ and wire it in settings."""
+    run(_args(str(tmp_path)))
+    hook = tmp_path / ".claude" / "hooks" / "hook-current-time.sh"
+    assert hook.exists(), "hook-current-time.sh must be materialized"
+    assert "additionalContext" in hook.read_text(encoding="utf-8")
+
+    settings = tmp_path / ".claude" / "settings.local.json"
+    parsed = json.loads(settings.read_text(encoding="utf-8"))
+    user_prompt_hooks = parsed.get("hooks", {}).get("UserPromptSubmit", [])
+    assert user_prompt_hooks, "UserPromptSubmit hook must be wired"
+    cmd = user_prompt_hooks[0]["hooks"][0]["command"]
+    assert "hook-current-time.sh" in cmd
+    # Workspace path is quoted so paths with spaces (e.g. iCloud Drive) work.
+    assert cmd.count('"') >= 2
+
+
 def test_init_config_parses_via_load(tmp_path: Path) -> None:
     run(_args(str(tmp_path)))
     config = load(tmp_path / ".dd-config.yaml")
