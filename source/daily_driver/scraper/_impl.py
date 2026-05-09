@@ -2032,7 +2032,7 @@ def scrape_jobspy(config: dict) -> list[dict]:
         return []
 
     cfg = scraper_cfg(config)
-    jobspy_cfg = cfg.jobspy
+    jobspy_cfg = cfg.jobs
     results_wanted = jobspy_cfg.results_wanted_per_query
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed

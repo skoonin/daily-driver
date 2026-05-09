@@ -9,8 +9,8 @@ from daily_driver.core.config_models import (
     Compensation,
     Config,
     DailyDriverConfig,
+    JobsConfig,
     JobSearchPlugin,
-    JobSpyConfig,
     Locations,
     PluginsConfig,
     RecurringTask,
@@ -274,7 +274,7 @@ def test_scraper_config_defaults():
     assert m.wwr_categories == []
     assert m.hn_max_posts == 100
     assert m.greenhouse_boards == ["anthropic"]
-    assert isinstance(m.jobspy, JobSpyConfig)
+    assert isinstance(m.jobs, JobsConfig)
     assert m.playwright_delays == {}
     assert m.sources == {}
     assert m.parallel_workers == 4
@@ -318,26 +318,32 @@ def test_scraper_config_playwright_delays_rejects_unknown_key():
 
 
 # ---------------------------------------------------------------------------
-# JobSpyConfig
+# JobsConfig
 # ---------------------------------------------------------------------------
 
 
-def test_jobspy_config_defaults():
-    m = JobSpyConfig()
+def test_jobs_config_defaults():
+    m = JobsConfig()
     assert m.results_wanted_per_query == 50
     assert m.hours_old == 168
     assert m.country_indeed == "USA"
 
 
-def test_jobspy_config_custom():
-    m = JobSpyConfig(results_wanted_per_query=100, hours_old=72, country_indeed="CA")
+def test_jobs_config_custom():
+    m = JobsConfig(results_wanted_per_query=100, hours_old=72, country_indeed="CA")
     assert m.results_wanted_per_query == 100
     assert m.country_indeed == "CA"
 
 
-def test_jobspy_config_rejects_extra():
+def test_jobs_config_rejects_extra():
     with pytest.raises(ValidationError):
-        JobSpyConfig(bad_key="x")
+        JobsConfig(bad_key="x")
+
+
+def test_scraper_config_rejects_legacy_jobspy_key():
+    """Stale ``scraper.jobspy:`` from pre-rename configs hard-fails via extra=forbid."""
+    with pytest.raises(ValidationError):
+        ScraperConfig(jobspy={"results_wanted_per_query": 100})
 
 
 # ---------------------------------------------------------------------------
