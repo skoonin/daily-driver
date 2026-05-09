@@ -25,17 +25,13 @@ Read the YAML at that path. If the file is missing or `late_day` is unset, treat
 
 ## 1. Gather Context
 
-Read the workspace's context and voice profile:
+Resolve the workspace output directory, then Read `context.md` and `voice-profile.md` from it using the Claude Read tool:
 
 ```bash
-daily-driver read context
+daily-driver paths output
 ```
 
-```bash
-daily-driver read voice-profile
-```
-
-Apply the voice patterns for any written communication drafted during or after this session (cover letters, follow-up emails, recruiter replies).
+Read `<output>/context.md` and `<output>/voice-profile.md`. If either file is missing, note it and continue — they are optional. Apply the voice patterns for any written communication drafted during or after this session (cover letters, follow-up emails, recruiter replies).
 
 ## 2. Gather Calendar and Activity
 
@@ -45,9 +41,13 @@ Collect today's calendar events, recent Claude Code sessions, and git activity:
 daily-driver gather calendar
 ```
 
+For Claude Code sessions, list recent JSONL files directly (avoid context-heavy CLI scans):
+
 ```bash
-daily-driver gather sessions
+ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 ```
+
+Read the most recent few that match today's window. Skim for cwd + first user prompt to identify what was worked on.
 
 ```bash
 daily-driver gather git
@@ -55,11 +55,13 @@ daily-driver gather git
 
 ## 3. Review Carry-forward
 
-Read yesterday's notes to surface carry-forward items:
+Resolve yesterday's notes path and Read it:
 
 ```bash
-daily-driver gather notes --since yesterday --until today
+daily-driver paths daily-notes --date $(date -v-1d +%Y-%m-%d)
 ```
+
+Read the file at the printed path with the Claude Read tool. If it does not exist, there is no carry-forward — proceed.
 
 Extract structured carry-forward items from the notes file. Items labeled `BLOCKED`, `STALE`, or `CARRY-OVER` should be surfaced:
 
@@ -124,8 +126,8 @@ Then ask the user:
 
 `daily-driver day-start` has already written a plan stub at the canonical path
 and recorded the day's state in `<workspace>/.daily-driver/state/daily/<date>.yaml`
-— do NOT re-run `ensure-daily-dir` or mint a new file. Resolve the canonical path
-and overwrite the stub with the finalized plan:
+— do NOT mint a new file. Resolve the canonical path and overwrite the stub
+with the finalized plan:
 
 ```bash
 daily-driver paths daily-plan
