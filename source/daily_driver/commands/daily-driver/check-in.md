@@ -39,19 +39,27 @@ daily-driver read plan
 
 ## 2. Gather Fresh Data
 
-Collect calendar context, recent session activity, and git commits:
+Collect calendar context and git commits in the foreground:
 
 ```bash
 daily-driver gather calendar
 ```
 
 ```bash
-daily-driver gather sessions
-```
-
-```bash
 daily-driver gather git
 ```
+
+`gather sessions` walks every JSONL under `~/.claude/projects/` and can be context-heavy. Dispatch it to a background subagent (Task tool, `general-purpose` agent) so the foreground context window stays clean. The subagent's only job is to run `daily-driver gather sessions`, summarize active and recent sessions in three bullet points, and return.
+
+**Error handling — never silent.** If the subagent's exit code is non-zero, OR the subagent's summary explicitly reports an error, surface the subagent's stderr verbatim to the user (do not paraphrase, do not hide), then ask:
+
+> Background `gather sessions` failed:
+> ```
+> <stderr verbatim>
+> ```
+> Options: **retry** (re-dispatch the subagent), **continue** (proceed without session data), or **abort** (exit /check-in).
+
+Wait for the user's choice before continuing. On `retry`, dispatch again. On `continue`, note in the rendered check-in summary that session data is missing for this run. On `abort`, exit cleanly.
 
 ## 3. Review Application Pipeline
 

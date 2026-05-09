@@ -121,6 +121,58 @@ def invoke(
     return stdout
 
 
+def invoke_capture(
+    prompt: str,
+    *,
+    agent: str | None = None,
+    session_name: str | None = None,
+    timeout: int | None = None,
+    add_dirs: list[Path] | None = None,
+    model: str | None = None,
+) -> tuple[str, str, int]:
+    """Headless `claude -p` wrapper that returns (stdout, stderr, rc).
+
+    Unlike `invoke()`, this does NOT raise on non-zero rc — callers (including
+    F5's check-in subagent dispatch path) need to inspect stderr verbatim and
+    surface failures to the user with retry / continue / abort, which can't
+    happen if the error is unwound through `CalledProcessError`. `claude` not
+    being on PATH still raises `ClaudeNotFoundError` since that's a setup bug,
+    not a subagent failure to forward.
+    """
+    if shutil.which("claude") is None:
+        raise ClaudeNotFoundError("claude CLI not found on PATH")
+
+    args = _build_args(
+        prompt,
+        agent=agent,
+        session_name=session_name,
+        headless=True,
+        add_dirs=add_dirs,
+        model=model,
+        output_format=None,
+    )
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ClaudeNotFoundError("claude CLI not found on PATH") from exc
+
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+
+    return stdout, stderr, proc.returncode
+
+
 def spawn_interactive(
     prompt: str | None = None,
     *,

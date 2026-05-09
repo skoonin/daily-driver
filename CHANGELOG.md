@@ -14,6 +14,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Log file paths renamed**: `launchd-scrape-jobs.{out,err}` → `launchd-jobs.{out,err}` under `.daily-driver/state/logs/`. Old log files are not auto-deleted; remove `launchd-scrape-jobs.{out,err}` manually if you want to clean up.
 - **Migration**: update your `.dd-config.yaml` (rename both `scheduler.scrape_jobs` and any `scraper.jobspy:` block), then re-run `daily-driver install-scheduler`.
 
+### Added -- daily-state epic (W4)
+- `core/daily_state.py`: per-day `DailyState` YAML at `<workspace>/.daily-driver/state/daily/YYYY-MM-DD.yaml` with atomic write + flock. Records `last_day_start_session_id`, `last_day_start_at`, `last_check_in_at`, `plan_summary`, and `late_day`. Parse / schema failures raise `DailyStateError` with the on-disk path baked in so a hand-edited file produces an actionable message instead of a bare traceback.
+- `daily-driver paths daily-state` and the `daily_state` key in `paths --json` resolve the per-day state file.
+- `daily-driver doctor`: new `Daily-state writable` check probes `<state_dir>/state/daily/` via `tempfile.NamedTemporaryFile` (no leaked dotfiles on the error path).
+- `daily-driver day-start`: pre-mints a `uuid4` session id, writes a plan stub at the canonical path (only when absent — never clobbers user/claude edits), records `last_day_start_session_id` / `last_day_start_at` / `late_day` in the day's state, then launches `claude --session-id <uuid> --session-name day-cycle-<date>` so /check-in can resume the same conversation later.
+- `daily-driver check-in`: when `claude.resume_check_in: true` is set in `.dd-config.yaml` AND today's state has a `last_day_start_session_id`, /check-in launches with `claude --resume <uuid>`. Resume failures fall back to a fresh session with a stderr warning + logger warning — never silent. `last_check_in_at` is recorded only on rc=0; bookkeeping failures after a successful session are demoted to a stderr warning so they don't mis-report success as failure. New `--no-resume` CLI flag forces a fresh session per invocation.
+- `core/config_models.py`: new `ClaudeConfig` (`resume_check_in: bool = False`) and `ScheduleConfig` (`day_start: str | None`, `day_end: str | None`, HH:MM with PyYAML-int auto-coercion so unquoted `07:00` is accepted). Both nested models are `extra="forbid"`.
+- `core/scheduler.py`: launchd plists for `com.daily-driver.day-start` and `com.daily-driver.day-end` are emitted from `schedule.day_start` / `schedule.day_end`. Single source of truth: the same config knob drives both `is_late_day` and the plist install (per Q11). `uninstall-scheduler` now also unloads the new labels.
+- `claude_cli.spawn_interactive` and `claude_cli.invoke` accept `session_id` and `resume_session_id` (mutually exclusive). New `claude_cli.invoke_capture(prompt, ...) -> (stdout, stderr, rc)` returns structured output without raising on non-zero rc (still raises `ClaudeNotFoundError` / `TimeoutExpired` for setup + hang failures) — used by the /check-in template's background `gather sessions` dispatch path so subagent stderr surfaces verbatim.
+- `commands/daily-driver/day-start.md` template: instructs claude to read `late_day` from state and frame the agenda as a late-day partial plan when set; step 8 now writes the finalized plan to the canonical path (`daily-driver paths daily-plan`) directly.
+- `commands/daily-driver/check-in.md` template: state-driven resume detection (replaces the unverifiable "if resumed from day-start" assumption); surfaces a "no plan today" notice when state is absent (per review #33); dispatches `gather sessions` to a background subagent with explicit verbatim-stderr error handling and a retry / continue / abort prompt — never silent on subagent failure.
+
+### Changed -- daily-state epic (W4)
+- `cli/commands/_claude_session.py`: `handle_launch_exception` widened to surface `DailyStateError`, `ValueError`, and `OSError` as clean `error: ...` lines instead of bare-raise tracebacks.
+- **BREAKING**: day-start session-name prefix renamed `day-start-<date>` → `day-cycle-<date>` to make the resumable session legible in the `/resume` picker. Per MVP no-compat policy.
+
+
 ### Added
 - `daily-driver jobs run --sources LIST`: comma-separated source IDs to run for this invocation, overriding `scraper.sources` toggles. Validated against the registered scraper set; unknown IDs exit 2.
 - `daily-driver jobs run --list-sources`: prints the registered source IDs and exits.
