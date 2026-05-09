@@ -113,11 +113,11 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
 
-### `scrape-jobs run [--dry-run | --backfill]`
+### `jobs run [--dry-run | --backfill]`
 
 Runs enabled scrapers, appends new rows to `jobs.csv`, enriches via `claude` CLI. `--dry-run` prints matches without writing. `--backfill` re-enriches empty fields on existing rows.
 
-### `scrape-jobs status [--json]`
+### `jobs status [--json]`
 
 Reads `jobs-last-run.json` and `jobs.csv` metadata.
 
@@ -125,7 +125,7 @@ Reads `jobs-last-run.json` and `jobs.csv` metadata.
 
 ### `install-scheduler`
 
-Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, scrape-jobs at 07:00. Idempotent.
+Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00. Idempotent.
 
 ### `uninstall-scheduler [--keep-state]`
 

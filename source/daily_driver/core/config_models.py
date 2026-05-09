@@ -104,7 +104,7 @@ class RoleFilters(BaseModel):
     exclude_keywords: list[str] = []
 
 
-class JobSpyConfig(BaseModel):
+class JobsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     results_wanted_per_query: int = 50
@@ -151,7 +151,7 @@ class ScraperConfig(BaseModel):
     wwr_categories: list[str] = []
     hn_max_posts: int = 100
     greenhouse_boards: list[str] = ["anthropic"]
-    jobspy: JobSpyConfig = JobSpyConfig()
+    jobs: JobsConfig = JobsConfig()
     playwright_delays: dict[str, PlaywrightDelays] = {}
     sources: dict[str, SourceToggle] = {}
     parallel_workers: int = 4

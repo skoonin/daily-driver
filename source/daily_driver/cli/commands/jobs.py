@@ -1,4 +1,4 @@
-"""scrape-jobs subcommand: run job-board scraper or show run status."""
+"""jobs subcommand: run job-board scraper or show run status."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ def add_parser(
     parents: list[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
-        "scrape-jobs",
+        "jobs",
         parents=parents,
         help="Job-board scraper: run the scraper or inspect its last run",
     )
 
-    nested = parser.add_subparsers(dest="scrape_action", metavar="<action>")
+    nested = parser.add_subparsers(dest="jobs_action", metavar="<action>")
 
     p_run = nested.add_parser("run", parents=parents, help="Scrape enabled job boards")
     p_run.add_argument(
@@ -34,6 +34,20 @@ def add_parser(
         "--backfill",
         action="store_true",
         help="Re-enrich empty fields in existing jobs.csv rows",
+    )
+    p_run.add_argument(
+        "--sources",
+        default=None,
+        metavar="LIST",
+        help=(
+            "Comma-separated source IDs to run (overrides .dd-config.yaml "
+            "scraper.sources toggles). Use 'jobs run --list-sources' to see options."
+        ),
+    )
+    p_run.add_argument(
+        "--list-sources",
+        action="store_true",
+        help="Print the registered source IDs and exit",
     )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
@@ -98,6 +112,31 @@ def _resolve_output_dir(workspace) -> Path:  # type: ignore[no-untyped-def]
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.scraper import run as run_scrape
     from daily_driver.scraper import run_backfill
+    from daily_driver.scraper._impl import SCRAPERS
+
+    if getattr(args, "list_sources", False):
+        for sid in sorted(SCRAPERS):
+            print(sid)
+        return 0
+
+    sources_override: list[str] | None = None
+    raw_sources = getattr(args, "sources", None)
+    if raw_sources:
+        sources_override = [s.strip() for s in raw_sources.split(",") if s.strip()]
+        if not sources_override:
+            print(
+                "error: --sources parsed to an empty list (only commas/whitespace?)",
+                file=sys.stderr,
+            )
+            return 2
+        unknown = [s for s in sources_override if s not in SCRAPERS]
+        if unknown:
+            print(
+                f"error: unknown source(s): {', '.join(unknown)}. "
+                f"Known: {', '.join(sorted(SCRAPERS))}",
+                file=sys.stderr,
+            )
+            return 2
 
     legacy = workspace.root / "config.yaml"
     if legacy.exists():
@@ -138,7 +177,9 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         run_backfill(config, csv_path)
         return 0
 
-    return run_scrape(config, output_dir, dry_run=args.dry_run)
+    return run_scrape(
+        config, output_dir, dry_run=args.dry_run, sources_override=sources_override
+    )
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
@@ -243,7 +284,7 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
     if not hasattr(args, "func") or args.func is run:
-        print("usage: daily-driver scrape-jobs <action> ...", file=sys.stderr)
+        print("usage: daily-driver jobs <action> ...", file=sys.stderr)
         print("actions: run, status, prune", file=sys.stderr)
         return 2
 

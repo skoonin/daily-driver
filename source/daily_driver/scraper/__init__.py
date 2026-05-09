@@ -48,6 +48,7 @@ def run(
     output_dir: Path,
     *,
     dry_run: bool = False,
+    sources_override: list[str] | None = None,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
@@ -102,7 +103,9 @@ def run(
     # pagination instead of waiting for the post-scrape filter below.
     config["_known_urls"] = known_urls
 
-    all_jobs, failed_sources = _impl.run_all_scrapers(config)
+    all_jobs, failed_sources = _impl.run_all_scrapers(
+        config, sources_override=sources_override
+    )
 
     new_jobs = [
         j
@@ -201,13 +204,7 @@ def run(
     )
 
     if dry_run:
-        for j in new_jobs:
-            print(
-                f"  [{j['source']:22s}] {j['company']:30s} | "
-                f"{j['role']:45s} | {j['location']}"
-            )
-            print(f"    {j['url']}")
-        print(f"\n{len(new_jobs)} new jobs (dry-run, nothing written)")
+        _print_dry_run_table(new_jobs)
         return 1 if failed_sources else 0
 
     written = _impl.append_jobs(csv_path, new_jobs, header)
@@ -248,6 +245,54 @@ def run(
     if written > 0:
         _impl._notify_new_jobs(written, csv_path)
     return 0
+
+
+def _fix_mojibake(text: str) -> str:
+    """Reverse the common UTF-8-as-latin-1 mis-decoding (em-dash → 'â€"' etc.).
+
+    Returns text unchanged when the round-trip would lose data — pure ASCII
+    and legitimate latin-1 characters (e.g. 'é') survive intact.
+    """
+    if not text:
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
+def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
+    """Render a Rich table summary of dry-run matches."""
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console(stderr=False)
+    if not jobs:
+        console.print("[dim]Dry-run: no new jobs matched.[/dim]")
+        return
+
+    table = Table(
+        title=f"Dry-run preview ({len(jobs)} new jobs)",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("Source")
+    table.add_column("Company")
+    table.add_column("Role")
+    table.add_column("Location")
+    table.add_column("URL", overflow="fold")
+    for j in jobs:
+        table.add_row(
+            _fix_mojibake(str(j.get("source", ""))),
+            _fix_mojibake(str(j.get("company", ""))),
+            _fix_mojibake(str(j.get("role", ""))),
+            _fix_mojibake(str(j.get("location", ""))),
+            str(j.get("url", "")),
+        )
+    console.print(table)
+    console.print(
+        f"[dim]{len(jobs)} new jobs (dry-run, nothing written).[/dim]",
+    )
 
 
 __all__ = ["ScraperError", "load_config_file", "run", "run_backfill"]

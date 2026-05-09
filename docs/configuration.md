@@ -63,7 +63,7 @@ Injected into Claude sessions as context.
 
 ## `scheduler`
 
-Freeform dict passed to the Jinja launchd plist templates. Times are local wall-clock, 24-hour. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, scrape-jobs at 07:00.
+Freeform dict passed to the Jinja launchd plist templates. Times are local wall-clock, 24-hour. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00.
 
 ## `plugins.job_search`
 
@@ -167,7 +167,7 @@ tracker:
 
 scheduler:
   checkin:     {times: ["10:30", "15:00"]}
-  scrape_jobs: {time: "06:30"}
+  jobs: {time: "06:30"}
 
 plugins:
   job_search:
