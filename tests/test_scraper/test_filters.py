@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from daily_driver.scraper._impl import (
+    _known_urls_from_config,
     comp_meets_threshold,
     dedup_key,
     location_matches,
@@ -266,3 +267,26 @@ class TestCompParsing:
     def test_period_extracted(self, comp_str: str, expected_period: str) -> None:
         r = self._parsed(comp_str)
         assert r["comp_period"] == expected_period
+
+
+class TestKnownUrlsFromConfig:
+    """Adapters read pruned/dedup URLs from the config dict's _known_urls key.
+
+    The orchestrator stuffs the union of jobs.csv + jobs.archive.csv URLs in
+    here so Playwright adapters (Apple, Wellfound) can short-circuit during
+    pagination without re-deriving the dedup state.
+    """
+
+    def test_returns_empty_set_when_key_absent(self) -> None:
+        assert _known_urls_from_config({}) == set()
+
+    def test_returns_set_when_key_present(self) -> None:
+        urls = {"https://jobs.apple.com/x/details/1", "https://wellfound.com/jobs/2"}
+        assert _known_urls_from_config({"_known_urls": urls}) == urls
+
+    def test_returns_empty_set_when_value_is_none(self) -> None:
+        assert _known_urls_from_config({"_known_urls": None}) == set()
+
+    def test_returns_empty_set_when_value_is_wrong_type(self) -> None:
+        # Defensive — config dicts are user-built; don't crash on garbage.
+        assert _known_urls_from_config({"_known_urls": "not-a-set"}) == set()

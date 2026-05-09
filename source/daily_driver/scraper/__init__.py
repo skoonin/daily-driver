@@ -97,6 +97,11 @@ def run(
         csv_path,
     )
 
+    # Stuff the merged dedup set into the config dict so adapters that build
+    # their URL deterministically (Apple, Wellfound) can short-circuit during
+    # pagination instead of waiting for the post-scrape filter below.
+    config["_known_urls"] = known_urls
+
     all_jobs, failed_sources = _impl.run_all_scrapers(config)
 
     new_jobs = [

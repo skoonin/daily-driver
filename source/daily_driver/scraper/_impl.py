@@ -246,6 +246,19 @@ def countries_list(config: dict[str, Any]) -> list[str]:
     return list(loc.countries) if loc and loc.countries else ["US", "CA"]
 
 
+def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
+    """Return URLs the orchestrator already knows about (jobs.csv + archive).
+
+    The orchestrator stuffs this set under the transient ``_known_urls`` key so
+    Playwright adapters (Apple, Wellfound) can short-circuit pagination when
+    they reconstruct a URL that's already triaged. Returns an empty set if the
+    key is missing or holds a non-set value — adapters must treat absence as
+    "no known URLs", not an error.
+    """
+    val = config.get("_known_urls") if isinstance(config, dict) else None
+    return val if isinstance(val, set) else set()
+
+
 def country_params(country: str) -> dict[str, str]:
     """Look up per-scraper parameters for an ISO country code.
 
@@ -2104,6 +2117,8 @@ def scrape_wellfound(config: dict) -> list[dict]:
     page_load_ms = wf_delays.page_load_ms
     jobs: list[dict] = []
     seen_urls: set[str] = set()
+    known_urls = _known_urls_from_config(config)
+    skipped_known = 0
 
     try:
         with _playwright_browser(config) as page:
@@ -2171,6 +2186,9 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             href = f"https://wellfound.com{href}"
                         if href in seen_urls:
                             continue
+                        if href and href in known_urls:
+                            skipped_known += 1
+                            continue
                         if href:
                             seen_urls.add(href)
                         job: dict = {
@@ -2190,7 +2208,11 @@ def scrape_wellfound(config: dict) -> list[dict]:
     except Exception as exc:
         log.warning("[wellfound] browser session error: %s", exc)
 
-    log.info("[wellfound] %d jobs matched", len(jobs))
+    log.info(
+        "[wellfound] %d jobs matched (%d skipped as already-known)",
+        len(jobs),
+        skipped_known,
+    )
     return jobs
 
 
@@ -2215,6 +2237,8 @@ def scrape_apple(config: dict) -> list[dict]:
     max_pages = cfg.max_pages
     jobs: list[dict] = []
     seen_positions: set[str] = set()
+    known_urls = _known_urls_from_config(config)
+    skipped_known = 0
     base_url = "https://jobs.apple.com"
 
     try:
@@ -2303,6 +2327,9 @@ def scrape_apple(config: dict) -> list[dict]:
                             job_id = item.get("id", position_id)
                             slug = item.get("transformedPostingTitle", "")
                             detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
+                            if detail_url in known_urls:
+                                skipped_known += 1
+                                continue
                             jobs.append(
                                 {
                                     "company": "Apple",
@@ -2327,7 +2354,11 @@ def scrape_apple(config: dict) -> list[dict]:
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 
-    log.info("[apple] %d jobs matched", len(jobs))
+    log.info(
+        "[apple] %d jobs matched (%d skipped as already-known)",
+        len(jobs),
+        skipped_known,
+    )
     return jobs
 
 
