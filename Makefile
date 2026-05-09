@@ -25,6 +25,11 @@ PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; \
     else .ci-tools/detect-python.sh 2>/dev/null || echo python3; fi)
 PIP := $(PYTHON) -m pip
 
+# tox detection: prefer PATH (e.g., `pipx install tox`), then .venv/bin/tox.
+# Lets `make test*` work in worktrees without `make setup` polluting them
+# with a local .venv that VS Code may auto-activate over the main repo's.
+TOX := $(shell command -v tox 2>/dev/null || echo .venv/bin/tox)
+
 PROJ_DIR := $(shell pwd)
 
 include makefiles/clean.mk

@@ -35,7 +35,7 @@ release: ## Cut a release (usage: make release VERSION=X.Y.Z)
 	@echo "  OK: clean tree, tag v$(VERSION) does not exist"
 	@echo ""
 	@echo "[2/6] Running test suite on py311 + py312..."
-	@.venv/bin/tox -e py311,py312
+	@$(TOX) -e py311,py312
 	@echo ""
 	@echo "[3/6] Running install smoke test..."
 	@rm -rf /tmp/daily-driver-release-smoke

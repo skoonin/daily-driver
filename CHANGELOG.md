@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `core/config_models.py`: `ScraperConfig.playwright_delays` is now `dict[str, PlaywrightDelays]` and `sources` is `dict[str, SourceToggle]` (auto-coerces legacy `bool` values via a `field_validator`). Replaces ad-hoc dict access in `scraper/_impl.py`.
+- `Makefile`: `TOX := $(shell command -v tox 2>/dev/null || echo .venv/bin/tox)` — `make test*` targets now prefer a tox on `PATH` (e.g., `pipx install tox`) over the worktree's `.venv/bin/tox`. Lets `make test` work in git worktrees without running `make setup` there (which creates a local `.venv` that VS Code may auto-activate over the main repo's interpreter).
 
 ### Removed
 - **BREAKING**: `daily-driver uninstall-scheduler --keep-state` removed. The state mirror under `.daily-driver/state/launchd/` is now always cleaned up on uninstall. The `keep_state` parameter on `core.scheduler.uninstall_all()` is also gone.

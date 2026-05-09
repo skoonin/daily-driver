@@ -2,7 +2,7 @@
 
 .PHONY: clean
 clean: ## Remove build artifacts and caches
-	@.venv/bin/tox -e clean 2>/dev/null || true
+	@$(TOX) -e clean 2>/dev/null || true
 	@rm -rf dist build *.egg-info htmlcov .pytest_cache .tox .coverage
 	@find . -type d -name __pycache__ -prune -exec rm -rf {} \; 2>/dev/null || true
 	@find . -type f -name '*.pyc' -delete 2>/dev/null || true
