@@ -6,14 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking — W2 jobs CLI rename
+- **CLI subcommand renamed**: `daily-driver scrape-jobs` → `daily-driver jobs`. All forms are renamed: `jobs run [--dry-run | --backfill]`, `jobs status [--json]`, `jobs prune --older-than SPEC ...`. There is no alias; invoking `scrape-jobs` errors with argparse's "invalid choice".
+- **YAML key `scheduler.scrape_jobs:` → `scheduler.jobs:`** in `.dd-config.yaml`. Stale keys raise `SchedulerError` at `install-scheduler` time pointing at the new key.
+- **YAML key `plugins.job_search.scraper.jobspy:` → `plugins.job_search.scraper.jobs:`**. Pydantic model renamed `JobSpyConfig` → `JobsConfig`. Stale `scraper.jobspy:` keys raise `ValidationError` (extra='forbid').
+- **launchd label `com.daily-driver.scrape-jobs` → `com.daily-driver.jobs`** and plist filename `scrape-jobs.plist.j2` → `jobs.plist.j2`. `install-scheduler` and `uninstall-scheduler` now sweep the legacy label automatically — pre-rename plists at `~/Library/LaunchAgents/com.daily-driver.scrape-jobs.plist` are unloaded and removed on the next install or uninstall.
+- **Migration**: update your `.dd-config.yaml` (rename both `scheduler.scrape_jobs` and any `scraper.jobspy:` block), then re-run `daily-driver install-scheduler`.
+
 ### Added
+- `daily-driver jobs run --sources LIST`: comma-separated source IDs to run for this invocation, overriding `scraper.sources` toggles. Validated against the registered scraper set; unknown IDs exit 2.
+- `daily-driver jobs run --list-sources`: prints the registered source IDs and exits.
+- `daily-driver jobs run --dry-run` now renders matches as a Rich table (Source / Company / Role / Location / URL) with a best-effort UTF-8 mojibake reversal so em-dashes and other non-ASCII glyphs display correctly.
 - `cli/_common.py`: `add_global_flags(parser)` registers `-v/-q/--no-color/--workspace` (with `default=argparse.SUPPRESS`) into a "global options" group; every leaf calls it AFTER its local args so globals render at the bottom of `--help`. `daily-driver tracker list -v` (and `--workspace PATH` after the subcommand) now parse correctly — previously a parse error.
 - `daily-driver tracker list --since SPEC`: filters by `updated_at >= parse_since(SPEC)`.
-- `daily-driver scrape-jobs prune --older-than SPEC [--status STATUS] [--dry-run]`: moves stale rows from `jobs.csv` to `jobs.archive.csv` (default statuses: `dropped, rejected, closed`). Scraper now unions URLs and dedup-keys from both files at run start so triaged listings are never re-discovered.
+- `daily-driver jobs prune --older-than SPEC [--status STATUS] [--dry-run]`: moves stale rows from `jobs.csv` to `jobs.archive.csv` (default statuses: `dropped, rejected, closed`). Scraper now unions URLs and dedup-keys from both files at run start so triaged listings are never re-discovered.
 - `jobs.csv` schema: added `Date Last Seen` column (defaults to `Date Found` on insert). Drives `prune --older-than`. The on-rescan upsert path is owned by W5/W6; until that lands, prune effectively ages from first-discovery. Existing CSVs are migrated by the legacy-header migrator on next scrape.
 - Time-injection hook: `init` materializes `<workspace>/.claude/hooks/hook-current-time.sh` and wires it into `settings.local.json` under `hooks.UserPromptSubmit`. Injects current local time into Claude context on every user message.
 - `core/dates.py`: unified `parse_since` / `parse_range` parser shared by `summary` and `gather`. Grammar: `today|yesterday|tomorrow`, `week|month|quarter|year`, `Nd|Nw|Nm|Ny`, `YYYY-MM-DD`, `YYYY-MM-DD:YYYY-MM-DD`. Month math clamps to last day (`Jan 31 - 1m → Dec 31`).
-- CLI short flags: `-f` for `--force` (`init`), `-n` for `--dry-run` (`scrape-jobs run`, `voice-update`).
+- CLI short flags: `-f` for `--force` (`init`), `-n` for `--dry-run` (`jobs run`, `voice-update`).
 - `make test-quick` target — py311 only, fast inner loop. `make test` now runs the full tox envlist (matches CI).
 - `docs/cli-tree.md`: snapshot of the v0.1.x CLI command surface (subcommands, flags, parent-parser inheritance gap). Planning reference for the upcoming `parents=[GLOBAL_PARSER]` migration.
 - W6: `plugins.job_search.primary_currency` (`USD`/`CAD`/`EUR`/`GBP`, default `null`). When set, scraped jobs whose parsed comp currency doesn't match are dropped at the scraper write boundary. Unparseable comp passes through. (#48)
