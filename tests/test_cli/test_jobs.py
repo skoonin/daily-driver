@@ -155,6 +155,59 @@ def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
     assert kwargs.get("dry_run") is True
 
 
+def test_jobs_run_list_sources_prints_registry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), "jobs", "run", "--list-sources"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    # SCRAPERS keys at time of writing — at least one known source in output.
+    assert "remoteok" in out
+
+
+def test_jobs_run_unknown_source_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), "jobs", "run", "--sources", "no_such_source"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown source" in err
+
+
+def test_jobs_run_sources_override_passes_to_scrape(tmp_path: Path) -> None:
+    """`--sources remoteok` propagates as sources_override to scraper.run."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.scraper.run", return_value=0) as mock_run:
+        rc = app(
+            [
+                "--workspace",
+                str(ws),
+                "jobs",
+                "run",
+                "--sources",
+                "remoteok,greenhouse",
+                "--dry-run",
+            ]
+        )
+
+    assert rc == 0
+    assert mock_run.called
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("sources_override") == ["remoteok", "greenhouse"]
+    assert kwargs.get("dry_run") is True
+
+
 def test_jobs_run_legacy_config_yaml_exits_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

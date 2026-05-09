@@ -2516,7 +2516,11 @@ def _merge_and_dedup(
     return all_jobs, failed_sources
 
 
-def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
+def run_all_scrapers(
+    config: dict,
+    *,
+    sources_override: list[str] | None = None,
+) -> tuple[list[dict], list[str]]:
     """Run all enabled scrapers and deduplicate results within this run.
 
     Two phases:
@@ -2527,17 +2531,28 @@ def run_all_scrapers(config: dict) -> tuple[list[dict], list[str]]:
     concurrently is RAM-heavy and makes bot detection easier. Deduplicates by
     both URL and company+role key so the same job appearing on multiple boards
     is only kept once (first scraper wins).
+
+    When ``sources_override`` is provided, only those source IDs run regardless
+    of the ``scraper.sources`` toggles in config. Caller is responsible for
+    validating IDs against ``SCRAPERS``.
     """
     cfg = scraper_cfg(config)
     source_cfg = cfg.sources
     workers = cfg.parallel_workers
 
-    def _is_enabled(sid: str) -> bool:
-        toggle = source_cfg.get(sid)
-        return toggle.enabled if toggle is not None else False
+    if sources_override is not None:
+        override = set(sources_override)
+        enabled = [sid for sid in SCRAPERS if sid in override]
+        disabled = [sid for sid in SCRAPERS if sid not in override]
+        log.info("[--sources] running only: %s", ", ".join(enabled) or "(none)")
+    else:
 
-    enabled = [sid for sid in SCRAPERS if _is_enabled(sid)]
-    disabled = [sid for sid in SCRAPERS if not _is_enabled(sid)]
+        def _is_enabled(sid: str) -> bool:
+            toggle = source_cfg.get(sid)
+            return toggle.enabled if toggle is not None else False
+
+        enabled = [sid for sid in SCRAPERS if _is_enabled(sid)]
+        disabled = [sid for sid in SCRAPERS if not _is_enabled(sid)]
     for sid in disabled:
         log.info("[%s] disabled in config, skipping", sid)
 

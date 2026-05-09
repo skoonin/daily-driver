@@ -48,6 +48,7 @@ def run(
     output_dir: Path,
     *,
     dry_run: bool = False,
+    sources_override: list[str] | None = None,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
@@ -102,7 +103,9 @@ def run(
     # pagination instead of waiting for the post-scrape filter below.
     config["_known_urls"] = known_urls
 
-    all_jobs, failed_sources = _impl.run_all_scrapers(config)
+    all_jobs, failed_sources = _impl.run_all_scrapers(
+        config, sources_override=sources_override
+    )
 
     new_jobs = [
         j
