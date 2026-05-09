@@ -7,7 +7,7 @@ documented invariants (selector classes, salary prefix patterns, JSON-LD shape).
 
 from __future__ import annotations
 
-from daily_driver.scraper._impl import (
+from daily_driver.scraper.parsing import (
     parse_greenhouse_html,
     parse_jsonld_jobposting,
 )

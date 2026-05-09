@@ -17,6 +17,7 @@ from typing import Any
 
 from . import _impl
 from ._impl import ScraperError
+from .parsing import _fix_mojibake  # noqa: F401  (re-export for tests)
 
 log = logging.getLogger(__name__)
 
@@ -245,20 +246,6 @@ def run(
     if written > 0:
         _impl._notify_new_jobs(written, csv_path)
     return 0
-
-
-def _fix_mojibake(text: str) -> str:
-    """Reverse the common UTF-8-as-latin-1 mis-decoding (em-dash → 'â€"' etc.).
-
-    Returns text unchanged when the round-trip would lose data — pure ASCII
-    and legitimate latin-1 characters (e.g. 'é') survive intact.
-    """
-    if not text:
-        return text
-    try:
-        return text.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        return text
 
 
 def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
