@@ -332,7 +332,7 @@ def test_jobs_status_missing_workspace_exits_1(
 def _seed_jobs_csv(ws: Path, rows: list[dict]) -> Path:
     import csv
 
-    from daily_driver.scraper._impl import CANONICAL_HEADER
+    from daily_driver.scraper.csv_io import CANONICAL_HEADER
 
     p = ws / "jobs.csv"
     with open(p, "w", newline="", encoding="utf-8") as f:
@@ -502,7 +502,7 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
 
     import csv
 
-    from daily_driver.scraper._impl import CANONICAL_HEADER
+    from daily_driver.scraper.csv_io import CANONICAL_HEADER
 
     with open(archive, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL)

@@ -6,7 +6,7 @@ import csv
 import datetime as dt
 from pathlib import Path
 
-from daily_driver.scraper._impl import append_jobs, append_jobs_typed
+from daily_driver.scraper.csv_io import append_jobs, append_jobs_typed
 from daily_driver.scraper.models import (
     Comp,
     EnrichedJob,
