@@ -10,52 +10,7 @@ from __future__ import annotations
 from daily_driver.scraper._impl import (
     parse_greenhouse_html,
     parse_jsonld_jobposting,
-    parse_linkedin_html,
 )
-
-# ---------------------------------------------------------------------------
-# parse_linkedin_html
-# ---------------------------------------------------------------------------
-
-
-class TestLinkedInParser:
-    def test_extracts_comp_from_compensation_salary_div(self) -> None:
-        html = """
-        <html><body>
-        <div class="compensation__salary">$150,000.00/yr - $200,000.00/yr</div>
-        </body></html>
-        """
-        result = parse_linkedin_html(html)
-        assert "comp" in result
-        assert "$150" in result["comp"]
-
-    def test_extracts_description_text(self) -> None:
-        html = """
-        <html><body>
-        <div class="show-more-less-html__markup">We are hiring an SRE.</div>
-        </body></html>
-        """
-        result = parse_linkedin_html(html)
-        assert result["description_text"] == "We are hiring an SRE."
-
-    def test_returns_empty_when_no_compensation_div(self) -> None:
-        html = "<html><body><p>No comp here.</p></body></html>"
-        result = parse_linkedin_html(html)
-        assert "comp" not in result
-
-    def test_empty_string_returns_empty_dict(self) -> None:
-        assert parse_linkedin_html("") == {}
-
-    def test_ignores_similar_jobs_salary_info_class(self) -> None:
-        """`.salary-info` is a sidebar class; only `.compensation__salary` counts."""
-        html = """
-        <html><body>
-        <div class="salary-info">$50k</div>
-        </body></html>
-        """
-        result = parse_linkedin_html(html)
-        assert "comp" not in result
-
 
 # ---------------------------------------------------------------------------
 # parse_greenhouse_html

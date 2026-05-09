@@ -246,6 +246,16 @@ def countries_list(config: dict[str, Any]) -> list[str]:
     return list(loc.countries) if loc and loc.countries else ["US", "CA"]
 
 
+def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
+    """Return URLs the orchestrator already knows about (jobs.csv + archive).
+
+    Read from the transient ``_known_urls`` key set by ``scraper.run()``.
+    Empty set when absent (e.g., direct ``scrape_*`` calls in tests) —
+    scrapers treat that as "skip nothing", preserving pre-W6 behavior.
+    """
+    return config.get("_known_urls", set())
+
+
 def country_params(country: str) -> dict[str, str]:
     """Look up per-scraper parameters for an ISO country code.
 
@@ -745,6 +755,11 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
         url = (job.get("url") or "").strip()
         if not url:
             continue
+        # LinkedIn anonymous detail pages don't emit JSON-LD; comp/description
+        # arrive via JobSpy's linkedin_fetch_description. Skip the GET entirely
+        # rather than fetch HTML only to throw it away.
+        if "linkedin.com" in url:
+            continue
 
         if url in cache:
             details = cache[url]
@@ -779,99 +794,6 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
         enriched_count,
         len(jobs),
     )
-
-
-# LinkedIn renders an already-human-readable range. Example text found on the
-# real Fable posting (2026-04-10): "CA$130,000.00/yr - CA$150,000.00/yr". We
-# normalize it to match the JSON-LD formatter's output shape: drop .00, collapse
-# to an en-dash range with the unit suffix at the end.
-#
-# Primary: tidy LinkedIn format with leading prefix + explicit unit.
-# Example: "CA$130,000.00/yr - CA$150,000.00/yr"
-_LINKEDIN_RANGE_RE = re.compile(
-    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
-    r"(?P<min>[\d,]+)(?:\.\d+)?"
-    r"(?P<u>/\w+)"
-    r"\s*[-\u2013\u2014]\s*"  # accept -, en-dash, em-dash
-    r"(?P=p)(?P<max>[\d,]+)(?:\.\d+)?(?P=u)$"
-)
-
-_LINKEDIN_SINGLE_RE = re.compile(
-    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac|[A-Z]{3}\s?)"
-    r"(?P<amount>[\d,]+)(?:\.\d+)?"
-    r"(?P<u>/\w+)$"
-)
-
-# Fallback: looser range with optional unit and trailing currency code.
-# Handles postings like "$144,000\u2014$200,000 CAD" where the currency code
-# is a suffix rather than a prefix and no unit is present.
-_LINKEDIN_LOOSE_RANGE_RE = re.compile(
-    r"^(?P<p>CA\$|US\$|\$|\u00a3|\u20ac)"
-    r"(?P<min>[\d,]+)(?:\.\d+)?"
-    r"\s*[-\u2013\u2014]\s*"
-    r"(?:CA\$|US\$|\$|\u00a3|\u20ac)?"
-    r"(?P<max>[\d,]+)(?:\.\d+)?"
-    r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?$"
-)
-
-
-def _clean_linkedin_comp(raw: str) -> str:
-    """Normalize LinkedIn's comp text into the shape used by the JSON-LD path.
-
-    Returns "" if the text doesn't match a recognized pattern — callers treat
-    empty as "could not parse", not an error. We deliberately don't try to
-    salvage partial matches: a weird format is better left blank than filled
-    with a half-guess.
-    """
-    s = " ".join((raw or "").split())
-    m = _LINKEDIN_RANGE_RE.match(s)
-    if m:
-        return f"{m['p']}{m['min']}\u2013{m['max']}{m['u']}"
-    m = _LINKEDIN_SINGLE_RE.match(s)
-    if m:
-        return f"{m['p']}{m['amount']}{m['u']}"
-    m = _LINKEDIN_LOOSE_RANGE_RE.match(s)
-    if m:
-        # Default to /yr when the source omits a unit — job-board convention.
-        cur = f" {m['cur']}" if m["cur"] else ""
-        return f"{m['p']}{m['min']}\u2013{m['max']}/yr{cur}"
-    return ""
-
-
-def parse_linkedin_html(html: str) -> dict:
-    """Extract job details from LinkedIn's anonymous /jobs/view/ HTML.
-
-    LinkedIn does not expose JSON-LD on unauthenticated detail pages as of
-    2026-04-10 — comp lives in a plain `<div class="compensation__salary">`.
-    Returns {"comp": ...} when found, {} otherwise.
-    """
-    if not html:
-        return {}
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-    except Exception as exc:  # pragma: no cover - defensive only
-        log.debug("[enrich] BeautifulSoup failed: %s", exc)
-        return {}
-
-    # compensation__salary is LinkedIn's stable class for the disclosed-range div.
-    # Similar-jobs sidebars use .salary-info instead, so this class is precise.
-    out = {}
-
-    # Job description text for downstream Notes enrichment.
-    desc_div = soup.find("div", class_="show-more-less-html__markup") or soup.find(
-        "div", class_="description__text"
-    )
-    if desc_div:
-        out["description_text"] = desc_div.get_text(" ", strip=True)
-
-    salary_div = soup.find("div", class_="compensation__salary")
-    if salary_div is not None:
-        raw = salary_div.get_text(strip=True)
-        comp = _clean_linkedin_comp(raw)
-        if comp:
-            out["comp"] = comp
-
-    return out
 
 
 # K4: salary parsing now lives in models._parse_k_salary.
@@ -930,14 +852,13 @@ def parse_greenhouse_html(html: str) -> dict:
 def _parse_detail_page(html: str, url: str) -> dict:
     """Dispatch to the right detail-page parser based on URL hostname.
 
-    LinkedIn requires its own HTML parser because it doesn't emit JSON-LD.
-    Greenhouse job-boards pages also lack JSON-LD; we try JSON-LD first
+    Greenhouse job-boards pages lack JSON-LD; we try JSON-LD first
     (covers any Greenhouse board that does publish structured data) and fall
     back to the text-pattern parser. Everything else uses JSON-LD only.
+    LinkedIn descriptions/comp now come from JobSpy's
+    ``linkedin_fetch_description=True``; the vendored HTML parser was deleted.
     """
     host = urllib.parse.urlparse(url).hostname or ""
-    if "linkedin.com" in host:
-        return parse_linkedin_html(html)
     if "greenhouse.io" in host:
         result = parse_jsonld_jobposting(html)
         if result.get("comp"):
@@ -1176,6 +1097,23 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     if cmax >= threshold:
         return (True, "")
     return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
+
+
+def currency_matches_primary(job: dict, config: dict) -> bool:
+    """Return True if ``job`` should pass the primary-currency filter (#48).
+
+    When ``plugins.job_search.primary_currency`` is unset, every job passes.
+    When set, jobs with a parsed ``comp_currency`` matching pass; jobs with an
+    empty/missing currency (unparseable comp) also pass — currency=None is the
+    sentinel for "couldn't read", not "doesn't match".
+    """
+    primary = _model(config).primary_currency
+    if primary is None:
+        return True
+    job_currency = job.get("comp_currency") or ""
+    if not job_currency:
+        return True
+    return job_currency == primary
 
 
 def normalize_typed(raw: "RawScrapedJob") -> "NormalizedJob":  # noqa: F821
@@ -2123,7 +2061,18 @@ def scrape_jobspy(config: dict) -> list[dict]:
                     results_wanted=results_wanted,
                     country_indeed=country_indeed,
                     hours_old=hours_old,
+                    linkedin_fetch_description=True,
                 )
+            except TypeError as exc:
+                # python-jobspy < 1.1.82 doesn't accept linkedin_fetch_description.
+                # Bail out of the entire run with an actionable hint rather than
+                # emitting a generic warning per (term, country) iteration.
+                log.error(
+                    "[jobspy] python-jobspy is too old (%s); upgrade with "
+                    "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                    exc,
+                )
+                return jobs
             except Exception as exc:
                 log.warning(
                     "[jobspy] scrape failed for %r / %s: %s", term, country, exc
@@ -2182,6 +2131,8 @@ def scrape_wellfound(config: dict) -> list[dict]:
     page_load_ms = wf_delays.page_load_ms
     jobs: list[dict] = []
     seen_urls: set[str] = set()
+    known_urls = _known_urls_from_config(config)
+    skipped_known = 0
 
     try:
         with _playwright_browser(config) as page:
@@ -2249,6 +2200,9 @@ def scrape_wellfound(config: dict) -> list[dict]:
                             href = f"https://wellfound.com{href}"
                         if href in seen_urls:
                             continue
+                        if href and href in known_urls:
+                            skipped_known += 1
+                            continue
                         if href:
                             seen_urls.add(href)
                         job: dict = {
@@ -2268,7 +2222,11 @@ def scrape_wellfound(config: dict) -> list[dict]:
     except Exception as exc:
         log.warning("[wellfound] browser session error: %s", exc)
 
-    log.info("[wellfound] %d jobs matched", len(jobs))
+    log.info(
+        "[wellfound] %d jobs matched (%d skipped as already-known)",
+        len(jobs),
+        skipped_known,
+    )
     return jobs
 
 
@@ -2293,6 +2251,8 @@ def scrape_apple(config: dict) -> list[dict]:
     max_pages = cfg.max_pages
     jobs: list[dict] = []
     seen_positions: set[str] = set()
+    known_urls = _known_urls_from_config(config)
+    skipped_known = 0
     base_url = "https://jobs.apple.com"
 
     try:
@@ -2381,6 +2341,9 @@ def scrape_apple(config: dict) -> list[dict]:
                             job_id = item.get("id", position_id)
                             slug = item.get("transformedPostingTitle", "")
                             detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
+                            if detail_url in known_urls:
+                                skipped_known += 1
+                                continue
                             jobs.append(
                                 {
                                     "company": "Apple",
@@ -2405,7 +2368,11 @@ def scrape_apple(config: dict) -> list[dict]:
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 
-    log.info("[apple] %d jobs matched", len(jobs))
+    log.info(
+        "[apple] %d jobs matched (%d skipped as already-known)",
+        len(jobs),
+        skipped_known,
+    )
     return jobs
 
 

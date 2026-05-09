@@ -97,6 +97,11 @@ def run(
         csv_path,
     )
 
+    # Stuff the merged dedup set into the config dict so adapters that build
+    # their URL deterministically (Apple, Wellfound) can short-circuit during
+    # pagination instead of waiting for the post-scrape filter below.
+    config["_known_urls"] = known_urls
+
     all_jobs, failed_sources = _impl.run_all_scrapers(config)
 
     new_jobs = [
@@ -153,6 +158,16 @@ def run(
         skipped_below_comp,
         _impl.min_comp_usd(config),
     )
+
+    pre_currency = len(new_jobs)
+    new_jobs = [j for j in new_jobs if _impl.currency_matches_primary(j, config)]
+    skipped_currency = pre_currency - len(new_jobs)
+    if skipped_currency:
+        log.info(
+            "Primary-currency filter: %d dropped (not matching %s)",
+            skipped_currency,
+            _impl._model(config).primary_currency,
+        )
 
     if dry_run:
         log.info(

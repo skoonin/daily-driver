@@ -13,7 +13,9 @@ from __future__ import annotations
 import pytest
 
 from daily_driver.scraper._impl import (
+    _known_urls_from_config,
     comp_meets_threshold,
+    currency_matches_primary,
     dedup_key,
     location_matches,
     matches_roles,
@@ -266,3 +268,47 @@ class TestCompParsing:
     def test_period_extracted(self, comp_str: str, expected_period: str) -> None:
         r = self._parsed(comp_str)
         assert r["comp_period"] == expected_period
+
+
+class TestKnownUrlsFromConfig:
+    """Adapters read pruned/dedup URLs from the config dict's _known_urls key.
+
+    The orchestrator stuffs the union of jobs.csv + jobs.archive.csv URLs in
+    here so Playwright adapters (Apple, Wellfound) can short-circuit during
+    pagination without re-deriving the dedup state.
+    """
+
+    def test_returns_empty_set_when_key_absent(self) -> None:
+        assert _known_urls_from_config({}) == set()
+
+    def test_returns_set_when_key_present(self) -> None:
+        urls = {"https://jobs.apple.com/x/details/1", "https://wellfound.com/jobs/2"}
+        assert _known_urls_from_config({"_known_urls": urls}) == urls
+
+
+class TestCurrencyMatchesPrimary:
+    """Currency primary-mode filter (#48).
+
+    When ``plugins.job_search.primary_currency`` is set, drop scraped rows
+    whose Comp parses to a different currency. Rows with empty/unknown
+    currency (unparseable comp) pass through — currency=None is the sentinel
+    for "couldn't read", not "doesn't match".
+    """
+
+    def _config(self, primary: str | None) -> dict:
+        return {"job_search": {"primary_currency": primary}}
+
+    def test_no_primary_keeps_all(self) -> None:
+        assert currency_matches_primary({"comp_currency": "EUR"}, self._config(None))
+
+    def test_matching_currency_kept(self) -> None:
+        assert currency_matches_primary({"comp_currency": "USD"}, self._config("USD"))
+
+    def test_mismatched_currency_dropped(self) -> None:
+        assert not currency_matches_primary(
+            {"comp_currency": "EUR"}, self._config("USD")
+        )
+
+    def test_unparseable_currency_kept(self) -> None:
+        assert currency_matches_primary({"comp_currency": ""}, self._config("USD"))
+        assert currency_matches_primary({}, self._config("USD"))
