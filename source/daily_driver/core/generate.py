@@ -1,6 +1,6 @@
 """Copy package-bundled commands, agents, and settings into the workspace .claude/ tree.
 
-Materialization is triggered on version drift or via ignore_drift=True. The version stamp
+Generation is triggered on version drift or via ignore_drift=True. The version stamp
 is written last so a crash mid-run leaves the stamp stale, ensuring the next invocation
 retries — idempotent by construction.
 
@@ -25,7 +25,7 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
 
-_logger = get_logger("materialize")
+_logger = get_logger("generate")
 
 
 def _atomic_write_text(dest: Path, content: str) -> None:
@@ -123,16 +123,16 @@ def _remove_stale_files(
                 _logger.debug("Removed stale package file: %s", rel)
 
 
-def materialize(
+def generate(
     workspace: Workspace,
     *,
     ignore_drift: bool = False,
     force_overwrite: bool = False,
 ) -> None:
-    """Materialize package assets into the workspace .claude/ tree.
+    """Generate package assets into the workspace .claude/ tree.
 
     ignore_drift: when True, skip the version-stamp fast-path and always run the
-        materialization body. Use this when you need to re-materialize regardless
+        generation body. Use this when you need to regenerate regardless
         of whether the version has changed (e.g. --reset).
 
     force_overwrite: when True, overwrite package-managed .md files even if the
@@ -151,15 +151,15 @@ def materialize(
     ):
         return
 
-    lock_path = workspace.ephemeral_dir / "materialize.lock"
+    lock_path = workspace.ephemeral_dir / "generate.lock"
     with file_lock(lock_path):
-        # Re-check inside the lock: another process may have materialized while we waited.
+        # Re-check inside the lock: another process may have generated while we waited.
         if not ignore_drift and not version_stamp.is_drifted(
             workspace.state_dir, workspace.version
         ):
             return
 
-        _logger.info("Materializing assets for version %s", workspace.version)
+        _logger.info("Generating assets for version %s", workspace.version)
 
         claude_root = workspace.root / ".claude"
 

@@ -51,7 +51,7 @@ Full walkthrough in [docs/quick-start.md](docs/quick-start.md).
     manifest.json          # SHA-256 manifest of managed .claude/ files
     state/                 # ephemeral: locks, logs
   .claude/
-    commands/daily-driver/ # shipped slash commands (re-materialized on drift)
+    commands/daily-driver/ # shipped slash commands (regenerated on drift)
     agents/daily-driver/   # shipped agents (ditto)
     commands/*.md          # your custom commands (untouched)
     agents/*.md            # your custom agents (untouched)
@@ -70,7 +70,7 @@ Workspace discovery walks up from CWD looking for `.dd-config.yaml`. Override wi
 | [configuration.md](docs/configuration.md) | `.dd-config.yaml` reference |
 | [customization.md](docs/customization.md) | `.claude/` ownership, custom commands/agents |
 | [troubleshooting.md](docs/troubleshooting.md) | doctor errors, launchd, flock, Playwright |
-| [developer.md](docs/developer.md) | Architecture, runtime flow, materialize, init contract |
+| [developer.md](docs/developer.md) | Architecture, runtime flow, generate, init contract |
 | [extending.md](docs/extending.md) | Adding subcommands and scraper sources |
 | [releasing.md](docs/releasing.md) | Release workflow, semver, CHANGELOG |
 

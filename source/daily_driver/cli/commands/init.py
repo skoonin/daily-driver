@@ -9,7 +9,7 @@ import traceback
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
-from daily_driver.core.materialize import materialize
+from daily_driver.core.generate import generate
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
 
@@ -128,10 +128,10 @@ def run(args: argparse.Namespace) -> int:
     _scaffold_gitignore(root, force=False)
 
     try:
-        materialize(workspace, ignore_drift=True, force_overwrite=True)
+        generate(workspace, ignore_drift=True, force_overwrite=True)
     except Exception as exc:  # noqa: BLE001
         _restore_backup()
-        print(f"error during materialize: {exc}", file=sys.stderr)
+        print(f"error during workspace generation: {exc}", file=sys.stderr)
         if getattr(args, "verbose", False):
             traceback.print_exc(file=sys.stderr)
         return 1

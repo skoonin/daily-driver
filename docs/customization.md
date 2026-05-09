@@ -2,9 +2,9 @@
 
 ## `.claude/` ownership
 
-Materialization only touches three paths. Everything else is yours.
+Generation only touches three paths. Everything else is yours.
 
-| Path | Owner | Behavior on materialize |
+| Path | Owner | Behavior on generate |
 |------|-------|-------------------------|
 | `.claude/commands/daily-driver/` | Daily Driver | Wiped and recopied from package |
 | `.claude/agents/daily-driver/` | Daily Driver | Wiped and recopied from package |

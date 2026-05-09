@@ -45,13 +45,13 @@ pip install --upgrade git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
-On the next command invocation, Daily Driver detects version-stamp drift and re-materializes `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/settings.local.json`. Anything outside those three paths is untouched.
+On the next command invocation, Daily Driver detects version-stamp drift and regenerates `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/settings.local.json`. Anything outside those three paths is untouched.
 
 ### Breaking config changes
 
 `.dd-config.yaml` is validated with Pydantic (`extra="forbid"`). Schema-breaking releases surface a validation error naming the offending key. No automatic migrations in v0.1.0 — read `CHANGELOG.md`, edit the config, run `daily-driver doctor`.
 
-### Force re-materialize
+### Force regenerate
 
 ```bash
 daily-driver doctor --reset

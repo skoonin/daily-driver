@@ -1,9 +1,9 @@
-"""Regression tests: materialize must produce the file counts codified in the init contract.
+"""Regression tests: generate must produce the file counts codified in the init contract.
 
 These tests exist specifically to catch the broken-wheel gap that slipped into v0.1.0:
 test_package_data_resources_are_importable() passed with zero .md files because it only
 checked traversable accessibility.  These tests count actual files on disk after a real
-materialize(force=True) call.
+generate(force=True) call.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from daily_driver.core import materialize
+from daily_driver.core import generate
 from daily_driver.core.contract import MIN_AGENTS, MIN_COMMANDS
 
 
@@ -38,25 +38,25 @@ class _FakeWorkspace:
             root=root,
             state_dir=state_dir,
             version=version,
-            logger=logging.getLogger("test.materialize_contract"),
+            logger=logging.getLogger("test.generate_contract"),
             console=Console(stderr=True),
         )
 
 
-def test_materialize_produces_minimum_command_count(tmp_path: Path) -> None:
-    """materialize(force=True) must copy >= 5 command .md files onto disk.
+def test_generate_produces_minimum_command_count(tmp_path: Path) -> None:
+    """generate(force=True) must copy >= 5 command .md files onto disk.
 
     The importability test (test_package_data_resources_are_importable) passed
     even when the wheel contained zero .md files — this test closes that gap by
-    counting files on disk after an actual materialize run.
+    counting files on disk after an actual generate run.
     """
     ws = _FakeWorkspace.make(tmp_path)
-    materialize.materialize(ws, ignore_drift=True, force_overwrite=True)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
 
     commands_dir = tmp_path / ".claude" / "commands" / "daily-driver"
     assert (
         commands_dir.is_dir()
-    ), ".claude/commands/daily-driver must exist after materialize"
+    ), ".claude/commands/daily-driver must exist after generate"
 
     md_files = list(commands_dir.glob("*.md"))
     assert len(md_files) >= MIN_COMMANDS, (
@@ -65,15 +65,13 @@ def test_materialize_produces_minimum_command_count(tmp_path: Path) -> None:
     )
 
 
-def test_materialize_produces_minimum_agent_count(tmp_path: Path) -> None:
-    """materialize(force=True) must copy >= 1 agent .md file onto disk."""
+def test_generate_produces_minimum_agent_count(tmp_path: Path) -> None:
+    """generate(force=True) must copy >= 1 agent .md file onto disk."""
     ws = _FakeWorkspace.make(tmp_path)
-    materialize.materialize(ws, ignore_drift=True, force_overwrite=True)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
 
     agents_dir = tmp_path / ".claude" / "agents" / "daily-driver"
-    assert (
-        agents_dir.is_dir()
-    ), ".claude/agents/daily-driver must exist after materialize"
+    assert agents_dir.is_dir(), ".claude/agents/daily-driver must exist after generate"
 
     md_files = list(agents_dir.glob("*.md"))
     assert len(md_files) >= MIN_AGENTS, (
@@ -82,10 +80,10 @@ def test_materialize_produces_minimum_agent_count(tmp_path: Path) -> None:
     )
 
 
-def test_materialize_known_command_names_on_disk(tmp_path: Path) -> None:
-    """The five named commands must all be present by filename after materialize."""
+def test_generate_known_command_names_on_disk(tmp_path: Path) -> None:
+    """The five named commands must all be present by filename after generate."""
     ws = _FakeWorkspace.make(tmp_path)
-    materialize.materialize(ws, ignore_drift=True, force_overwrite=True)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
 
     commands_dir = tmp_path / ".claude" / "commands" / "daily-driver"
     present = {f.name for f in commands_dir.glob("*.md")}
@@ -103,10 +101,10 @@ def test_materialize_known_command_names_on_disk(tmp_path: Path) -> None:
     ), f"expected command files missing from .claude/commands/daily-driver/: {missing}"
 
 
-def test_materialize_known_agent_names_on_disk(tmp_path: Path) -> None:
-    """The work-planner agent must be present by filename after materialize."""
+def test_generate_known_agent_names_on_disk(tmp_path: Path) -> None:
+    """The work-planner agent must be present by filename after generate."""
     ws = _FakeWorkspace.make(tmp_path)
-    materialize.materialize(ws, ignore_drift=True, force_overwrite=True)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
 
     agents_dir = tmp_path / ".claude" / "agents" / "daily-driver"
     present = {f.name for f in agents_dir.glob("*.md")}

@@ -59,7 +59,7 @@ End-user reference: `docs/commands.md`. Short list:
 ## Architecture
 
 All code lives under `source/daily_driver/`. Read `docs/developer.md` for the
-architecture map, runtime flow, init contract, materialize lifecycle, and
+architecture map, runtime flow, init contract, generate lifecycle, and
 extensibility rules. Recipes for adding subcommands or scraper sources live
 in `docs/extending.md`. Release workflow is in `docs/releasing.md`.
 
@@ -71,7 +71,7 @@ Key conventions:
   `launchctl` — tests monkeypatch one spot, not many.
 - **Workspace writes are flock-guarded.** `core.locking.file_lock` wraps
   `fcntl.flock` for YAML reads + writes and the focus lock.
-- **`.claude/*/daily-driver/` is package-managed.** Materialized from wheel
+- **`.claude/*/daily-driver/` is package-managed.** Generated from wheel
   package-data on `init` and on version drift. `doctor --fix` preserves
   user-edited managed files (SHA-256 manifest); `doctor --reset` overwrites.
   Top-level `.claude/commands/` and `.claude/agents/` are user territory.

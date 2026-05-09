@@ -17,8 +17,8 @@ cd ~/daily-driver-workspace
 ├── .daily-driver/             # version stamp, SHA-256 manifest, state/ for locks + logs
 ├── .claude/
 │   ├── settings.local.json    # rendered from packaged template
-│   ├── commands/daily-driver/ # managed — re-materialized on version drift
-│   └── agents/daily-driver/   # managed — re-materialized on version drift
+│   ├── commands/daily-driver/ # managed — regenerated on version drift
+│   └── agents/daily-driver/   # managed — regenerated on version drift
 ├── context.md                 # your writing context (copied once; yours thereafter)
 └── voice-profile.md           # your writing-style profile (ditto)
 ```
@@ -29,8 +29,8 @@ The `.claude/*/daily-driver/` subdirs are package-managed. Top-level entries und
 
 ```bash
 daily-driver doctor
-daily-driver doctor --fix      # re-materialize if drifted
-daily-driver doctor --reset    # force full re-materialize
+daily-driver doctor --fix      # regenerate if drifted
+daily-driver doctor --reset    # force full regenerate
 ```
 
 `--fix` and `--reset` are mutually exclusive. ERROR rows exit non-zero; WARNING rows exit 0.

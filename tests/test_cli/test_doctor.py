@@ -170,13 +170,13 @@ def test_doctor_with_bad_workspace_override_errors_with_no_workspace(
 # ---------------------------------------------------------------------------
 
 
-def test_doctor_fix_rematerializes_drifted_workspace(
+def test_doctor_fix_regenerates_drifted_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--fix invokes materialize without force_overwrite; shows post-fix table."""
-    import daily_driver.core.materialize as mat_module
+    """--fix invokes generate without force_overwrite; shows post-fix table."""
+    import daily_driver.core.generate as mat_module
     from daily_driver.cli.cli import app
     from daily_driver.core import version_stamp
 
@@ -184,13 +184,13 @@ def test_doctor_fix_rematerializes_drifted_workspace(
     # Stamp an old version so drift is detectable; contract files already exist on disk.
     version_stamp.write(ws / ".daily-driver", "0.0.0")
 
-    materialize_calls: list[dict] = []
+    generate_calls: list[dict] = []
 
-    def spy_materialize(
+    def spy_generate(
         workspace, *, ignore_drift: bool = False, force_overwrite: bool = False
     ) -> None:
         version_stamp.write(workspace.state_dir, workspace.version)
-        materialize_calls.append(
+        generate_calls.append(
             {
                 "ignore_drift": ignore_drift,
                 "force_overwrite": force_overwrite,
@@ -198,16 +198,16 @@ def test_doctor_fix_rematerializes_drifted_workspace(
             }
         )
 
-    monkeypatch.setattr(mat_module, "materialize", spy_materialize)
+    monkeypatch.setattr(mat_module, "generate", spy_generate)
 
     rc = app(["--workspace", str(ws), "doctor", "--fix"])
 
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert rc == 0
-    assert len(materialize_calls) == 1
+    assert len(generate_calls) == 1
     # --fix preserves user edits; must not set force_overwrite.
-    assert materialize_calls[0]["force_overwrite"] is False
+    assert generate_calls[0]["force_overwrite"] is False
     assert "After fix" in combined
 
 
@@ -217,7 +217,7 @@ def test_doctor_fix_without_workspace_errors_with_no_workspace(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """--fix without a discoverable workspace errors clearly; nothing to fix."""
-    import daily_driver.core.materialize as mat_module
+    import daily_driver.core.generate as mat_module
     from daily_driver.cli.cli import app
 
     monkeypatch.chdir(tmp_path)
@@ -225,7 +225,7 @@ def test_doctor_fix_without_workspace_errors_with_no_workspace(
     calls: list[dict] = []
     monkeypatch.setattr(
         mat_module,
-        "materialize",
+        "generate",
         lambda workspace, *, ignore_drift=False, force_overwrite=False: calls.append(
             {"ignore_drift": ignore_drift, "force_overwrite": force_overwrite}
         ),
@@ -240,14 +240,14 @@ def test_doctor_fix_without_workspace_errors_with_no_workspace(
     assert "daily-driver init" in captured.err
 
 
-def test_doctor_fix_with_bad_workspace_override_errors_without_calling_materialize(
+def test_doctor_fix_with_bad_workspace_override_errors_without_calling_generate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """--fix with --workspace pointing nowhere must error before materialize runs.
-    Guards against a regression where materialize is invoked on a None workspace."""
-    import daily_driver.core.materialize as mat_module
+    """--fix with --workspace pointing nowhere must error before generate runs.
+    Guards against a regression where generate is invoked on a None workspace."""
+    import daily_driver.core.generate as mat_module
     from daily_driver.cli.cli import app
 
     monkeypatch.chdir(tmp_path)
@@ -256,7 +256,7 @@ def test_doctor_fix_with_bad_workspace_override_errors_without_calling_materiali
     calls: list[dict] = []
     monkeypatch.setattr(
         mat_module,
-        "materialize",
+        "generate",
         lambda workspace, *, ignore_drift=False, force_overwrite=False: calls.append(
             {"ignore_drift": ignore_drift, "force_overwrite": force_overwrite}
         ),
@@ -276,21 +276,21 @@ def test_doctor_fix_with_bad_workspace_override_errors_without_calling_materiali
 # ---------------------------------------------------------------------------
 
 
-def test_doctor_reset_rematerializes(
+def test_doctor_reset_regenerates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    import daily_driver.core.materialize as mat_module
+    import daily_driver.core.generate as mat_module
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
 
-    materialize_calls: list[dict] = []
+    generate_calls: list[dict] = []
     monkeypatch.setattr(
         mat_module,
-        "materialize",
-        lambda workspace, *, ignore_drift=False, force_overwrite=False: materialize_calls.append(
+        "generate",
+        lambda workspace, *, ignore_drift=False, force_overwrite=False: generate_calls.append(
             {
                 "ignore_drift": ignore_drift,
                 "force_overwrite": force_overwrite,
@@ -303,12 +303,12 @@ def test_doctor_reset_rematerializes(
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert len(materialize_calls) == 1
+    assert len(generate_calls) == 1
     # --reset must skip drift check and overwrite user edits.
-    assert materialize_calls[0]["ignore_drift"] is True
-    assert materialize_calls[0]["force_overwrite"] is True
-    assert materialize_calls[0]["root"] == ws
-    assert "re-materialized" in captured.out + captured.err
+    assert generate_calls[0]["ignore_drift"] is True
+    assert generate_calls[0]["force_overwrite"] is True
+    assert generate_calls[0]["root"] == ws
+    assert "regenerated" in captured.out + captured.err
 
 
 def test_doctor_reset_without_workspace_exits_1(

@@ -2,14 +2,14 @@
 
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it re-materializes drifted `.claude/daily-driver/`
+Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`
 and resolves most "missing file" errors. If the error row mentions a missing
 dependency (`dep:claude`, `dep:pbcopy`), install it and re-run.
 
 ```bash
 daily-driver doctor
 daily-driver doctor --fix       # fixable drift only
-daily-driver doctor --reset     # nuke and re-materialize .claude/daily-driver/
+daily-driver doctor --reset     # nuke and regenerate .claude/daily-driver/
 ```
 
 `--reset` requires a workspace (exits 1 otherwise).

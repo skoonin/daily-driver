@@ -175,13 +175,13 @@ def test_daily_state_writable_error_when_unwritable(
 
 
 # ---------------------------------------------------------------------------
-# 4. After materialize(workspace), drift check is OK
+# 4. After generate(workspace), drift check is OK
 # ---------------------------------------------------------------------------
 
 
-def test_workspace_drift_ok_after_materialize(tmp_path: Path) -> None:
+def test_workspace_drift_ok_after_generate(tmp_path: Path) -> None:
     ws = _FakeWorkspace.make(tmp_path)
-    # Write the stamp directly (simulating a completed materialize).
+    # Write the stamp directly (simulating a completed generate).
     version_stamp.write(ws.state_dir, ws.version)
 
     results = run_checks(ws)  # type: ignore[arg-type]
@@ -191,23 +191,23 @@ def test_workspace_drift_ok_after_materialize(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. reset(workspace) calls materialize with ignore_drift=True, force_overwrite=True
+# 5. reset(workspace) calls generate with ignore_drift=True, force_overwrite=True
 # ---------------------------------------------------------------------------
 
 
-def test_reset_calls_materialize_with_overwrite(
+def test_reset_calls_generate_with_overwrite(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """reset() must pass ignore_drift=True and force_overwrite=True to materialize."""
-    import daily_driver.core.materialize as mat_module
+    """reset() must pass ignore_drift=True and force_overwrite=True to generate."""
+    import daily_driver.core.generate as mat_module
 
     ws = _FakeWorkspace.make(tmp_path)
-    materialize_calls: list[dict] = []
+    generate_calls: list[dict] = []
 
-    def spy_materialize(
+    def spy_generate(
         workspace, *, ignore_drift: bool = False, force_overwrite: bool = False
     ) -> None:
-        materialize_calls.append(
+        generate_calls.append(
             {
                 "workspace": workspace,
                 "ignore_drift": ignore_drift,
@@ -215,37 +215,37 @@ def test_reset_calls_materialize_with_overwrite(
             }
         )
 
-    monkeypatch.setattr(mat_module, "materialize", spy_materialize)
+    monkeypatch.setattr(mat_module, "generate", spy_generate)
 
     reset(ws)  # type: ignore[arg-type]
 
-    assert len(materialize_calls) == 1
-    assert materialize_calls[0]["ignore_drift"] is True
-    assert materialize_calls[0]["force_overwrite"] is True
-    assert materialize_calls[0]["workspace"] is ws
+    assert len(generate_calls) == 1
+    assert generate_calls[0]["ignore_drift"] is True
+    assert generate_calls[0]["force_overwrite"] is True
+    assert generate_calls[0]["workspace"] is ws
 
 
 # ---------------------------------------------------------------------------
-# 6. fix() calls materialize without force_overwrite; preserves user edits
+# 6. fix() calls generate without force_overwrite; preserves user edits
 # ---------------------------------------------------------------------------
 
 
 def test_fix_resolves_workspace_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import daily_driver.core.materialize as mat_module
+    import daily_driver.core.generate as mat_module
 
     ws = _FakeWorkspace.make(tmp_path)
     # No stamp — drift present.
 
-    materialize_calls: list[dict] = []
+    generate_calls: list[dict] = []
 
-    def spy_materialize(
+    def spy_generate(
         workspace, *, ignore_drift: bool = False, force_overwrite: bool = False
     ) -> None:
         # Actually write the stamp so the re-run check passes.
         version_stamp.write(workspace.state_dir, workspace.version)
-        materialize_calls.append(
+        generate_calls.append(
             {
                 "workspace": workspace,
                 "ignore_drift": ignore_drift,
@@ -253,7 +253,7 @@ def test_fix_resolves_workspace_drift(
             }
         )
 
-    monkeypatch.setattr(mat_module, "materialize", spy_materialize)
+    monkeypatch.setattr(mat_module, "generate", spy_generate)
 
     initial = run_checks(ws)  # type: ignore[arg-type]
     drift_before = next(r for r in initial if r.name == "Workspace drift")
@@ -261,9 +261,9 @@ def test_fix_resolves_workspace_drift(
 
     post_fix = fix(initial, ws)  # type: ignore[arg-type]
 
-    assert len(materialize_calls) == 1
+    assert len(generate_calls) == 1
     # fix() must NOT set force_overwrite — user edits are preserved.
-    assert materialize_calls[0]["force_overwrite"] is False
+    assert generate_calls[0]["force_overwrite"] is False
 
     drift_after = next(r for r in post_fix if r.name == "Workspace drift")
     assert drift_after.status == "OK"

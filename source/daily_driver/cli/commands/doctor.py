@@ -33,7 +33,7 @@ def add_parser(
         "--reset",
         action="store_true",
         default=False,
-        help="Force re-materialize .claude/ from package data.",
+        help="Force regenerate .claude/ from package data.",
     )
     add_global_flags(p)
     p.set_defaults(func=run)
@@ -83,7 +83,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.reset:
         reset(workspace)
-        console.print("[green]✓[/green] workspace re-materialized from package data")
+        console.print("[green]✓[/green] workspace regenerated from package data")
         return 0
 
     if args.fix:

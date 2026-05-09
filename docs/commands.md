@@ -15,7 +15,7 @@
 
 ### `init [PATH] [--force]`
 
-Scaffolds a workspace. Static files (`context.md`, `voice-profile.md`) are only written if missing — `--force` does not clobber them. `.dd-config.yaml` is overwritten with a backup. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)materialized.
+Scaffolds a workspace. Static files (`context.md`, `voice-profile.md`) are only written if missing — `--force` does not clobber them. `.dd-config.yaml` is overwritten with a backup. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
 
 ### `doctor [--fix | --reset]`
 
