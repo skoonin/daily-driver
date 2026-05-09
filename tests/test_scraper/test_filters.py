@@ -15,6 +15,7 @@ import pytest
 from daily_driver.scraper._impl import (
     _known_urls_from_config,
     comp_meets_threshold,
+    currency_matches_primary,
     dedup_key,
     location_matches,
     matches_roles,
@@ -290,3 +291,31 @@ class TestKnownUrlsFromConfig:
     def test_returns_empty_set_when_value_is_wrong_type(self) -> None:
         # Defensive — config dicts are user-built; don't crash on garbage.
         assert _known_urls_from_config({"_known_urls": "not-a-set"}) == set()
+
+
+class TestCurrencyMatchesPrimary:
+    """Currency primary-mode filter (#48).
+
+    When ``plugins.job_search.primary_currency`` is set, drop scraped rows
+    whose Comp parses to a different currency. Rows with empty/unknown
+    currency (unparseable comp) pass through — currency=None is the sentinel
+    for "couldn't read", not "doesn't match".
+    """
+
+    def _config(self, primary: str | None) -> dict:
+        return {"job_search": {"primary_currency": primary}}
+
+    def test_no_primary_keeps_all(self) -> None:
+        assert currency_matches_primary({"comp_currency": "EUR"}, self._config(None))
+
+    def test_matching_currency_kept(self) -> None:
+        assert currency_matches_primary({"comp_currency": "USD"}, self._config("USD"))
+
+    def test_mismatched_currency_dropped(self) -> None:
+        assert not currency_matches_primary(
+            {"comp_currency": "EUR"}, self._config("USD")
+        )
+
+    def test_unparseable_currency_kept(self) -> None:
+        assert currency_matches_primary({"comp_currency": ""}, self._config("USD"))
+        assert currency_matches_primary({}, self._config("USD"))

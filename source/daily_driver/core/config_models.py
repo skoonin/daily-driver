@@ -184,6 +184,11 @@ class JobSearchPlugin(BaseModel):
     domain_keywords: list[str] = []
     seniority_keywords: list[str] = []
     min_comp_usd: int = 180000
+    # When set, drop scraped jobs whose parsed comp currency doesn't match.
+    # Unparseable comp is kept (None=sentinel for "couldn't read"). Decoupled
+    # from compensation.currency: that one drives the user's pay-floor input;
+    # this one prunes the input stream by source-currency.
+    primary_currency: Literal["USD", "CAD", "EUR", "GBP"] | None = None
     scraper: ScraperConfig = ScraperConfig()
     sources: dict[str, Any] = {}
 

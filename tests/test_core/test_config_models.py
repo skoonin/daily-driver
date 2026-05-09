@@ -237,6 +237,22 @@ def test_job_search_plugin_rejects_extra():
         JobSearchPlugin(nonexistent_key="oops")
 
 
+def test_job_search_plugin_primary_currency_default_is_none():
+    m = JobSearchPlugin()
+    assert m.primary_currency is None
+
+
+@pytest.mark.parametrize("code", ["USD", "CAD", "GBP", "EUR"])
+def test_job_search_plugin_primary_currency_accepts_supported_codes(code):
+    m = JobSearchPlugin(primary_currency=code)
+    assert m.primary_currency == code
+
+
+def test_job_search_plugin_primary_currency_rejects_unsupported():
+    with pytest.raises(ValidationError):
+        JobSearchPlugin(primary_currency="JPY")
+
+
 # ---------------------------------------------------------------------------
 # ScraperConfig
 # ---------------------------------------------------------------------------

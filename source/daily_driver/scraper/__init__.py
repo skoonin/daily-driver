@@ -159,6 +159,16 @@ def run(
         _impl.min_comp_usd(config),
     )
 
+    pre_currency = len(new_jobs)
+    new_jobs = [j for j in new_jobs if _impl.currency_matches_primary(j, config)]
+    skipped_currency = pre_currency - len(new_jobs)
+    if skipped_currency:
+        log.info(
+            "Primary-currency filter: %d dropped (not matching %s)",
+            skipped_currency,
+            _impl._model(config).primary_currency,
+        )
+
     if dry_run:
         log.info(
             "[dry-run] skipping enrich_company_descriptions and enrich_fit_and_notes (claude calls)"

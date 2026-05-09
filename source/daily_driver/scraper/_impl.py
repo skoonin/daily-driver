@@ -1102,6 +1102,23 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
 
 
+def currency_matches_primary(job: dict, config: dict) -> bool:
+    """Return True if ``job`` should pass the primary-currency filter (#48).
+
+    When ``plugins.job_search.primary_currency`` is unset, every job passes.
+    When set, jobs with a parsed ``comp_currency`` matching pass; jobs with an
+    empty/missing currency (unparseable comp) also pass — currency=None is the
+    sentinel for "couldn't read", not "doesn't match".
+    """
+    primary = _model(config).primary_currency
+    if primary is None:
+        return True
+    job_currency = (job.get("comp_currency") or "").strip().upper()
+    if not job_currency:
+        return True
+    return job_currency == primary
+
+
 def normalize_typed(raw: "RawScrapedJob") -> "NormalizedJob":  # noqa: F821
     """Typed normalizer: ``RawScrapedJob -> NormalizedJob``.
 
