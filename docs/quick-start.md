@@ -48,7 +48,7 @@ daily-driver status
 ## 4. Scheduler (optional)
 
 ```bash
-daily-driver install-scheduler
+daily-driver scheduler install
 ```
 
-Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins and overnight job scraping. Uninstall with `daily-driver uninstall-scheduler` (`--keep-state` retains mirrored copies under `.daily-driver/state/launchd/`). macOS only.
+Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins and overnight job searches. Uninstall with `daily-driver scheduler uninstall`. Show installed jobs with `daily-driver scheduler status`. macOS only.

@@ -40,10 +40,10 @@ non-Playwright sources while debugging, configure only those sources in
 1. **XML malformed.** Run `plutil -lint ~/Library/LaunchAgents/com.daily-driver.<name>.plist`
 2. **Label collision** with a previously-loaded plist. Run
    `launchctl list | grep daily-driver`, unload any stragglers with
-   `launchctl unload <path>`, then re-run `daily-driver install-scheduler`.
+   `launchctl unload <path>`, then re-run `daily-driver scheduler install`.
 3. **Path to `daily-driver` not absolute.** The scheduler resolves `daily-driver`
    via `shutil.which` at install time. If you moved your venv after installing,
-   re-run `daily-driver install-scheduler`.
+   re-run `daily-driver scheduler install`.
 4. **macOS blocked the job.** Check System Settings > Login Items and Extensions.
 
 View scheduler logs:

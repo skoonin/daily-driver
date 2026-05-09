@@ -378,7 +378,7 @@ class TestInstallUninstall:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """uninstall-scheduler also tears down the pre-rename plist."""
+        """`scheduler uninstall` also tears down the pre-rename plist."""
         from daily_driver.integrations import launchd as launchd_int
 
         monkeypatch.setattr(sys, "platform", "darwin")

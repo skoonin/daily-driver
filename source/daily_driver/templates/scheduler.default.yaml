@@ -1,4 +1,4 @@
-# Read at `install-scheduler` invocation time to supply scheduling defaults.
+# Read at `scheduler install` invocation time to supply scheduling defaults.
 # Never copied into the user workspace — lives in the installed package only.
 checkin:
   times: ["11:00", "15:00"]

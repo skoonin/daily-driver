@@ -128,8 +128,10 @@ daily-driver/
 │   ├── --agent (default: work-planner)
 │   ├── --model
 │   └── --timeout SECONDS
-├── install-scheduler
-├── uninstall-scheduler
+├── scheduler
+│   ├── install
+│   ├── uninstall
+│   └── status [--json]
 └── voice-update
     ├── --from PATH ... (required)
     ├── --append | --replace

@@ -37,8 +37,7 @@ _COMMANDS = [
     ("day-end", "daily_driver.cli.commands.day_end"),
     ("check-in", "daily_driver.cli.commands.check_in"),
     ("summary", "daily_driver.cli.commands.summary"),
-    ("install-scheduler", "daily_driver.cli.commands.install_scheduler"),
-    ("uninstall-scheduler", "daily_driver.cli.commands.uninstall_scheduler"),
+    ("scheduler", "daily_driver.cli.commands.scheduler"),
     ("voice-update", "daily_driver.cli.commands.voice_update"),
 ]
 
@@ -75,6 +74,12 @@ def app(argv: list[str] | None = None) -> int:
 
     subparsers = parser.add_subparsers(dest="cmd", metavar="<command>")
 
+    # Subcommands invoked by the shipped slash commands but not useful as
+    # day-to-day user-facing CLI verbs. Hidden from `daily-driver --help`
+    # listing while remaining fully callable. Keep this set in sync with
+    # source/daily_driver/commands/daily-driver/*.md.
+    _HIDDEN_FROM_TOP_HELP = {"paths", "read", "ensure-daily-dir", "gather"}
+
     # Deferred imports keep --version / --help fast and avoid circular imports
     # at module load time.  All command modules are shipped in-package; an
     # ImportError here means a packaging defect, not a graceful-degradation
@@ -84,6 +89,16 @@ def app(argv: list[str] | None = None) -> int:
         module = cast(_CommandModule, importlib.import_module(module_path))
         module.add_parser(subparsers, [])
         _cmd_map[cmd_name] = module
+
+    # Strip hidden subcommands from the help listing. Standard argparse
+    # workaround — `help=argparse.SUPPRESS` on the subparser itself renders
+    # the literal "==SUPPRESS==" text under Python 3.11 (bpo-22848). The
+    # entries remain in subparsers.choices so parsing/dispatch is unaffected.
+    subparsers._choices_actions = [  # type: ignore[attr-defined]
+        a
+        for a in subparsers._choices_actions  # type: ignore[attr-defined]
+        if a.dest not in _HIDDEN_FROM_TOP_HELP
+    ]
 
     # Register globals on the top-level parser AFTER subparsers so they render
     # at the bottom of `daily-driver --help`.

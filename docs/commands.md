@@ -123,13 +123,17 @@ Reads `jobs-last-run.json` and `jobs.csv` metadata.
 
 ## Scheduler (macOS)
 
-### `install-scheduler`
+### `scheduler install`
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00. Idempotent.
 
-### `uninstall-scheduler [--keep-state]`
+### `scheduler uninstall`
 
-`launchctl unload` + delete plist. `--keep-state` retains mirrored copies under `.daily-driver/state/launchd/`.
+`launchctl unload` + delete plist. State mirror under `.daily-driver/state/launchd/` is always removed.
+
+### `scheduler status [--json]`
+
+Lists configured jobs and whether each plist is currently installed in `~/Library/LaunchAgents/`.
 
 ## Scripting helpers
 

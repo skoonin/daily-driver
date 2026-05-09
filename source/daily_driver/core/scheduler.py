@@ -76,7 +76,7 @@ def _merge_scheduler_config(workspace: Workspace) -> dict[str, Any]:
     if "scrape_jobs" in user_cfg:
         raise SchedulerError(
             "scheduler.scrape_jobs was renamed to scheduler.jobs. "
-            "Update .dd-config.yaml and re-run install-scheduler."
+            "Update .dd-config.yaml and re-run `daily-driver scheduler install`."
         )
     merged: dict[str, Any] = {**defaults}
     for key, value in user_cfg.items():

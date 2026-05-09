@@ -1,4 +1,4 @@
-"""CLI-level tests for install-scheduler / uninstall-scheduler dispatch.
+"""CLI-level tests for `scheduler {install,uninstall,status}` dispatch.
 
 Mocks the launchctl layer so tests pass on non-darwin CI too. Platform
 validation is covered by test_core/test_scheduler.py::TestPlatformGuard.
@@ -48,7 +48,7 @@ def test_install_scheduler_exits_0_and_reports_labels(
     ws = _init_workspace(tmp_path)
     _patch_launchd(monkeypatch, tmp_path)
 
-    rc = app(["--workspace", str(ws), "install-scheduler"])
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
     out = capsys.readouterr()
     combined = out.out + out.err
 
@@ -67,7 +67,7 @@ def test_uninstall_scheduler_reports_no_op_when_nothing_installed(
     ws = _init_workspace(tmp_path)
     _patch_launchd(monkeypatch, tmp_path)
 
-    rc = app(["--workspace", str(ws), "uninstall-scheduler"])
+    rc = app(["--workspace", str(ws), "scheduler", "uninstall"])
     out = capsys.readouterr()
     combined = out.out + out.err
 
@@ -87,7 +87,7 @@ def test_uninstall_scheduler_rejects_removed_keep_state_flag(
     _patch_launchd(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc_info:
-        app(["--workspace", str(ws), "uninstall-scheduler", "--keep-state"])
+        app(["--workspace", str(ws), "scheduler", "uninstall", "--keep-state"])
     assert exc_info.value.code == 2
 
 
@@ -101,8 +101,8 @@ def test_uninstall_scheduler_always_removes_state_mirror(
     ws = _init_workspace(tmp_path)
     _patch_launchd(monkeypatch, tmp_path)
 
-    app(["--workspace", str(ws), "install-scheduler"])
-    rc = app(["--workspace", str(ws), "uninstall-scheduler"])
+    app(["--workspace", str(ws), "scheduler", "install"])
+    rc = app(["--workspace", str(ws), "scheduler", "uninstall"])
 
     assert rc == 0
     state_dir = ws / ".daily-driver" / "state" / "launchd"
@@ -119,7 +119,64 @@ def test_install_scheduler_errors_on_non_darwin(
     ws = _init_workspace(tmp_path)
     monkeypatch.setattr(sys, "platform", "linux")
 
-    rc = app(["--workspace", str(ws), "install-scheduler"])
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
     captured = capsys.readouterr()
     assert rc == 1
     assert "macOS-only" in captured.err
+
+
+def test_scheduler_status_lists_configured_jobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`scheduler status` prints configured job labels and an installed marker."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "status"])
+    out = capsys.readouterr()
+    combined = out.out + out.err
+
+    assert rc == 0
+    assert "com.daily-driver.checkin" in combined
+    assert "com.daily-driver.jobs" in combined
+
+
+def test_scheduler_status_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`scheduler status --json` returns a structured payload."""
+    import json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "status", "--json"])
+    out = capsys.readouterr()
+    assert rc == 0
+    payload = json.loads(out.out)
+    assert payload["schema"] == 1
+    labels = {row["label"] for row in payload["data"]}
+    assert "com.daily-driver.checkin" in labels
+
+
+def test_scheduler_bare_action_prints_usage(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`scheduler` with no action prints usage and returns 2."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler"])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "scheduler" in captured.err

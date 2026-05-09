@@ -46,7 +46,7 @@ daily_driver/
 5. `core.version_stamp` compares the workspace's stamped version against `daily_driver.__version__`. On mismatch: `doctor --fix` regenerates; other subcommands proceed without touching the filesystem.
 6. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`, logged, and turned into non-zero exits with a Rich-formatted stderr message — no tracebacks on happy-path failures.
 
-Scheduled invocations go through the same entry point. `install-scheduler` renders `launchd/<job>.plist.j2` with workspace-specific paths and calls `launchctl load`. stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
+Scheduled invocations go through the same entry point. `scheduler install` renders `launchd/<job>.plist.j2` with workspace-specific paths and calls `launchctl load`. stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
 
 ## Generate lifecycle
 

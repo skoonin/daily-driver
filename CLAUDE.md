@@ -52,8 +52,8 @@ End-user reference: `docs/commands.md`. Short list:
   plan path.
 - `daily-driver gather {calendar,git,sessions,notes} [--json]` — read
   external state for downstream commands.
-- `daily-driver install-scheduler | uninstall-scheduler` — macOS launchd
-  plist install/remove.
+- `daily-driver scheduler {install,uninstall,status}` — macOS launchd
+  plist install / remove / inspection.
 
 ## Architecture
 

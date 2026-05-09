@@ -206,7 +206,7 @@ _HHMM_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 class ScheduleConfig(BaseModel):
     """Single source of truth for daily-driver's scheduled times.
 
-    Drives BOTH the launchd plist install (`install-scheduler` builds plists
+    Drives BOTH the launchd plist install (`scheduler install` builds plists
     from these) AND `is_late_day` evaluation (so prompts can frame the agenda
     when the user starts late). HH:MM strings; 24-hour clock.
     """

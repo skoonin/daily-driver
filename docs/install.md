@@ -61,7 +61,7 @@ Wipes the managed `.claude/daily-driver/` subdirs, recopies from the installed p
 
 ### Scheduler after upgrade
 
-`install-scheduler` is idempotent — re-run it after an upgrade to pick up template or binary-path changes. It unloads, rewrites, reloads.
+`scheduler install` is idempotent — re-run it after an upgrade to pick up template or binary-path changes. It unloads, rewrites, reloads.
 
 ### Downgrade
 
