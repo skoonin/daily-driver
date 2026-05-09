@@ -1,4 +1,4 @@
-"""scrape-jobs subcommand: run job-board scraper or show run status."""
+"""jobs subcommand: run job-board scraper or show run status."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ def add_parser(
     parents: list[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
-        "scrape-jobs",
+        "jobs",
         parents=parents,
         help="Job-board scraper: run the scraper or inspect its last run",
     )
 
-    nested = parser.add_subparsers(dest="scrape_action", metavar="<action>")
+    nested = parser.add_subparsers(dest="jobs_action", metavar="<action>")
 
     p_run = nested.add_parser("run", parents=parents, help="Scrape enabled job boards")
     p_run.add_argument(
@@ -243,7 +243,7 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
     if not hasattr(args, "func") or args.func is run:
-        print("usage: daily-driver scrape-jobs <action> ...", file=sys.stderr)
+        print("usage: daily-driver jobs <action> ...", file=sys.stderr)
         print("actions: run, status, prune", file=sys.stderr)
         return 2
 

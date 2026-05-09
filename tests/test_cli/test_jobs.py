@@ -1,11 +1,8 @@
-"""CLI tests for the ``scrape-jobs`` subcommand.
+"""CLI tests for the ``jobs`` subcommand.
 
 Network and source-specific behavior is NOT covered here — these tests
 exercise argparse wiring, workspace resolution, config loading, and the
 backfill short-circuit against a mocked ``daily_driver.scraper`` module.
-
-All invocations now use the ``scrape-jobs run`` / ``scrape-jobs status``
-subcommand form introduced in the Wave 2b refactor.
 """
 
 from __future__ import annotations
@@ -47,63 +44,63 @@ def _init_workspace(tmp_path: Path, *, scraper_enabled: bool | None = None) -> P
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_jobs_help_exits_0() -> None:
+def test_jobs_help_exits_0() -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["scrape-jobs", "--help"])
+        app(["jobs", "--help"])
 
     assert exc.value.code == 0
 
 
-def test_scrape_jobs_no_action_exits_2(
+def test_jobs_no_action_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bare ``scrape-jobs`` with no action returns 2 and prints usage."""
+    """Bare ``jobs`` with no action returns 2 and prints usage."""
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
-    rc = app(["--workspace", str(ws), "scrape-jobs"])
+    rc = app(["--workspace", str(ws), "jobs"])
 
     assert rc == 2
 
 
-def test_scrape_jobs_run_help_exits_0() -> None:
+def test_jobs_run_help_exits_0() -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["scrape-jobs", "run", "--help"])
+        app(["jobs", "run", "--help"])
 
     assert exc.value.code == 0
 
 
-def test_scrape_jobs_status_help_exits_0() -> None:
+def test_jobs_status_help_exits_0() -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["scrape-jobs", "status", "--help"])
+        app(["jobs", "status", "--help"])
 
     assert exc.value.code == 0
 
 
 # ---------------------------------------------------------------------------
-# scrape-jobs run — workspace / config validation
+# jobs run — workspace / config validation
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_jobs_run_missing_workspace_exits_1(
+def test_jobs_run_missing_workspace_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from daily_driver.cli.cli import app
 
     monkeypatch.chdir(tmp_path)
 
-    rc = app(["--workspace", str(tmp_path / "missing"), "scrape-jobs", "run"])
+    rc = app(["--workspace", str(tmp_path / "missing"), "jobs", "run"])
 
     assert rc == 1
 
 
-def test_scrape_jobs_run_no_job_search_exits_1(
+def test_jobs_run_no_job_search_exits_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Fresh workspace with no plugins.job_search config exits 1."""
@@ -111,46 +108,46 @@ def test_scrape_jobs_run_no_job_search_exits_1(
 
     ws = _init_workspace(tmp_path)
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "run"])
+    rc = app(["--workspace", str(ws), "jobs", "run"])
 
     captured = capsys.readouterr()
     assert rc == 1
     assert "plugins.job_search" in captured.err
 
 
-def test_scrape_jobs_run_scraper_disabled_returns_zero(
+def test_jobs_run_scraper_disabled_returns_zero(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=False)
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "run"])
+    rc = app(["--workspace", str(ws), "jobs", "run"])
 
     captured = capsys.readouterr()
     assert rc == 0
     assert "Scraper disabled" in captured.out
 
 
-def test_scrape_jobs_run_backfill_dispatches(tmp_path: Path) -> None:
+def test_jobs_run_backfill_dispatches(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
     with patch("daily_driver.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "scrape-jobs", "run", "--backfill"])
+        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
 
     assert rc == 0
     assert mock_backfill.called
 
 
-def test_scrape_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
+def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
     with patch("daily_driver.scraper.run", return_value=0) as mock_run:
-        rc = app(["--workspace", str(ws), "scrape-jobs", "run", "--dry-run"])
+        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
     assert mock_run.called
@@ -158,7 +155,7 @@ def test_scrape_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
     assert kwargs.get("dry_run") is True
 
 
-def test_scrape_jobs_run_legacy_config_yaml_exits_1(
+def test_jobs_run_legacy_config_yaml_exits_1(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Legacy config.yaml at workspace root is rejected with a migration error."""
@@ -169,7 +166,7 @@ def test_scrape_jobs_run_legacy_config_yaml_exits_1(
         "output_dir: .\n" "job_search:\n  scraper:\n    enabled: false\n"
     )
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "run"])
+    rc = app(["--workspace", str(ws), "jobs", "run"])
 
     assert rc == 1
     captured = capsys.readouterr()
@@ -177,32 +174,32 @@ def test_scrape_jobs_run_legacy_config_yaml_exits_1(
 
 
 # ---------------------------------------------------------------------------
-# scrape-jobs status
+# jobs status
 # ---------------------------------------------------------------------------
 
 
-def test_scrape_jobs_status_no_run_yet(
+def test_jobs_status_no_run_yet(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "status"])
+    rc = app(["--workspace", str(ws), "jobs", "status"])
 
     assert rc == 0
     captured = capsys.readouterr()
     assert "No scraper run recorded" in captured.out
 
 
-def test_scrape_jobs_status_json_no_run(
+def test_jobs_status_json_no_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "status", "--json"])
+    rc = app(["--workspace", str(ws), "jobs", "status", "--json"])
 
     assert rc == 0
     captured = capsys.readouterr()
@@ -213,7 +210,7 @@ def test_scrape_jobs_status_json_no_run(
     assert payload["data"]["awaiting_action"] == 0
 
 
-def test_scrape_jobs_status_json_with_last_run(
+def test_jobs_status_json_with_last_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
@@ -235,7 +232,7 @@ def test_scrape_jobs_status_json_with_last_run(
     csv_content = "status,company,role\napplied,Acme,SRE\ninterviewing,Corp,DevOps\nskipped,Bad,Role\n"
     (ws / "jobs.csv").write_text(csv_content, encoding="utf-8")
 
-    rc = app(["--workspace", str(ws), "scrape-jobs", "status", "--json"])
+    rc = app(["--workspace", str(ws), "jobs", "status", "--json"])
 
     assert rc == 0
     captured = capsys.readouterr()
@@ -248,14 +245,14 @@ def test_scrape_jobs_status_json_with_last_run(
     assert data["awaiting_action"] == 2
 
 
-def test_scrape_jobs_status_missing_workspace_exits_1(
+def test_jobs_status_missing_workspace_exits_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from daily_driver.cli.cli import app
 
     monkeypatch.chdir(tmp_path)
 
-    rc = app(["--workspace", str(tmp_path / "missing"), "scrape-jobs", "status"])
+    rc = app(["--workspace", str(tmp_path / "missing"), "jobs", "status"])
 
     assert rc == 1
 
@@ -314,7 +311,7 @@ def test_prune_dry_run_lists_candidates_without_writing(
         [
             "--workspace",
             str(ws),
-            "scrape-jobs",
+            "jobs",
             "prune",
             "--older-than",
             "2026-04-01",
@@ -358,7 +355,7 @@ def test_prune_moves_rows_to_archive(tmp_path: Path) -> None:
         [
             "--workspace",
             str(ws),
-            "scrape-jobs",
+            "jobs",
             "prune",
             "--older-than",
             "2026-04-01",
@@ -393,7 +390,7 @@ def test_prune_status_filter(tmp_path: Path, capsys: pytest.CaptureFixture) -> N
         [
             "--workspace",
             str(ws),
-            "scrape-jobs",
+            "jobs",
             "prune",
             "--older-than",
             "2026-04-01",
@@ -418,7 +415,7 @@ def test_prune_invalid_spec_exits_2(
         [
             "--workspace",
             str(ws),
-            "scrape-jobs",
+            "jobs",
             "prune",
             "--older-than",
             "garbage",

@@ -28,7 +28,7 @@ _COMMANDS = [
     ("tracker", "daily_driver.cli.commands.tracker"),
     ("status", "daily_driver.cli.commands.status"),
     ("focus", "daily_driver.cli.commands.focus"),
-    ("scrape-jobs", "daily_driver.cli.commands.scrape_jobs"),
+    ("jobs", "daily_driver.cli.commands.jobs"),
     ("paths", "daily_driver.cli.commands.paths"),
     ("read", "daily_driver.cli.commands.read_"),
     ("ensure-daily-dir", "daily_driver.cli.commands.ensure_daily_dir"),

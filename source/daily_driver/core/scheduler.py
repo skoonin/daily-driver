@@ -27,7 +27,11 @@ class SchedulerError(Exception):
 
 
 _LABEL_CHECKIN = "com.daily-driver.checkin"
-_LABEL_SCRAPE_JOBS = "com.daily-driver.scrape-jobs"
+_LABEL_SCRAPE_JOBS = "com.daily-driver.jobs"
+
+# Labels installed by previous releases; swept by install_all / uninstall_all
+# so a renamed job doesn't leave an orphaned plist firing the old argv.
+_LEGACY_LABELS = ("com.daily-driver.scrape-jobs",)
 
 _TIME_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 
@@ -67,6 +71,11 @@ def _default_scheduler_config() -> dict[str, Any]:
 def _merge_scheduler_config(workspace: Workspace) -> dict[str, Any]:
     defaults = _default_scheduler_config()
     user_cfg = workspace.config.scheduler or {}
+    if "scrape_jobs" in user_cfg:
+        raise SchedulerError(
+            "scheduler.scrape_jobs was renamed to scheduler.jobs. "
+            "Update .dd-config.yaml and re-run install-scheduler."
+        )
     merged: dict[str, Any] = {**defaults}
     for key, value in user_cfg.items():
         merged[key] = value
@@ -121,15 +130,15 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             )
         )
 
-    scrape_cfg = cfg.get("scrape_jobs", {})
+    scrape_cfg = cfg.get("jobs", {})
     scrape_time_raw = scrape_cfg.get("time")
     if scrape_time_raw:
-        stdout, stderr = _log_paths(workspace, "scrape-jobs")
-        scrape_args = [dd_bin, "scrape-jobs", "run", "--workspace", workspace_root]
+        stdout, stderr = _log_paths(workspace, "jobs")
+        scrape_args = [dd_bin, "jobs", "run", "--workspace", workspace_root]
         jobs.append(
             ScheduledJob(
                 label=_LABEL_SCRAPE_JOBS,
-                template="scrape-jobs.plist.j2",
+                template="jobs.plist.j2",
                 program_arguments=scrape_args,
                 context={
                     "label": _LABEL_SCRAPE_JOBS,
@@ -180,6 +189,12 @@ def install_all(workspace: Workspace) -> list[str]:
     jobs = build_jobs(workspace)
     installed: list[str] = []
 
+    # Sweep legacy plists before installing — a previously-loaded
+    # com.daily-driver.scrape-jobs would otherwise keep firing the old argv.
+    for legacy in _LEGACY_LABELS:
+        launchd_int.unload(legacy)
+        launchd_int.remove(legacy)
+
     for job in jobs:
         content = render_plist(job)
 
@@ -214,7 +229,7 @@ def uninstall_all(workspace: Workspace) -> list[str]:
         raise SchedulerError(str(exc)) from exc
 
     removed: list[str] = []
-    for label in (_LABEL_CHECKIN, _LABEL_SCRAPE_JOBS):
+    for label in (_LABEL_CHECKIN, _LABEL_SCRAPE_JOBS, *_LEGACY_LABELS):
         launchd_int.unload(label)
         if launchd_int.remove(label):
             removed.append(label)

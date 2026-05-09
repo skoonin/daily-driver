@@ -54,7 +54,7 @@ def test_install_scheduler_exits_0_and_reports_labels(
 
     assert rc == 0
     assert "com.daily-driver.checkin" in combined
-    assert "com.daily-driver.scrape-jobs" in combined
+    assert "com.daily-driver.jobs" in combined
 
 
 def test_uninstall_scheduler_reports_no_op_when_nothing_installed(

@@ -57,7 +57,7 @@ class TestBuildJobs:
         jobs = scheduler.build_jobs(ws)
         labels = [j.label for j in jobs]
         assert "com.daily-driver.checkin" in labels
-        assert "com.daily-driver.scrape-jobs" in labels
+        assert "com.daily-driver.jobs" in labels
 
     def test_user_override_replaces_defaults(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(
@@ -73,9 +73,9 @@ class TestBuildJobs:
         assert all(j.label != "com.daily-driver.checkin" for j in jobs)
 
     def test_missing_scrape_time_omits_job(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"scrape_jobs": {}})
+        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {}})
         jobs = scheduler.build_jobs(ws)
-        assert all(j.label != "com.daily-driver.scrape-jobs" for j in jobs)
+        assert all(j.label != "com.daily-driver.jobs" for j in jobs)
 
     def test_log_paths_land_in_state_logs(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(tmp_path)
@@ -104,6 +104,14 @@ class TestBuildJobs:
         with pytest.raises(scheduler.SchedulerError):
             scheduler.build_jobs(ws)
 
+    def test_legacy_scrape_jobs_key_raises(self, tmp_path: Path) -> None:
+        """Stale `scheduler.scrape_jobs:` from pre-rename configs hard-fails."""
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"scrape_jobs": {"time": "07:00"}}
+        )
+        with pytest.raises(scheduler.SchedulerError, match="renamed to scheduler.jobs"):
+            scheduler.build_jobs(ws)
+
 
 # ---------------------------------------------------------------------------
 # render_plist — produces valid XML with expected keys
@@ -125,12 +133,10 @@ class TestRenderPlist:
         pairs = dict(_plist_dict_pairs(top))
         assert pairs["Label"].text == "com.daily-driver.checkin"
 
-    def test_scrape_jobs_plist_contains_single_calendar_interval(
-        self, tmp_path: Path
-    ) -> None:
+    def test_jobs_plist_contains_single_calendar_interval(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(tmp_path)
         jobs = scheduler.build_jobs(ws)
-        scrape = next(j for j in jobs if j.label == "com.daily-driver.scrape-jobs")
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
 
         xml_str = scheduler.render_plist(scrape)
         assert "<key>StartCalendarInterval</key>" in xml_str
@@ -236,13 +242,13 @@ class TestInstallUninstall:
 
         assert set(installed) == {
             "com.daily-driver.checkin",
-            "com.daily-driver.scrape-jobs",
+            "com.daily-driver.jobs",
         }
         assert set(calls["load"]) == set(installed)
         # State mirror written
         state_dir = ws.ephemeral_dir / "launchd"
         assert (state_dir / "com.daily-driver.checkin.plist").exists()
-        assert (state_dir / "com.daily-driver.scrape-jobs.plist").exists()
+        assert (state_dir / "com.daily-driver.jobs.plist").exists()
         # Log dir pre-created
         assert (ws.ephemeral_dir / "logs").is_dir()
 
@@ -276,7 +282,7 @@ class TestInstallUninstall:
 
         assert set(removed) == {
             "com.daily-driver.checkin",
-            "com.daily-driver.scrape-jobs",
+            "com.daily-driver.jobs",
         }
         assert not (ws.ephemeral_dir / "launchd").exists()
 
@@ -295,3 +301,41 @@ class TestInstallUninstall:
 
         state_dir = ws.ephemeral_dir / "launchd"
         assert not state_dir.exists()
+
+    def test_install_sweeps_legacy_scrape_jobs_label(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Pre-rename `com.daily-driver.scrape-jobs` plists are unloaded on install."""
+        from daily_driver.integrations import launchd as launchd_int
+
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        calls = self._patch_launchd(monkeypatch, tmp_path)
+
+        # Seed an orphaned legacy plist as if a previous release had installed it.
+        launchd_int.write_plist("com.daily-driver.scrape-jobs", "<plist/>")
+
+        scheduler.install_all(ws)
+
+        assert "com.daily-driver.scrape-jobs" in calls["unload"]
+        assert "com.daily-driver.scrape-jobs" in calls["remove"]
+
+    def test_uninstall_sweeps_legacy_scrape_jobs_label(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """uninstall-scheduler also tears down the pre-rename plist."""
+        from daily_driver.integrations import launchd as launchd_int
+
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        launchd_int.write_plist("com.daily-driver.scrape-jobs", "<plist/>")
+
+        removed = scheduler.uninstall_all(ws)
+
+        assert "com.daily-driver.scrape-jobs" in removed

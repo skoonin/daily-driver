@@ -67,7 +67,7 @@ daily-driver/
 │   ├── off
 │   └── status
 │       └── --json
-├── scrape-jobs
+├── jobs
 │   ├── run
 │   │   ├── -n, --dry-run
 │   │   └── --backfill

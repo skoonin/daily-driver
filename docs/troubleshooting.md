@@ -20,7 +20,7 @@ The workspace version stamp does not match the installed package version. Safe
 to ignore for minor version bumps; `doctor --fix` picks up new shipped commands
 and agents.
 
-## `scrape-jobs` fails on Wellfound or Apple
+## `jobs` fails on Wellfound or Apple
 
 Those two sources use Playwright. Install it:
 
@@ -51,8 +51,8 @@ View scheduler logs:
 ```bash
 tail -f .daily-driver/state/logs/launchd-checkin.out
 tail -f .daily-driver/state/logs/launchd-checkin.err
-tail -f .daily-driver/state/logs/launchd-scrape-jobs.out
-tail -f .daily-driver/state/logs/launchd-scrape-jobs.err
+tail -f .daily-driver/state/logs/launchd-jobs.out
+tail -f .daily-driver/state/logs/launchd-jobs.err
 ```
 
 ## Tracker locks / "file in use"

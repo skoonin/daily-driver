@@ -949,7 +949,7 @@ CANONICAL_HEADER = [
     "Fit",
     "Comp",
     "Date Found",
-    # Date Last Seen drives `scrape-jobs prune --older-than`. Today scraper
+    # Date Last Seen drives `jobs prune --older-than`. Today scraper
     # only sets it on insert (defaults to Date Found); the upsert-on-rescan
     # path is owned by W5/W6 — until then prune ages from first-discovery.
     "Date Last Seen",

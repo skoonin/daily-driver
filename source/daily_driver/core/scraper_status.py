@@ -45,7 +45,7 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
 
 
 def build_status(output_dir: Path) -> dict[str, Any]:
-    """Assemble the full status payload for ``scrape-jobs status``.
+    """Assemble the full status payload for ``jobs status``.
 
     Schema version 1. Keys:
       last_run      - dict from jobs-last-run.json, or null
