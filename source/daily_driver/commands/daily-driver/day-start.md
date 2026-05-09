@@ -114,13 +114,16 @@ Then ask the user:
 
 ## 8. Save Plan
 
-After the user confirms, ensure today's daily directory exists:
+`daily-driver day-start` has already written a plan stub at the canonical path
+and recorded the day's state in `<workspace>/.daily-driver/state/daily/<date>.yaml`
+— do NOT re-run `ensure-daily-dir` or mint a new file. Resolve the canonical path
+and overwrite the stub with the finalized plan:
 
 ```bash
-daily-driver ensure-daily-dir
+daily-driver paths daily-plan
 ```
 
-Write the plan to the path printed by `ensure-daily-dir` (e.g., `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md`) with YAML frontmatter followed by the markdown body. The frontmatter must include:
+Write the plan to that path with YAML frontmatter followed by the markdown body. The frontmatter must include:
 
 - `date`: today's date
 - `generated_at`: current time HH:MM

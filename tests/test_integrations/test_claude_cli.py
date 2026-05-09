@@ -130,6 +130,63 @@ def test_invoke_prompt_precedes_add_dir(monkeypatch):
     assert args.index("PROMPT") < args.index("--add-dir")
 
 
+def test_invoke_emits_session_id_flag(monkeypatch):
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    sid = "11111111-2222-3333-4444-555555555555"
+    invoke("p", session_id=sid)
+
+    args = captured["args"]
+    assert "--session-id" in args
+    assert args[args.index("--session-id") + 1] == sid
+
+
+def test_invoke_emits_resume_flag(monkeypatch):
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    sid = "11111111-2222-3333-4444-555555555555"
+    invoke("p", resume_session_id=sid)
+
+    args = captured["args"]
+    assert "--resume" in args
+    assert args[args.index("--resume") + 1] == sid
+
+
+def test_invoke_session_id_and_resume_are_mutually_exclusive(monkeypatch):
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        invoke("p", session_id="a" * 8, resume_session_id="b" * 8)
+
+
 def test_invoke_passes_input_text(monkeypatch):
     monkeypatch.setattr(
         "daily_driver.integrations.claude_cli.shutil.which",

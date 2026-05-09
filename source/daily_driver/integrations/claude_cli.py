@@ -24,7 +24,11 @@ def _build_args(
     model: str | None,
     output_format: str | None,
     session_persistence: bool = True,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> list[str]:
+    if session_id is not None and resume_session_id is not None:
+        raise ValueError("session_id and resume_session_id are mutually exclusive")
     args: list[str] = ["claude"]
     if headless:
         args.append("-p")
@@ -35,6 +39,10 @@ def _build_args(
         args.extend(["--agent", agent])
     if session_name:
         args.extend(["-n", session_name])
+    if session_id is not None:
+        args.extend(["--session-id", session_id])
+    if resume_session_id is not None:
+        args.extend(["--resume", resume_session_id])
     if model:
         args.extend(["--model", model])
     if output_format:
@@ -63,6 +71,8 @@ def invoke(
     model: str | None = None,
     output_format: str | None = None,
     session_persistence: bool = True,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> str:
     """Invoke the `claude` CLI and return its stdout.
 
@@ -81,6 +91,8 @@ def invoke(
         model=model,
         output_format=output_format,
         session_persistence=session_persistence,
+        session_id=session_id,
+        resume_session_id=resume_session_id,
     )
 
     try:
@@ -116,12 +128,16 @@ def spawn_interactive(
     session_name: str | None = None,
     add_dirs: list[Path] | None = None,
     model: str | None = None,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> int:
     """Spawn `claude` with inherited stdin/stdout/stderr and return its exit code.
 
     Used for interactive sessions (day-start, day-end, check-in) where the user
     drives the conversation. Does not capture output -- the terminal is handed
-    off to the claude process.
+    off to the claude process. `session_id` pre-mints the session UUID so the
+    program can record it before launch; `resume_session_id` reattaches to a
+    prior session — the two are mutually exclusive.
     """
     if shutil.which("claude") is None:
         raise ClaudeNotFoundError("claude CLI not found on PATH")
@@ -134,6 +150,8 @@ def spawn_interactive(
         add_dirs=add_dirs,
         model=model,
         output_format=None,
+        session_id=session_id,
+        resume_session_id=resume_session_id,
     )
 
     try:
