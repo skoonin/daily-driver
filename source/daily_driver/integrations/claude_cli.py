@@ -24,7 +24,11 @@ def _build_args(
     model: str | None,
     output_format: str | None,
     session_persistence: bool = True,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> list[str]:
+    if session_id is not None and resume_session_id is not None:
+        raise ValueError("session_id and resume_session_id are mutually exclusive")
     args: list[str] = ["claude"]
     if headless:
         args.append("-p")
@@ -35,6 +39,10 @@ def _build_args(
         args.extend(["--agent", agent])
     if session_name:
         args.extend(["-n", session_name])
+    if session_id is not None:
+        args.extend(["--session-id", session_id])
+    if resume_session_id is not None:
+        args.extend(["--resume", resume_session_id])
     if model:
         args.extend(["--model", model])
     if output_format:
@@ -63,6 +71,8 @@ def invoke(
     model: str | None = None,
     output_format: str | None = None,
     session_persistence: bool = True,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> str:
     """Invoke the `claude` CLI and return its stdout.
 
@@ -81,6 +91,8 @@ def invoke(
         model=model,
         output_format=output_format,
         session_persistence=session_persistence,
+        session_id=session_id,
+        resume_session_id=resume_session_id,
     )
 
     try:
@@ -109,6 +121,58 @@ def invoke(
     return stdout
 
 
+def invoke_capture(
+    prompt: str,
+    *,
+    agent: str | None = None,
+    session_name: str | None = None,
+    timeout: int | None = None,
+    add_dirs: list[Path] | None = None,
+    model: str | None = None,
+) -> tuple[str, str, int]:
+    """Headless `claude -p` wrapper that returns (stdout, stderr, rc).
+
+    Unlike `invoke()`, this does NOT raise on non-zero rc — callers (including
+    F5's check-in subagent dispatch path) need to inspect stderr verbatim and
+    surface failures to the user with retry / continue / abort, which can't
+    happen if the error is unwound through `CalledProcessError`. `claude` not
+    being on PATH still raises `ClaudeNotFoundError` since that's a setup bug,
+    not a subagent failure to forward.
+    """
+    if shutil.which("claude") is None:
+        raise ClaudeNotFoundError("claude CLI not found on PATH")
+
+    args = _build_args(
+        prompt,
+        agent=agent,
+        session_name=session_name,
+        headless=True,
+        add_dirs=add_dirs,
+        model=model,
+        output_format=None,
+    )
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ClaudeNotFoundError("claude CLI not found on PATH") from exc
+
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+
+    return stdout, stderr, proc.returncode
+
+
 def spawn_interactive(
     prompt: str | None = None,
     *,
@@ -116,12 +180,16 @@ def spawn_interactive(
     session_name: str | None = None,
     add_dirs: list[Path] | None = None,
     model: str | None = None,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
 ) -> int:
     """Spawn `claude` with inherited stdin/stdout/stderr and return its exit code.
 
     Used for interactive sessions (day-start, day-end, check-in) where the user
     drives the conversation. Does not capture output -- the terminal is handed
-    off to the claude process.
+    off to the claude process. `session_id` pre-mints the session UUID so the
+    program can record it before launch; `resume_session_id` reattaches to a
+    prior session — the two are mutually exclusive.
     """
     if shutil.which("claude") is None:
         raise ClaudeNotFoundError("claude CLI not found on PATH")
@@ -134,6 +202,8 @@ def spawn_interactive(
         add_dirs=add_dirs,
         model=model,
         output_format=None,
+        session_id=session_id,
+        resume_session_id=resume_session_id,
     )
 
     try:

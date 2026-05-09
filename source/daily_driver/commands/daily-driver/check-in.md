@@ -3,7 +3,17 @@ name: check-in
 description: Mid-day check-in - review progress against plan and update status
 ---
 
-> If this session was resumed from day-start, planning context is already loaded; skip redundant plan re-reads in steps 1-2.
+> Verify resume status from the daily-state marker before assuming planning context is loaded:
+>
+> ```bash
+> daily-driver paths daily-state
+> ```
+>
+> Read the YAML at that path. If `last_day_start_session_id` is set AND your CLI was launched with `--resume`, planning context is loaded — skip redundant plan re-reads in steps 1-2. If the file is missing or has no `last_day_start_at`, surface this notice once at the top of the check-in:
+>
+> > Note: no day-start plan recorded for today. Continuing without a plan baseline.
+>
+> Then proceed normally — the user decides whether to abort and run /day-start.
 
 Mid-day check-in session. Follow these steps in order.
 
@@ -29,19 +39,27 @@ daily-driver read plan
 
 ## 2. Gather Fresh Data
 
-Collect calendar context, recent session activity, and git commits:
+Collect calendar context and git commits in the foreground:
 
 ```bash
 daily-driver gather calendar
 ```
 
 ```bash
-daily-driver gather sessions
-```
-
-```bash
 daily-driver gather git
 ```
+
+`gather sessions` walks every JSONL under `~/.claude/projects/` and can be context-heavy. Dispatch it to a background subagent (Task tool, `general-purpose` agent) so the foreground context window stays clean. The subagent's only job is to run `daily-driver gather sessions`, summarize active and recent sessions in three bullet points, and return.
+
+**Error handling — never silent.** If the subagent's exit code is non-zero, OR the subagent's summary explicitly reports an error, surface the subagent's stderr verbatim to the user (do not paraphrase, do not hide), then ask:
+
+> Background `gather sessions` failed:
+> ```
+> <stderr verbatim>
+> ```
+> Options: **retry** (re-dispatch the subagent), **continue** (proceed without session data), or **abort** (exit /check-in).
+
+Wait for the user's choice before continuing. On `retry`, dispatch again. On `continue`, note in the rendered check-in summary that session data is missing for this run. On `abort`, exit cleanly.
 
 ## 3. Review Application Pipeline
 

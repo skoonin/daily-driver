@@ -15,6 +15,14 @@ echo "current_time=$(date +%H:%M) current_date=$(date +%Y-%m-%d) day_of_week=$(d
 
 Use `current_time` as the earliest start for any planned work block. Time already past is gone — do not schedule work in time that has already elapsed.
 
+Also read today's daily-state to detect a late start:
+
+```bash
+daily-driver paths daily-state
+```
+
+Read the YAML at that path. If the file is missing or `late_day` is unset, treat it as `false` and continue. If `late_day: true`, frame the agenda as a late-day partial plan: prioritize what's still actionable in the remaining hours, defer non-urgent items to tomorrow, and flag the late start at the top of the rendered plan ("Late-day start at HH:MM — partial plan only"). Do NOT block the flow on late_day; it is informational metadata only.
+
 ## 1. Gather Context
 
 Read the workspace's context and voice profile:
@@ -114,13 +122,16 @@ Then ask the user:
 
 ## 8. Save Plan
 
-After the user confirms, ensure today's daily directory exists:
+`daily-driver day-start` has already written a plan stub at the canonical path
+and recorded the day's state in `<workspace>/.daily-driver/state/daily/<date>.yaml`
+— do NOT re-run `ensure-daily-dir` or mint a new file. Resolve the canonical path
+and overwrite the stub with the finalized plan:
 
 ```bash
-daily-driver ensure-daily-dir
+daily-driver paths daily-plan
 ```
 
-Write the plan to the path printed by `ensure-daily-dir` (e.g., `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md`) with YAML frontmatter followed by the markdown body. The frontmatter must include:
+Write the plan to that path with YAML frontmatter followed by the markdown body. The frontmatter must include:
 
 - `date`: today's date
 - `generated_at`: current time HH:MM

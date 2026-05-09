@@ -10,6 +10,7 @@ from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._utils import resolve_date
+from daily_driver.core.daily_state import state_path as daily_state_path
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
 _CHOICES = (
@@ -20,6 +21,7 @@ _CHOICES = (
     "daily",
     "daily-plan",
     "daily-notes",
+    "daily-state",
 )
 
 
@@ -82,6 +84,7 @@ def run(args: argparse.Namespace) -> int:
             "daily": str(daily),
             "daily_plan": str(daily / f"{when.isoformat()}-plan.md"),
             "daily_notes": str(daily / f"{when.isoformat()}-notes.md"),
+            "daily_state": str(daily_state_path(workspace, when)),
         }
         print(json.dumps({"schema": 1, "data": payload}, indent=2))
         return 0
@@ -100,4 +103,6 @@ def run(args: argparse.Namespace) -> int:
         print(_daily_dir(workspace, when) / f"{when.isoformat()}-plan.md")
     elif args.kind == "daily-notes":
         print(_daily_dir(workspace, when) / f"{when.isoformat()}-notes.md")
+    elif args.kind == "daily-state":
+        print(daily_state_path(workspace, when))
     return 0

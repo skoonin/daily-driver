@@ -389,3 +389,56 @@ def test_config_rejects_extra_in_plugins():
             tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
             plugins={"job_search": None, "mystery_plugin": {}},
         )
+
+
+# ---------------------------------------------------------------------------
+# F3 ClaudeConfig + F4 ScheduleConfig
+# ---------------------------------------------------------------------------
+
+
+def test_claude_config_default_resume_off():
+    from daily_driver.core.config_models import ClaudeConfig
+
+    m = ClaudeConfig()
+    assert m.resume_check_in is False
+
+
+def test_claude_config_rejects_extra():
+    from daily_driver.core.config_models import ClaudeConfig
+
+    with pytest.raises(ValidationError):
+        ClaudeConfig(resume_check_in=True, bogus=1)
+
+
+def test_schedule_config_default_both_none():
+    from daily_driver.core.config_models import ScheduleConfig
+
+    m = ScheduleConfig()
+    assert m.day_start is None
+    assert m.day_end is None
+
+
+def test_schedule_config_accepts_hhmm_string():
+    from daily_driver.core.config_models import ScheduleConfig
+
+    m = ScheduleConfig(day_start="07:00", day_end="17:30")
+    assert m.day_start == "07:00"
+    assert m.day_end == "17:30"
+
+
+def test_schedule_config_coerces_yaml_int():
+    """PyYAML parses unquoted HH:MM as base-60 int; we coerce back to string."""
+    from daily_driver.core.config_models import ScheduleConfig
+
+    # 17:30 -> 17*60 + 30 = 1050 ; 07:00 -> 420
+    m = ScheduleConfig(day_start=420, day_end=1050)
+    assert m.day_start == "07:00"
+    assert m.day_end == "17:30"
+
+
+def test_schedule_config_rejects_invalid_hhmm():
+    from daily_driver.core.config_models import ScheduleConfig
+
+    for bad in ("9:99", "25:00", "noon", 99999):
+        with pytest.raises(ValidationError):
+            ScheduleConfig(day_start=bad)

@@ -28,6 +28,8 @@ class SchedulerError(Exception):
 
 _LABEL_CHECKIN = "com.daily-driver.checkin"
 _LABEL_SCRAPE_JOBS = "com.daily-driver.jobs"
+_LABEL_DAY_START = "com.daily-driver.day-start"
+_LABEL_DAY_END = "com.daily-driver.day-end"
 
 # Labels installed by previous releases; swept by install_all / uninstall_all
 # so a renamed job doesn't leave an orphaned plist firing the old argv.
@@ -152,6 +154,47 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             )
         )
 
+    schedule_cfg = workspace.config.schedule
+    if schedule_cfg.day_start:
+        stdout, stderr = _log_paths(workspace, "day-start")
+        ds_args = [dd_bin, "day-start", "--workspace", workspace_root]
+        jobs.append(
+            ScheduledJob(
+                label=_LABEL_DAY_START,
+                template="checkin.plist.j2",
+                program_arguments=ds_args,
+                context={
+                    "label": _LABEL_DAY_START,
+                    "program_arguments": ds_args,
+                    "times": [_parse_hhmm(schedule_cfg.day_start)],
+                    "stdout_path": str(stdout),
+                    "stderr_path": str(stderr),
+                    "env_path": env_path,
+                    "home": home,
+                },
+            )
+        )
+
+    if schedule_cfg.day_end:
+        stdout, stderr = _log_paths(workspace, "day-end")
+        de_args = [dd_bin, "day-end", "--workspace", workspace_root]
+        jobs.append(
+            ScheduledJob(
+                label=_LABEL_DAY_END,
+                template="checkin.plist.j2",
+                program_arguments=de_args,
+                context={
+                    "label": _LABEL_DAY_END,
+                    "program_arguments": de_args,
+                    "times": [_parse_hhmm(schedule_cfg.day_end)],
+                    "stdout_path": str(stdout),
+                    "stderr_path": str(stderr),
+                    "env_path": env_path,
+                    "home": home,
+                },
+            )
+        )
+
     return jobs
 
 
@@ -229,7 +272,13 @@ def uninstall_all(workspace: Workspace) -> list[str]:
         raise SchedulerError(str(exc)) from exc
 
     removed: list[str] = []
-    for label in (_LABEL_CHECKIN, _LABEL_SCRAPE_JOBS, *_LEGACY_LABELS):
+    for label in (
+        _LABEL_CHECKIN,
+        _LABEL_SCRAPE_JOBS,
+        _LABEL_DAY_START,
+        _LABEL_DAY_END,
+        *_LEGACY_LABELS,
+    ):
         launchd_int.unload(label)
         if launchd_int.remove(label):
             removed.append(label)
