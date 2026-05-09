@@ -18,8 +18,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-# Minimum file counts the materialize step must produce. Exposed as module-level
-# constants so tests and materialize can assert against them without depending
+# Minimum file counts the generate step must produce. Exposed as module-level
+# constants so tests and generate can assert against them without depending
 # on the check() implementation.
 MIN_COMMANDS = 5
 MIN_AGENTS = 1
@@ -106,7 +106,7 @@ def check(workspace_root: Path) -> list[ContractViolation]:
     )
 
     # .claude/commands/user and .claude/agents/user are user territory:
-    # init seeds the dirs but materialize never writes there, so a missing
+    # init seeds the dirs but generate never writes there, so a missing
     # dir cannot be repaired by `doctor --fix` and reporting it as ERROR
     # produces a stuck state. Per CLAUDE.md these are intentionally not
     # package-managed — they are excluded from the contract entirely.

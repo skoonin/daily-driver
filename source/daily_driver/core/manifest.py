@@ -1,7 +1,7 @@
 """SHA-256 manifest for package-managed files in the workspace .claude/ tree.
 
 The manifest records the SHA-256 of each file at the time it was last written
-by materialize(). On the next materialize run the recorded hash is compared
+by generate(). On the next generate run the recorded hash is compared
 against the file on disk; a mismatch means the user edited the file and the
 overwrite is suppressed (unless force=True).
 
@@ -58,7 +58,7 @@ def save(state_dir: Path, files: dict[str, str]) -> None:
 
 
 def is_user_edited(workspace_root: Path, state_dir: Path, rel_path: str) -> bool:
-    """Return True if the file at workspace_root/rel_path has been modified since last materialize.
+    """Return True if the file at workspace_root/rel_path has been modified since last generate.
 
     A file is considered user-edited when:
     - it exists on disk, AND

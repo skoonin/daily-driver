@@ -2,7 +2,7 @@
 
 Each daily-driver subcommand that orchestrates a Claude session (day-start,
 day-end, check-in, summary) resolves the workspace, verifies auth, and
-hands control to the `claude` CLI with a materialized slash command as
+hands control to the `claude` CLI with a generated slash command as
 the opening prompt.
 """
 
@@ -70,17 +70,18 @@ def register_interactive_launcher(
     parser.add_argument(
         "--session-name",
         default=None,
-        help="Override the auto-generated session display name",
+        help="Custom name for this Claude session (defaults to a timestamped name)",
     )
     parser.add_argument(
         "--agent",
         default="work-planner",
-        help="Agent to load (default: work-planner)",
+        help="Claude agent to load (default: work-planner)",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model alias or name (e.g., 'sonnet', 'opus')",
+        choices=["sonnet", "opus", "haiku"],
+        help="Claude model to use.",
     )
     add_global_flags(parser)
     parser.set_defaults(func=_build_run(slash_command, session_prefix))
@@ -119,7 +120,7 @@ def launch_interactive(
     """Launch an interactive claude session driving `slash_command`.
 
     The slash command is passed as the opening prompt -- claude resolves
-    it against `<workspace>/.claude/commands/` (materialized on `init`).
+    it against `<workspace>/.claude/commands/` (generated on `init`).
     """
     return claude_cli.spawn_interactive(
         prompt=slash_command,

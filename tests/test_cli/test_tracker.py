@@ -193,6 +193,96 @@ def test_update_unknown_id_exits_1(workspace: Workspace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_tracker_delete_removes_entry_by_id(tmp_path: Path) -> None:
+    """`tracker delete <id>` removes the entry; subsequent list is empty."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "tracker",
+            "add",
+            "--category",
+            "task",
+            "--title",
+            "doomed",
+        ]
+    )
+    assert rc == 0
+
+    rc = app(["--workspace", str(ws), "tracker", "delete", "task-001"])
+    assert rc == 0
+
+    rc = app(["--workspace", str(ws), "tracker", "list", "--json"])
+    assert rc == 0
+
+
+def test_tracker_prune_requires_a_filter(tmp_path: Path) -> None:
+    """`tracker prune` with no filter must refuse (safety guard)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    rc = app(["--workspace", str(ws), "tracker", "prune"])
+    assert rc == 2
+
+
+def test_tracker_prune_by_category_dry_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`tracker prune --category test --dry-run` lists matches without deleting."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    app(
+        [
+            "--workspace",
+            str(ws),
+            "tracker",
+            "add",
+            "--category",
+            "test",
+            "--title",
+            "fixture-1",
+        ]
+    )
+    app(
+        [
+            "--workspace",
+            str(ws),
+            "tracker",
+            "add",
+            "--category",
+            "task",
+            "--title",
+            "real-task",
+        ]
+    )
+
+    capsys.readouterr()
+    rc = app(
+        ["--workspace", str(ws), "tracker", "prune", "--category", "test", "--dry-run"]
+    )
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "Would delete" in captured.err
+    assert "fixture-1" in captured.err
+    assert "real-task" not in captured.err
+
+
 def test_tracker_without_workspace_exits_1(tmp_path: Path) -> None:
     """CWD outside a workspace, no --workspace flag → exit 1."""
     # Pass a workspace path pointing to a dir with no .dd-config.yaml

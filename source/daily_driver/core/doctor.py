@@ -102,7 +102,7 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
         return CheckResult(
             name="Workspace drift",
             status="WARNING",
-            detail=f"workspace at {workspace.root} needs re-materialize",
+            detail=f"workspace at {workspace.root} needs regeneration",
             fix_hint="Run: daily-driver doctor --fix",
             fixable=True,
         )
@@ -193,11 +193,11 @@ def fix(
     User-edited package-managed files are preserved; only missing or drifted
     (unedited) files are overwritten. Use reset() to unconditionally overwrite.
 
-    ignore_drift is set True so materialize runs even when the version stamp is
+    ignore_drift is set True so generate runs even when the version stamp is
     current — a contract violation (e.g. a missing subdirectory) needs the
-    materialization body to run regardless of whether the version changed.
+    generation body to run regardless of whether the version changed.
     """
-    from daily_driver.core.materialize import materialize
+    from daily_driver.core.generate import generate
 
     if workspace is not None and any(
         r.fixable
@@ -205,13 +205,13 @@ def fix(
         and (r.name == "Workspace drift" or r.name.startswith("contract:"))
         for r in results
     ):
-        materialize(workspace, ignore_drift=True, force_overwrite=False)
+        generate(workspace, ignore_drift=True, force_overwrite=False)
 
     return run_checks(workspace)
 
 
 def reset(workspace: Workspace) -> None:
-    """Force re-materialize .claude/ from package data, overwriting user edits."""
-    from daily_driver.core.materialize import materialize
+    """Force regenerate .claude/ from package data, overwriting user edits."""
+    from daily_driver.core.generate import generate
 
-    materialize(workspace, ignore_drift=True, force_overwrite=True)
+    generate(workspace, ignore_drift=True, force_overwrite=True)

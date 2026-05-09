@@ -15,7 +15,7 @@ daily_driver/
 ├── cli/
 │   ├── cli.py               # static _COMMANDS table + dispatch loop
 │   └── commands/            # one module per subcommand; argparse + presentation only
-├── core/                    # workspace, config, tracker, locking, materialize, scheduler...
+├── core/                    # workspace, config, tracker, locking, generate, scheduler...
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
 ├── gathers/                 # read-only readers: calendar, git, sessions, notes
 ├── scraper/                 # comp, parsing, csv_io, enrichment, runner + sources/{remoteok,…,apple}.py
@@ -43,25 +43,25 @@ daily_driver/
 2. Global flags (`--workspace`, `--verbose`, `--quiet`, `--no-color`) live on a shared parent parser.
 3. Most subcommands call `Workspace.discover_or_fail(override=args.workspace)`. Precedence: `--workspace` flag, upward search for `.dd-config.yaml`, fail with `WorkspaceError`.
 4. `core.config.load()` parses YAML (`safe_load`) and validates against `core.config_models.Config`. Pydantic v2, `extra="forbid"` at every nesting level. Invalid config fails at parse, not mid-command.
-5. `core.version_stamp` compares the workspace's stamped version against `daily_driver.__version__`. On mismatch: `doctor --fix` re-materializes; other subcommands proceed without touching the filesystem.
+5. `core.version_stamp` compares the workspace's stamped version against `daily_driver.__version__`. On mismatch: `doctor --fix` regenerates; other subcommands proceed without touching the filesystem.
 6. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`, logged, and turned into non-zero exits with a Rich-formatted stderr message — no tracebacks on happy-path failures.
 
-Scheduled invocations go through the same entry point. `install-scheduler` renders `launchd/<job>.plist.j2` with workspace-specific paths and calls `launchctl load`. stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
+Scheduled invocations go through the same entry point. `scheduler install` renders `launchd/<job>.plist.j2` with workspace-specific paths and calls `launchctl load`. stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
 
-## Materialize lifecycle
+## Generate lifecycle
 
-`materialize(workspace, force=False)` copies `commands/daily-driver/*.md`, `agents/daily-driver/*.md`, and a rendered `settings.local.json` into the workspace `.claude/` tree. Only those three paths are ever touched.
+`generate(workspace, force=False)` copies `commands/daily-driver/*.md`, `agents/daily-driver/*.md`, and a rendered `settings.local.json` into the workspace `.claude/` tree. Only those three paths are ever touched.
 
 Key invariants:
 
-- **Version stamp written last.** A crash mid-materialize leaves the stamp stale; the next invocation re-runs. Idempotent by construction.
-- **SHA-256 manifest guards user edits.** `_copy_package_md` checks the manifest before overwriting any managed `.md` file. A user edit flips the hash; subsequent materializes skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` is the nuclear option that overwrites.
+- **Version stamp written last.** A crash mid-generate leaves the stamp stale; the next invocation re-runs. Idempotent by construction.
+- **SHA-256 manifest guards user edits.** `_copy_package_md` checks the manifest before overwriting any managed `.md` file. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` is the nuclear option that overwrites.
 - **`settings.local.json` merges instead of overwriting.** Package-managed top-level keys are refreshed from the template; user-added top-level keys are preserved.
-- **Concurrency.** Materialize acquires an exclusive `materialize.lock` under `ephemeral_dir` and re-checks drift inside the lock (double-checked locking).
+- **Concurrency.** Generate acquires an exclusive `generate.lock` under `ephemeral_dir` and re-checks drift inside the lock (double-checked locking).
 
 ## Init contract
 
-`core/contract.py` codifies every artifact `daily-driver init` promises to produce. `doctor` runs `contract.check()` and surfaces violations as ERROR. A regression test counts files on disk after `materialize(force=True)`, closing the broken-wheel gap that shipped in v0.1.0 (prior to this, an `is_dir()` check passed even when the wheel contained zero `.md` files — users got a workspace with an empty `commands/daily-driver/` directory).
+`core/contract.py` codifies every artifact `daily-driver init` promises to produce. `doctor` runs `contract.check()` and surfaces violations as ERROR. A regression test counts files on disk after `generate(force=True)`, closing the broken-wheel gap that shipped in v0.1.0 (prior to this, an `is_dir()` check passed even when the wheel contained zero `.md` files — users got a workspace with an empty `commands/daily-driver/` directory).
 
 | Path | Kind |
 |------|------|
@@ -74,15 +74,15 @@ Key invariants:
 | `.claude/commands/daily-driver/` | `count_gte >= 5` |
 | `.claude/agents/daily-driver/` | `count_gte >= 1` |
 
-`.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `materialize` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
+`.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `generate` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
 
 Validation kinds: `exists_file`, `exists_dir`, `parses_yaml`, `parses_config`, `json_valid`, `count_gte`.
 
-To add an entry: append to `ENTRIES` in `contract.py`, ensure `init`/`materialize` produces the path, run `make test-unit`.
+To add an entry: append to `ENTRIES` in `contract.py`, ensure `init`/`generate` produces the path, run `make test-unit`.
 
 ## Flock model
 
-All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock` and `materialize.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock` and `generate.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
 
 ## Extensibility
 

@@ -206,7 +206,7 @@ _HHMM_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 class ScheduleConfig(BaseModel):
     """Single source of truth for daily-driver's scheduled times.
 
-    Drives BOTH the launchd plist install (`install-scheduler` builds plists
+    Drives BOTH the launchd plist install (`scheduler install` builds plists
     from these) AND `is_late_day` evaluation (so prompts can frame the agenda
     when the user starts late). HH:MM strings; 24-hour clock.
     """
@@ -245,6 +245,14 @@ class ClaudeConfig(BaseModel):
     resume_check_in: bool = False
 
 
+class FocusConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Used when `daily-driver focus on` is invoked without `--for`.
+    # Same syntax as `--for`: 30m, 2h, 1h30m, or bare minutes.
+    default_duration: str = "25m"
+
+
 class GatherGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -272,4 +280,5 @@ class Config(BaseModel):
     gather: GatherConfig = GatherConfig()
     claude: ClaudeConfig = ClaudeConfig()
     schedule: ScheduleConfig = ScheduleConfig()
+    focus: FocusConfig = FocusConfig()
     plugins: PluginsConfig = PluginsConfig()

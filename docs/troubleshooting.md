@@ -2,14 +2,14 @@
 
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it re-materializes drifted `.claude/daily-driver/`
+Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`
 and resolves most "missing file" errors. If the error row mentions a missing
 dependency (`dep:claude`, `dep:pbcopy`), install it and re-run.
 
 ```bash
 daily-driver doctor
 daily-driver doctor --fix       # fixable drift only
-daily-driver doctor --reset     # nuke and re-materialize .claude/daily-driver/
+daily-driver doctor --reset     # nuke and regenerate .claude/daily-driver/
 ```
 
 `--reset` requires a workspace (exits 1 otherwise).
@@ -40,10 +40,10 @@ non-Playwright sources while debugging, configure only those sources in
 1. **XML malformed.** Run `plutil -lint ~/Library/LaunchAgents/com.daily-driver.<name>.plist`
 2. **Label collision** with a previously-loaded plist. Run
    `launchctl list | grep daily-driver`, unload any stragglers with
-   `launchctl unload <path>`, then re-run `daily-driver install-scheduler`.
+   `launchctl unload <path>`, then re-run `daily-driver scheduler install`.
 3. **Path to `daily-driver` not absolute.** The scheduler resolves `daily-driver`
    via `shutil.which` at install time. If you moved your venv after installing,
-   re-run `daily-driver install-scheduler`.
+   re-run `daily-driver scheduler install`.
 4. **macOS blocked the job.** Check System Settings > Login Items and Extensions.
 
 View scheduler logs:

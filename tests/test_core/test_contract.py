@@ -142,7 +142,7 @@ def test_check_detects_missing_agents(tmp_path: Path) -> None:
 def test_check_ignores_missing_user_territory_dirs(tmp_path: Path) -> None:
     """User-territory dirs (.claude/commands/user, .claude/agents/user) are
     not package-managed; their absence must not produce a contract violation
-    because `doctor --fix` cannot regenerate them (materialize never writes
+    because `doctor --fix` cannot regenerate them (generate never writes
     user territory). See review-2026-04-23.md #11."""
     _scaffold_valid_workspace(tmp_path)
     import shutil

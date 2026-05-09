@@ -15,7 +15,7 @@
 
 ### `init [PATH] [--force]`
 
-Scaffolds a workspace. Static files (`context.md`, `voice-profile.md`) are only written if missing — `--force` does not clobber them. `.dd-config.yaml` is overwritten with a backup. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)materialized.
+Scaffolds a workspace. Static files (`context.md`, `voice-profile.md`) are only written if missing — `--force` does not clobber them. `.dd-config.yaml` is overwritten with a backup. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
 
 ### `doctor [--fix | --reset]`
 
@@ -123,13 +123,17 @@ Reads `jobs-last-run.json` and `jobs.csv` metadata.
 
 ## Scheduler (macOS)
 
-### `install-scheduler`
+### `scheduler install`
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00. Idempotent.
 
-### `uninstall-scheduler [--keep-state]`
+### `scheduler uninstall`
 
-`launchctl unload` + delete plist. `--keep-state` retains mirrored copies under `.daily-driver/state/launchd/`.
+`launchctl unload` + delete plist. State mirror under `.daily-driver/state/launchd/` is always removed.
+
+### `scheduler status [--json]`
+
+Lists configured jobs and whether each plist is currently installed in `~/Library/LaunchAgents/`.
 
 ## Scripting helpers
 

@@ -1,6 +1,6 @@
 """Copy package-bundled commands, agents, and settings into the workspace .claude/ tree.
 
-Materialization is triggered on version drift or via ignore_drift=True. The version stamp
+Generation is triggered on version drift or via ignore_drift=True. The version stamp
 is written last so a crash mid-run leaves the stamp stale, ensuring the next invocation
 retries — idempotent by construction.
 
@@ -17,6 +17,7 @@ import importlib.resources.abc
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from daily_driver.core import manifest as _manifest
@@ -25,7 +26,20 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
 
-_logger = get_logger("materialize")
+_logger = get_logger("generate")
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    """Counts surfaced after a successful generate() run.
+
+    n_written counts package-managed .md files written this run (commands +
+    agents). n_preserved counts files skipped because the SHA-256 manifest
+    detected user edits.
+    """
+
+    n_written: int
+    n_preserved: int
 
 
 def _atomic_write_text(dest: Path, content: str) -> None:
@@ -123,16 +137,16 @@ def _remove_stale_files(
                 _logger.debug("Removed stale package file: %s", rel)
 
 
-def materialize(
+def generate(
     workspace: Workspace,
     *,
     ignore_drift: bool = False,
     force_overwrite: bool = False,
-) -> None:
-    """Materialize package assets into the workspace .claude/ tree.
+) -> GenerationResult | None:
+    """Generate package assets into the workspace .claude/ tree.
 
     ignore_drift: when True, skip the version-stamp fast-path and always run the
-        materialization body. Use this when you need to re-materialize regardless
+        generation body. Use this when you need to regenerate regardless
         of whether the version has changed (e.g. --reset).
 
     force_overwrite: when True, overwrite package-managed .md files even if the
@@ -149,17 +163,17 @@ def materialize(
     if not ignore_drift and not version_stamp.is_drifted(
         workspace.state_dir, workspace.version
     ):
-        return
+        return None
 
-    lock_path = workspace.ephemeral_dir / "materialize.lock"
+    lock_path = workspace.ephemeral_dir / "generate.lock"
     with file_lock(lock_path):
-        # Re-check inside the lock: another process may have materialized while we waited.
+        # Re-check inside the lock: another process may have generated while we waited.
         if not ignore_drift and not version_stamp.is_drifted(
             workspace.state_dir, workspace.version
         ):
-            return
+            return None
 
-        _logger.info("Materializing assets for version %s", workspace.version)
+        _logger.info("Generating assets for version %s", workspace.version)
 
         claude_root = workspace.root / ".claude"
 
@@ -223,6 +237,11 @@ def materialize(
         # Stamp written last — crash before here = stamp stays stale = redo on next run.
         version_stamp.write(workspace.state_dir, workspace.version)
         _logger.info("Version stamp written: %s", workspace.version)
+
+        n_preserved = len(cmd_skipped) + len(agent_skipped)
+        return GenerationResult(
+            n_written=n_commands + n_agents, n_preserved=n_preserved
+        )
 
 
 def _merge_settings(existing_text: str, rendered_text: str) -> str:

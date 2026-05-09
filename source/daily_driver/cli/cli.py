@@ -17,7 +17,11 @@ import sys
 from typing import Protocol, cast
 
 import daily_driver
-from daily_driver.cli._common import add_global_flags, configure
+from daily_driver.cli._common import (
+    HelpfulArgumentParser,
+    add_global_flags,
+    configure,
+)
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -37,8 +41,7 @@ _COMMANDS = [
     ("day-end", "daily_driver.cli.commands.day_end"),
     ("check-in", "daily_driver.cli.commands.check_in"),
     ("summary", "daily_driver.cli.commands.summary"),
-    ("install-scheduler", "daily_driver.cli.commands.install_scheduler"),
-    ("uninstall-scheduler", "daily_driver.cli.commands.uninstall_scheduler"),
+    ("scheduler", "daily_driver.cli.commands.scheduler"),
     ("voice-update", "daily_driver.cli.commands.voice_update"),
 ]
 
@@ -60,9 +63,12 @@ def app(argv: list[str] | None = None) -> int:
     Bare `daily-driver` (no subcommand) prints help and returns 2.
     `daily-driver --version` prints version string and returns 0.
     """
-    parser = argparse.ArgumentParser(
+    parser = HelpfulArgumentParser(
         prog="daily-driver",
-        description="Daily Driver — job search planning and accountability CLI.",
+        description=(
+            "Daily Driver — ADHD-friendly daily planning, focus, and "
+            "task tracking. Drives professional work, job search, and errands."
+        ),
     )
     parser.add_argument(
         "--version",
@@ -70,7 +76,18 @@ def app(argv: list[str] | None = None) -> int:
         version=f"daily-driver {daily_driver.__version__}",
     )
 
-    subparsers = parser.add_subparsers(dest="cmd", metavar="<command>")
+    # parser_class propagates HelpfulArgumentParser to every nested
+    # subparser, so `daily-driver focus on` (etc.) also points at --help
+    # on parse errors.
+    subparsers = parser.add_subparsers(
+        dest="cmd", metavar="<command>", parser_class=HelpfulArgumentParser
+    )
+
+    # Subcommands invoked by the shipped slash commands but not useful as
+    # day-to-day user-facing CLI verbs. Hidden from `daily-driver --help`
+    # listing while remaining fully callable. Keep this set in sync with
+    # source/daily_driver/commands/daily-driver/*.md.
+    _HIDDEN_FROM_TOP_HELP = {"paths", "read", "ensure-daily-dir", "gather"}
 
     # Deferred imports keep --version / --help fast and avoid circular imports
     # at module load time.  All command modules are shipped in-package; an
@@ -79,8 +96,16 @@ def app(argv: list[str] | None = None) -> int:
     _cmd_map: dict[str, _CommandModule] = {}
     for cmd_name, module_path in _COMMANDS:
         module = cast(_CommandModule, importlib.import_module(module_path))
-        module.add_parser(subparsers, [])
+        module.add_parser(subparsers, [])  # type: ignore[arg-type]
         _cmd_map[cmd_name] = module
+
+    # Strip hidden subcommands from the help listing. Standard argparse
+    # workaround — `help=argparse.SUPPRESS` on the subparser itself renders
+    # the literal "==SUPPRESS==" text under Python 3.11 (bpo-22848). The
+    # entries remain in subparsers.choices so parsing/dispatch is unaffected.
+    subparsers._choices_actions = [
+        a for a in subparsers._choices_actions if a.dest not in _HIDDEN_FROM_TOP_HELP
+    ]
 
     # Register globals on the top-level parser AFTER subparsers so they render
     # at the bottom of `daily-driver --help`.

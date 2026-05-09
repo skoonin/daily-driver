@@ -27,7 +27,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "summary",
         parents=parents,
-        help="Generate a period summary (headless via claude, or --json bundle)",
+        help="Generate a period summary using Claude (or --json for raw data)",
     )
     parser.add_argument(
         "--range",
@@ -56,7 +56,7 @@ def add_parser(
         "--json",
         action="store_true",
         dest="emit_json",
-        help="Emit a JSON bundle instead of invoking claude",
+        help="Print raw JSON data instead of running Claude",
     )
     parser.add_argument(
         "--no-clipboard",
@@ -66,23 +66,24 @@ def add_parser(
     parser.add_argument(
         "--session-name",
         default=None,
-        help="Override the auto-generated claude session display name",
+        help="Custom name for this Claude session (defaults to a timestamped name)",
     )
     parser.add_argument(
         "--agent",
         default="work-planner",
-        help="Agent to load (default: work-planner)",
+        help="Claude agent to load (default: work-planner)",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Model alias or name (e.g., 'sonnet', 'opus')",
+        choices=["sonnet", "opus", "haiku"],
+        help="Claude model to use.",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=180,
-        help="Seconds to wait for claude before failing (default: 180)",
+        help="Seconds to wait for Claude before giving up (default: 180)",
     )
     add_global_flags(parser)
     return parser

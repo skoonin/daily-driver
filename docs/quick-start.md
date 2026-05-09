@@ -17,8 +17,8 @@ cd ~/daily-driver-workspace
 ├── .daily-driver/             # version stamp, SHA-256 manifest, state/ for locks + logs
 ├── .claude/
 │   ├── settings.local.json    # rendered from packaged template
-│   ├── commands/daily-driver/ # managed — re-materialized on version drift
-│   └── agents/daily-driver/   # managed — re-materialized on version drift
+│   ├── commands/daily-driver/ # managed — regenerated on version drift
+│   └── agents/daily-driver/   # managed — regenerated on version drift
 ├── context.md                 # your writing context (copied once; yours thereafter)
 └── voice-profile.md           # your writing-style profile (ditto)
 ```
@@ -29,8 +29,8 @@ The `.claude/*/daily-driver/` subdirs are package-managed. Top-level entries und
 
 ```bash
 daily-driver doctor
-daily-driver doctor --fix      # re-materialize if drifted
-daily-driver doctor --reset    # force full re-materialize
+daily-driver doctor --fix      # regenerate if drifted
+daily-driver doctor --reset    # force full regenerate
 ```
 
 `--fix` and `--reset` are mutually exclusive. ERROR rows exit non-zero; WARNING rows exit 0.
@@ -48,7 +48,7 @@ daily-driver status
 ## 4. Scheduler (optional)
 
 ```bash
-daily-driver install-scheduler
+daily-driver scheduler install
 ```
 
-Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins and overnight job scraping. Uninstall with `daily-driver uninstall-scheduler` (`--keep-state` retains mirrored copies under `.daily-driver/state/launchd/`). macOS only.
+Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins and overnight job searches. Uninstall with `daily-driver scheduler uninstall`. Show installed jobs with `daily-driver scheduler status`. macOS only.

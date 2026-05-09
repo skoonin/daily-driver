@@ -35,7 +35,7 @@ CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`.
 
 ### Claude launcher
 
-Create the shipped slash-command file at `source/daily_driver/commands/daily-driver/review.md` (package data, materialized into the workspace).
+Create the shipped slash-command file at `source/daily_driver/commands/daily-driver/review.md` (package data, generated into the workspace).
 
 Create `source/daily_driver/cli/commands/review.py`:
 

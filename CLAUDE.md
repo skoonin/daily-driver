@@ -42,9 +42,8 @@ End-user reference: `docs/commands.md`. Short list:
   prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of
   `voice-profile.md` from writing samples.
-- `daily-driver scrape-jobs {run,status}` — `run [--dry-run | --backfill]`
-  for multi-source job scraping + Claude enrichment; `status` shows last-run
-  metadata.
+- `daily-driver jobs {run,status,prune}` — search the configured job
+  boards, show last-run metadata, or archive stale rows from `jobs.csv`.
 - `daily-driver paths [<kind>] [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
 - `daily-driver read {context,voice-profile,plan}` — print workspace text
@@ -53,13 +52,13 @@ End-user reference: `docs/commands.md`. Short list:
   plan path.
 - `daily-driver gather {calendar,git,sessions,notes} [--json]` — read
   external state for downstream commands.
-- `daily-driver install-scheduler | uninstall-scheduler` — macOS launchd
-  plist install/remove.
+- `daily-driver scheduler {install,uninstall,status}` — macOS launchd
+  plist install / remove / inspection.
 
 ## Architecture
 
 All code lives under `source/daily_driver/`. Read `docs/developer.md` for the
-architecture map, runtime flow, init contract, materialize lifecycle, and
+architecture map, runtime flow, init contract, generate lifecycle, and
 extensibility rules. Recipes for adding subcommands or scraper sources live
 in `docs/extending.md`. Release workflow is in `docs/releasing.md`.
 
@@ -71,7 +70,7 @@ Key conventions:
   `launchctl` — tests monkeypatch one spot, not many.
 - **Workspace writes are flock-guarded.** `core.locking.file_lock` wraps
   `fcntl.flock` for YAML reads + writes and the focus lock.
-- **`.claude/*/daily-driver/` is package-managed.** Materialized from wheel
+- **`.claude/*/daily-driver/` is package-managed.** Generated from wheel
   package-data on `init` and on version drift. `doctor --fix` preserves
   user-edited managed files (SHA-256 manifest); `doctor --reset` overwrites.
   Top-level `.claude/commands/` and `.claude/agents/` are user territory.

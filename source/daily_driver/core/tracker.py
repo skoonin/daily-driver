@@ -189,6 +189,56 @@ class Tracker:
                     return updated
             raise KeyError(f"entry '{entry_id}' not found")
 
+    def delete(self, entry_id: str) -> TrackerEntry:
+        """Remove a single entry by id. Raises KeyError if not found."""
+        with file_lock(self._lock_path(), shared=False):
+            data = self.load()
+            for i, entry in enumerate(data.entries):
+                if entry.id == entry_id:
+                    del data.entries[i]
+                    self._save_unlocked(data)
+                    return entry
+            raise KeyError(f"entry '{entry_id}' not found")
+
+    def prune(
+        self,
+        *,
+        category: str | None = None,
+        status: str | None = None,
+        older_than: date | None = None,
+        dry_run: bool = False,
+    ) -> list[TrackerEntry]:
+        """Remove entries matching all provided filters. Returns deleted entries.
+
+        At least one filter must be provided — pruning everything is too easy
+        to typo, so callers must opt in. With dry_run=True returns the
+        candidate set without persisting changes.
+        """
+        if category is None and status is None and older_than is None:
+            raise ValueError(
+                "prune requires at least one filter (--category, --status, --older-than)"
+            )
+
+        with file_lock(self._lock_path(), shared=False):
+            data = self.load()
+
+            def matches(entry: TrackerEntry) -> bool:
+                if category is not None and entry.category != category:
+                    return False
+                if status is not None and entry.status != status:
+                    return False
+                if older_than is not None and entry.updated_at.date() >= older_than:
+                    return False
+                return True
+
+            removed = [e for e in data.entries if matches(e)]
+            if dry_run or not removed:
+                return removed
+
+            data.entries = [e for e in data.entries if not matches(e)]
+            self._save_unlocked(data)
+            return removed
+
     def list(
         self,
         *,

@@ -49,7 +49,7 @@ def test_init_creates_nonexistent_target(tmp_path: Path) -> None:
 def test_init_settings_json_is_valid_json(tmp_path: Path) -> None:
     run(_args(str(tmp_path)))
     settings = tmp_path / ".claude" / "settings.local.json"
-    assert settings.exists(), "settings.local.json must be rendered by materialize"
+    assert settings.exists(), "settings.local.json must be rendered by generate"
     parsed = json.loads(settings.read_text(encoding="utf-8"))
     assert isinstance(parsed, dict)
 
@@ -67,7 +67,7 @@ def test_init_scaffolds_time_hook(tmp_path: Path) -> None:
     """init must drop hook-current-time.sh into .claude/hooks/ and wire it in settings."""
     run(_args(str(tmp_path)))
     hook = tmp_path / ".claude" / "hooks" / "hook-current-time.sh"
-    assert hook.exists(), "hook-current-time.sh must be materialized"
+    assert hook.exists(), "hook-current-time.sh must be generated"
     assert "additionalContext" in hook.read_text(encoding="utf-8")
 
     settings = tmp_path / ".claude" / "settings.local.json"

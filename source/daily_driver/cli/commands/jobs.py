@@ -18,17 +18,19 @@ def add_parser(
     parser = subparsers.add_parser(
         "jobs",
         parents=parents,
-        help="Job-board scraper: run the scraper or inspect its last run",
+        help="Search job boards and manage your jobs.csv (run | status | prune)",
     )
 
     nested = parser.add_subparsers(dest="jobs_action", metavar="<action>")
 
-    p_run = nested.add_parser("run", parents=parents, help="Scrape enabled job boards")
+    p_run = nested.add_parser(
+        "run", parents=parents, help="Search the configured job boards"
+    )
     p_run.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
-        help="Print matches without writing to CSV",
+        help="Print results without writing to jobs.csv",
     )
     p_run.add_argument(
         "--backfill",
@@ -40,14 +42,14 @@ def add_parser(
         default=None,
         metavar="LIST",
         help=(
-            "Comma-separated source IDs to run (overrides .dd-config.yaml "
-            "scraper.sources toggles). Use 'jobs run --list-sources' to see options."
+            "Comma-separated job-board names to search (overrides .dd-config.yaml). "
+            "Use 'jobs run --list-sources' to see options."
         ),
     )
     p_run.add_argument(
         "--list-sources",
         action="store_true",
-        help="Print the registered source IDs and exit",
+        help="List the available job-board names and exit",
     )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
@@ -59,7 +61,7 @@ def add_parser(
         "--json",
         action="store_true",
         default=False,
-        help="Emit JSON output wrapped in {schema, data}",
+        help="Emit JSON output",
     )
     add_global_flags(p_status)
     p_status.set_defaults(func=_run_status)

@@ -1,7 +1,7 @@
-"""Version stamp for drift detection between installed package and materialized workspace files.
+"""Version stamp for drift detection between installed package and generated workspace files.
 
 The stamp file lives at {state_dir}/version and contains the installed __version__ string.
-Writing it last in the materialization sequence means a crash mid-materialize leaves the
+Writing it last in the generation sequence means a crash mid-generate leaves the
 stamp stale, so the next invocation sees drift and redoes the work — idempotent.
 """
 
