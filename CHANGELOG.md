@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `make test-quick` target — py311 only, fast inner loop. `make test` now runs the full tox envlist (matches CI).
 - `docs/cli-tree.md`: snapshot of the v0.1.x CLI command surface (subcommands, flags, parent-parser inheritance gap). Planning reference for the upcoming `parents=[GLOBAL_PARSER]` migration.
 - W6: `plugins.job_search.primary_currency` (`USD`/`CAD`/`EUR`/`GBP`, default `null`). When set, scraped jobs whose parsed comp currency doesn't match are dropped at the scraper write boundary. Unparseable comp passes through. (#48)
-- W6: Apple/Wellfound adapters now consult the dedup union (`jobs.csv` + `jobs.archive.csv`) via the orchestrator's `_known_urls` config key and short-circuit during pagination, saving Playwright work on already-triaged listings.
+- W6: Apple/Wellfound adapters now consult the dedup union (`jobs.csv` + `jobs.archive.csv`) via the orchestrator's `_known_urls` config key and skip already-triaged listings during result iteration (saves dict construction + downstream filter work; pagination scroll itself is unchanged).
 - W6: `tests/test_scraper/test_e2e_smoke.py` — opt-in `@pytest.mark.smoke` end-to-end scrape against a real source. Excluded from default runs; invoke with `pytest -m smoke`.
 
 ### Changed

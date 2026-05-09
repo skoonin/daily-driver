@@ -46,28 +46,13 @@ def test_remoteok_live_returns_list_with_expected_fields() -> None:
 @pytest.mark.smoke
 @pytest.mark.needs_jobspy
 def test_jobspy_linkedin_fetch_description_accepted() -> None:
-    """JobSpy 1.1.82+ accepts ``linkedin_fetch_description=True`` (W6 invariant).
+    """JobSpy accepts ``linkedin_fetch_description=True`` against a live call.
 
-    The whole point of W6's LinkedIn-parser deletion is that JobSpy now sources
-    LinkedIn description + comp natively. If the pin slips below 1.1.82,
-    ``scrape_jobspy`` will raise ``TypeError`` — the explicit catch in
-    ``_impl.scrape_jobspy`` converts that to a logged error and an empty list,
-    which this test detects via the empty result + a manual probe of the
-    library version.
+    Pip pin (`python-jobspy>=1.1.82`) + the ``TypeError`` hard-fail in
+    ``scrape_jobspy`` enforce the version contract; this test exercises the
+    real call path end-to-end. Asserts shape only — empty results are fine
+    (LinkedIn rate-limits, search may not match anything in `hours_old`).
     """
-    import jobspy  # type: ignore[import-untyped]
-
-    pkg_version = getattr(jobspy, "__version__", "0.0.0")
-    parts = pkg_version.split(".")[:3]
-    try:
-        major, minor, patch = (int(p) for p in parts)
-    except ValueError:
-        pytest.skip(f"unparseable jobspy version {pkg_version!r}")
-    assert (major, minor, patch) >= (1, 1, 82), (
-        f"python-jobspy {pkg_version} too old; W6 requires >=1.1.82 for "
-        "linkedin_fetch_description support"
-    )
-
     config = {
         "job_search": {
             "roles": ["software engineer"],

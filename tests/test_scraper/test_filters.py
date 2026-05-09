@@ -285,13 +285,6 @@ class TestKnownUrlsFromConfig:
         urls = {"https://jobs.apple.com/x/details/1", "https://wellfound.com/jobs/2"}
         assert _known_urls_from_config({"_known_urls": urls}) == urls
 
-    def test_returns_empty_set_when_value_is_none(self) -> None:
-        assert _known_urls_from_config({"_known_urls": None}) == set()
-
-    def test_returns_empty_set_when_value_is_wrong_type(self) -> None:
-        # Defensive — config dicts are user-built; don't crash on garbage.
-        assert _known_urls_from_config({"_known_urls": "not-a-set"}) == set()
-
 
 class TestCurrencyMatchesPrimary:
     """Currency primary-mode filter (#48).

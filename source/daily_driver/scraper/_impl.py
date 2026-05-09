@@ -249,14 +249,11 @@ def countries_list(config: dict[str, Any]) -> list[str]:
 def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
     """Return URLs the orchestrator already knows about (jobs.csv + archive).
 
-    The orchestrator stuffs this set under the transient ``_known_urls`` key so
-    Playwright adapters (Apple, Wellfound) can short-circuit pagination when
-    they reconstruct a URL that's already triaged. Returns an empty set if the
-    key is missing or holds a non-set value — adapters must treat absence as
-    "no known URLs", not an error.
+    Read from the transient ``_known_urls`` key set by ``scraper.run()``.
+    Empty set when absent (e.g., direct adapter calls in tests) — adapters
+    treat that as "skip nothing", preserving pre-W6 behavior.
     """
-    val = config.get("_known_urls") if isinstance(config, dict) else None
-    return val if isinstance(val, set) else set()
+    return config.get("_known_urls", set())
 
 
 def country_params(country: str) -> dict[str, str]:
@@ -1113,7 +1110,7 @@ def currency_matches_primary(job: dict, config: dict) -> bool:
     primary = _model(config).primary_currency
     if primary is None:
         return True
-    job_currency = (job.get("comp_currency") or "").strip().upper()
+    job_currency = job.get("comp_currency") or ""
     if not job_currency:
         return True
     return job_currency == primary
