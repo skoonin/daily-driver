@@ -85,19 +85,24 @@ tracker:
 #       # doesn't match. Unparseable comp passes through. Unset = no filter.
 #       # primary_currency: USD            # USD | CAD | EUR | GBP
 #       sources:
-#         # Adapter shipped in this repo (HTTP/RSS, no extra deps):
+#         # All keys are optional; omitted = on (SourceToggle defaults
+#         # enabled=true). List a key with `false` to disable it.
+#
+#         # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
 #         remoteok: false                  # remoteok.com RSS
 #         weworkremotely: false            # weworkremotely.com listings
 #         hn_who_is_hiring: false          # HN monthly "Who is hiring?" thread
 #         greenhouse: false                # Greenhouse boards (configurable list)
 #
-#         # Adapter shipped in this repo (Playwright, needs `playwright install`):
+#         # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #         wellfound: false                 # wellfound.com (formerly AngelList)
 #         apple: false                     # jobs.apple.com (API intercept)
 #
-#         # python-jobspy aggregator (one toggle, multiple sites; needs
-#         # `python-jobspy>=1.1.82`). Internally enables linkedin + indeed +
-#         # google with linkedin_fetch_description=True. Glassdoor is
-#         # intentionally disabled — JobSpy's Glassdoor path returns HTTP 400
-#         # ("location not parsed") on every request as of 2026-04.
+#         # python-jobspy aggregator (one toggle, multiple upstream sites;
+#         # requires `python-jobspy>=1.1.82`). Internally fetches linkedin +
+#         # indeed + google with linkedin_fetch_description=True. Glassdoor
+#         # is intentionally disabled in code — JobSpy's Glassdoor path
+#         # returns HTTP 400 ("location not parsed") on every request as of
+#         # 2026-04. Disable this only if you don't want LinkedIn/Indeed/
+#         # Google coverage; there is no other scraper for those sites.
 #         jobspy: false                    # linkedin + indeed + google

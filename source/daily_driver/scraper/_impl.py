@@ -250,8 +250,8 @@ def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
     """Return URLs the orchestrator already knows about (jobs.csv + archive).
 
     Read from the transient ``_known_urls`` key set by ``scraper.run()``.
-    Empty set when absent (e.g., direct adapter calls in tests) — adapters
-    treat that as "skip nothing", preserving pre-W6 behavior.
+    Empty set when absent (e.g., direct ``scrape_*`` calls in tests) —
+    scrapers treat that as "skip nothing", preserving pre-W6 behavior.
     """
     return config.get("_known_urls", set())
 
