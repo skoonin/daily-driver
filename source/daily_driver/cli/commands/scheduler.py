@@ -125,7 +125,7 @@ def _run_status(args: argparse.Namespace) -> int:
 
     from rich.table import Table
 
-    from daily_driver.core.scheduler import build_jobs
+    from daily_driver.core.scheduler import SchedulerError, build_jobs
     from daily_driver.integrations import launchd as launchd_int
 
     workspace = _resolve_workspace(args)
@@ -134,7 +134,7 @@ def _run_status(args: argparse.Namespace) -> int:
 
     try:
         jobs = build_jobs(workspace)
-    except Exception as exc:  # noqa: BLE001
+    except SchedulerError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
