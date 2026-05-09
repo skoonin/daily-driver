@@ -84,13 +84,13 @@ Using the gathered data, present:
 ## 5. Interactive Review
 
 For each planned item that was scheduled up to now:
-- Ask: "What is the status of app-NNN - Company Role task?" (planned / in-progress / done / blocked)
+- Ask: "What is the status of `<tracker-id> - <label>` task?" (planned / in-progress / done / blocked) — `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `job-003`).
 - If the user reports time spent, compare to the planned time block. If actual > planned * 2, flag as an overrun.
 - Note any context switches or unplanned work.
 
 ## 6. Application Follow-up Reminders
 
-For each overdue follow-up from step 3, ask: "Follow up on app-NNN - Company | Role? It has been N days since last activity." Present as a compact checklist, not prose.
+For each overdue follow-up from step 3, ask: "Follow up on `<tracker-id> - <label>`? It has been N days since last activity." Present as a compact checklist, not prose.
 
 If the user followed up, update the tracker:
 

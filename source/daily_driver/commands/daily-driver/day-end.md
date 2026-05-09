@@ -59,7 +59,7 @@ Using the work-planner agent behavior, present:
 2. **Plan vs Actual** — Compare morning plan items to what happened. Assign final status to each plan_item: [done], [in-progress], [blocked], [carry-over], [unplanned], [dropped]
    - Use session data and git activity to infer status for items not covered by the plan
 3. **Unplanned Work** — Things that came up that weren't in the plan
-4. **Application Follow-ups** — For applications with overdue follow-ups from step 4, ask: "Follow up on app-NNN - Company | Role?" Present as a compact checklist.
+4. **Tracker Follow-ups** — For tracker entries with overdue follow-ups from step 4, ask: "Follow up on `<tracker-id> - <label>`?" Present as a compact checklist.
 5. **Carry-forward** — Build the carry_forward list for tomorrow:
    - `done` or `dropped`: do NOT add
    - `carry-over`: add with `carried_days` incremented

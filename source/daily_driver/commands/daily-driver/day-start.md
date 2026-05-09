@@ -113,7 +113,7 @@ Using the work-planner agent behavior, present:
 3. **Carry-forward** — Structured items from step 3 (BLOCKED, STALE, CARRY-OVER) — includes both work and personal items
 4. **Proposed Plan** — Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal items, and buffer. Do not schedule work in time that has already passed. All items (work and personal) are plan_items.
 
-Use the required time block format: `- HH:MM - HH:MM | app-NNN - Company Role - Task description`
+Use the required time block format: `- HH:MM - HH:MM | <tracker-id> - <label> - Task description` where `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `job-003`). For items not tied to a tracker entry (personal, ad-hoc), omit the tracker-id segment.
 
 Then ask the user:
 - Does this look right?
@@ -136,6 +136,6 @@ Write the plan to that path with YAML frontmatter followed by the markdown body.
 - `date`: today's date
 - `generated_at`: current time HH:MM
 - `carry_forward`: items from step 3 (`carried_days` already incremented — copy values as-is). Includes both work and personal items.
-- `plan_items`: one entry per planned item (work and personal) with `time_block`, `app_id`, `type`, `status: planned`, `carry_forward_id` linking to source cf-NNN where applicable, and for personal items: `recurring`
+- `plan_items`: one entry per planned item (work and personal) with `time_block`, `tracker_id` (the `{category}-NNN` ID, or `null` for items not tied to a tracker entry), `type`, `status: planned`, `carry_forward_id` linking to source cf-NNN where applicable, and for personal items: `recurring`
 
 See the work-planner agent's "Plan File Frontmatter" section for the exact schema.
