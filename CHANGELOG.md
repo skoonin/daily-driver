@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — W9 shipped-prompt schema drift
+
+- `source/daily_driver/agents/daily-driver/work-planner.md`: rewritten to reflect the current category-driven tracker. Replaced `app-NNN` with `{category}-NNN` (e.g. `task-001`, `job-007`) and the `app_id` field with `tracker_id`; generalized planning prose from job-search-only to any tracked work; tracker-update example now uses `<tracker-id>` instead of a bare `<ID>`. (#47)
+- `source/daily_driver/commands/daily-driver/{check-in,day-end,day-start}.md`: same drift closed inline — `app-NNN - Company | Role` references replaced with `<tracker-id> - <label>` patterns that match the current tracker schema.
+
 ### Breaking — W2 jobs CLI rename
 
 - **CLI subcommand renamed**: `daily-driver scrape-jobs` → `daily-driver jobs`. All forms are renamed: `jobs run [--dry-run | --backfill]`, `jobs status [--json]`, `jobs prune --older-than SPEC ...`. There is no alias; invoking `scrape-jobs` errors with argparse's "invalid choice".
