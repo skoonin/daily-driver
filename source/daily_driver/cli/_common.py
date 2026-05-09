@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import NoReturn
 
 import daily_driver.core.logging as dd_logging
 
@@ -26,7 +27,7 @@ class HelpfulArgumentParser(argparse.ArgumentParser):
     instead of forcing the user to read the usage line and infer it.
     """
 
-    def error(self, message: str) -> None:  # noqa: ARG002 — argparse contract
+    def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
         sys.stderr.write(f"{self.prog}: error: {message}\n")
         sys.stderr.write(f"\nRun: {self.prog} --help\n")

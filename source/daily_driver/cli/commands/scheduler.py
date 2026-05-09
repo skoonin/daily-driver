@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
@@ -56,7 +57,7 @@ def add_parser(
     return parser
 
 
-def _resolve_workspace(args: argparse.Namespace):
+def _resolve_workspace(args: argparse.Namespace) -> Any:
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
     workspace_override = getattr(args, "workspace", None)

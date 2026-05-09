@@ -96,17 +96,15 @@ def app(argv: list[str] | None = None) -> int:
     _cmd_map: dict[str, _CommandModule] = {}
     for cmd_name, module_path in _COMMANDS:
         module = cast(_CommandModule, importlib.import_module(module_path))
-        module.add_parser(subparsers, [])
+        module.add_parser(subparsers, [])  # type: ignore[arg-type]
         _cmd_map[cmd_name] = module
 
     # Strip hidden subcommands from the help listing. Standard argparse
     # workaround — `help=argparse.SUPPRESS` on the subparser itself renders
     # the literal "==SUPPRESS==" text under Python 3.11 (bpo-22848). The
     # entries remain in subparsers.choices so parsing/dispatch is unaffected.
-    subparsers._choices_actions = [  # type: ignore[attr-defined]
-        a
-        for a in subparsers._choices_actions  # type: ignore[attr-defined]
-        if a.dest not in _HIDDEN_FROM_TOP_HELP
+    subparsers._choices_actions = [
+        a for a in subparsers._choices_actions if a.dest not in _HIDDEN_FROM_TOP_HELP
     ]
 
     # Register globals on the top-level parser AFTER subparsers so they render

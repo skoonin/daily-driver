@@ -11,6 +11,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `source/daily_driver/agents/daily-driver/work-planner.md`: rewritten to reflect the current category-driven tracker. Replaced `app-NNN` with `{category}-NNN` (e.g. `task-001`, `job-007`) and the `app_id` field with `tracker_id`; generalized planning prose from job-search-only to any tracked work; tracker-update example now uses `<tracker-id>` instead of a bare `<ID>`. (#47)
 - `source/daily_driver/commands/daily-driver/{check-in,day-end,day-start}.md`: same drift closed inline — `app-NNN - Company | Role` references replaced with `<tracker-id> - <label>` patterns that match the current tracker schema.
 
+### Breaking — W8 CLI structure & copy polish
+
+- **`core/materialize.py` → `core/generate.py`** (review-2026-04-23 #17). The
+  module is renamed; the function `materialize()` is now `generate()` and
+  returns a `GenerationResult(n_written, n_preserved)` (or `None` when the
+  drift fast-path skips work). The ephemeral lock file at
+  `<workspace>/.daily-driver/state/generate.lock` replaces the prior
+  `materialize.lock`. CHANGELOG entries from earlier releases keep their
+  original wording (historical record). No user action required — internal
+  rename; old `materialize.lock` files are harmless and self-cleaning.
+- **`install-scheduler` / `uninstall-scheduler` → `scheduler {install,uninstall,status}`**
+  (review #26). The two top-level subcommands collapse into a single
+  `scheduler` parent. `scheduler status [--json]` is new and lists
+  configured jobs from `.dd-config.yaml` plus whether each plist is
+  currently installed in `~/Library/LaunchAgents/`. **Migration**: `daily-driver
+  install-scheduler` → `daily-driver scheduler install`, `daily-driver
+  uninstall-scheduler` → `daily-driver scheduler uninstall`. No alias,
+  per pre-1.0 no-compat policy.
+
+### Added — W8 CLI structure & copy polish
+
+- `daily-driver tracker delete <id>` and `daily-driver tracker prune
+  [--category CAT] [--status STATUS] [--older-than SPEC] [--dry-run]`
+  (#30). `prune` requires at least one filter and refuses to run otherwise
+  — pruning everything is too easy to typo. `--older-than` accepts the
+  full `parse_since` grammar (`today`, `Nd`, `YYYY-MM-DD`, etc.).
+- `daily-driver scheduler status [--json]` (#26): new action that lists
+  configured jobs and their installation state.
+- `focus.default_duration: '25m'` config field (#19). `daily-driver focus
+  on` now works without `--for`, falling back to this config value (then
+  to a built-in 25m if unset).
+- `daily-driver status` now distinguishes "unconfigured workspace" from
+  "quiet day with nothing to report" (#21). Surfaces a `Setup gaps`
+  bullet list above the existing tables (Rich) and a `setup_gaps` field
+  in `--json` output. Detected gaps: `context.md` is the bundled
+  template, `voice-profile.md` is empty or templated, `gather.git.search_paths`
+  is empty, tracker is empty or contains only `test-*` fixtures.
+- `daily-driver doctor --fix` prints a one-line action log between the
+  before / after tables: `Action: regenerated N file(s) (preserved N
+  user-edited)` (#24). Only printed when generation actually ran.
+- `HelpfulArgumentParser` in `cli/_common.py`: argparse subclass that
+  appends `Run: {prog} --help` below the standard usage/error lines on
+  every parse failure (#19 addendum). Wired into `cli.py` via
+  `parser_class=` so every nested subparser inherits it.
+- `--model` flag is now restricted to `choices=[sonnet, opus, haiku]`
+  in `day-start`, `day-end`, `check-in`, `summary`, and `voice-update`
+  (#16 addendum). Clarified help text: `Claude model to use.`
+
+### Changed — W8 CLI structure & copy polish
+
+- User-facing CLI help text de-jargoned across every subcommand (#16).
+  Sample renames: `Scaffold a new daily-driver workspace` → `Create a
+  new daily-driver workspace`; `Job-board scraper: run the scraper or
+  inspect its last run` → `Search job boards and manage your jobs.csv`;
+  `Read external state` → `Pull data from calendar, git, Claude
+  sessions, or notes`; `Generate a period summary (headless via claude,
+  or --json bundle)` → `Generate a period summary using Claude (or
+  --json for raw data)`. Top-level CLI description broadened beyond
+  job search to reflect the tracker's actual scope.
+- `tracker stats` column headers: `Dimension / Key / Count` → `Group /
+  Value / Count`; dimension labels prettified (`total` → `Total`,
+  `by_category` → `By category`, `by_status` → `By status`) (#16
+  addendum).
+- `paths`, `read`, `gather`, and `ensure-daily-dir` are hidden from
+  `daily-driver --help` (#26). They remain fully callable — the shipped
+  slash commands (`/day-start`, `/check-in`, `/day-end`, work-planner
+  agent) invoke them directly. Implementation filters
+  `subparsers._choices_actions` in `cli/cli.py`; the
+  `argparse.SUPPRESS`-on-subparser pattern is broken under Py 3.11
+  (bpo-22848).
+- Several user-visible doc/string updates picked up the
+  `materialize` → `generate` rename: `docs/{customization,developer,
+  install,quick-start,troubleshooting,extending,commands,cli-tree}.md`,
+  `README.md`, `CLAUDE.md`, `core/scheduler.py` error text,
+  `templates/scheduler.default.yaml`, `templates/.dd-config.yaml.j2`.
+
 ### Breaking — W2 jobs CLI rename
 
 - **CLI subcommand renamed**: `daily-driver scrape-jobs` → `daily-driver jobs`. All forms are renamed: `jobs run [--dry-run | --backfill]`, `jobs status [--json]`, `jobs prune --older-than SPEC ...`. There is no alias; invoking `scrape-jobs` errors with argparse's "invalid choice".
