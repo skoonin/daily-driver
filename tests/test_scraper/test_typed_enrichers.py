@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from daily_driver.scraper._impl import (
+from daily_driver.scraper.enrichment import (
     enrich_company_descriptions_typed,
     enrich_fit_and_notes_typed,
     enrich_job_details_typed,
