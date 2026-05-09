@@ -7,7 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from daily_driver.core.logging import get_logger
+from daily_driver.core.clock import now
+from daily_driver.core.logging import get_logger, log_query_window
 
 log = get_logger(__name__)
 
@@ -27,6 +28,9 @@ def gather_commits(
     repo_root: Path, since: datetime, until: datetime | None = None
 ) -> list[GitCommit]:
     """Return commits in [since, until or HEAD). Empty list if not a git repo."""
+    log_query_window(
+        log, f"git ({repo_root})", since, until if until is not None else now()
+    )
     global _git_warned
     if not shutil.which("git"):
         if not _git_warned:

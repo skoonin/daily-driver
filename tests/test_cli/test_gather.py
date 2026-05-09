@@ -121,6 +121,97 @@ def test_gather_git_text_mode(
     assert "Add widget" in out
 
 
+def test_gather_git_falls_back_to_cwd_when_no_repo_and_no_search_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+
+    ws = _init_workspace(tmp_path)
+    seen: list[Path] = []
+
+    def fake_gather(repo, since, until):
+        seen.append(repo)
+        return []
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+    monkeypatch.chdir(tmp_path)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+
+    capsys.readouterr()
+    assert rc == 0
+    assert seen == [Path.cwd()]
+
+
+def test_gather_git_uses_search_paths_when_no_repo_arg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+
+    ws = _init_workspace(tmp_path)
+    # Two repos under a common root; configure that root as a search path.
+    repos_root = tmp_path / "repos"
+    repo_a = repos_root / "a"
+    repo_b = repos_root / "b"
+    for r in (repo_a, repo_b):
+        (r / ".git").mkdir(parents=True)
+
+    config_path = ws / ".dd-config.yaml"
+    text = config_path.read_text()
+    text += f"\ngather:\n  git:\n    search_paths:\n      - {repos_root}\n"
+    config_path.write_text(text)
+
+    seen: list[Path] = []
+
+    def fake_gather(repo, since, until):
+        seen.append(repo)
+        return [
+            GitCommit(
+                sha=f"sha{repo.name}",
+                timestamp=datetime(2026, 4, 20, 14, 30),
+                author="x",
+                subject=f"in {repo.name}",
+            )
+        ]
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert {p.resolve() for p in seen} == {repo_a.resolve(), repo_b.resolve()}
+    assert "sha-a" in out or "shaa" in out
+    assert "sha-b" in out or "shab" in out
+
+
+def test_gather_git_search_paths_no_repos_prints_placeholder(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    empty_root = tmp_path / "empty-root"
+    empty_root.mkdir()
+    config_path = ws / ".dd-config.yaml"
+    text = config_path.read_text()
+    text += f"\ngather:\n  git:\n    search_paths:\n      - {empty_root}\n"
+    config_path.write_text(text)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "no git repos discovered" in out
+
+
 def test_gather_sessions_text_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
