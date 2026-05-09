@@ -6,10 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Docs — W9 feature parity audit
-
-- New `docs/parity-audit.md`: one row per legacy capability (slash commands, agents, shell scripts, hooks, launchd plists, top-level files) from the pre-pure-Python `daily-driver` repo, mapped to its current CLI / shipped-artifact equivalent with status (parity / partial / missing / dropped) and a short rationale. Eight follow-up rows captured for missing capabilities (meeting-prep flow, interview-prep state, application-pipeline gather, per-company doc auto-create, ruled-out logging, deterministic standup builder, calendar-sync persistence, shipped-prompt lint test) — none in scope for this PR. (#45)
-
 ### Fixed — W9 shipped-prompt schema drift
 
 - `source/daily_driver/agents/daily-driver/work-planner.md`: rewritten to reflect the current category-driven tracker. Replaced `app-NNN` with `{category}-NNN` (e.g. `task-001`, `job-007`) and the `app_id` field with `tracker_id`; generalized planning prose from job-search-only to any tracked work; tracker-update example now uses `<tracker-id>` instead of a bare `<ID>`. (#47)
