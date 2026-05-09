@@ -69,7 +69,7 @@ For headless flows, call `launch_headless()` from `_claude_session` with capture
 
 ## Adding a scraper source
 
-All scrapers live in `source/daily_driver/scraper/_impl.py`. One module, one `SCRAPERS` dict.
+Each scraper lives in its own module under `source/daily_driver/scraper/sources/`. The `SCRAPERS` dict and typed `SOURCE_REGISTRY` are assembled in `source/daily_driver/scraper/sources/__init__.py`. Shared HTTP / Playwright helpers live in `sources/_http.py`; orchestration (`run_all_scrapers`, dedup, filters) lives in `scraper/runner.py`.
 
 ### Pipeline
 

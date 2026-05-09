@@ -1,6 +1,6 @@
-"""Smoke tests for the ported scraper package.
+"""Smoke tests for the scraper package.
 
-These tests verify that the large ``_impl`` module loads cleanly and that
+These tests verify that the scraper submodules load cleanly and that
 the public entry points (``run``, ``run_backfill``, ``load_config_file``)
 are wired correctly. Source-level behavior (HTTP, HTML parsing, playwright)
 is out of scope here — see test_scraper_run.py for CLI-level integration.
@@ -21,8 +21,8 @@ def test_package_exports_public_api() -> None:
     assert hasattr(scraper, "load_config_file")
 
 
-def test_impl_module_loads_without_side_effects() -> None:
-    """The runner module must import without kicking off I/O."""
+def test_runner_and_csv_io_load_without_side_effects() -> None:
+    """The runner and csv_io modules must import without kicking off I/O."""
     from daily_driver.scraper import csv_io, runner
 
     assert callable(runner.run_all_scrapers)
