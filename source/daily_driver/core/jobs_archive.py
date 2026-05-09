@@ -142,7 +142,7 @@ def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:
     if not archive.exists():
         return set(), set()
 
-    from daily_driver.scraper._impl import dedup_key
+    from daily_driver.scraper.runner import dedup_key
 
     urls: set[str] = set()
     keys: set[str] = set()

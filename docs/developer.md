@@ -18,7 +18,7 @@ daily_driver/
 ├── core/                    # workspace, config, tracker, locking, materialize, scheduler...
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
 ├── gathers/                 # read-only readers: calendar, git, sessions, notes
-├── scraper/_impl.py         # all sources + filters + enrichment in one module; SCRAPERS dict
+├── scraper/                 # comp, parsing, csv_io, enrichment, runner + sources/{remoteok,…,apple}.py
 ├── integrations/            # subprocess wrappers: claude_cli, clipboard, launchd
 ├── launchd/                 # PACKAGE DATA — plist Jinja templates
 ├── commands/daily-driver/   # PACKAGE DATA — shipped slash commands
@@ -32,7 +32,7 @@ daily_driver/
 - **`cli/`** — argparse + Rich only. `add_parser(subparsers, parents)` + `run(args) -> int`. Non-trivial logic belongs in `core/<same-name>.py`.
 - **`core/`** — business logic. No subprocess, no TTY, no network. Unit-testable in isolation.
 - **`gathers/`** — typed readers returning plain dataclasses. No YAML, no printing.
-- **`scraper/_impl.py`** — single flat module by design. Source-specific functions, shared utilities, orchestrator.
+- **`scraper/`** — split into focused modules: `comp.py`, `parsing.py`, `csv_io.py`, `enrichment.py`, `runner.py` (orchestration + filters + dedup), and `sources/<name>.py` (one file per source). `sources/__init__.py` registers each source in `SCRAPERS` / `SOURCE_REGISTRY`.
 - **`integrations/`** — the single subprocess boundary. Every `claude`, `pbcopy`, `launchctl` call goes through here. Tests monkeypatch one module instead of many.
 
 ## Runtime flow
@@ -95,7 +95,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 ### Requires a fork
 
 - New subcommand — static `_COMMANDS` table in `cli/cli.py`; no runtime plugin loader.
-- New scraper source — add function + register in `SCRAPERS` dict in `scraper/_impl.py`. See [extending.md](extending.md).
+- New scraper source — add `scraper/sources/<name>.py` with a `scrape_<name>(config) -> list[dict]` function and register it in `scraper/sources/__init__.py:SCRAPERS`. See [extending.md](extending.md).
 - New config fields — Pydantic model in `core.config_models`. `extra="forbid"` is strict.
 
 ### Why `plugins/` is empty

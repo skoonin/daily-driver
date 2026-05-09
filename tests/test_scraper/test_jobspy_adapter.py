@@ -6,11 +6,11 @@ import datetime as dt
 
 import pytest
 
-from daily_driver.scraper._impl import (
+from daily_driver.scraper.models import RawScrapedJob
+from daily_driver.scraper.sources.jobspy import (
     jobspy_row_to_raw,
     normalize_jobspy_row,
 )
-from daily_driver.scraper.models import RawScrapedJob
 
 
 def _row(**overrides: object) -> dict[str, object]:

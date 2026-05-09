@@ -1,6 +1,6 @@
-"""Smoke tests for the ported scraper package.
+"""Smoke tests for the scraper package.
 
-These tests verify that the large ``_impl`` module loads cleanly and that
+These tests verify that the scraper submodules load cleanly and that
 the public entry points (``run``, ``run_backfill``, ``load_config_file``)
 are wired correctly. Source-level behavior (HTTP, HTML parsing, playwright)
 is out of scope here — see test_scraper_run.py for CLI-level integration.
@@ -21,15 +21,15 @@ def test_package_exports_public_api() -> None:
     assert hasattr(scraper, "load_config_file")
 
 
-def test_impl_module_loads_without_side_effects() -> None:
-    """The ported _impl module must import without kicking off I/O."""
-    from daily_driver.scraper import _impl
+def test_runner_and_csv_io_load_without_side_effects() -> None:
+    """The runner and csv_io modules must import without kicking off I/O."""
+    from daily_driver.scraper import csv_io, runner
 
-    assert callable(_impl.run_all_scrapers)
-    assert callable(_impl.load_existing_jobs)
-    assert callable(_impl.normalize_job)
-    assert hasattr(_impl, "CANONICAL_HEADER")
-    assert isinstance(_impl.CANONICAL_HEADER, list)
+    assert callable(runner.run_all_scrapers)
+    assert callable(csv_io.load_existing_jobs)
+    assert callable(runner.normalize_job)
+    assert hasattr(csv_io, "CANONICAL_HEADER")
+    assert isinstance(csv_io.CANONICAL_HEADER, list)
 
 
 def test_load_config_file_reads_yaml(tmp_path: Path) -> None:

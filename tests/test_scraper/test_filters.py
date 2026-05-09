@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from daily_driver.scraper._impl import (
+from daily_driver.scraper.comp import comp_meets_threshold, currency_matches_primary
+from daily_driver.scraper.runner import (
     _known_urls_from_config,
-    comp_meets_threshold,
-    currency_matches_primary,
     dedup_key,
     location_matches,
     matches_roles,

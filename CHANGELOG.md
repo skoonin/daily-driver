@@ -204,6 +204,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `docs/developer/architecture/` updated against source: corrected `Workspace.discover_or_fail(override=...)` classmethod signature and actual dataclass fields, replaced non-existent `launch_claude_session` with `register_interactive_launcher` / `launch_headless` from `_claude_session`, corrected scraper architecture to the flat `_impl.py` + `SCRAPERS` dict design, added scrape-jobs enrichment and scheduled-invocation data flows, added decisions for `extra="forbid"`, integrations/ subprocess funnel, and the flat scraper layout.
 - Root `CLAUDE.md`: corrected the command-surface section to describe the shipped `standup` subcommand instead of the un-shipped `summary` umbrella; removed `docs/developer/contributing/version-management.md` stale example that referenced `daily-driver summary --mode interview`.
 
+### Changed
+
+- Internal: split `scraper/_impl.py` into focused modules (`comp`, `parsing`, `csv_io`, `enrichment`, `runner`, `sources/*`). Public surface unchanged.
+
 ## [0.1.0] — 2026-04-21
 
 ### Added -- Phase 8.1: `make release` / `make release-push`
