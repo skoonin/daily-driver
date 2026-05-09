@@ -17,6 +17,7 @@ import importlib.resources.abc
 import json
 import os
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from daily_driver.core import manifest as _manifest
@@ -26,6 +27,19 @@ from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
 
 _logger = get_logger("generate")
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    """Counts surfaced after a successful generate() run.
+
+    n_written counts package-managed .md files written this run (commands +
+    agents). n_preserved counts files skipped because the SHA-256 manifest
+    detected user edits.
+    """
+
+    n_written: int
+    n_preserved: int
 
 
 def _atomic_write_text(dest: Path, content: str) -> None:
@@ -128,7 +142,7 @@ def generate(
     *,
     ignore_drift: bool = False,
     force_overwrite: bool = False,
-) -> None:
+) -> GenerationResult | None:
     """Generate package assets into the workspace .claude/ tree.
 
     ignore_drift: when True, skip the version-stamp fast-path and always run the
@@ -149,7 +163,7 @@ def generate(
     if not ignore_drift and not version_stamp.is_drifted(
         workspace.state_dir, workspace.version
     ):
-        return
+        return None
 
     lock_path = workspace.ephemeral_dir / "generate.lock"
     with file_lock(lock_path):
@@ -157,7 +171,7 @@ def generate(
         if not ignore_drift and not version_stamp.is_drifted(
             workspace.state_dir, workspace.version
         ):
-            return
+            return None
 
         _logger.info("Generating assets for version %s", workspace.version)
 
@@ -223,6 +237,11 @@ def generate(
         # Stamp written last — crash before here = stamp stays stale = redo on next run.
         version_stamp.write(workspace.state_dir, workspace.version)
         _logger.info("Version stamp written: %s", workspace.version)
+
+        n_preserved = len(cmd_skipped) + len(agent_skipped)
+        return GenerationResult(
+            n_written=n_commands + n_agents, n_preserved=n_preserved
+        )
 
 
 def _merge_settings(existing_text: str, rendered_text: str) -> str:

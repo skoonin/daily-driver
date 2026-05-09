@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.resources
 import json
 import sys
 from pathlib import Path
@@ -46,6 +47,110 @@ def add_parser(
 
 def _entry_to_dict(entry: Any) -> dict[str, Any]:
     return entry.model_dump()
+
+
+def _read_package_template(name: str) -> str | None:
+    """Return the bundled template content, or None if not found."""
+    try:
+        return (
+            importlib.resources.files("daily_driver.templates")
+            .joinpath(name)
+            .read_text(encoding="utf-8")
+        )
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        return None
+
+
+def _detect_setup_gaps(workspace: Any, all_entries: list[Any]) -> list[dict[str, str]]:
+    """Surface common first-run config gaps so a fresh workspace looks
+    different from a quiet day. Each gap has a short id (machine-readable)
+    and a human-readable message.
+    """
+    gaps: list[dict[str, str]] = []
+
+    context_path = workspace.root / "context.md"
+    if not context_path.exists():
+        gaps.append(
+            {
+                "id": "context_missing",
+                "message": "context.md is missing — run `daily-driver init`",
+            }
+        )
+    else:
+        template = _read_package_template("context.md")
+        if template is not None:
+            actual = context_path.read_text(encoding="utf-8")
+            if actual.strip() == template.strip():
+                gaps.append(
+                    {
+                        "id": "context_unedited",
+                        "message": (
+                            "context.md is still the default template — "
+                            "edit it to describe yourself, your goals, and your constraints"
+                        ),
+                    }
+                )
+
+    voice_path = workspace.root / "voice-profile.md"
+    if not voice_path.exists() or not voice_path.read_text(encoding="utf-8").strip():
+        gaps.append(
+            {
+                "id": "voice_profile_empty",
+                "message": (
+                    "voice-profile.md is empty — run `daily-driver voice-update "
+                    "--from <path>` to seed it from writing samples"
+                ),
+            }
+        )
+    else:
+        template = _read_package_template("voice-profile.md")
+        if template is not None:
+            actual = voice_path.read_text(encoding="utf-8")
+            if actual.strip() == template.strip():
+                gaps.append(
+                    {
+                        "id": "voice_profile_template",
+                        "message": (
+                            "voice-profile.md is still the default template — "
+                            "run `daily-driver voice-update --from <path>` to seed it"
+                        ),
+                    }
+                )
+
+    git_paths = workspace.config.gather.git.search_paths
+    if not git_paths:
+        gaps.append(
+            {
+                "id": "gather_git_unset",
+                "message": (
+                    "gather.git.search_paths is empty — `gather git` will only "
+                    "scan the current directory. Add repo paths to .dd-config.yaml."
+                ),
+            }
+        )
+
+    if not all_entries:
+        gaps.append(
+            {
+                "id": "tracker_empty",
+                "message": (
+                    "tracker is empty — `daily-driver tracker add --category task "
+                    "--title ...` to record your first item"
+                ),
+            }
+        )
+    elif all(e.id.startswith(("test-", "test_")) for e in all_entries):
+        gaps.append(
+            {
+                "id": "tracker_only_fixtures",
+                "message": (
+                    "tracker only contains test fixtures — "
+                    "`daily-driver tracker prune --category test` to clear them"
+                ),
+            }
+        )
+
+    return gaps
 
 
 def run(args: argparse.Namespace) -> int:
@@ -95,6 +200,8 @@ def run(args: argparse.Namespace) -> int:
         reverse=True,
     )
 
+    setup_gaps = _detect_setup_gaps(workspace, all_entries)
+
     if args.json:
         payload = {
             "totals": {
@@ -104,11 +211,22 @@ def run(args: argparse.Namespace) -> int:
             },
             "stalled": [_entry_to_dict(e) for e in stalled],
             "recent": [_entry_to_dict(e) for e in recent],
+            "setup_gaps": setup_gaps,
         }
         print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
         return 0
 
     console = Console(stderr=False)
+
+    # --- Setup gaps (printed first so it's visible above the tables) ---
+    if setup_gaps:
+        console.print(
+            "[bold yellow]Setup gaps "
+            "(workspace looks unconfigured, not quiet):[/bold yellow]"
+        )
+        for gap in setup_gaps:
+            console.print(f"  • {gap['message']}")
+        console.print("")
 
     # --- Totals table ---
     totals_table = Table(show_header=True, header_style="bold", title="Tracker Totals")

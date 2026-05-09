@@ -118,6 +118,61 @@ def test_status_json_format(
     assert parsed["totals"]["by_category"]["task"] == 1
 
 
+def test_status_setup_gaps_flag_unconfigured_workspace(
+    workspace: Workspace, capsys: pytest.CaptureFixture
+) -> None:
+    """A fresh `init` workspace must surface the unconfigured signals so it
+    looks different from a quiet day with nothing to report."""
+    args = _args(workspace.root, json_output=True)
+    result = run(args)
+    assert result == 0
+    envelope = json.loads(capsys.readouterr().out)
+    gap_ids = {gap["id"] for gap in envelope["data"]["setup_gaps"]}
+    # Fresh workspace: context.md / voice-profile.md absent or templated,
+    # tracker is empty, gather.git.search_paths is empty. (The Workspace.init
+    # fixture writes only .dd-config.yaml; the CLI `init` command writes the
+    # markdown templates. We accept either signal here.)
+    assert {"context_unedited", "context_missing"} & gap_ids
+    assert {"voice_profile_template", "voice_profile_empty"} & gap_ids
+    assert "gather_git_unset" in gap_ids
+    assert "tracker_empty" in gap_ids
+
+
+def test_status_setup_gaps_clear_when_configured(
+    workspace: Workspace, capsys: pytest.CaptureFixture
+) -> None:
+    """Editing context.md + voice-profile.md + adding a tracker entry +
+    setting gather.git.search_paths clears the corresponding gaps."""
+    from daily_driver.core.tracker import Tracker
+
+    (workspace.root / "context.md").write_text(
+        "# Custom context\nMy actual context.\n", encoding="utf-8"
+    )
+    (workspace.root / "voice-profile.md").write_text(
+        "# Custom voice\nMy actual voice samples.\n", encoding="utf-8"
+    )
+
+    config_path = workspace.root / ".dd-config.yaml"
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw.setdefault("gather", {}).setdefault("git", {})["search_paths"] = [
+        str(workspace.root)
+    ]
+    config_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    Tracker(workspace).add(category="task", title="Real task")
+
+    args = _args(workspace.root, json_output=True)
+    result = run(args)
+    assert result == 0
+    envelope = json.loads(capsys.readouterr().out)
+    gap_ids = {gap["id"] for gap in envelope["data"]["setup_gaps"]}
+    assert "context_unedited" not in gap_ids
+    assert "voice_profile_template" not in gap_ids
+    assert "voice_profile_empty" not in gap_ids
+    assert "gather_git_unset" not in gap_ids
+    assert "tracker_empty" not in gap_ids
+
+
 # ---------------------------------------------------------------------------
 # 4. status stalled detection — entries with updated_at >14 days old
 #    in non-terminal status are flagged

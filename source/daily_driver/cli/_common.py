@@ -13,8 +13,24 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 import daily_driver.core.logging as dd_logging
+
+
+class HelpfulArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that points users at --help on parse errors.
+
+    Standard argparse prints usage + error and exits 2. We append
+    `Run: {prog} --help` so the pointer to detailed help is one line away,
+    instead of forcing the user to read the usage line and infer it.
+    """
+
+    def error(self, message: str) -> None:  # noqa: ARG002 — argparse contract
+        self.print_usage(sys.stderr)
+        sys.stderr.write(f"{self.prog}: error: {message}\n")
+        sys.stderr.write(f"\nRun: {self.prog} --help\n")
+        sys.exit(2)
 
 
 def add_global_flags(parser: argparse.ArgumentParser) -> None:

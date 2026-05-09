@@ -245,6 +245,14 @@ class ClaudeConfig(BaseModel):
     resume_check_in: bool = False
 
 
+class FocusConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Used when `daily-driver focus on` is invoked without `--for`.
+    # Same syntax as `--for`: 30m, 2h, 1h30m, or bare minutes.
+    default_duration: str = "25m"
+
+
 class GatherGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -272,4 +280,5 @@ class Config(BaseModel):
     gather: GatherConfig = GatherConfig()
     claude: ClaudeConfig = ClaudeConfig()
     schedule: ScheduleConfig = ScheduleConfig()
+    focus: FocusConfig = FocusConfig()
     plugins: PluginsConfig = PluginsConfig()

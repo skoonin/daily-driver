@@ -53,10 +53,13 @@ def add_parser(
     p_on.add_argument(
         "--for",
         dest="duration",
-        required=True,
+        default=None,
         metavar="DURATION",
         type=_parse_duration,
-        help="Duration: 30m, 2h, 1h30m, or bare minutes",
+        help=(
+            "Duration: 30m, 2h, 1h30m, or bare minutes "
+            "(default: focus.default_duration in .dd-config.yaml, fallback 25m)"
+        ),
     )
     p_on.add_argument(
         "--reason",
@@ -92,8 +95,26 @@ def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unty
     from daily_driver.core.clock import now
 
     console = Console(stderr=False)
+
+    duration_minutes = args.duration
+    if duration_minutes is None:
+        configured = workspace.config.focus.default_duration
+        try:
+            duration_minutes = _parse_duration(configured)
+        except argparse.ArgumentTypeError as exc:
+            print(
+                f"error: invalid focus.default_duration in .dd-config.yaml: {exc}",
+                file=sys.stderr,
+            )
+            print(
+                "Run: daily-driver focus on --help",
+                file=sys.stderr,
+            )
+            return 2
+        args.duration = duration_minutes
+
     start = now()
-    end = start + datetime.timedelta(minutes=args.duration)
+    end = start + datetime.timedelta(minutes=duration_minutes)
     end_epoch = int(end.timestamp())
 
     payload = {

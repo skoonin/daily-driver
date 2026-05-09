@@ -17,7 +17,11 @@ import sys
 from typing import Protocol, cast
 
 import daily_driver
-from daily_driver.cli._common import add_global_flags, configure
+from daily_driver.cli._common import (
+    HelpfulArgumentParser,
+    add_global_flags,
+    configure,
+)
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -59,7 +63,7 @@ def app(argv: list[str] | None = None) -> int:
     Bare `daily-driver` (no subcommand) prints help and returns 2.
     `daily-driver --version` prints version string and returns 0.
     """
-    parser = argparse.ArgumentParser(
+    parser = HelpfulArgumentParser(
         prog="daily-driver",
         description=(
             "Daily Driver — ADHD-friendly daily planning, focus, and "
@@ -72,7 +76,12 @@ def app(argv: list[str] | None = None) -> int:
         version=f"daily-driver {daily_driver.__version__}",
     )
 
-    subparsers = parser.add_subparsers(dest="cmd", metavar="<command>")
+    # parser_class propagates HelpfulArgumentParser to every nested
+    # subparser, so `daily-driver focus on` (etc.) also points at --help
+    # on parse errors.
+    subparsers = parser.add_subparsers(
+        dest="cmd", metavar="<command>", parser_class=HelpfulArgumentParser
+    )
 
     # Subcommands invoked by the shipped slash commands but not useful as
     # day-to-day user-facing CLI verbs. Hidden from `daily-driver --help`

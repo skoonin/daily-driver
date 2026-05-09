@@ -74,6 +74,24 @@ def _status_args(workspace_path: Path) -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 
+def test_focus_on_uses_config_default_duration(workspace: Workspace) -> None:
+    """`focus on` without --for falls back to focus.default_duration in config."""
+    # Workspace.init() seeds .dd-config.yaml with the default 25m via FocusConfig.
+    frozen = datetime(2026, 4, 20, 9, 0, 0, tzinfo=timezone.utc)
+    clock_mod.FROZEN_TIME = frozen
+    try:
+        args = _on_args(workspace.root, duration=None)
+        result = run(args)
+    finally:
+        clock_mod.FROZEN_TIME = None
+    assert result == 0
+    lock = workspace.ephemeral_dir / "focus.lock"
+    assert lock.exists()
+    data = json.loads(lock.read_text())
+    # 25 minutes default
+    assert data["end_epoch"] == int(frozen.replace(minute=25).timestamp())
+
+
 def test_focus_on_creates_lock_file(workspace: Workspace) -> None:
     frozen = datetime(2026, 4, 20, 9, 0, 0, tzinfo=timezone.utc)
     clock_mod.FROZEN_TIME = frozen

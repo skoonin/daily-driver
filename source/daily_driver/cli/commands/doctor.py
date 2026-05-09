@@ -59,7 +59,7 @@ def _render_table(results: list[Any], console: Console) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.core.doctor import fix, reset, run_checks
+    from daily_driver.core.doctor import reset, run_checks
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
     console = Console(stderr=True)
@@ -87,9 +87,32 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     if args.fix:
+        from daily_driver.core import generate as generate_mod
+
         results = run_checks(workspace)
         _render_table(results, console)
-        results = fix(results, workspace)
+
+        # Mirror core.doctor.fix(): only run generate when a fixable drift /
+        # contract violation is present.
+        needs_gen = any(
+            r.fixable
+            and r.status != "OK"
+            and (r.name == "Workspace drift" or r.name.startswith("contract:"))
+            for r in results
+        )
+        action: generate_mod.GenerationResult | None = None
+        if needs_gen:
+            action = generate_mod.generate(
+                workspace, ignore_drift=True, force_overwrite=False
+            )
+        results = run_checks(workspace)
+
+        if action is not None:
+            console.print(
+                f"\n[bold]Action:[/bold] regenerated {action.n_written} file"
+                f"{'s' if action.n_written != 1 else ''} "
+                f"(preserved {action.n_preserved} user-edited)"
+            )
         console.print("\n[bold]After fix:[/bold]")
         _render_table(results, console)
         return 0 if all(r.status in ("OK", "WARNING") for r in results) else 1

@@ -22,7 +22,10 @@ def add_parser(
     parser = subparsers.add_parser(
         "tracker",
         parents=parents,
-        help="Manage tracker entries (add, update, list, follow-ups, stats)",
+        help=(
+            "Manage tracker entries "
+            "(add, update, delete, prune, list, follow-ups, stats)"
+        ),
     )
 
     nested = parser.add_subparsers(dest="tracker_action", metavar="<action>")
@@ -88,6 +91,46 @@ def add_parser(
     )
     add_global_flags(p_update)
     p_update.set_defaults(func=_run_update)
+
+    # --- delete ---
+    p_delete = nested.add_parser(
+        "delete", parents=parents, help="Delete a single entry by ID"
+    )
+    p_delete.add_argument("id", metavar="ID", help="Entry ID to delete")
+    add_global_flags(p_delete)
+    p_delete.set_defaults(func=_run_delete)
+
+    # --- prune ---
+    p_prune = nested.add_parser(
+        "prune",
+        parents=parents,
+        help="Bulk-delete entries by category, status, or age",
+    )
+    p_prune.add_argument(
+        "--category", default=None, metavar="CAT", help="Match category"
+    )
+    p_prune.add_argument(
+        "--status", default=None, metavar="STATUS", help="Match status"
+    )
+    p_prune.add_argument(
+        "--older-than",
+        default=None,
+        metavar="SPEC",
+        help=(
+            "Match entries last updated before SPEC "
+            "(today, yesterday, week, month, quarter, year, "
+            "Nd, Nw, Nm, Ny, YYYY-MM-DD)"
+        ),
+    )
+    p_prune.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print matching entries without deleting them",
+    )
+    add_global_flags(p_prune)
+    p_prune.set_defaults(func=_run_prune)
 
     # --- list ---
     p_list = nested.add_parser("list", parents=parents, help="List tracker entries")
@@ -248,6 +291,54 @@ def _run_update(args: argparse.Namespace, tracker: Any) -> int:
     return 0
 
 
+def _run_delete(args: argparse.Namespace, tracker: Any) -> int:
+    try:
+        entry = tracker.delete(args.id)
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Deleted {entry.id}: {entry.title}", file=sys.stderr)
+    return 0
+
+
+def _run_prune(args: argparse.Namespace, tracker: Any) -> int:
+    older_than = None
+    if args.older_than is not None:
+        from daily_driver.core.dates import parse_since
+
+        try:
+            older_than = parse_since(args.older_than)
+        except ValueError as exc:
+            print(f"error: --older-than: {exc}", file=sys.stderr)
+            return 2
+    try:
+        removed = tracker.prune(
+            category=args.category,
+            status=args.status,
+            older_than=older_than,
+            dry_run=args.dry_run,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if not removed:
+        print("No matching entries.", file=sys.stderr)
+        return 0
+
+    label = "Would delete" if args.dry_run else "Deleted"
+    for entry in removed:
+        print(
+            f"{label} {entry.id} [{entry.category}/{entry.status}]: {entry.title}",
+            file=sys.stderr,
+        )
+    print(
+        f"{label} {len(removed)} entr{'y' if len(removed) == 1 else 'ies'}.",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def _run_list(args: argparse.Namespace, tracker: Any) -> int:
     since = None
     if args.since is not None:
@@ -325,7 +416,10 @@ def run(args: argparse.Namespace) -> int:
         # No nested action selected — print help and exit.
         # Retrieve the tracker subparser's help via re-parse with -h.
         print("usage: daily-driver tracker <action> ...", file=sys.stderr)
-        print("actions: add, update, list, follow-ups, stats", file=sys.stderr)
+        print(
+            "actions: add, update, delete, prune, list, follow-ups, stats",
+            file=sys.stderr,
+        )
         return 2
 
     workspace_override = getattr(args, "workspace", None)
