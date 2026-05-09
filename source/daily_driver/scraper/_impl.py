@@ -27,7 +27,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from xml.etree import ElementTree as ET
 
 if TYPE_CHECKING:
     from daily_driver.scraper.models import (
@@ -40,7 +39,7 @@ if sys.platform != "win32":
 
 import requests
 import yaml
-from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+from bs4 import XMLParsedAsHTMLWarning
 
 from daily_driver.core.clock import today
 from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
@@ -102,6 +101,14 @@ from daily_driver.scraper.sources._http import (  # noqa: E402,F401
     _http_session,
     _playwright_browser,
     country_params,
+)
+from daily_driver.scraper.sources.greenhouse import scrape_greenhouse  # noqa: E402,F401
+from daily_driver.scraper.sources.hn_who_is_hiring import (  # noqa: E402,F401
+    scrape_hn_who_is_hiring,
+)
+from daily_driver.scraper.sources.remoteok import scrape_remoteok  # noqa: E402,F401
+from daily_driver.scraper.sources.weworkremotely import (  # noqa: E402,F401
+    scrape_weworkremotely,
 )
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -511,321 +518,6 @@ def _search_terms(config: dict) -> list[str]:
     if explicit:
         return list(explicit)
     return _compress_search_terms(roles_list(config))
-
-
-# ── Scrapers ──────────────────────────────────────────────────────────────────
-
-
-def scrape_remoteok(config: dict) -> list[dict]:
-    """Fetch jobs from RemoteOK's public JSON API.
-
-    GET https://remoteok.com/api returns all current listings as JSON.
-    No auth or browser required. We filter client-side with matches_roles().
-    """
-    roles = roles_list(config)
-    session = _http_session(config)
-    jobs: list[dict] = []
-    seen_ids: set[str] = set()
-
-    resp = _api_get(session, "https://remoteok.com/api", config, label="remoteok")
-    if not resp:
-        return jobs
-
-    for item in resp.json():
-        if "position" not in item:
-            continue
-        role = item["position"]
-        if not matches_roles(role, roles, config):
-            continue
-        job_id = str(item.get("id", ""))
-        if job_id in seen_ids:
-            continue
-        if job_id:
-            seen_ids.add(job_id)
-        sal_min = item.get("salary_min")
-        sal_max = item.get("salary_max")
-        currency = item.get("salary_currency") or "USD"
-        prefix = "$" if currency == "USD" else f"{currency} "
-        comp = (
-            f"{prefix}{int(sal_min):,}-{prefix}{int(sal_max):,}/yr"
-            if sal_min and sal_max
-            else ""
-        )
-        job: dict = {
-            "company": item.get("company", ""),
-            "role": role,
-            "location": item.get("location", "") or "Remote",
-            "url": item.get("url", ""),
-            "source": "RemoteOK",
-            "date_found": today().isoformat(),
-        }
-        if comp:
-            job["comp"] = comp
-        jobs.append(job)
-
-    log.info("[remoteok] %d jobs matched", len(jobs))
-    return jobs
-
-
-def scrape_weworkremotely(config: dict) -> list[dict]:
-    """Fetch jobs from WeWorkRemotely's public RSS feeds.
-
-    WWR publishes per-category RSS at
-    /categories/remote-{category}-jobs.rss. Categories are configured under
-    plugins.job_search.scraper.wwr_categories in .dd-config.yaml.
-    No auth or browser required.
-    """
-    roles = roles_list(config)
-    session = _http_session(config)
-    jobs: list[dict] = []
-    seen_urls: set[str] = set()
-
-    categories = scraper_cfg(config).wwr_categories
-    if not categories:
-        log.warning("[weworkremotely] no wwr_categories configured; skipping")
-        return jobs
-
-    for category in categories:
-        url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
-        resp = _api_get(session, url, config, label="weworkremotely")
-        if not resp:
-            continue
-
-        try:
-            root = ET.fromstring(resp.content)
-        except ET.ParseError as exc:
-            log.warning("[weworkremotely] RSS parse failed for %s: %s", category, exc)
-            continue
-
-        for item in root.findall(".//item"):
-            raw_title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            region = (item.findtext("region") or "Remote").strip()
-
-            # Title format: "Company: Role Title"
-            if ": " in raw_title:
-                company, role = raw_title.split(": ", 1)
-            else:
-                company, role = "", raw_title
-
-            if not role or not matches_roles(role, roles, config):
-                continue
-            if link in seen_urls:
-                continue
-            if link:
-                seen_urls.add(link)
-
-            jobs.append(
-                {
-                    "company": company,
-                    "role": role,
-                    "location": region,
-                    "url": link,
-                    "source": "We Work Remotely",
-                    "date_found": today().isoformat(),
-                }
-            )
-
-    log.info("[weworkremotely] %d jobs matched", len(jobs))
-    return jobs
-
-
-def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
-    """Scrape the current month's HN Who's Hiring thread via Algolia API.
-
-    Index-page fetch resolves the thread ID from HN's HTML (unchanged).
-    Comment retrieval uses Algolia's public search API instead of parsing
-    HN's HTML comment tree, which breaks on markup changes.
-    Comment headline format (convention): "Company | Role | Location | ..."
-    """
-    max_posts = scraper_cfg(config).hn_max_posts
-    roles = roles_list(config)
-    session = _http_session(config)
-    current_month_str = today().strftime("%B %Y")
-
-    index_resp = _api_get(
-        session,
-        "https://news.ycombinator.com/submitted?id=whoishiring",
-        config,
-        label="hn_who_is_hiring",
-    )
-    if not index_resp:
-        return []
-
-    index_soup = BeautifulSoup(index_resp.text, "html.parser")
-
-    thread_id = None
-    for a_tag in index_soup.find_all("a"):
-        text = a_tag.get_text(strip=True)
-        if "Who is hiring?" in text and current_month_str in text:
-            href_raw = a_tag.get("href", "")
-            href = href_raw if isinstance(href_raw, str) else ""
-            if href.startswith("item?id="):
-                thread_id = href.split("=", 1)[1]
-            elif "item?id=" in href:
-                thread_id = href.split("item?id=", 1)[1].split("&")[0]
-            break
-
-    if not thread_id:
-        log.warning(
-            "[hn_who_is_hiring] could not find thread for %s", current_month_str
-        )
-        return []
-
-    algolia_url = (
-        f"https://hn.algolia.com/api/v1/search"
-        f"?tags=comment,story_{thread_id}&hitsPerPage=1000"
-    )
-    algolia_resp = _api_get(
-        session, algolia_url, config, label="hn_who_is_hiring_algolia"
-    )
-    if not algolia_resp:
-        return []
-
-    data = algolia_resp.json()
-    hits = data.get("hits", [])
-    total = data.get("nbHits", len(hits))
-    if isinstance(total, int) and total > 1000:
-        log.warning(
-            "[hn_who_is_hiring] thread has %d comments; only first 1000 retrieved",
-            total,
-        )
-
-    # Strip HTML tags from Algolia comment_text (simple tag-only removal;
-    # avoids pulling in a new dependency for this narrow use case).
-    _strip_tags = re.compile(r"<[^>]+>")
-
-    jobs: list[dict[str, Any]] = []
-    thread_url = f"https://news.ycombinator.com/item?id={thread_id}"
-
-    for hit in hits:
-        if len(jobs) >= max_posts:
-            break
-
-        raw_html = hit.get("comment_text") or ""
-        if not raw_html:
-            continue
-
-        raw_text = _strip_tags.sub("", raw_html).strip()
-        # Decode the handful of HTML entities that appear in HN posts.
-        raw_text = (
-            raw_text.replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", '"')
-            .replace("&#x27;", "'")
-        )
-        first_line = raw_text.split("\n")[0].strip()
-        if not first_line:
-            continue
-
-        parts = [p.strip() for p in first_line.split("|")]
-        if len(parts) < 2:
-            continue
-
-        company = parts[0]
-        role = parts[1] if len(parts) > 1 else ""
-
-        if not matches_roles(" ".join(parts), roles, config):
-            continue
-
-        location = "Remote"
-        for part in parts[2:]:
-            if re.search(r"\bremote\b", part, re.IGNORECASE):
-                location = "Remote"
-                break
-            if len(part) < 40 and "http" not in part and "$" not in part:
-                location = part
-                break
-
-        comment_id = hit.get("objectID", "")
-        url = (
-            f"https://news.ycombinator.com/item?id={comment_id}"
-            if comment_id
-            else thread_url
-        )
-
-        jobs.append(
-            {
-                "company": company,
-                "role": role,
-                "location": location,
-                "url": url,
-                "source": "HN Who's Hiring",
-                "date_found": today().isoformat(),
-            }
-        )
-
-    log.info("[hn_who_is_hiring] %d jobs matched", len(jobs))
-    return jobs
-
-
-def scrape_greenhouse(config: dict) -> list[dict]:
-    """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
-
-    Reads board slugs from config at job_search.scraper.greenhouse_boards
-    (default: ["anthropic"]). Each slug maps to
-    https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
-    which returns all jobs with full HTML descriptions in a single request.
-    """
-    roles = roles_list(config)
-    boards = scraper_cfg(config).greenhouse_boards
-    session = _http_session(config)
-    jobs: list[dict] = []
-
-    for board in boards:
-        api_url = (
-            f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
-        )
-        resp = _api_get(session, api_url, config, label=f"greenhouse/{board}")
-        if not resp:
-            continue
-        data = resp.json()
-
-        board_jobs = data.get("jobs", [])
-        company_name = board.replace("-", " ").title()
-        # Use the first job's metadata to get the real company name if available.
-        if board_jobs:
-            first_meta = board_jobs[0].get("company_name")
-            if first_meta:
-                company_name = first_meta
-
-        for entry in board_jobs:
-            title = entry.get("title", "")
-            if not title or not matches_roles(title, roles, config):
-                continue
-
-            loc = entry.get("location", {})
-            location = loc.get("name", "") if isinstance(loc, dict) else str(loc)
-
-            absolute_url = entry.get("absolute_url", "")
-            desc_html = entry.get("content", "")
-            desc_text = ""
-            if desc_html:
-                desc_text = BeautifulSoup(desc_html, "html.parser").get_text(
-                    " ", strip=True
-                )
-
-            jobs.append(
-                {
-                    "company": company_name,
-                    "role": title,
-                    "location": location or "Remote",
-                    "url": absolute_url,
-                    "source": f"Greenhouse ({board})",
-                    "date_found": today().isoformat(),
-                    "description_text": desc_text,
-                }
-            )
-
-        log.info(
-            "[greenhouse] %s: %d jobs matched out of %d listed",
-            board,
-            sum(1 for j in jobs if j["source"] == f"Greenhouse ({board})"),
-            len(board_jobs),
-        )
-
-    return jobs
 
 
 # ── JobSpy (LinkedIn + Indeed + Glassdoor + Google) ──────────────────────────
