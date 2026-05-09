@@ -313,6 +313,259 @@ def test_day_start_surfaces_oserror_from_plan_stub_cleanly(
     assert "Traceback" not in err
 
 
+def test_check_in_does_not_resume_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: claude.resume_check_in defaults False; no --resume even with state."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import DailyState, write_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_spawn(prompt=None, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    write_state(
+        ws,
+        DailyState(
+            date=clock.today(), last_day_start_session_id="some-uuid-from-morning"
+        ),
+    )
+
+    rc = app(["--workspace", str(ws_root), "check-in"])
+    assert rc == 0
+    assert captured.get("resume_session_id") is None
+
+
+def test_check_in_resumes_when_config_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: with claude.resume_check_in=true and state in place, --resume <uuid> is passed."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import DailyState, write_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    cfg_path = ws_root / ".dd-config.yaml"
+    existing = cfg_path.read_text(encoding="utf-8")
+    cfg_path.write_text(
+        existing + "\nclaude:\n  resume_check_in: true\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    captured: dict[str, object] = {}
+
+    def fake_spawn(prompt=None, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    sid = "11111111-2222-3333-4444-555555555555"
+    write_state(ws, DailyState(date=clock.today(), last_day_start_session_id=sid))
+
+    rc = app(["--workspace", str(ws_root), "check-in"])
+    assert rc == 0
+    assert captured.get("resume_session_id") == sid
+
+
+def test_check_in_falls_back_when_resume_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """F3: resume failure → warn + retry without --resume; never silent."""
+    import subprocess as _sp
+
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import DailyState, write_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    cfg_path = ws_root / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text() + "\nclaude:\n  resume_check_in: true\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+
+    calls: list[dict[str, object]] = []
+
+    def fake_spawn(prompt=None, **kwargs):
+        calls.append(dict(kwargs))
+        if kwargs.get("resume_session_id"):
+            raise _sp.CalledProcessError(
+                returncode=2,
+                cmd=["claude", "--resume", str(kwargs["resume_session_id"])],
+                output="",
+                stderr="session not found",
+            )
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    sid = "11111111-2222-3333-4444-555555555555"
+    write_state(ws, DailyState(date=clock.today(), last_day_start_session_id=sid))
+
+    rc = app(["--workspace", str(ws_root), "check-in"])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert len(calls) == 2
+    assert calls[0]["resume_session_id"] == sid
+    assert calls[1].get("resume_session_id") is None
+    assert "could not resume" in err
+    assert sid in err
+
+    # Fallback success path must still record last_check_in_at.
+    from daily_driver.core.daily_state import read_state as _read_state
+
+    after = _read_state(ws, clock.today())
+    assert after is not None
+    assert after.last_check_in_at is not None
+    assert after.last_day_start_session_id == sid
+
+
+def test_check_in_records_last_check_in_at_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: a successful check-in updates last_check_in_at, preserving prior fields."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import DailyState, read_state, write_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    sid = "abc"
+    write_state(
+        ws,
+        DailyState(
+            date=clock.today(),
+            last_day_start_session_id=sid,
+            plan_summary="prior",
+        ),
+    )
+
+    rc = app(["--workspace", str(ws_root), "check-in"])
+    assert rc == 0
+
+    after = read_state(ws, clock.today())
+    assert after is not None
+    assert after.last_check_in_at is not None
+    assert after.last_day_start_session_id == sid
+    assert after.plan_summary == "prior"
+
+
+def test_check_in_skips_state_update_on_nonzero_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: a failed claude session must not record last_check_in_at (avoid lying)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import read_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 7)
+
+    rc = app(["--workspace", str(ws_root), "check-in"])
+    assert rc == 7
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    after = read_state(ws, clock.today())
+    # No prior state → still none after a failed run.
+    assert after is None
+
+
+def test_check_in_state_write_failure_does_not_mask_session_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """F3: a state-write failure post-session must warn, not flip rc to 1."""
+    from daily_driver.cli.cli import app
+    from daily_driver.cli.commands import check_in as check_in_mod
+    from daily_driver.integrations import claude_cli
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
+
+    def boom(_workspace: object) -> None:
+        raise PermissionError("simulated read-only state dir")
+
+    monkeypatch.setattr(check_in_mod, "_record_check_in", boom)
+
+    rc = app(["--workspace", str(ws), "check-in"])
+    err = capsys.readouterr().err
+
+    assert rc == 0
+    assert "warning:" in err
+    assert "last_check_in_at" in err
+    assert "simulated read-only" in err
+    assert "Traceback" not in err
+
+
+def test_check_in_no_resume_flag_overrides_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: --no-resume forces a fresh session even when config says resume."""
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.core.daily_state import DailyState, write_state
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import claude_cli
+
+    ws_root = _init_workspace(tmp_path)
+    cfg_path = ws_root / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text() + "\nclaude:\n  resume_check_in: true\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    captured: dict[str, object] = {}
+
+    def fake_spawn(prompt=None, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    ws = Workspace.discover_or_fail(override=ws_root)
+    write_state(
+        ws,
+        DailyState(date=clock.today(), last_day_start_session_id="abc"),
+    )
+
+    rc = app(["--workspace", str(ws_root), "check-in", "--no-resume"])
+    assert rc == 0
+    assert captured.get("resume_session_id") is None
+
+
 def test_interactive_launcher_propagates_claude_exit_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

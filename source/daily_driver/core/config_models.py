@@ -199,6 +199,18 @@ class PluginsConfig(BaseModel):
     job_search: JobSearchPlugin | None = None
 
 
+class ClaudeConfig(BaseModel):
+    """Knobs for how daily-driver invokes the `claude` CLI."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # When True, /check-in tries to --resume the day-start session UUID stored
+    # in <workspace>/.daily-driver/state/daily/<date>.yaml. Defaults False per
+    # plan §6 WS-Daily F3 — flip after measuring context-window growth across
+    # a typical day, or per-user once flipped.
+    resume_check_in: bool = False
+
+
 class GatherGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -224,4 +236,5 @@ class Config(BaseModel):
     voice_profile: VoiceProfile = VoiceProfile()
     tracker: TrackerConfig
     gather: GatherConfig = GatherConfig()
+    claude: ClaudeConfig = ClaudeConfig()
     plugins: PluginsConfig = PluginsConfig()

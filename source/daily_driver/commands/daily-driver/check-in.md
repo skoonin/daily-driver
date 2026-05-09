@@ -3,7 +3,17 @@ name: check-in
 description: Mid-day check-in - review progress against plan and update status
 ---
 
-> If this session was resumed from day-start, planning context is already loaded; skip redundant plan re-reads in steps 1-2.
+> Verify resume status from the daily-state marker before assuming planning context is loaded:
+>
+> ```bash
+> daily-driver paths daily-state
+> ```
+>
+> Read the YAML at that path. If `last_day_start_session_id` is set AND your CLI was launched with `--resume`, planning context is loaded — skip redundant plan re-reads in steps 1-2. If the file is missing or has no `last_day_start_at`, surface this notice once at the top of the check-in:
+>
+> > Note: no day-start plan recorded for today. Continuing without a plan baseline.
+>
+> Then proceed normally — the user decides whether to abort and run /day-start.
 
 Mid-day check-in session. Follow these steps in order.
 
