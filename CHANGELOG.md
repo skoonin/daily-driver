@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **YAML key `scheduler.scrape_jobs:` → `scheduler.jobs:`** in `.dd-config.yaml`. Stale keys raise `SchedulerError` at `install-scheduler` time pointing at the new key.
 - **YAML key `plugins.job_search.scraper.jobspy:` → `plugins.job_search.scraper.jobs:`**. Pydantic model renamed `JobSpyConfig` → `JobsConfig`. Stale `scraper.jobspy:` keys raise `ValidationError` (extra='forbid').
 - **launchd label `com.daily-driver.scrape-jobs` → `com.daily-driver.jobs`** and plist filename `scrape-jobs.plist.j2` → `jobs.plist.j2`. `install-scheduler` and `uninstall-scheduler` now sweep the legacy label automatically — pre-rename plists at `~/Library/LaunchAgents/com.daily-driver.scrape-jobs.plist` are unloaded and removed on the next install or uninstall.
+- **Log file paths renamed**: `launchd-scrape-jobs.{out,err}` → `launchd-jobs.{out,err}` under `.daily-driver/state/logs/`. Old log files are not auto-deleted; remove `launchd-scrape-jobs.{out,err}` manually if you want to clean up.
 - **Migration**: update your `.dd-config.yaml` (rename both `scheduler.scrape_jobs` and any `scraper.jobspy:` block), then re-run `daily-driver install-scheduler`.
 
 ### Added

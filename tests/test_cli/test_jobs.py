@@ -169,6 +169,20 @@ def test_jobs_run_list_sources_prints_registry(
     assert "remoteok" in out
 
 
+def test_jobs_run_empty_sources_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--sources ',,, '` parses to [] and must hard-fail rather than silently run zero."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), "jobs", "run", "--sources", ",,, ,"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "empty list" in err
+
+
 def test_jobs_run_unknown_source_exits_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

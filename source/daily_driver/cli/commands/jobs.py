@@ -123,6 +123,12 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     raw_sources = getattr(args, "sources", None)
     if raw_sources:
         sources_override = [s.strip() for s in raw_sources.split(",") if s.strip()]
+        if not sources_override:
+            print(
+                "error: --sources parsed to an empty list (only commas/whitespace?)",
+                file=sys.stderr,
+            )
+            return 2
         unknown = [s for s in sources_override if s not in SCRAPERS]
         if unknown:
             print(
