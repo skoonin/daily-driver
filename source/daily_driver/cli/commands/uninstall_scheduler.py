@@ -8,6 +8,8 @@ from pathlib import Path
 
 from rich.console import Console
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -18,6 +20,7 @@ def add_parser(
         parents=parents,
         help="Remove launchd scheduler plists (macOS only)",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 

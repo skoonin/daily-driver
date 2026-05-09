@@ -12,6 +12,8 @@ from typing import Any
 from rich.console import Console
 from rich.table import Table
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -58,6 +60,7 @@ def add_parser(
         metavar="KEY=VALUE",
         help="Extra key=value pairs (repeatable)",
     )
+    add_global_flags(p_add)
     p_add.set_defaults(func=_run_add)
 
     # --- update ---
@@ -83,6 +86,7 @@ def add_parser(
         metavar="KEY=VALUE",
         help="Extra key=value pairs (repeatable, merged into existing)",
     )
+    add_global_flags(p_update)
     p_update.set_defaults(func=_run_update)
 
     # --- list ---
@@ -106,6 +110,7 @@ def add_parser(
     p_list.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_list)
     p_list.set_defaults(func=_run_list)
 
     # --- follow-ups ---
@@ -121,6 +126,7 @@ def add_parser(
     p_fu.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_fu)
     p_fu.set_defaults(func=_run_follow_ups)
 
     # --- stats ---
@@ -130,6 +136,7 @@ def add_parser(
     p_stats.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_stats)
     p_stats.set_defaults(func=_run_stats)
 
     parser.set_defaults(func=run)

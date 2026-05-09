@@ -7,6 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
@@ -88,6 +89,7 @@ def add_parser(
         default=180,
         help="Seconds to wait for claude before failing (default: 180).",
     )
+    add_global_flags(parser)
     return parser
 
 
@@ -114,9 +116,7 @@ def run(args: argparse.Namespace) -> int:
 
     prompt = build_prompt(source_files, current_profile=current_profile, mode=mode)
 
-    from daily_driver.cli._common import dry_run_skip_claude
-
-    if dry_run_skip_claude(args, action="claude voice-profile rewrite"):
+    if args.dry_run:
         print(f"dry-run: would invoke claude with {len(prompt)} char prompt")
         print(f"dry-run: would write to {profile_path}")
         return 0

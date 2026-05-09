@@ -11,6 +11,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._utils import resolve_date
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -27,6 +28,7 @@ def add_parser(
     nested = parser.add_subparsers(dest="read_what", metavar="<what>")
 
     p_context = nested.add_parser("context", parents=parents, help="Print context.md")
+    add_global_flags(p_context)
     p_context.set_defaults(func=_run_context)
 
     p_voice = nested.add_parser(
@@ -34,6 +36,7 @@ def add_parser(
         parents=parents,
         help="Print voice-profile.md; prints '(no voice profile ...)' marker on missing/empty",
     )
+    add_global_flags(p_voice)
     p_voice.set_defaults(func=_run_voice_profile)
 
     p_plan = nested.add_parser("plan", parents=parents, help="Print a daily plan file")
@@ -47,6 +50,7 @@ def add_parser(
         action="store_true",
         help="Only emit YAML frontmatter",
     )
+    add_global_flags(p_plan)
     p_plan.set_defaults(func=_run_plan)
 
     parser.set_defaults(func=run)

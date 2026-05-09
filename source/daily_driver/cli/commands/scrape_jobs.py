@@ -8,6 +8,8 @@ import logging
 import sys
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
+
 
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
@@ -33,6 +35,7 @@ def add_parser(
         action="store_true",
         help="Re-enrich empty fields in existing jobs.csv rows",
     )
+    add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
 
     p_status = nested.add_parser(
@@ -44,6 +47,7 @@ def add_parser(
         default=False,
         help="Emit JSON output wrapped in {schema, data}",
     )
+    add_global_flags(p_status)
     p_status.set_defaults(func=_run_status)
 
     p_prune = nested.add_parser(
@@ -76,6 +80,7 @@ def add_parser(
         action="store_true",
         help="Print prune candidates without writing to disk",
     )
+    add_global_flags(p_prune)
     p_prune.set_defaults(func=_run_prune)
 
     parser.set_defaults(func=run)
@@ -141,10 +146,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     from rich.table import Table
 
     from daily_driver.core.dates import parse_since
-    from daily_driver.core.jobs_archive import (
-        DEFAULT_PRUNE_STATUSES,
-        prune,
-    )
+    from daily_driver.core.jobs_archive import DEFAULT_PRUNE_STATUSES, prune
 
     try:
         cutoff = parse_since(args.older_than)
@@ -153,17 +155,19 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         return 2
 
     if args.status:
-        statuses = frozenset(s.strip().lower() for s in args.status if s.strip())
+        statuses = tuple(s.strip().lower() for s in args.status if s.strip())
     else:
         statuses = DEFAULT_PRUNE_STATUSES
 
     output_dir = _resolve_output_dir(workspace)
     csv_path = output_dir / "jobs.csv"
 
-    result = prune(csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run)
+    candidates, archived = prune(
+        csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run
+    )
 
     console = Console(stderr=False)
-    if not result.candidates:
+    if not candidates:
         console.print("[dim]No rows match prune criteria.[/dim]")
         return 0
 
@@ -175,17 +179,18 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     table.add_column("Status")
     table.add_column("Date Last Seen")
     table.add_column("Role")
-    for c in result.candidates:
-        table.add_row(c.company, c.status, c.date_last_seen, c.role)
+    for row in candidates:
+        table.add_row(
+            row.get("Company", ""),
+            row.get("Status", ""),
+            row.get("Date Last Seen", "") or row.get("Date Found", ""),
+            row.get("Role", ""),
+        )
     console.print(table)
     if args.dry_run:
-        console.print(
-            f"[yellow]Dry-run: {len(result.candidates)} would be pruned.[/yellow]"
-        )
+        console.print(f"[yellow]Dry-run: {len(candidates)} would be pruned.[/yellow]")
     else:
-        console.print(
-            f"[green]Archived {result.archived} rows to jobs.archive.csv.[/green]"
-        )
+        console.print(f"[green]Archived {archived} rows to jobs.archive.csv.[/green]")
     return 0
 
 

@@ -221,9 +221,9 @@ def uninstall_all(workspace: Workspace) -> list[str]:
 
     state_dir = _state_launchd_dir(workspace)
     if state_dir.exists():
-        for child in state_dir.iterdir():
-            child.unlink()
-        state_dir.rmdir()
+        # rmtree handles non-empty trees and is idempotent under ignore_errors —
+        # safer than iterdir + unlink which crashes if a non-plist subdir lands here.
+        shutil.rmtree(state_dir, ignore_errors=True)
 
     return removed
 

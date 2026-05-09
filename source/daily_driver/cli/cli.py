@@ -1,9 +1,10 @@
 """CLI entry point for daily-driver.
 
 Builds the argparse tree and dispatches subcommands. Global flags
-(`-v/-q/--no-color/--workspace`) live on `cli._common.GLOBAL_PARSER` and are
-applied to both the top-level parser and every leaf via `parents=[...]`,
-so they work in either position: `daily-driver -v tracker list` and
+(`-v/-q/--no-color/--workspace`) are registered via
+`cli._common.add_global_flags(parser)` on the top-level parser and inside
+each leaf's `add_parser` (called AFTER local args so they render at the
+bottom of `--help`). This makes `daily-driver -v tracker list` and
 `daily-driver tracker list -v` both parse.
 """
 
@@ -16,7 +17,7 @@ import sys
 from typing import Protocol, cast
 
 import daily_driver
-from daily_driver.cli._common import GLOBAL_PARSER, configure
+from daily_driver.cli._common import add_global_flags, configure
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -62,7 +63,6 @@ def app(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="daily-driver",
         description="Daily Driver — job search planning and accountability CLI.",
-        parents=[GLOBAL_PARSER],
     )
     parser.add_argument(
         "--version",
@@ -79,8 +79,12 @@ def app(argv: list[str] | None = None) -> int:
     _cmd_map: dict[str, _CommandModule] = {}
     for cmd_name, module_path in _COMMANDS:
         module = cast(_CommandModule, importlib.import_module(module_path))
-        module.add_parser(subparsers, [GLOBAL_PARSER])
+        module.add_parser(subparsers, [])
         _cmd_map[cmd_name] = module
+
+    # Register globals on the top-level parser AFTER subparsers so they render
+    # at the bottom of `daily-driver --help`.
+    add_global_flags(parser)
 
     # parse_args() raises SystemExit for --version, --help, or bad flags.
     args = parser.parse_args(argv)

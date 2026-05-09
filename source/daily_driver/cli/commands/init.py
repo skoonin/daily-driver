@@ -8,6 +8,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.core.materialize import materialize
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -34,6 +35,7 @@ def add_parser(
         default=False,
         help="Overwrite existing .dd-config.yaml.",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.integrations import claude_cli
 
@@ -80,6 +81,7 @@ def register_interactive_launcher(
         default=None,
         help="Model alias or name (e.g., 'sonnet', 'opus')",
     )
+    add_global_flags(parser)
     parser.set_defaults(func=_build_run(slash_command, session_prefix))
     return parser
 

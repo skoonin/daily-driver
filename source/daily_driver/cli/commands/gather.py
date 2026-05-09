@@ -12,6 +12,7 @@ import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.core.clock import today
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.gathers import calendar as gather_calendar
@@ -37,6 +38,7 @@ def add_parser(
     p_cal.add_argument("--since", default=None, help="ISO date (default: today)")
     p_cal.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
     p_cal.add_argument("--json", action="store_true", help="Emit JSON")
+    add_global_flags(p_cal)
     p_cal.set_defaults(func=_run_calendar)
 
     p_git = nested.add_parser(
@@ -55,6 +57,7 @@ def add_parser(
     )
     p_git.add_argument("--until", default=None, help="ISO date (default: now)")
     p_git.add_argument("--json", action="store_true", help="Emit JSON")
+    add_global_flags(p_git)
     p_git.set_defaults(func=_run_git)
 
     p_sess = nested.add_parser(
@@ -63,6 +66,7 @@ def add_parser(
     p_sess.add_argument("--since", default=None, help="ISO date (default: today)")
     p_sess.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
     p_sess.add_argument("--json", action="store_true", help="Emit JSON")
+    add_global_flags(p_sess)
     p_sess.set_defaults(func=_run_sessions)
 
     p_notes = nested.add_parser(
@@ -71,6 +75,7 @@ def add_parser(
     p_notes.add_argument("--since", default=None, help="ISO date (default: 7d ago)")
     p_notes.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
     p_notes.add_argument("--json", action="store_true", help="Emit JSON")
+    add_global_flags(p_notes)
     p_notes.set_defaults(func=_run_notes)
 
     parser.set_defaults(func=run)

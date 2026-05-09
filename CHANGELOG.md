@@ -6,14 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Breaking
-- `daily-driver uninstall-scheduler --keep-state` removed. The state mirror under `.daily-driver/state/launchd/` is now always cleaned up on uninstall. The `keep_state` parameter on `core.scheduler.uninstall_all()` is also gone.
-
 ### Added
-- `cli/_common.py`: `GLOBAL_PARSER` defines `-v/-q/--no-color/--workspace` once with `default=argparse.SUPPRESS`; both top-level and every leaf use it via `parents=[...]`. `daily-driver tracker list -v` (and `--workspace PATH` after the subcommand) now parse correctly — previously a parse error.
+- `cli/_common.py`: `add_global_flags(parser)` registers `-v/-q/--no-color/--workspace` (with `default=argparse.SUPPRESS`) into a "global options" group; every leaf calls it AFTER its local args so globals render at the bottom of `--help`. `daily-driver tracker list -v` (and `--workspace PATH` after the subcommand) now parse correctly — previously a parse error.
 - `daily-driver tracker list --since SPEC`: filters by `updated_at >= parse_since(SPEC)`.
 - `daily-driver scrape-jobs prune --older-than SPEC [--status STATUS] [--dry-run]`: moves stale rows from `jobs.csv` to `jobs.archive.csv` (default statuses: `dropped, rejected, closed`). Scraper now unions URLs and dedup-keys from both files at run start so triaged listings are never re-discovered.
-- `jobs.csv` schema: added `Date Last Seen` and `Date Last Updated` columns. Auto-populated on append; existing CSVs are migrated by the legacy-header migrator on next scrape.
+- `jobs.csv` schema: added `Date Last Seen` column (defaults to `Date Found` on insert). Drives `prune --older-than`. The on-rescan upsert path is owned by W5/W6; until that lands, prune effectively ages from first-discovery. Existing CSVs are migrated by the legacy-header migrator on next scrape.
 - Time-injection hook: `init` materializes `<workspace>/.claude/hooks/hook-current-time.sh` and wires it into `settings.local.json` under `hooks.UserPromptSubmit`. Injects current local time into Claude context on every user message.
 - `core/dates.py`: unified `parse_since` / `parse_range` parser shared by `summary` and `gather`. Grammar: `today|yesterday|tomorrow`, `week|month|quarter|year`, `Nd|Nw|Nm|Ny`, `YYYY-MM-DD`, `YYYY-MM-DD:YYYY-MM-DD`. Month math clamps to last day (`Jan 31 - 1m → Dec 31`).
 - CLI short flags: `-f` for `--force` (`init`), `-n` for `--dry-run` (`scrape-jobs run`, `voice-update`).
@@ -22,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - `core/config_models.py`: `ScraperConfig.playwright_delays` is now `dict[str, PlaywrightDelays]` and `sources` is `dict[str, SourceToggle]` (auto-coerces legacy `bool` values via a `field_validator`). Replaces ad-hoc dict access in `scraper/_impl.py`.
+
+### Removed
+- **BREAKING**: `daily-driver uninstall-scheduler --keep-state` removed. The state mirror under `.daily-driver/state/launchd/` is now always cleaned up on uninstall. The `keep_state` parameter on `core.scheduler.uninstall_all()` is also gone.
 
 ### Fixed -- doctor (W11)
 - `cli/commands/doctor.py`: running `daily-driver doctor` (or `--fix` / `--reset`) without a discoverable workspace now exits 1 with a clear `error: no workspace at <path> (run 'daily-driver init <path>' to scaffold one)` message instead of silently reporting only dependency checks. Resolves review-2026-04-23 #10.

@@ -76,6 +76,8 @@ def test_init_scaffolds_time_hook(tmp_path: Path) -> None:
     assert user_prompt_hooks, "UserPromptSubmit hook must be wired"
     cmd = user_prompt_hooks[0]["hooks"][0]["command"]
     assert "hook-current-time.sh" in cmd
+    # Workspace path is quoted so paths with spaces (e.g. iCloud Drive) work.
+    assert cmd.count('"') >= 2
 
 
 def test_init_config_parses_via_load(tmp_path: Path) -> None:

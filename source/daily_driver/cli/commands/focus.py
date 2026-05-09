@@ -11,6 +11,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from daily_driver.cli._common import add_global_flags
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
 
@@ -63,9 +64,11 @@ def add_parser(
         metavar="TEXT",
         help="Optional reason",
     )
+    add_global_flags(p_on)
     p_on.set_defaults(func=_run_on)
 
     p_off = nested.add_parser("off", parents=parents, help="End focus mode")
+    add_global_flags(p_off)
     p_off.set_defaults(func=_run_off)
 
     p_status = nested.add_parser(
@@ -74,6 +77,7 @@ def add_parser(
     p_status.add_argument(
         "--json", action="store_true", default=False, help="Emit JSON output"
     )
+    add_global_flags(p_status)
     p_status.set_defaults(func=_run_status)
 
     parser.set_defaults(func=run)

@@ -258,21 +258,13 @@ def _copy_hooks(workspace: Workspace) -> None:
     """Copy package-managed hook scripts into <workspace>/.claude/hooks/."""
     hooks_dest = workspace.root / ".claude" / "hooks"
     hooks_dest.mkdir(parents=True, exist_ok=True)
-    try:
-        hooks_pkg = importlib.resources.files("daily_driver.templates").joinpath(
-            "hooks"
-        )
-    except (FileNotFoundError, ModuleNotFoundError):
-        return
+    hooks_pkg = importlib.resources.files("daily_driver.templates").joinpath("hooks")
     for entry in hooks_pkg.iterdir():
         if not entry.name.endswith(".sh"):
             continue
         dest = hooks_dest / entry.name
         dest.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
-        try:
-            dest.chmod(0o755)
-        except OSError:
-            pass
+        dest.chmod(0o755)
 
 
 def _render_settings(workspace: Workspace) -> None:
