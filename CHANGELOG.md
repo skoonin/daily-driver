@@ -16,13 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CLI short flags: `-f` for `--force` (`init`), `-n` for `--dry-run` (`scrape-jobs run`, `voice-update`).
 - `make test-quick` target — py311 only, fast inner loop. `make test` now runs the full tox envlist (matches CI).
 - `docs/cli-tree.md`: snapshot of the v0.1.x CLI command surface (subcommands, flags, parent-parser inheritance gap). Planning reference for the upcoming `parents=[GLOBAL_PARSER]` migration.
+- W6: `plugins.job_search.primary_currency` (`USD`/`CAD`/`EUR`/`GBP`, default `null`). When set, scraped jobs whose parsed comp currency doesn't match are dropped at the scraper write boundary. Unparseable comp passes through. (#48)
+- W6: Apple/Wellfound adapters now consult the dedup union (`jobs.csv` + `jobs.archive.csv`) via the orchestrator's `_known_urls` config key and short-circuit during pagination, saving Playwright work on already-triaged listings.
+- W6: `tests/test_scraper/test_e2e_smoke.py` — opt-in `@pytest.mark.smoke` end-to-end scrape against a real source. Excluded from default runs; invoke with `pytest -m smoke`.
 
 ### Changed
 - `core/config_models.py`: `ScraperConfig.playwright_delays` is now `dict[str, PlaywrightDelays]` and `sources` is `dict[str, SourceToggle]` (auto-coerces legacy `bool` values via a `field_validator`). Replaces ad-hoc dict access in `scraper/_impl.py`.
 - `Makefile`: `TOX := $(shell command -v tox 2>/dev/null || echo .venv/bin/tox)` — `make test*` targets now prefer a tox on `PATH` (e.g., `pipx install tox`) over the worktree's `.venv/bin/tox`. Lets `make test` work in git worktrees without running `make setup` there (which creates a local `.venv` that VS Code may auto-activate over the main repo's interpreter).
+- W6: scraper now passes `linkedin_fetch_description=True` to JobSpy. JobSpy 1.1.82+ populates LinkedIn comp + description natively, replacing the vendored HTML parser. `enrich_job_details` skips LinkedIn URLs entirely (no HTTP) — JobSpy is the source of truth for LinkedIn detail data.
 
 ### Removed
 - **BREAKING**: `daily-driver uninstall-scheduler --keep-state` removed. The state mirror under `.daily-driver/state/launchd/` is now always cleaned up on uninstall. The `keep_state` parameter on `core.scheduler.uninstall_all()` is also gone.
+- W6: vendored LinkedIn detail-page HTML/JSON-LD parser (`parse_linkedin_html`, `_clean_linkedin_comp`, `_LINKEDIN_*_RE`) and its tests. Use JobSpy `linkedin_fetch_description=True`. Pin `python-jobspy>=1.1.82`. Stale-jobspy `TypeError` now aborts the run with an upgrade hint instead of being swallowed by the catch-all warning.
 
 ### Fixed -- doctor (W11)
 - `cli/commands/doctor.py`: running `daily-driver doctor` (or `--fix` / `--reset`) without a discoverable workspace now exits 1 with a clear `error: no workspace at <path> (run 'daily-driver init <path>' to scaffold one)` message instead of silently reporting only dependency checks. Resolves review-2026-04-23 #10.

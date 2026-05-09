@@ -158,7 +158,7 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--import-mode=importlib -p no:warnings -p no:cacheprovider"
+addopts = "--import-mode=importlib -p no:warnings -p no:cacheprovider -m 'not smoke'"
 pythonpath = ["source", "tests"]
 testpaths = ["tests"]
 markers = [
@@ -171,4 +171,5 @@ markers = [
     "integration: integration tests",
     "e2e: end-to-end tests",
     "unit: unit tests",
+    "smoke: end-to-end smoke tests against live URLs (off by default; run with `pytest -m smoke`)",
 ]
