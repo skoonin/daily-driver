@@ -29,8 +29,15 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
+
+if TYPE_CHECKING:
+    from daily_driver.scraper.models import (
+        EnrichedJob,
+        NormalizedJob,
+        RawScrapedJob,
+    )
 
 if sys.platform != "win32":
     import fcntl
@@ -288,17 +295,32 @@ def location_matches(job: dict, config: dict) -> bool:
 # ── Dedup helpers ─────────────────────────────────────────────────────────────
 
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _dedup_norm(s: str) -> str:
+    return _WHITESPACE_RE.sub(" ", s.lower().strip())
+
+
 def dedup_key(company: str, role: str) -> str:
     """Normalized dedup key for cross-site duplicate detection.
 
     Lowercases and collapses whitespace in both fields so the same job posted
     on RemoteOK and LinkedIn produces an identical key.
+
+    For typed callers, prefer ``dedup_key_for(job: NormalizedJob)``.
     """
+    return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
 
-    def _norm(s: str) -> str:
-        return re.sub(r"\s+", " ", s.lower().strip())
 
-    return f"{_norm(company)}::{_norm(role)}"
+def dedup_key_for(job: "NormalizedJob") -> str:  # noqa: F821
+    """Typed dedup key (K5): operates directly on NormalizedJob.
+
+    Equivalent to ``dedup_key(job.company, job.role)`` but skips the dict-key
+    plumbing in the orchestrator. Both forms must produce identical keys —
+    test_dedup_typed_matches_legacy guards that invariant.
+    """
+    return f"{_dedup_norm(job.company)}::{_dedup_norm(job.role)}"
 
 
 # ── Company enrichment ───────────────────────────────────────────────────────
@@ -675,7 +697,7 @@ def _format_comp(base_salary: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def _find_jobposting(node) -> dict | None:
+def _find_jobposting(node: Any) -> dict | None:
     """Walk a parsed JSON-LD payload and return the first JobPosting dict."""
     if isinstance(node, dict):
         node_type = node.get("@type")
@@ -852,21 +874,8 @@ def parse_linkedin_html(html: str) -> dict:
     return out
 
 
-def _parse_k_salary(s: str) -> int | None:
-    """Parse a salary amount that may use K/M shorthand into a plain integer.
-
-    Greenhouse boards (e.g. Anthropic) post "$150K-$200K" instead of full numbers.
-    Returns None on unrecognized input so callers leave comp blank.
-    """
-    s = s.replace(",", "").strip()
-    try:
-        if s.upper().endswith("K"):
-            return int(float(s[:-1]) * 1_000)
-        if s.upper().endswith("M"):
-            return int(float(s[:-1]) * 1_000_000)
-        return int(float(s))
-    except (ValueError, TypeError):
-        return None
+# K4: salary parsing now lives in models._parse_k_salary.
+from daily_driver.scraper.models import _parse_k_salary  # noqa: E402
 
 
 def parse_greenhouse_html(html: str) -> dict:
@@ -1119,149 +1128,34 @@ _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
 # Stripped here so dedup and display see clean titles.
 _REMOTE_ROLE_SUFFIXES: tuple[str, ...] = (" (remote)", "(remote)", " - remote")
 
-# Static FX table; refreshed manually — not worth an API call for rough filtering.
-_FX_TO_USD: dict[str, float] = {
-    "USD": 1.0,
-    "CAD": 0.73,
-    "GBP": 1.26,
-    "EUR": 1.09,
-}
-
-# Symbols that unambiguously signal a non-USD currency when bare $ is absent.
-_COMP_SYMBOL_TO_CURRENCY: dict[str, str] = {
-    "£": "GBP",
-    "€": "EUR",
-    "ca$": "CAD",
-}
-
-# Matches a currency token at the start of a comp segment.
-_COMP_CURRENCY_RE = re.compile(
-    r"""
-    (?:
-        (?P<code>USD|CAD|GBP|EUR)\s*      # explicit ISO code (USD 150K)
-        |
-        (?P<sym>CA\$|£|€|\$)              # currency symbol (CA$ before bare $)
-    )
-    """,
-    re.VERBOSE | re.IGNORECASE,
-)
-
-# Matches a single monetary amount with optional commas and K/M suffix.
-_COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
-
-# Period tokens found as suffixes like "/yr", "/mo", "/hr".
-_COMP_PERIOD_MAP: dict[str, str] = {
-    "yr": "year",
-    "year": "year",
-    "mo": "month",
-    "month": "month",
-    "hr": "hour",
-    "hour": "hour",
-}
-
 
 def _parse_comp(comp_str: str) -> dict:
-    """Parse a free-form comp display string into structured fields.
+    """Legacy dict-shape wrapper around ``Comp.parse``.
 
-    Returns a dict with keys: comp_min_native, comp_max_native, comp_currency,
-    comp_period, comp_min_usd, comp_max_usd. All values are None/"" on
-    unparseable input so callers can safely access without KeyError.
-
-    Currency detection precedence: explicit ISO code > symbol (CA$ > $ > £ > €).
-    A bare $ with no other signal defaults to USD.
-
-    Does NOT convert hourly/monthly amounts to annual equivalents — the caller
-    is responsible for that. comp_period signals which unit native values are in.
-
-    Examples::
-        >>> r = _parse_comp("$150,000-$200,000")
-        >>> r["comp_min_native"], r["comp_max_native"], r["comp_currency"]
-        (150000, 200000, 'USD')
-        >>> r = _parse_comp("CAD 120,000-160,000/yr")
-        >>> r["comp_currency"], r["comp_min_native"]
-        ('CAD', 120000)
-        >>> _parse_comp("unpublished")["comp_min_native"] is None
-        True
+    Kept for the dict-based pipeline and ``comp_meets_threshold``. Returns
+    ``comp_min_native``, ``comp_max_native``, ``comp_currency``, ``comp_period``,
+    ``comp_min_usd``, ``comp_max_usd``. All ``None`` / ``""`` on unparseable input.
+    Collapses into ``Comp.parse`` direct calls at K8/K9.
     """
-    empty: dict = {
-        "comp_min_native": None,
-        "comp_max_native": None,
-        "comp_currency": "",
-        "comp_period": "",
-        "comp_min_usd": None,
-        "comp_max_usd": None,
-    }
-    if not comp_str or not comp_str.strip():
-        return empty
+    from daily_driver.scraper.models import Comp
 
-    s = comp_str.strip()
-
-    # Extract period suffix before stripping it.
-    period = "year"  # default for yearly-ish numbers; overridden when explicit
-    period_match = re.search(r"/\s*(yr|year|mo|month|hr|hour)\b", s, re.IGNORECASE)
-    if period_match:
-        period = _COMP_PERIOD_MAP.get(period_match.group(1).lower(), "year")
-        s = s[: period_match.start()]
-
-    # Walk left-to-right consuming (optional currency token)(amount) pairs.
-    currencies_found: list[str] = []
-    amounts_found: list[int] = []
-
-    pos = 0
-    while pos < len(s):
-        cm = _COMP_CURRENCY_RE.match(s, pos)
-        if cm:
-            code = cm.group("code")
-            sym = cm.group("sym")
-            if code:
-                currencies_found.append(code.upper())
-            elif sym:
-                currencies_found.append(
-                    _COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD")
-                )
-            pos = cm.end()
-            while pos < len(s) and s[pos] == " ":
-                pos += 1
-            am = _COMP_AMOUNT_RE.match(s, pos)
-            if am:
-                val = _parse_k_salary(am.group())
-                if val is not None:
-                    amounts_found.append(val)
-                pos = am.end()
-        elif s[pos] in "-\u2013\u2014 ,":
-            pos += 1
-        else:
-            am = _COMP_AMOUNT_RE.match(s, pos)
-            if am:
-                val = _parse_k_salary(am.group())
-                if val is not None:
-                    amounts_found.append(val)
-                pos = am.end()
-            else:
-                pos += 1
-
-    if not amounts_found:
-        return empty
-
-    # First explicit ISO code wins; fall back to first symbol; default USD.
-    currency = currencies_found[0] if currencies_found else "USD"
-    if currency not in _FX_TO_USD:
-        currency = "USD"
-
-    comp_min = amounts_found[0]
-    comp_max = amounts_found[1] if len(amounts_found) >= 2 else amounts_found[0]
-
-    if comp_min > comp_max:
-        comp_min, comp_max = comp_max, comp_min
-
-    fx = _FX_TO_USD[currency]
+    c = Comp.parse(comp_str)
+    if not c.is_known:
+        return {
+            "comp_min_native": None,
+            "comp_max_native": None,
+            "comp_currency": "",
+            "comp_period": "",
+            "comp_min_usd": None,
+            "comp_max_usd": None,
+        }
     return {
-        "comp_min_native": comp_min,
-        "comp_max_native": comp_max,
-        "comp_currency": currency,
-        "comp_period": period,
-        "comp_min_usd": int(comp_min * fx),
-        "comp_max_usd": int(comp_max * fx),
+        "comp_min_native": c.min_native,
+        "comp_max_native": c.max_native,
+        "comp_currency": c.currency or "",
+        "comp_period": c.period,
+        "comp_min_usd": c.min_usd,
+        "comp_max_usd": c.max_usd,
     }
 
 
@@ -1278,6 +1172,20 @@ def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
     if cmax >= threshold:
         return (True, "")
     return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
+
+
+def normalize_typed(raw: "RawScrapedJob") -> "NormalizedJob":  # noqa: F821
+    """Typed normalizer: ``RawScrapedJob -> NormalizedJob``.
+
+    Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
+    ``daily_driver.scraper`` without crossing into the model layer directly.
+    The legacy dict-based ``normalize_job`` below remains for callers that
+    pass partial dicts through ``__init__.py``'s orchestrator; it will be
+    collapsed into this typed entry point at K9.
+    """
+    from daily_driver.scraper.models import NormalizedJob
+
+    return NormalizedJob.from_raw(raw)
 
 
 def normalize_job(raw: dict, source: str) -> dict:
@@ -1339,7 +1247,12 @@ def normalize_job(raw: dict, source: str) -> dict:
 
 
 def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
-    """Append new jobs to CSV. Returns count of rows written."""
+    """Append new jobs to CSV. Returns count of rows written.
+
+    Legacy dict-based entry point. Typed callers should use
+    ``append_jobs_typed`` (K6) which routes through
+    ``EnrichedJob.to_csv_row()``.
+    """
     if not jobs:
         return 0
 
@@ -1368,6 +1281,160 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
                 row["GD Rating"] = job.get("gd_rating", "")
                 row["Notes"] = job.get("notes", "")
                 writer.writerow(row)
+                written += 1
+    except OSError as exc:
+        raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
+    return written
+
+
+def _enriched_to_dict(job: "EnrichedJob") -> dict[str, Any]:  # noqa: F821
+    """Project an EnrichedJob into the legacy working-dict shape.
+
+    Used by typed enricher wrappers so existing dict-based enricher bodies
+    (which mutate in place) can run unchanged. K9 collapses these wrappers.
+    """
+    return {
+        "company": job.company,
+        "role": job.role,
+        "location": job.location,
+        "url": job.url,
+        "source": job.source,
+        "source_canonical": job.source_canonical,
+        "source_board": job.source_board,
+        "comp": str(job.comp),
+        "date_found": job.date_found.isoformat(),
+        "product": job.product,
+        "gd_rating": job.gd_rating,
+        "fit": "" if job.fit is None else job.fit,
+        "notes": job.notes,
+        "description_text": job.description_text,
+        "status": job.status.value,
+    }
+
+
+def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
+    """Pick the enricher-mutated fields out of the working dict.
+
+    Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
+    """
+    from daily_driver.scraper.models import Comp, JobStatus
+
+    updates: dict[str, Any] = {}
+    if "product" in d:
+        updates["product"] = d["product"]
+    if "gd_rating" in d:
+        updates["gd_rating"] = d["gd_rating"]
+    if "fit" in d:
+        f = d["fit"]
+        updates["fit"] = (
+            int(f)
+            if isinstance(f, int) or (isinstance(f, str) and f.isdigit())
+            else None
+        )
+    if "notes" in d:
+        updates["notes"] = d["notes"]
+    if "description_text" in d:
+        updates["description_text"] = d["description_text"]
+    if "status" in d and d["status"]:
+        updates["status"] = JobStatus(d["status"])
+    if "skip_reason" in d:
+        updates["skip_reason"] = d["skip_reason"]
+    if "comp" in d and isinstance(d["comp"], str) and d["comp"]:
+        # Re-parse only when the enricher updated the display string.
+        new_comp = Comp.parse(d["comp"])
+        updates["comp"] = new_comp
+    return updates
+
+
+def enrich_company_descriptions_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any] | None = None,
+    *,
+    budget: int = 0,
+) -> tuple["list[EnrichedJob]", dict[str, int]]:  # noqa: F821
+    """Typed wrapper around ``enrich_company_descriptions`` (K8).
+
+    Round-trips through a working-dict list because the legacy body mutates
+    in place; returns a fresh list of frozen EnrichedJob instances built via
+    ``model_copy(update=...)``.
+    """
+    working = [_enriched_to_dict(j) for j in jobs]
+    stats = enrich_company_descriptions(working, config, budget=budget)
+    out = [
+        j.model_copy(update=_dict_to_enriched_updates(d))
+        for j, d in zip(jobs, working, strict=True)
+    ]
+    return out, stats
+
+
+def enrich_fit_and_notes_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any],
+    *,
+    budget: int = 0,
+) -> tuple["list[EnrichedJob]", dict[str, int]]:  # noqa: F821
+    """Typed wrapper around ``enrich_fit_and_notes`` (K8)."""
+    working = [_enriched_to_dict(j) for j in jobs]
+    stats = enrich_fit_and_notes(working, config, budget=budget)
+    out = [
+        j.model_copy(update=_dict_to_enriched_updates(d))
+        for j, d in zip(jobs, working, strict=True)
+    ]
+    return out, stats
+
+
+def enrich_job_details_typed(
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    config: dict[str, Any],
+) -> "list[EnrichedJob]":  # noqa: F821
+    """Typed wrapper around ``enrich_job_details`` (K8).
+
+    The legacy ``enrich_job_details`` returns ``None`` and mutates in place;
+    this wrapper produces a fresh list with each job's description_text /
+    posted_date / comp populated where the detail fetch supplied them.
+    """
+    import datetime as dt
+
+    working = [_enriched_to_dict(j) for j in jobs]
+    enrich_job_details(working, config)
+    out: list[Any] = []
+    for j, d in zip(jobs, working, strict=True):
+        updates = _dict_to_enriched_updates(d)
+        # Detail enricher may also write posted_date as ISO string.
+        if d.get("posted_date") and isinstance(d["posted_date"], str):
+            try:
+                updates["posted_date"] = dt.date.fromisoformat(d["posted_date"])
+            except ValueError:
+                pass
+        # Comp from JSON-LD comes back via "comp" string; already handled.
+        out.append(j.model_copy(update=updates))
+    return out
+
+
+def append_jobs_typed(
+    csv_path: Path,
+    jobs: "list[EnrichedJob]",  # noqa: F821
+    header: list[str],
+) -> int:
+    """Typed CSV writer (K6): one row per ``EnrichedJob.to_csv_row()``.
+
+    Header is still passed in so callers can pin the column order to whatever
+    is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
+    Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
+    """
+    if not jobs:
+        return 0
+
+    written = 0
+    try:
+        with open(csv_path, "a", newline="", encoding="utf-8") as f:
+            if sys.platform != "win32":
+                fcntl.flock(f, fcntl.LOCK_EX)
+            writer = csv.DictWriter(
+                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+            )
+            for job in jobs:
+                writer.writerow(job.to_csv_row())
                 written += 1
     except OSError as exc:
         raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
@@ -1534,7 +1601,7 @@ def _has_playwright() -> bool:
 
 
 @contextmanager
-def _playwright_browser(config: dict):
+def _playwright_browser(config: dict) -> Any:
     """Yield a Playwright Page with non-headless Chromium and realistic settings.
 
     Non-headless by default — avoids most bot-detection heuristics on LinkedIn,
@@ -1718,7 +1785,8 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     for a_tag in index_soup.find_all("a"):
         text = a_tag.get_text(strip=True)
         if "Who is hiring?" in text and current_month_str in text:
-            href = a_tag.get("href", "")
+            href_raw = a_tag.get("href", "")
+            href = href_raw if isinstance(href_raw, str) else ""
             if href.startswith("item?id="):
                 thread_id = href.split("=", 1)[1]
             elif "item?id=" in href:
@@ -1754,7 +1822,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     # avoids pulling in a new dependency for this narrow use case).
     _strip_tags = re.compile(r"<[^>]+>")
 
-    jobs = []
+    jobs: list[dict[str, Any]] = []
     thread_url = f"https://news.ycombinator.com/item?id={thread_id}"
 
     for hit in hits:
@@ -1945,18 +2013,62 @@ def _format_jobspy_comp(row: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def normalize_jobspy_row(row: dict) -> dict:
-    """Adapt a single JobSpy DataFrame record to the scraper dict shape."""
+def jobspy_row_to_raw(row: dict[str, Any]) -> "RawScrapedJob | None":  # noqa: F821
+    """Validate a JobSpy DataFrame row through RawScrapedJob (Q15: extra='ignore').
+
+    Returns None when the role is empty (jobspy yields these for ads / non-job
+    cards); pydantic would otherwise reject NonEmptyStr role.
+    """
+    # Local import: models.py uses deferred imports from this module
+    # (`_parse_comp`, `_REMOTE_*`); top-level import would cycle until K4/K9.
+    from daily_driver.scraper.models import RawScrapedJob
+
+    role = _jobspy_str(row.get("title"))
+    if not role:
+        return None
+    return RawScrapedJob.model_validate(
+        {
+            "company": _jobspy_str(row.get("company")),
+            "role": role,
+            "location": _jobspy_str(row.get("location")),
+            "url": _jobspy_str(row.get("job_url")),
+            # JobSpy "site" is the upstream source name (linkedin, indeed, ...).
+            "source": _jobspy_str(row.get("site"), "jobspy"),
+            "comp_display": _format_jobspy_comp(row),
+            "date_found": today(),
+        }
+    )
+
+
+def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a single JobSpy DataFrame record to the scraper dict shape.
+
+    Validates through RawScrapedJob at the boundary (Q15) and dumps back to
+    the legacy dict shape for the dict-based pipeline. Carries `description`
+    separately because RawScrapedJob does not model enrichment fields.
+    """
+    raw = jobspy_row_to_raw(row)
+    description = _jobspy_str(row.get("description"))
+    if raw is None:
+        return {
+            "company": _jobspy_str(row.get("company")),
+            "role": "",
+            "location": _jobspy_str(row.get("location")),
+            "url": _jobspy_str(row.get("job_url")),
+            "source": _jobspy_str(row.get("site"), "jobspy"),
+            "description": description,
+            "comp": _format_jobspy_comp(row),
+            "date_found": today().isoformat(),
+        }
     return {
-        "company": _jobspy_str(row.get("company")),
-        "role": _jobspy_str(row.get("title")),
-        "location": _jobspy_str(row.get("location")),
-        "url": _jobspy_str(row.get("job_url")),
-        # site field is the JobSpy source name (linkedin, indeed, glassdoor, google)
-        "source": _jobspy_str(row.get("site"), "jobspy"),
-        "description": _jobspy_str(row.get("description")),
-        "comp": _format_jobspy_comp(row),
-        "date_found": today().isoformat(),
+        "company": raw.company,
+        "role": raw.role,
+        "location": raw.location,
+        "url": raw.url,
+        "source": raw.source,
+        "description": description,
+        "comp": raw.comp_display,
+        "date_found": raw.date_found.isoformat(),
     }
 
 
@@ -2198,9 +2310,9 @@ def scrape_apple(config: dict) -> list[dict]:
                 for term in terms:
                     # Fresh list each iteration; closure captures the name, not
                     # the value, so each _capture_response writes to its own list.
-                    api_results = []
+                    api_results: list[Any] = []
 
-                    def _capture_response(response):
+                    def _capture_response(response: Any) -> None:
                         if "jobs.apple.com/api/v1/search" in response.url:
                             try:
                                 body = response.json()
@@ -2302,6 +2414,50 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "jobspy": scrape_jobspy,
     "wellfound": scrape_wellfound,
     "apple": scrape_apple,
+}
+
+
+def _typed_source(
+    fn: Callable[[dict[str, Any]], list[dict[str, Any]]],
+) -> Callable[[dict[str, Any]], list[Any]]:
+    """Wrap a dict-returning scraper into a Source-protocol callable.
+
+    Validates each row through ``RawScrapedJob`` (Q15: ``extra='ignore'``).
+    Rows that fail validation (empty role, etc.) are dropped with a debug log
+    rather than aborting the whole source.
+    """
+    from daily_driver.scraper.models import RawScrapedJob
+
+    def wrapped(config: dict[str, Any]) -> list[Any]:
+        out: list[Any] = []
+        for row in fn(config):
+            try:
+                out.append(
+                    RawScrapedJob.model_validate(
+                        {
+                            "company": row.get("company", ""),
+                            "role": row.get("role", ""),
+                            "url": row.get("url", ""),
+                            "source": row.get("source", ""),
+                            "location": row.get("location", ""),
+                            "comp_display": row.get("comp", "") or "",
+                            "date_found": row.get("date_found") or today().isoformat(),
+                        }
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.debug("[%s] dropped invalid row: %s", fn.__name__, exc)
+        return out
+
+    wrapped.__name__ = f"typed_{fn.__name__}"
+    return wrapped
+
+
+# Q16: explicit Source registry — no dynamic dispatch, all 7 sources known
+# at import time. Each entry is a Source-protocol callable that validates
+# rows through RawScrapedJob.
+SOURCE_REGISTRY: dict[str, Callable[[dict[str, Any]], list[Any]]] = {
+    sid: _typed_source(fn) for sid, fn in SCRAPERS.items()
 }
 
 

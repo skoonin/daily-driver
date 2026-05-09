@@ -117,8 +117,17 @@ module = ["daily_driver.cli.commands.*"]
 warn_return_any = false
 
 [[tool.mypy.overrides]]
+# WS-K K7: ignore_errors carve-out dropped; remaining laxness limited to
+# bare-dict annotations (helper utilities, not the typed RawScrapedJob /
+# NormalizedJob / EnrichedJob hot path) and BeautifulSoup attribute access.
+# Adapter rewrite to native list[RawScrapedJob] returns is post-WS-K (W7).
 module = ["daily_driver.scraper._impl"]
-ignore_errors = true
+disallow_any_generics = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["playwright.*", "playwright", "requests", "requests.*", "bs4", "bs4.*"]
+ignore_missing_imports = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
