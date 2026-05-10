@@ -122,6 +122,18 @@ Then ask the user:
 - Anything to add or reprioritize?
 - Any known interrupts or blockers today?
 
+## 7.5 Optional: Interview Practice
+
+Before saving the plan, offer interview practice as a short opt-in:
+
+> Want to do interview practice this morning? It's about 5-10 minutes — behavioral STAR, technical fundamentals, or system design depending on the day. (yes / no / skip)
+
+If the user accepts, point them at the slash command rather than chaining inline — it keeps the plan-save flow clean and lets them run it as a focused session:
+
+> Run `/interview-prep` next. When it finishes, come back and we'll save the plan.
+
+If the user declines or skips, continue immediately to step 8. Do not press the question, do not re-prompt. This is a single optional offer, not a multi-step procedure.
+
 ## 8. Save Plan
 
 `daily-driver day-start` has already written a plan stub at the canonical path
