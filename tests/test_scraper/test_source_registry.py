@@ -75,6 +75,7 @@ def test_registry_is_explicit_not_dynamic() -> None:
         "remoteok",
         "weworkremotely",
         "hn_who_is_hiring",
+        "hn_jobs",
         "greenhouse",
         "jobspy",
         "apple",
