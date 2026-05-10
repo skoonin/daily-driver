@@ -494,6 +494,7 @@ def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
     """
     scraper_fn = SCRAPERS[source_id]
     timeout = timeout_seconds(cfg)
+    log.info("[%s] starting", source_id)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(cfg)
@@ -593,11 +594,13 @@ def run_all_scrapers(
     if headless_sources:
         headless_cfg = _config_with_headless(config, True)
         log.info(
-            "[phase1] running %d headless scrapers, %d workers",
+            "[phase1] running %d headless scrapers (%s), %d workers",
             len(headless_sources),
+            ", ".join(headless_sources),
             workers,
         )
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        pool = ThreadPoolExecutor(max_workers=max(1, workers))
+        try:
             futures = {
                 pool.submit(_run_one, sid, headless_cfg): sid
                 for sid in headless_sources
@@ -605,13 +608,23 @@ def run_all_scrapers(
             for fut in as_completed(futures):
                 sid = futures[fut]
                 results.append((sid, fut.result()))
+        except KeyboardInterrupt:
+            # Drop pending (unstarted) futures and stop waiting on the pool.
+            # In-flight HTTP requests cannot be killed mid-call; they run to
+            # their per-source ``timeout`` before their threads exit. The CLI
+            # boundary catches this re-raise and prints a clean message.
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
     # Phase 2: non-headless, serial (preserves pre-parallel behavior)
     if visible_sources:
         visible_cfg = _config_with_headless(config, False)
         log.info(
-            "[phase2] running %d non-headless scrapers serially",
+            "[phase2] running %d non-headless scrapers serially (%s)",
             len(visible_sources),
+            ", ".join(visible_sources),
         )
         for sid in visible_sources:
             results.append((sid, _run_one(sid, visible_cfg)))
