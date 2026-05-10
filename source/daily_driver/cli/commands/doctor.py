@@ -1,4 +1,4 @@
-"""CLI wrapper for the doctor subcommand."""
+"""doctor subcommand: verify and repair workspace contracts and dependencies."""
 
 from __future__ import annotations
 
