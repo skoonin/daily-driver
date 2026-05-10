@@ -406,3 +406,85 @@ def test_list_since_invalid_spec_exits_2(
     args = _list_args(workspace.root, since="not-a-spec")
     assert run(args) == 2
     assert "invalid date spec" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# tracker show
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_show_prints_entry_fields(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    app(
+        [
+            "--workspace",
+            str(ws),
+            "tracker",
+            "add",
+            "--category",
+            "task",
+            "--title",
+            "Inspectable",
+            "--note",
+            "context blob",
+        ]
+    )
+    capsys.readouterr()
+
+    rc = app(["--workspace", str(ws), "tracker", "show", "task-001"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "task-001" in out
+    assert "Inspectable" in out
+    assert "context blob" in out
+
+
+def test_tracker_show_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    app(
+        [
+            "--workspace",
+            str(ws),
+            "tracker",
+            "add",
+            "--category",
+            "task",
+            "--title",
+            "JSON view",
+        ]
+    )
+    capsys.readouterr()
+
+    rc = app(["--workspace", str(ws), "tracker", "show", "task-001", "--json"])
+    assert rc == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["schema"] == 1
+    assert parsed["data"]["entry"]["id"] == "task-001"
+    assert parsed["data"]["entry"]["title"] == "JSON view"
+
+
+def test_tracker_show_unknown_id_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    rc = app(["--workspace", str(ws), "tracker", "show", "task-999"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "task-999" in err

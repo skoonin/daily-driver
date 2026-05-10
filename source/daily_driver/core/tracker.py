@@ -239,6 +239,13 @@ class Tracker:
             self._save_unlocked(data)
             return removed
 
+    def get(self, entry_id: str) -> TrackerEntry:
+        """Return a single entry by id. Raises KeyError if not found."""
+        for entry in self.load().entries:
+            if entry.id == entry_id:
+                return entry
+        raise KeyError(f"entry '{entry_id}' not found")
+
     def list(
         self,
         *,
