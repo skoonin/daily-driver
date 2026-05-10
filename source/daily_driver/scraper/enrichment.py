@@ -420,10 +420,13 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
             else:
                 try:
                     details = _parse_detail_page(resp.text, url)
-                except (ValueError, TypeError) as exc:
-                    # Parser-side data shape errors (malformed JSON-LD, etc.)
-                    # are non-fatal: missing comp just means the CSV stays blank.
-                    log.debug("[detail] %s: parse failed: %s", url, exc)
+                except ValueError as exc:
+                    # Malformed page data (bad JSON-LD, unexpected shape) is
+                    # non-fatal: missing comp just means the CSV stays blank.
+                    # Programmer errors (AttributeError, TypeError) are
+                    # deliberately NOT caught — those signal real regressions
+                    # in `_parse_detail_page` and must remain visible.
+                    log.warning("[detail] %s: parse failed: %s", url, exc)
                     details = {}
             cache[url] = details
 

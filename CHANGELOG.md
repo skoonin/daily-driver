@@ -12,8 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer trigger an HTTP fetch — HN aggressively 429s on bursts and the
   title-derived data from `hn_who_is_hiring` / `hn_jobs` is sufficient.
   Logged once per run, not per URL.
-- **Skip Indeed detail enrichment.** All `*.indeed.com` hosts are skipped
-  (mirrors the existing LinkedIn skip): JobSpy already populates
+- **Skip Indeed detail enrichment.** URLs containing `indeed.com` are
+  skipped (mirrors the existing LinkedIn skip): JobSpy already populates
   description, and bare `requests` get bot-walled with 403. Logged once
   per run.
 - **Route remaining detail fetches through `_api_get`.** Replaces the bare
