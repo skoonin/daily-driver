@@ -59,6 +59,7 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
         help="Disable Rich color/formatting output.",
     )
     g.add_argument(
+        "-w",
         "--workspace",
         metavar="PATH",
         default=argparse.SUPPRESS,

@@ -35,6 +35,7 @@ def add_parser(
         help="Show workspace status and tracker summary",
     )
     parser.add_argument(
+        "-j",
         "--json",
         action="store_true",
         default=False,

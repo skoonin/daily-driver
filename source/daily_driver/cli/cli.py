@@ -41,6 +41,7 @@ _COMMANDS = [
     ("summary", "daily_driver.cli.commands.summary"),
     ("scheduler", "daily_driver.cli.commands.scheduler"),
     ("voice-update", "daily_driver.cli.commands.voice_update"),
+    ("help", "daily_driver.cli.commands.help"),
 ]
 
 

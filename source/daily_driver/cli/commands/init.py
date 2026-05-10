@@ -1,4 +1,10 @@
-"""init subcommand: scaffold a new daily-driver workspace."""
+"""init subcommand: scaffold a new daily-driver workspace.
+
+Idempotent: re-running on an existing workspace fills in any missing
+artifacts and reports a Created / Skipped summary. `--force` only changes
+the behavior of `.dd-config.yaml` (overwrite + .bak) — every other static
+file is preserved across runs to avoid clobbering user edits.
+"""
 
 from __future__ import annotations
 
@@ -40,24 +46,28 @@ def add_parser(
     return parser
 
 
-def _copy_template(name: str, dest: Path) -> None:
-    """Write a static template file to dest if it does not already exist."""
+def _copy_template(name: str, dest: Path) -> bool:
+    """Write a static template file to dest if absent. Returns True if created."""
     if dest.exists():
-        return
+        return False
     content = (
         importlib.resources.files("daily_driver.templates")
         .joinpath(name)
         .read_text(encoding="utf-8")
     )
     dest.write_text(content, encoding="utf-8")
+    return True
 
 
 def _render_template(
     name: str, dest: Path, *, force: bool = False, **ctx: object
-) -> None:
-    """Render a Jinja2 template to dest. Skips if dest exists and force is False."""
+) -> bool:
+    """Render a Jinja2 template to dest. Returns True if (re-)written.
+
+    Skips if dest exists and force is False.
+    """
     if dest.exists() and not force:
-        return
+        return False
     template_text = (
         importlib.resources.files("daily_driver.templates")
         .joinpath(name)
@@ -68,18 +78,43 @@ def _render_template(
     env = Environment(undefined=StrictUndefined)
     rendered = env.from_string(template_text).render(**ctx)
     dest.write_text(rendered, encoding="utf-8")
+    return True
 
 
-def _scaffold_user_dirs(claude_root: Path) -> None:
-    """Create user-territory Claude command and agent subdirectories if absent."""
-    (claude_root / "commands" / "user").mkdir(parents=True, exist_ok=True)
-    (claude_root / "agents" / "user").mkdir(parents=True, exist_ok=True)
+def _scaffold_user_dirs(claude_root: Path) -> tuple[bool, bool]:
+    """Create user-territory subdirs if absent. Returns (commands_created, agents_created)."""
+    cmd_dir = claude_root / "commands" / "user"
+    agent_dir = claude_root / "agents" / "user"
+    cmd_created = not cmd_dir.exists()
+    agent_created = not agent_dir.exists()
+    cmd_dir.mkdir(parents=True, exist_ok=True)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    return cmd_created, agent_created
 
 
-def _scaffold_gitignore(root: Path, *, force: bool = False) -> None:
-    """Write workspace-root .gitignore from gitignore.j2 template if absent (or force)."""
+def _scaffold_gitignore(root: Path, *, force: bool = False) -> bool:
+    """Write workspace-root .gitignore from gitignore.j2 if absent (or force).
+
+    Returns True when the file was (re-)written.
+    """
     dest = root / ".gitignore"
-    _render_template("gitignore.j2", dest, force=force)
+    return _render_template("gitignore.j2", dest, force=force)
+
+
+def _format_summary(
+    root: Path, created: list[str], skipped: list[str], generated: int
+) -> str:
+    """Render the post-init summary block. Created/Skipped omitted if empty."""
+    lines = [f"Initialized workspace at {root}"]
+    if created:
+        lines.append(f"  Created: {', '.join(created)}")
+    if skipped:
+        lines.append(f"  Skipped: {', '.join(skipped)} (already present)")
+    lines.append(
+        f"  Generated: .claude/*/daily-driver/* ({generated} file"
+        f"{'s' if generated != 1 else ''})"
+    )
+    return "\n".join(lines)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -87,16 +122,15 @@ def run(args: argparse.Namespace) -> int:
     root.mkdir(parents=True, exist_ok=True)
 
     marker = root / ".dd-config.yaml"
+    marker_existed = marker.exists()
 
-    if marker.exists() and not args.force:
-        print(
-            f"workspace already initialized at {root} (use --force to overwrite)",
-            file=sys.stderr,
-        )
-        return 1
+    created: list[str] = []
+    skipped: list[str] = []
 
     backup: Path | None = None
-    if marker.exists() and args.force:
+    if marker_existed and args.force:
+        # Preserve the previous config as .bak so users can recover from a
+        # botched `--force`. Removed on a successful run.
         backup = marker.with_suffix(marker.suffix + ".bak")
         if backup.exists():
             backup.unlink()
@@ -109,26 +143,45 @@ def run(args: argparse.Namespace) -> int:
             backup.rename(marker)
 
     try:
-        workspace = Workspace.init(root)
+        if marker_existed and not args.force:
+            # Idempotent path: load the existing workspace rather than calling
+            # Workspace.init (which raises when the marker is present).
+            workspace = Workspace.discover_or_fail(override=root)
+            skipped.append(".dd-config.yaml")
+        else:
+            workspace = Workspace.init(root)
+            created.append(".dd-config.yaml")
     except WorkspaceError as exc:
         _restore_backup()
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    # Static files: only write when absent, even under --force.
-    _copy_template("context.md", root / "context.md")
-    _copy_template("voice-profile.md", root / "voice-profile.md")
+    # Static files: only write when absent, even under --force. Tracking the
+    # write/skip outcome lets us surface "what changed" in the summary.
+    for name in ("context.md", "voice-profile.md"):
+        if _copy_template(name, root / name):
+            created.append(name)
+        else:
+            skipped.append(name)
 
-    # Ensure .claude/ exists and scaffold user-territory subdirs.
     claude_root = root / ".claude"
+    claude_dir_existed = claude_root.exists()
     claude_root.mkdir(exist_ok=True)
-    _scaffold_user_dirs(claude_root)
+    if not claude_dir_existed:
+        created.append(".claude/")
 
-    # .gitignore: write if absent; --force does not overwrite (user owns it after first write).
-    _scaffold_gitignore(root, force=False)
+    cmd_created, agent_created = _scaffold_user_dirs(claude_root)
+    (created if cmd_created else skipped).append(".claude/commands/user/")
+    (created if agent_created else skipped).append(".claude/agents/user/")
+
+    # .gitignore: never overwritten — user owns it after first write.
+    if _scaffold_gitignore(root, force=False):
+        created.append(".gitignore")
+    else:
+        skipped.append(".gitignore")
 
     try:
-        generate(workspace, ignore_drift=True, force_overwrite=True)
+        result = generate(workspace, ignore_drift=True, force_overwrite=True)
     except Exception as exc:  # noqa: BLE001
         _restore_backup()
         print(f"error during workspace generation: {exc}", file=sys.stderr)
@@ -139,10 +192,9 @@ def run(args: argparse.Namespace) -> int:
     if backup is not None and backup.exists():
         backup.unlink()
 
-    print(
-        f"Initialized workspace at {root}\n"
-        f"  Edit {root / '.dd-config.yaml'} to configure\n"
-        f"  Run `daily-driver doctor` to verify installation",
-        file=sys.stderr,
+    generated_count = getattr(result, "n_written", 0) + getattr(
+        result, "n_preserved", 0
     )
+
+    print(_format_summary(root, created, skipped, generated_count), file=sys.stderr)
     return 0

@@ -366,3 +366,101 @@ def test_tracker_path_resolves_tilde_output_dir(
     tracker = Tracker(ws)
 
     assert tracker.path == tmp_path / "notes" / "tracker.yaml"
+
+
+# ---------------------------------------------------------------------------
+# 14. RECOMMENDED_STATUSES + warn-on-unknown-status
+# ---------------------------------------------------------------------------
+
+
+def test_recommended_statuses_constant_exposed() -> None:
+    """The recommended set is the contract surface used by `help` and warnings."""
+    from daily_driver.core.tracker import RECOMMENDED_STATUSES
+
+    assert RECOMMENDED_STATUSES == (
+        "open",
+        "in-progress",
+        "blocked",
+        "done",
+        "ruled-out",
+    )
+
+
+def test_add_unknown_status_emits_warning(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tracker = Tracker(workspace)
+    tracker.add(category="task", title="weird", status="foobar")
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert "foobar" in err
+    # The hint should reference the config knob so users know how to silence.
+    assert "warn_unknown_status" in err
+
+
+def test_add_recommended_status_no_warning(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tracker = Tracker(workspace)
+    tracker.add(category="task", title="okay", status="in-progress")
+    err = capsys.readouterr().err
+    assert "warning" not in err.lower()
+
+
+def test_add_default_status_no_warning(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Default status is `open`; must not warn."""
+    tracker = Tracker(workspace)
+    tracker.add(category="task", title="default")
+    err = capsys.readouterr().err
+    assert "warning" not in err.lower()
+
+
+def test_update_unknown_status_emits_warning(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tracker = Tracker(workspace)
+    entry = tracker.add(category="task", title="t1")
+    capsys.readouterr()  # discard add output
+    tracker.update(entry.id, status="frobnicated")
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert "frobnicated" in err
+
+
+def test_warn_silenced_when_status_already_used(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If another entry already uses this non-recommended status, suppress warning.
+
+    Rationale: the user has clearly opted into this custom status; nagging
+    twice is noise.
+    """
+    tracker = Tracker(workspace)
+    tracker.add(category="task", title="first", status="custom")
+    capsys.readouterr()  # discard first warning
+    tracker.add(category="task", title="second", status="custom")
+    err = capsys.readouterr().err
+    assert "warning" not in err.lower()
+
+
+def test_warn_silenced_by_config_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Setting tracker.warn_unknown_status: false silences the warning."""
+    config_text = """\
+daily_driver:
+  output_dir: .
+tracker:
+  warn_unknown_status: false
+  categories:
+    task: {required: [title]}
+"""
+    (tmp_path / ".dd-config.yaml").write_text(config_text, encoding="utf-8")
+    (tmp_path / ".daily-driver").mkdir(exist_ok=True)
+    ws = Workspace.discover_or_fail(override=tmp_path)
+    tracker = Tracker(ws)
+    tracker.add(category="task", title="quiet", status="weird")
+    err = capsys.readouterr().err
+    assert "warning" not in err.lower()

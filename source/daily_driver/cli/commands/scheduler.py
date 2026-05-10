@@ -45,6 +45,7 @@ def add_parser(
         help="Show configured jobs and whether each is installed",
     )
     p_status.add_argument(
+        "-j",
         "--json",
         action="store_true",
         default=False,

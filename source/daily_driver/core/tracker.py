@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -12,6 +13,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from daily_driver.core.clock import now, today
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
+
+# Convention, not enforcement — `tracker add/update` accepts any string but
+# emits a one-line stderr nudge when the resolved status is outside this set
+# (and not already in use by another entry in the workspace). Silenced by
+# `tracker.warn_unknown_status: false` in .dd-config.yaml.
+RECOMMENDED_STATUSES: tuple[str, ...] = (
+    "open",
+    "in-progress",
+    "blocked",
+    "done",
+    "ruled-out",
+)
 
 
 class TrackerEntry(BaseModel):
@@ -99,6 +112,29 @@ class Tracker:
         with file_lock(self._lock_path(), shared=False):
             self._save_unlocked(data)
 
+    def _warn_unknown_status(
+        self, status: str, existing_entries: list[TrackerEntry]
+    ) -> None:
+        """Print a one-line stderr nudge when status is outside the recommended set.
+
+        Suppressed when (a) the workspace config sets warn_unknown_status=False,
+        (b) the status is in RECOMMENDED_STATUSES, or (c) another entry in the
+        same workspace already uses the same custom status.
+        """
+        if not self._workspace.config.tracker.warn_unknown_status:
+            return
+        if status in RECOMMENDED_STATUSES:
+            return
+        if any(e.status == status for e in existing_entries):
+            return
+        recommended = ", ".join(RECOMMENDED_STATUSES)
+        print(
+            f"warning: '{status}' is not in the recommended set ({recommended})\n"
+            "         Set tracker.warn_unknown_status: false in "
+            ".dd-config.yaml to silence",
+            file=sys.stderr,
+        )
+
     def add(
         self,
         *,
@@ -146,6 +182,8 @@ class Tracker:
         with file_lock(self._lock_path(), shared=False):
             data = self.load()
 
+            self._warn_unknown_status(status, data.entries)
+
             max_n = 0
             for entry in data.entries:
                 if entry.category == category:
@@ -184,6 +222,12 @@ class Tracker:
                     current.update(changes)
                     current["updated_at"] = now()
                     updated = TrackerEntry.model_validate(current)
+                    # Exclude the entry being updated from the "already in use"
+                    # check — otherwise its own prior status would always mask
+                    # the warning when the user changes it.
+                    if "status" in changes:
+                        peers = [e for e in data.entries if e.id != entry_id]
+                        self._warn_unknown_status(updated.status, peers)
                     data.entries[i] = updated
                     self._save_unlocked(data)
                     return updated

@@ -157,6 +157,23 @@ def test_tracker_category_config_defaults():
     assert m.required == []
 
 
+def test_tracker_config_warn_unknown_status_default_true():
+    m = TrackerConfig(
+        default_category="task",
+        categories={"task": TrackerCategoryConfig(required=["title"])},
+    )
+    assert m.warn_unknown_status is True
+
+
+def test_tracker_config_warn_unknown_status_can_be_disabled():
+    m = TrackerConfig(
+        default_category="task",
+        categories={"task": TrackerCategoryConfig(required=["title"])},
+        warn_unknown_status=False,
+    )
+    assert m.warn_unknown_status is False
+
+
 # ---------------------------------------------------------------------------
 # Compensation
 # ---------------------------------------------------------------------------

@@ -9,27 +9,84 @@
 | `-v`, `--verbose` | Debug-level logging |
 | `-q`, `--quiet` | Suppress output below WARNING |
 | `--no-color` | Disable Rich color |
-| `--workspace PATH` | Override CWD-upward workspace discovery |
+| `-w`, `--workspace PATH` | Override CWD-upward workspace discovery |
 
-Several commands also accept short forms of common flags: `-f` aliases `--force` (on `init`), and `-n` aliases `--dry-run` (on `tracker prune`, `jobs run`, `jobs prune`, `voice-update`).
+## Short flags
+
+Short flags follow Unix conventions and are scoped per-subcommand. The mapping below covers every short flag in the CLI; `daily-driver help` is the runtime equivalent.
+
+Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--force` on `init`), `-v`/`-q` (verbosity).
+
+| Subcommand | Long flag | Short |
+|---|---|---|
+| (global) | `--workspace` | `-w` |
+| `init` | `--force` | `-f` |
+| `tracker add` | `--category` | `-c` |
+| `tracker add` | `--title` | `-T` |
+| `tracker add` | `--status` | `-s` |
+| `tracker add` | `--tags` | `-t` |
+| `tracker add` | `--link` | `-l` |
+| `tracker add` | `--note` | `-N` |
+| `tracker add` | `--due` | `-d` |
+| `tracker update` | `--status` | `-s` |
+| `tracker update` | `--note` | `-N` |
+| `tracker update` | `--tags` | `-t` |
+| `tracker prune` | `--category` | `-c` |
+| `tracker prune` | `--status` | `-s` |
+| `tracker prune` | `--dry-run` | `-n` |
+| `tracker show` | `--json` | `-j` |
+| `tracker list` | `--category` | `-c` |
+| `tracker list` | `--status` | `-s` |
+| `tracker list` | `--tag` | `-t` |
+| `tracker list` | `--json` | `-j` |
+| `tracker follow-ups` | `--json` | `-j` |
+| `tracker stats` | `--json` | `-j` |
+| `status` | `--json` | `-j` |
+| `focus status` | `--json` | `-j` |
+| `jobs run` | `--sources` | `-S` |
+| `jobs run` | `--dry-run` | `-n` |
+| `jobs status` | `--json` | `-j` |
+| `jobs prune` | `--status` | `-s` |
+| `jobs prune` | `--dry-run` | `-n` |
+| `paths` | `--date` | `-d` |
+| `paths` | `--json` | `-j` |
+| `gather calendar` | `--json` | `-j` |
+| `gather git` | `--json` | `-j` |
+| `scheduler status` | `--json` | `-j` |
+| `summary` | `--range` | `-r` |
+| `summary` | `--json` | `-j` |
+| `voice-update` | `--dry-run` | `-n` |
+| `help` | `--json` | `-j` |
+
+Capitals are used where a lowercase letter is already taken on the same subparser (`-T` title vs `-t` tag, `-N` note vs `-n` dry-run, `-S` sources vs `-s` status). Some long flags intentionally have no short — `--repo`, `--reason`, `--for`, `--since`, `--until`, `--older-than`, `--match`, `--detail`, `--model` — to keep the alphabet free for higher-traffic flags.
 
 ## Workspace lifecycle
 
 ### `init [PATH] [-f | --force]`
 
-Scaffolds a workspace. Static files (`context.md`, `voice-profile.md`) are only written if missing — `--force` does not clobber them. `.dd-config.yaml` is overwritten with a backup. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
+Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten (the previous contents are preserved as `.dd-config.yaml.bak`). `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
 
 ### `doctor [--fix | --reset]`
 
 Runs contract + dependency checks. `--fix` and `--reset` are mutually exclusive. Exit 1 on any ERROR; WARNING exits 0. `--reset` requires a workspace. `--fix` prints an action log of every repair it performs (created file, restored permission, regenerated managed file) so the change set is auditable.
 
-### `status [--json]`
+### `status [-j | --json]`
 
 Tracker dashboard: setup gaps (printed first when present), totals by category/status, items stalled >14 days (non-terminal), 7-day activity. `--json` emits the full payload including a `setup_gaps` array of `{kind, message}` entries detected from workspace state.
+
+## Discovery
+
+### `help [TOPIC] [-j | --json]`
+
+Reference command — distinct from argparse `--help` (usage). Prints the subcommand list plus discoverable value groups in one place: tracker statuses (recommended + in-use), tracker categories (from `.dd-config.yaml`), scraper sources, date-spec grammar, recurring-task cadences. `TOPIC` filters to a single section: `commands`, `statuses`, `categories`, `sources`, `dates`, `cadences`. `--json` produces a structured payload for tab-completion or scripting.
+
+`help` is workspace-aware but does not require one; without a workspace, `categories` reports a hint and `statuses.in_use` is empty.
 
 ## Tracker
 
 YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `required` field lists are defined in `.dd-config.yaml` under `tracker.categories`. Writes are flock-guarded.
+
+Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Set `tracker.warn_unknown_status: false` in `.dd-config.yaml` to silence.
 
 ### `tracker add --category CAT --title TEXT [flags]`
 
