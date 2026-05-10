@@ -38,6 +38,7 @@ def add_parser(
         help="Re-enrich empty fields in existing jobs.csv rows",
     )
     p_run.add_argument(
+        "-S",
         "--sources",
         default=None,
         metavar="LIST",
@@ -58,6 +59,7 @@ def add_parser(
         "status", parents=parents, help="Show last-run metadata and job counts"
     )
     p_status.add_argument(
+        "-j",
         "--json",
         action="store_true",
         default=False,
@@ -81,6 +83,7 @@ def add_parser(
         ),
     )
     p_prune.add_argument(
+        "-s",
         "--status",
         action="append",
         default=None,

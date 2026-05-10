@@ -488,3 +488,41 @@ def test_tracker_show_unknown_id_exits_1(
     assert rc == 1
     err = capsys.readouterr().err
     assert "task-999" in err
+
+
+# ---------------------------------------------------------------------------
+# Short-flag forms (Phase 4C acceptance gate)
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_list_short_flags(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`tracker list -c <cat> -s <status> -j` must parse and produce JSON."""
+    from daily_driver.cli.cli import app
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+
+    app(
+        [
+            "-w",
+            str(ws),
+            "tracker",
+            "add",
+            "-c",
+            "task",
+            "-T",
+            "shorty",
+            "-s",
+            "open",
+        ]
+    )
+    capsys.readouterr()
+
+    rc = app(["-w", str(ws), "tracker", "list", "-c", "task", "-s", "open", "-j"])
+    assert rc == 0
+    parsed = json.loads(capsys.readouterr().out)
+    titles = {e["title"] for e in parsed["data"]["entries"]}
+    assert "shorty" in titles

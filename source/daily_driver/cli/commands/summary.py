@@ -30,6 +30,7 @@ def add_parser(
         help="Generate a period summary using Claude (or --json for raw data)",
     )
     parser.add_argument(
+        "-r",
         "--range",
         required=True,
         metavar="SPEC",
@@ -53,6 +54,7 @@ def add_parser(
         help="Keyword filter; may be repeated (e.g. --match python --match sre)",
     )
     parser.add_argument(
+        "-j",
         "--json",
         action="store_true",
         dest="emit_json",

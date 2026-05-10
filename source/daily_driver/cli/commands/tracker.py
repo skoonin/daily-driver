@@ -33,24 +33,42 @@ def add_parser(
     # --- add ---
     p_add = nested.add_parser("add", parents=parents, help="Add a new tracker entry")
     p_add.add_argument(
-        "--category", required=True, metavar="CAT", help="Entry category"
+        "-c",
+        "--category",
+        required=True,
+        metavar="CAT",
+        help="Entry category",
     )
-    p_add.add_argument("--title", required=True, metavar="TEXT", help="Entry title")
     p_add.add_argument(
-        "--status", default=None, metavar="STATUS", help="Initial status"
+        "-T",
+        "--title",
+        required=True,
+        metavar="TEXT",
+        help="Entry title",
     )
     p_add.add_argument(
+        "-s",
+        "--status",
+        default=None,
+        metavar="STATUS",
+        help="Initial status",
+    )
+    p_add.add_argument(
+        "-t",
         "--tags",
         default=None,
         metavar="a,b",
         help="Comma-separated tags",
     )
-    p_add.add_argument("--link", default=None, metavar="URL", help="Related URL")
-    p_add.add_argument("--note", default=None, metavar="TEXT", help="Free-text note")
+    p_add.add_argument("-l", "--link", default=None, metavar="URL", help="Related URL")
+    p_add.add_argument(
+        "-N", "--note", default=None, metavar="TEXT", help="Free-text note"
+    )
     p_add.add_argument(
         "--next-action", default=None, metavar="TEXT", help="Next action description"
     )
     p_add.add_argument(
+        "-d",
         "--due",
         default=None,
         metavar="YYYY-MM-DD",
@@ -71,12 +89,21 @@ def add_parser(
         "update", parents=parents, help="Update an existing entry"
     )
     p_update.add_argument("id", metavar="ID", help="Entry ID to update")
-    p_update.add_argument("--status", default=None, metavar="STATUS", help="New status")
-    p_update.add_argument("--note", default=None, metavar="TEXT", help="Append note")
+    p_update.add_argument(
+        "-s",
+        "--status",
+        default=None,
+        metavar="STATUS",
+        help="New status",
+    )
+    p_update.add_argument(
+        "-N", "--note", default=None, metavar="TEXT", help="Append note"
+    )
     p_update.add_argument(
         "--next-action", default=None, metavar="TEXT", help="Next action description"
     )
     p_update.add_argument(
+        "-t",
         "--tags",
         default=None,
         metavar="a,b",
@@ -107,10 +134,18 @@ def add_parser(
         help="Bulk-delete entries by category, status, or age",
     )
     p_prune.add_argument(
-        "--category", default=None, metavar="CAT", help="Match category"
+        "-c",
+        "--category",
+        default=None,
+        metavar="CAT",
+        help="Match category",
     )
     p_prune.add_argument(
-        "--status", default=None, metavar="STATUS", help="Match status"
+        "-s",
+        "--status",
+        default=None,
+        metavar="STATUS",
+        help="Match status",
     )
     p_prune.add_argument(
         "--older-than",
@@ -138,7 +173,11 @@ def add_parser(
     )
     p_show.add_argument("id", metavar="ID", help="Entry ID to display")
     p_show.add_argument(
-        "--json", action="store_true", default=False, help="Emit JSON output"
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit JSON output",
     )
     add_global_flags(p_show)
     p_show.set_defaults(func=_run_show)
@@ -146,12 +185,22 @@ def add_parser(
     # --- list ---
     p_list = nested.add_parser("list", parents=parents, help="List tracker entries")
     p_list.add_argument(
-        "--category", default=None, metavar="CAT", help="Filter by category"
+        "-c",
+        "--category",
+        default=None,
+        metavar="CAT",
+        help="Filter by category",
     )
     p_list.add_argument(
-        "--status", default=None, metavar="FILTER", help="Filter by status"
+        "-s",
+        "--status",
+        default=None,
+        metavar="FILTER",
+        help="Filter by status",
     )
-    p_list.add_argument("--tag", default=None, metavar="TAG", help="Filter by tag")
+    p_list.add_argument(
+        "-t", "--tag", default=None, metavar="TAG", help="Filter by tag"
+    )
     p_list.add_argument(
         "--since",
         default=None,
@@ -162,7 +211,11 @@ def add_parser(
         ),
     )
     p_list.add_argument(
-        "--json", action="store_true", default=False, help="Emit JSON output"
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit JSON output",
     )
     add_global_flags(p_list)
     p_list.set_defaults(func=_run_list)
@@ -178,7 +231,11 @@ def add_parser(
         help="Restrict to overdue entries only",
     )
     p_fu.add_argument(
-        "--json", action="store_true", default=False, help="Emit JSON output"
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit JSON output",
     )
     add_global_flags(p_fu)
     p_fu.set_defaults(func=_run_follow_ups)
@@ -188,7 +245,11 @@ def add_parser(
         "stats", parents=parents, help="Show tracker statistics"
     )
     p_stats.add_argument(
-        "--json", action="store_true", default=False, help="Emit JSON output"
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit JSON output",
     )
     add_global_flags(p_stats)
     p_stats.set_defaults(func=_run_stats)

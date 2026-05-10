@@ -40,11 +40,13 @@ def add_parser(
         help="Which path to print",
     )
     parser.add_argument(
+        "-d",
         "--date",
         default=None,
         help="ISO date (YYYY-MM-DD) for daily/daily-plan/daily-notes (default: today)",
     )
     parser.add_argument(
+        "-j",
         "--json",
         action="store_true",
         default=False,

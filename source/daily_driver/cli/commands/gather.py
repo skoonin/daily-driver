@@ -35,7 +35,7 @@ def add_parser(
     )
     p_cal.add_argument("--since", default=None, help="ISO date (default: today)")
     p_cal.add_argument("--until", default=None, help="ISO date (default: tomorrow)")
-    p_cal.add_argument("--json", action="store_true", help="Emit JSON")
+    p_cal.add_argument("-j", "--json", action="store_true", help="Emit JSON")
     add_global_flags(p_cal)
     p_cal.set_defaults(func=_run_calendar)
 
@@ -54,7 +54,7 @@ def add_parser(
         help="ISO date (default: 24h before now)",
     )
     p_git.add_argument("--until", default=None, help="ISO date (default: now)")
-    p_git.add_argument("--json", action="store_true", help="Emit JSON")
+    p_git.add_argument("-j", "--json", action="store_true", help="Emit JSON")
     add_global_flags(p_git)
     p_git.set_defaults(func=_run_git)
 

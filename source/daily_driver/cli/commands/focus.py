@@ -78,7 +78,11 @@ def add_parser(
         "status", parents=parents, help="Show focus mode state"
     )
     p_status.add_argument(
-        "--json", action="store_true", default=False, help="Emit JSON output"
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit JSON output",
     )
     add_global_flags(p_status)
     p_status.set_defaults(func=_run_status)
