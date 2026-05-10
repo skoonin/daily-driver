@@ -128,6 +128,16 @@ def timeout_seconds(config: dict[str, Any]) -> int:
     return _model(config).scraper.timeout
 
 
+def max_retries(config: dict[str, Any]) -> int:
+    """Number of additional attempts on rate-limited (429/503) HTTP responses."""
+    return _model(config).scraper.max_retries
+
+
+def max_age_days(config: dict[str, Any]) -> int:
+    """Maximum age (in days) for scraped postings. 0 disables the filter."""
+    return _model(config).scraper.max_age_days
+
+
 def enrich_timeout(config: dict[str, Any] | None) -> int:
     """Timeout for Claude CLI enrichment calls (seconds)."""
     return _model(config).scraper.enrich_timeout
@@ -935,6 +945,8 @@ __all__ = [
     "roles_list",
     "user_agent",
     "timeout_seconds",
+    "max_retries",
+    "max_age_days",
     "enrich_timeout",
     "locations_config",
     "persona",
