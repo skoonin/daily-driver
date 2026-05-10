@@ -68,6 +68,9 @@ class TrackerConfig(BaseModel):
 
     default_category: str = "task"
     categories: dict[str, TrackerCategoryConfig] = {}
+    # Warn (don't reject) when `tracker add/update --status` uses a value
+    # outside the recommended set. Free-form is intentional; this is a nudge.
+    warn_unknown_status: bool = True
 
     @model_validator(mode="after")
     def _default_category_in_categories(self) -> TrackerConfig:
