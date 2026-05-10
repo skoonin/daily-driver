@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — enrichment-path 403/429 errors
+
+- **Skip HN detail enrichment.** `news.ycombinator.com/item?id=*` URLs no
+  longer trigger an HTTP fetch — HN aggressively 429s on bursts and the
+  title-derived data from `hn_who_is_hiring` / `hn_jobs` is sufficient.
+  Logged once per run, not per URL.
+- **Skip Indeed detail enrichment.** All `*.indeed.com` hosts are skipped
+  (mirrors the existing LinkedIn skip): JobSpy already populates
+  description, and bare `requests` get bot-walled with 403. Logged once
+  per run.
+- **Route remaining detail fetches through `_api_get`.** Replaces the bare
+  `requests.get` in `enrich_job_details` with the hardened helper added in
+  the HN-retry work, so all detail fetches inherit retry / Retry-After /
+  exponential backoff. A single `requests.Session` is built once per run
+  and reused.
+
 ### Fixed — `daily-driver jobs run` UX
 
 - **Verbose mode now names sources, not just counts.** Phase summary lines

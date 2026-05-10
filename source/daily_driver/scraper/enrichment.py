@@ -14,6 +14,7 @@ import requests
 
 from daily_driver.integrations import claude_cli
 from daily_driver.scraper.parsing import _parse_detail_page
+from daily_driver.scraper.sources._http import _api_get, _http_session
 
 if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
@@ -352,18 +353,24 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     are swallowed — missing data is the expected outcome for boards that don't
     expose JSON-LD, not an error worth aborting the run for.
     """
-    from daily_driver.scraper.runner import (
-        scraper_cfg,
-        timeout_seconds,
-        user_agent,
-    )
+    from daily_driver.scraper.runner import scraper_cfg
 
     cache: dict[str, dict] = {}
     cfg = scraper_cfg(config)
     delay = cfg.detail_delay_seconds
-    timeout_s = timeout_seconds(config)
-    headers = {"User-Agent": user_agent(config)}
 
+    # Hosts whose detail pages we deliberately skip:
+    # - linkedin.com: anonymous detail pages don't emit JSON-LD; JobSpy's
+    #   linkedin_fetch_description already populates description.
+    # - news.ycombinator.com: aggressive 429 rate-limiting on /item?id=*.
+    #   Title-derived data from hn_who_is_hiring / hn_jobs is sufficient.
+    #   A future Algolia /api/v1/items/{id} integration could replace this.
+    # - *.indeed.com: bot-walls bare requests with 403; JobSpy already
+    #   populates description for Indeed listings.
+    hn_skipped_logged = False
+    indeed_skipped_logged = False
+
+    session: requests.Session | None = None
     fetched_count = 0
     enriched_count = 0
     for job in jobs:
@@ -374,10 +381,23 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
         url = (job.get("url") or "").strip()
         if not url:
             continue
-        # LinkedIn anonymous detail pages don't emit JSON-LD; comp/description
-        # arrive via JobSpy's linkedin_fetch_description. Skip the GET entirely
-        # rather than fetch HTML only to throw it away.
         if "linkedin.com" in url:
+            continue
+        if "news.ycombinator.com" in url:
+            if not hn_skipped_logged:
+                log.info(
+                    "[detail] skipping HN detail enrichment "
+                    "(rate-limited; title-derived data only)"
+                )
+                hn_skipped_logged = True
+            continue
+        if "indeed.com" in url:
+            if not indeed_skipped_logged:
+                log.info(
+                    "[detail] skipping Indeed detail enrichment "
+                    "(JobSpy already populates description)"
+                )
+                indeed_skipped_logged = True
             continue
 
         if url in cache:
@@ -386,17 +406,19 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
             if fetched_count > 0 and delay > 0:
                 time.sleep(delay)
             fetched_count += 1
-            try:
-                resp = requests.get(url, headers=headers, timeout=timeout_s)
-                resp.raise_for_status()
-                details = _parse_detail_page(resp.text, url)
-            except requests.RequestException as exc:
-                # Network flakes are expected and non-fatal — missing comp just
-                # means the CSV column stays blank. Programmer errors from the
-                # parser path (AttributeError, TypeError, etc.) are deliberately
-                # NOT caught here; we want them visible, not silently swallowed.
-                log.debug("[detail] %s: fetch failed: %s", url, exc)
+            if session is None:
+                session = _http_session(config)
+            resp = _api_get(session, url, config, label="detail")
+            if resp is None:
                 details = {}
+            else:
+                try:
+                    details = _parse_detail_page(resp.text, url)
+                except (ValueError, TypeError) as exc:
+                    # Parser-side data shape errors (malformed JSON-LD, etc.)
+                    # are non-fatal: missing comp just means the CSV stays blank.
+                    log.debug("[detail] %s: parse failed: %s", url, exc)
+                    details = {}
             cache[url] = details
 
         if details.get("comp"):
