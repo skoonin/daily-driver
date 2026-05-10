@@ -13,7 +13,6 @@ from .greenhouse import scrape_greenhouse
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
 from .jobspy import scrape_jobspy
 from .remoteok import scrape_remoteok
-from .wellfound import scrape_wellfound
 from .weworkremotely import scrape_weworkremotely
 
 log = logging.getLogger(__name__)
@@ -25,7 +24,6 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
     "greenhouse": scrape_greenhouse,
     "jobspy": scrape_jobspy,
-    "wellfound": scrape_wellfound,
     "apple": scrape_apple,
 }
 
@@ -66,7 +64,7 @@ def _typed_source(
     return wrapped
 
 
-# Q16: explicit Source registry — no dynamic dispatch, all 7 sources known
+# Q16: explicit Source registry — no dynamic dispatch, all sources known
 # at import time. Each entry is a Source-protocol callable that validates
 # rows through RawScrapedJob.
 SOURCE_REGISTRY: dict[str, Callable[[dict[str, Any]], list[Any]]] = {

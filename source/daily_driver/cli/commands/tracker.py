@@ -24,7 +24,7 @@ def add_parser(
         parents=parents,
         help=(
             "Manage tracker entries "
-            "(add, update, delete, prune, list, follow-ups, stats)"
+            "(add, update, delete, prune, show, list, follow-ups, stats)"
         ),
     )
 
@@ -131,6 +131,17 @@ def add_parser(
     )
     add_global_flags(p_prune)
     p_prune.set_defaults(func=_run_prune)
+
+    # --- show ---
+    p_show = nested.add_parser(
+        "show", parents=parents, help="Show a single tracker entry by ID"
+    )
+    p_show.add_argument("id", metavar="ID", help="Entry ID to display")
+    p_show.add_argument(
+        "--json", action="store_true", default=False, help="Emit JSON output"
+    )
+    add_global_flags(p_show)
+    p_show.set_defaults(func=_run_show)
 
     # --- list ---
     p_list = nested.add_parser("list", parents=parents, help="List tracker entries")
@@ -339,6 +350,43 @@ def _run_prune(args: argparse.Namespace, tracker: Any) -> int:
     return 0
 
 
+def _run_show(args: argparse.Namespace, tracker: Any) -> int:
+    try:
+        entry = tracker.get(args.id)
+    except KeyError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {"schema": 1, "data": {"entry": _entry_to_dict(entry)}},
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    console = Console(stderr=False)
+    table = Table(show_header=False, box=None, title=f"Entry {entry.id}")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("ID", entry.id)
+    table.add_row("Category", entry.category)
+    table.add_row("Title", entry.title)
+    table.add_row("Status", entry.status)
+    table.add_row("Tags", ", ".join(entry.tags))
+    table.add_row("Link", entry.link or "")
+    table.add_row("Next action", entry.next_action or "")
+    table.add_row("Due", str(entry.due) if entry.due else "")
+    table.add_row("Created", entry.created_at.isoformat())
+    table.add_row("Updated", entry.updated_at.isoformat())
+    table.add_row("Notes", entry.notes)
+    if entry.extras:
+        for key, value in entry.extras.items():
+            table.add_row(f"extras.{key}", str(value))
+    console.print(table)
+    return 0
+
+
 def _run_list(args: argparse.Namespace, tracker: Any) -> int:
     since = None
     if args.since is not None:
@@ -417,7 +465,7 @@ def run(args: argparse.Namespace) -> int:
         # Retrieve the tracker subparser's help via re-parse with -h.
         print("usage: daily-driver tracker <action> ...", file=sys.stderr)
         print(
-            "actions: add, update, delete, prune, list, follow-ups, stats",
+            "actions: add, update, delete, prune, show, list, follow-ups, stats",
             file=sys.stderr,
         )
         return 2

@@ -50,6 +50,9 @@ tracker:
 #   preferred_signoff: "—"
 
 # Optional: scheduler config (consumed by `scheduler install`).
+# Per-job launchd cadence overrides. Each key matches a scheduled job
+# (`check_in`, `jobs`, `day_start`, `day_end`); set `hour` and `minute`
+# to override the built-in default.
 # scheduler:
 #   check_in:
 #     hour: 14
@@ -57,6 +60,35 @@ tracker:
 #   jobs:
 #     hour: 8
 #     minute: 30
+
+# Optional: day-start / day-end scheduled times (HH:MM, 24h).
+# When set, `scheduler install` adds launchd jobs that fire `day-start` /
+# `day-end` at these times. Leave unset to skip the scheduled run.
+# schedule:
+#   day_start: "08:00"
+#   day_end: "17:30"
+
+# Optional: claude session behavior.
+# claude:
+#   # When true, `check-in` resumes the prior `claude` session instead of
+#   # opening a fresh one. Useful if you keep one long-running session per
+#   # day and want check-in to land in it.
+#   resume_check_in: false
+
+# Optional: focus mode defaults.
+# focus:
+#   # Fallback duration when `focus on` runs without `--for`.
+#   # Accepts the same suffixes as `--for` (e.g. "25m", "1h", "90m").
+#   default_duration: "25m"
+
+# Optional: gather config (controls what `daily-driver gather <kind>` reads).
+# gather:
+#   git:
+#     # Repos to scan for `gather git` activity. Each entry is a directory
+#     # containing one or more git checkouts. Paths can be absolute or
+#     # tilde-prefixed.
+#     search_paths:
+#       - "~/git"
 
 # Optional: plugins. Each plugin schema is strict — typos error out.
 # plugins:
@@ -95,7 +127,6 @@ tracker:
 #         greenhouse: false                # Greenhouse boards (configurable list)
 #
 #         # Scrapers shipped in this repo (Playwright, needs `playwright install`):
-#         wellfound: false                 # wellfound.com (formerly AngelList)
 #         apple: false                     # jobs.apple.com (API intercept)
 #
 #         # python-jobspy aggregator (one toggle, multiple upstream sites;

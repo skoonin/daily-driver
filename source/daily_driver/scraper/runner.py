@@ -542,7 +542,7 @@ def run_all_scrapers(
 
     Two phases:
       Phase 1 — headless-safe sources run in parallel via ThreadPoolExecutor
-      Phase 2 — non-headless sources (wellfound, apple) run serially
+      Phase 2 — non-headless sources (apple) run serially
 
     Phase 2 stays serial by design: running multiple visible Chromium windows
     concurrently is RAM-heavy and makes bot detection easier. Deduplicates by
