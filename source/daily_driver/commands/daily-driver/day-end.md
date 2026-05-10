@@ -7,23 +7,23 @@ End-of-day review session. Follow these steps in order.
 
 ## 1. Read Today's Plan
 
-Load this morning's plan for comparison:
+Resolve today's plan path and Read it with the Claude Read tool:
 
 ```bash
-daily-driver read plan --frontmatter
+daily-driver paths daily-plan
 ```
 
-```bash
-daily-driver read plan
-```
+Read the file at the printed path. Parse the YAML frontmatter for `plan_items` and read the markdown body for any commentary the planner wrote. If the file does not exist, note that no plan baseline exists for today and proceed.
 
 ## 2. Gather Session Activity
 
-Collect today's Claude Code session summaries:
+For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
 
 ```bash
-daily-driver gather sessions
+ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 ```
+
+Read the most recent few whose mtimes fall in today's window. Skim for cwd + first user prompt to identify what was worked on.
 
 ## 3. Gather Git Activity
 
@@ -47,9 +47,13 @@ daily-driver tracker list
 
 ## 5. Read Context
 
+Resolve the workspace output directory and Read `context.md` from it:
+
 ```bash
-daily-driver read context
+daily-driver paths output
 ```
+
+Read `<output>/context.md` with the Claude Read tool. If it is missing, note it and proceed.
 
 ## 6. Review the Day
 
@@ -96,31 +100,30 @@ If yes:
 4. Collect estimated durations for unblocked items
 5. Build the tomorrow plan structure (same schema as today's plan)
 
-Get tomorrow's date:
+Resolve tomorrow's canonical plan path; the parent directory is created inline:
 
 ```bash
-date -v+1d +%Y-%m-%d
+TOMORROW=$(date -v+1d +%Y-%m-%d)
+TOMORROW_PLAN=$(daily-driver paths daily-plan --date "$TOMORROW")
+mkdir -p "$(dirname "$TOMORROW_PLAN")"
+echo "$TOMORROW_PLAN"
 ```
 
-Ensure tomorrow's daily directory exists:
-
-```bash
-daily-driver ensure-daily-dir --date $(date -v+1d +%Y-%m-%d)
-```
-
-Save tomorrow's plan to `{output_dir}/YYYY/MM/YYYY-MM-DD-plan.md` with YAML frontmatter — same schema as today's plan but with tomorrow's date. Pre-populate `carry_forward` items as `plan_items` with `status: planned`.
+Write tomorrow's plan to `$TOMORROW_PLAN` with YAML frontmatter — same schema as today's plan but with tomorrow's date. Pre-populate `carry_forward` items as `plan_items` with `status: planned`.
 
 If no: skip this step.
 
 ## 9. Save Notes
 
-After the user confirms, ensure today's daily directory exists:
+After the user confirms, resolve today's canonical notes path; create the parent directory inline:
 
 ```bash
-daily-driver ensure-daily-dir
+NOTES_PATH=$(daily-driver paths daily-notes)
+mkdir -p "$(dirname "$NOTES_PATH")"
+echo "$NOTES_PATH"
 ```
 
-Write the notes to `{output_dir}/YYYY/MM/YYYY-MM-DD-notes.md` with YAML frontmatter followed by the markdown body. The frontmatter must include:
+Write the notes to `$NOTES_PATH` with YAML frontmatter followed by the markdown body. The frontmatter must include:
 
 - `date`: today's date
 - `carry_forward`: the list built in step 6 (items for tomorrow, both work and personal with `type: personal`)

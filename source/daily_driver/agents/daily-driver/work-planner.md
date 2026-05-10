@@ -251,11 +251,13 @@ When asked to draft a cover letter, application response, email to a
 recruiter or hiring manager, or any other professional communication
 on behalf of the user:
 
-1. Read the voice profile before writing anything:
+1. Read the voice profile before writing anything. Resolve its path, then Read with the Claude Read tool:
 
 ```bash
-daily-driver read voice-profile
+daily-driver paths output
 ```
+
+Read `<output>/voice-profile.md`. If the file is missing or empty, note it and continue.
 
 2. Apply the profile's patterns, language preferences, structural
    conventions, and explicit avoidances

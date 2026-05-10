@@ -27,19 +27,17 @@ Use `current_time` throughout this check-in to determine which plan blocks are p
 
 ## 1. Read Today's Plan
 
-Read today's plan frontmatter for plan items:
+Resolve today's plan path and Read it with the Claude Read tool:
 
 ```bash
-daily-driver read plan --frontmatter
+daily-driver paths daily-plan
 ```
 
-```bash
-daily-driver read plan
-```
+Read the file at the printed path. Parse the YAML frontmatter for `plan_items` (and the markdown body for any commentary the planner wrote). If the file does not exist, surface this once at the top of the check-in and proceed without a plan baseline.
 
 ## 2. Gather Fresh Data
 
-Collect calendar context and git commits in the foreground:
+Collect calendar context and git commits:
 
 ```bash
 daily-driver gather calendar
@@ -49,17 +47,13 @@ daily-driver gather calendar
 daily-driver gather git
 ```
 
-`gather sessions` walks every JSONL under `~/.claude/projects/` and can be context-heavy. Dispatch it to a background subagent (Task tool, `general-purpose` agent) so the foreground context window stays clean. The subagent's only job is to run `daily-driver gather sessions`, summarize active and recent sessions in three bullet points, and return.
+For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
 
-**Error handling — never silent.** If the subagent's exit code is non-zero, OR the subagent's summary explicitly reports an error, surface the subagent's stderr verbatim to the user (do not paraphrase, do not hide), then ask:
+```bash
+ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
+```
 
-> Background `gather sessions` failed:
-> ```
-> <stderr verbatim>
-> ```
-> Options: **retry** (re-dispatch the subagent), **continue** (proceed without session data), or **abort** (exit /check-in).
-
-Wait for the user's choice before continuing. On `retry`, dispatch again. On `continue`, note in the rendered check-in summary that session data is missing for this run. On `abort`, exit cleanly.
+Read the most recent few whose mtimes fall in today's window. Use them together with git commits to infer what was actually worked on since the morning plan.
 
 ## 3. Review Application Pipeline
 

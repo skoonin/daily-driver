@@ -1,4 +1,4 @@
-"""Tests for ``daily-driver gather {calendar,git,sessions,notes}``."""
+"""Tests for ``daily-driver gather {calendar,git}``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ import pytest
 
 from daily_driver.gathers.calendar import CalendarEvent
 from daily_driver.gathers.git import GitCommit
-from daily_driver.gathers.sessions import ClaudeSession
 
 
 def _init_workspace(tmp_path: Path) -> Path:
@@ -212,73 +211,6 @@ def test_gather_git_search_paths_no_repos_prints_placeholder(
     assert "no git repos discovered" in out
 
 
-def test_gather_sessions_text_mode(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from daily_driver.cli.cli import app
-    from daily_driver.gathers import sessions
-
-    ws = _init_workspace(tmp_path)
-    session = ClaudeSession(
-        session_id="a" * 32,
-        started_at=datetime(2026, 4, 21, 10, 0),
-        cwd=str(tmp_path),
-        message_count=12,
-    )
-    monkeypatch.setattr(sessions, "gather_sessions", lambda since, until: [session])
-
-    rc = app(["--workspace", str(ws), "gather", "sessions"])
-
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "msgs=12" in out
-    assert "aaaaaaaa" in out
-
-
-def test_gather_notes_lists_paths_in_range(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path)
-    (ws / "2026" / "04").mkdir(parents=True)
-    note = ws / "2026" / "04" / "2026-04-20-notes.md"
-    note.write_text("notes\n")
-
-    rc = app(
-        [
-            "--workspace",
-            str(ws),
-            "gather",
-            "notes",
-            "--since",
-            "2026-04-19",
-            "--until",
-            "2026-04-21",
-        ]
-    )
-
-    out = capsys.readouterr().out.strip()
-    assert rc == 0
-    assert str(note) in out
-
-
-def test_gather_notes_empty_prints_placeholder(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path)
-
-    rc = app(["--workspace", str(ws), "gather", "notes"])
-
-    out = capsys.readouterr().out
-    assert rc == 0
-    assert "no notes in window" in out
-
-
 def test_gather_bare_prints_usage_returns_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -305,7 +237,7 @@ def test_gather_invalid_date_returns_2(
             "--workspace",
             str(ws),
             "gather",
-            "notes",
+            "calendar",
             "--since",
             "not-a-date",
         ]
@@ -333,45 +265,6 @@ def test_gather_missing_workspace_exits_1(
     )
 
     assert rc == 1
-
-
-def test_gather_notes_uses_workspace_output_dir(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """notes honors output_dir resolution (not just workspace root)."""
-    from daily_driver.cli.cli import app
-    from daily_driver.core.workspace import Workspace
-
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    Workspace.init(ws)
-    # Rewrite output_dir to a sibling directory
-    config = ws / ".dd-config.yaml"
-    config.write_text(
-        config.read_text().replace("output_dir: .", "output_dir: ../output"),
-        encoding="utf-8",
-    )
-    output = tmp_path / "output"
-    (output / "2026" / "04").mkdir(parents=True)
-    note = output / "2026" / "04" / "2026-04-20-notes.md"
-    note.write_text("x\n")
-
-    rc = app(
-        [
-            "--workspace",
-            str(ws),
-            "gather",
-            "notes",
-            "--since",
-            "2026-04-19",
-            "--until",
-            "2026-04-21",
-        ]
-    )
-
-    out = capsys.readouterr().out.strip()
-    assert rc == 0
-    assert str(note.resolve()) in out
 
 
 def test_gather_calendar_unused_dates_default_to_today(
