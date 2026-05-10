@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Phase 4 CLI ergonomics
+
+- `daily-driver help [TOPIC] [-j|--json]`: reference command listing subcommands plus discoverable value groups (statuses, categories, sources, dates, cadences). Distinct from argparse `--help`. Workspace-aware but does not require one.
+- `tracker.RECOMMENDED_STATUSES` (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) plus a one-line stderr nudge when `tracker add/update --status` is given a value outside the set. Suppressed when another entry already uses the same custom status. New config knob `tracker.warn_unknown_status: bool = True` (`false` to silence).
+- Short flags across the CLI: `-c category`, `-s status`, `-t tag(s)`, `-T title`, `-l link`, `-d due/date`, `-N note`, `-S sources`, `-j json`, `-r range`, `-w workspace` (global). Reserved letters `-h`, `-n` (`--dry-run`), `-f` (`--force`), `-v`, `-q` are unchanged. Full mapping in `docs/commands.md`.
+
+### Changed — Phase 4 CLI ergonomics
+
+- `daily-driver init` is now idempotent. Re-running on an existing workspace fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. `--force` still overwrites `.dd-config.yaml` (with a `.bak` backup). Previously a second run errored with exit 1.
+
 ### Fixed — W9 shipped-prompt schema drift
 
 - `source/daily_driver/agents/daily-driver/work-planner.md`: rewritten to reflect the current category-driven tracker. Replaced `app-NNN` with `{category}-NNN` (e.g. `task-001`, `job-007`) and the `app_id` field with `tracker_id`; generalized planning prose from job-search-only to any tracked work; tracker-update example now uses `<tracker-id>` instead of a bare `<ID>`. (#47)
