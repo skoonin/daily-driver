@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from typing import Any
 
 import requests
 
 log = logging.getLogger(__name__)
+
+_RETRY_STATUS_CODES: frozenset[int] = frozenset({429, 503})
+_DEFAULT_BACKOFF_SECONDS: float = 1.5
+_MAX_BACKOFF_SECONDS: float = 30.0
 
 
 # Per-scraper parameters for each supported country. Add a row here when
@@ -87,23 +92,79 @@ def _http_session(config: dict) -> requests.Session:
     return session
 
 
+def _retry_after_seconds(resp: requests.Response) -> float | None:
+    """Parse Retry-After header (delta-seconds form). Returns None if absent/invalid."""
+    raw = resp.headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return None
+
+
 def _api_get(
     session: requests.Session,
     url: str,
     config: dict,
     *,
     label: str = "",
+    max_retries: int | None = None,
+    sleep: Any = time.sleep,
 ) -> requests.Response | None:
-    """GET a URL, log + return None on failure instead of raising."""
-    from daily_driver.scraper.runner import timeout_seconds
+    """GET a URL with retry on 429/503; log + return None on terminal failure.
 
-    try:
-        resp = session.get(url, timeout=timeout_seconds(config))
-        resp.raise_for_status()
-        return resp
-    except requests.RequestException as exc:
-        log.warning("[%s] request failed for %s: %s", label, url, exc)
-        return None
+    `max_retries` defaults to `scraper.max_retries` from config (3). Honors
+    `Retry-After` header when present; otherwise applies exponential backoff
+    (1.5s, 3s, 6s, ... capped at 30s). `sleep` is a seam for tests.
+    """
+    from daily_driver.scraper.runner import max_retries as cfg_max_retries
+    from daily_driver.scraper.runner import (
+        timeout_seconds,
+    )
+
+    timeout = timeout_seconds(config)
+    retries = cfg_max_retries(config) if max_retries is None else max_retries
+    last_exc: requests.RequestException | None = None
+
+    for attempt in range(retries + 1):
+        try:
+            resp = session.get(url, timeout=timeout)
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt >= retries:
+                break
+            sleep(min(_DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS))
+            continue
+
+        if resp.status_code in _RETRY_STATUS_CODES and attempt < retries:
+            wait = _retry_after_seconds(resp)
+            if wait is None:
+                wait = min(
+                    _DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS
+                )
+            log.info(
+                "[%s] %s rate-limited (HTTP %d); retrying in %.1fs (attempt %d/%d)",
+                label,
+                url,
+                resp.status_code,
+                wait,
+                attempt + 1,
+                retries,
+            )
+            sleep(wait)
+            continue
+
+        try:
+            resp.raise_for_status()
+            return resp
+        except requests.RequestException as exc:
+            last_exc = exc
+            break
+
+    if last_exc is not None:
+        log.warning("[%s] request failed for %s: %s", label, url, last_exc)
+    return None
 
 
 def _has_playwright() -> bool:

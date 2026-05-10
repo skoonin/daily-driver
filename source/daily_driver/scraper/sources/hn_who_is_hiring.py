@@ -6,8 +6,6 @@ import logging
 import re
 from typing import Any
 
-from bs4 import BeautifulSoup
-
 from daily_driver.core.clock import today
 from daily_driver.scraper.sources._http import _api_get, _http_session
 
@@ -17,9 +15,10 @@ log = logging.getLogger(__name__)
 def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     """Scrape the current month's HN Who's Hiring thread via Algolia API.
 
-    Index-page fetch resolves the thread ID from HN's HTML (unchanged).
-    Comment retrieval uses Algolia's public search API instead of parsing
-    HN's HTML comment tree, which breaks on markup changes.
+    Thread discovery uses Algolia's `author_whoishiring` story search rather
+    than HN's `/submitted?id=whoishiring` HTML page — HN aggressively rate-
+    limits the latter (429s on repeated launchd-driven runs). Algolia is
+    the single source for both the thread ID lookup and the comment fetch.
     Comment headline format (convention): "Company | Role | Location | ..."
     """
     from daily_driver.scraper.runner import matches_roles, roles_list, scraper_cfg
@@ -29,28 +28,23 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     session = _http_session(config)
     current_month_str = today().strftime("%B %Y")
 
-    index_resp = _api_get(
-        session,
-        "https://news.ycombinator.com/submitted?id=whoishiring",
-        config,
-        label="hn_who_is_hiring",
+    stories_url = (
+        "https://hn.algolia.com/api/v1/search_by_date"
+        "?tags=story,author_whoishiring&hitsPerPage=12"
     )
-    if not index_resp:
+    stories_resp = _api_get(session, stories_url, config, label="hn_who_is_hiring")
+    if not stories_resp:
         return []
 
-    index_soup = BeautifulSoup(index_resp.text, "html.parser")
-
-    thread_id = None
-    for a_tag in index_soup.find_all("a"):
-        text = a_tag.get_text(strip=True)
-        if "Who is hiring?" in text and current_month_str in text:
-            href_raw = a_tag.get("href", "")
-            href = href_raw if isinstance(href_raw, str) else ""
-            if href.startswith("item?id="):
-                thread_id = href.split("=", 1)[1]
-            elif "item?id=" in href:
-                thread_id = href.split("item?id=", 1)[1].split("&")[0]
-            break
+    thread_id: str | None = None
+    expected_substrings = ("who is hiring?", current_month_str.lower())
+    for hit in stories_resp.json().get("hits", []):
+        title = (hit.get("title") or "").lower()
+        if all(s in title for s in expected_substrings):
+            object_id = hit.get("objectID")
+            if object_id:
+                thread_id = str(object_id)
+                break
 
     if not thread_id:
         log.warning(

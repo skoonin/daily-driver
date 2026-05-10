@@ -5,6 +5,11 @@
 # preserved on parse — the root model is `extra="allow"` so you can stash
 # workspace-local notes without a schema bump. Plugin schemas are strict
 # (`extra="forbid"`); typos there are real errors.
+#
+# To enable a commented block: uncomment the header (at column 0) AND
+# every nested line together. Don't uncomment a single inner field on
+# its own — YAML will silently nest it inside whichever open block is
+# above, and Pydantic will reject it as `extra_forbidden`.
 
 # Required: workspace settings.
 daily_driver:
@@ -50,9 +55,11 @@ tracker:
 #   preferred_signoff: "—"
 
 # Optional: scheduler config (consumed by `scheduler install`).
-# Per-job launchd cadence overrides. Each key matches a scheduled job
-# (`check_in`, `jobs`, `day_start`, `day_end`); set `hour` and `minute`
-# to override the built-in default.
+# Freeform dict of per-job launchd cadence overrides for `check_in` and
+# `jobs`. Each key sets `hour` and `minute` to override the built-in
+# default. NOTE: `day_start` / `day_end` cadence does NOT live here — it
+# lives in the separate top-level `schedule:` block below as HH:MM
+# strings (that's the single source of truth for those two jobs).
 # scheduler:
 #   check_in:
 #     hour: 14
@@ -63,7 +70,8 @@ tracker:
 
 # Optional: day-start / day-end scheduled times (HH:MM, 24h).
 # When set, `scheduler install` adds launchd jobs that fire `day-start` /
-# `day-end` at these times. Leave unset to skip the scheduled run.
+# `day-end` at these times. Leave unset to skip the scheduled run. This
+# is also read by `is_late_day` evaluation — single source of truth.
 # schedule:
 #   day_start: "08:00"
 #   day_end: "17:30"
@@ -111,11 +119,22 @@ tracker:
 #     role_filters:
 #       exclude_management: true
 #       exclude_keywords: []
+#     # primary_currency lives on `job_search`, NOT on `scraper`. When set,
+#     # drops scraped jobs whose parsed comp currency doesn't match.
+#     # Unparseable comp passes through. Unset = no filter. Decoupled from
+#     # `compensation.currency` (that drives the user's pay-floor input;
+#     # this prunes the input stream by source-currency).
+#     primary_currency: USD             # USD | CAD | EUR | GBP
 #     scraper:
 #       enabled: false
-#       # primary_currency: drop scraped jobs whose parsed comp currency
-#       # doesn't match. Unparseable comp passes through. Unset = no filter.
-#       # primary_currency: USD            # USD | CAD | EUR | GBP
+#       # Retries for HTTP 429/503 responses (rate limits). Honors the
+#       # Retry-After header when present; otherwise applies exponential
+#       # backoff (1.5s, 3s, 6s, ... capped at 30s). Set to 0 to disable.
+#       max_retries: 3
+#       # Maximum age (in days) for scraped postings. Currently applied to
+#       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
+#       # 0 to disable the filter. Other sources are implicitly recent.
+#       max_age_days: 30
 #       sources:
 #         # All keys are optional; omitted = on (SourceToggle defaults
 #         # enabled=true). List a key with `false` to disable it.
@@ -124,6 +143,7 @@ tracker:
 #         remoteok: false                  # remoteok.com RSS
 #         weworkremotely: false            # weworkremotely.com listings
 #         hn_who_is_hiring: false          # HN monthly "Who is hiring?" thread
+#         hn_jobs: false                   # HN curated jobs (YC-funded company posts)
 #         greenhouse: false                # Greenhouse boards (configurable list)
 #
 #         # Scrapers shipped in this repo (Playwright, needs `playwright install`):

@@ -160,6 +160,8 @@ class ScraperConfig(BaseModel):
     sources: dict[str, SourceToggle] = {}
     parallel_workers: int = 4
     max_pages: int = 3
+    max_retries: int = 3
+    max_age_days: int = 30
 
     @field_validator("sources", mode="before")
     @classmethod

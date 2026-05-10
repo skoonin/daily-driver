@@ -10,6 +10,7 @@ from daily_driver.core.clock import today
 
 from .apple import scrape_apple
 from .greenhouse import scrape_greenhouse
+from .hn_jobs import scrape_hn_jobs
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
 from .jobspy import scrape_jobspy
 from .remoteok import scrape_remoteok
@@ -22,6 +23,7 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
+    "hn_jobs": scrape_hn_jobs,
     "greenhouse": scrape_greenhouse,
     "jobspy": scrape_jobspy,
     "apple": scrape_apple,
