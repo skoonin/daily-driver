@@ -306,15 +306,15 @@ def test_scraper_config_sources_typed_form():
 def test_scraper_config_playwright_delays_typed():
     from daily_driver.core.config_models import PlaywrightDelays
 
-    m = ScraperConfig(playwright_delays={"wellfound": {"page_load_ms": 5000}})
+    m = ScraperConfig(playwright_delays={"apple": {"page_load_ms": 5000}})
     assert isinstance(m.sources, dict)
-    assert isinstance(m.playwright_delays["wellfound"], PlaywrightDelays)
-    assert m.playwright_delays["wellfound"].page_load_ms == 5000
+    assert isinstance(m.playwright_delays["apple"], PlaywrightDelays)
+    assert m.playwright_delays["apple"].page_load_ms == 5000
 
 
 def test_scraper_config_playwright_delays_rejects_unknown_key():
     with pytest.raises(ValidationError):
-        ScraperConfig(playwright_delays={"wellfound": {"bogus_key": 1}})
+        ScraperConfig(playwright_delays={"apple": {"bogus_key": 1}})
 
 
 # ---------------------------------------------------------------------------

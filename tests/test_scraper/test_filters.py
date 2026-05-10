@@ -273,15 +273,18 @@ class TestKnownUrlsFromConfig:
     """Adapters read pruned/dedup URLs from the config dict's _known_urls key.
 
     The orchestrator stuffs the union of jobs.csv + jobs.archive.csv URLs in
-    here so Playwright adapters (Apple, Wellfound) can short-circuit during
-    pagination without re-deriving the dedup state.
+    here so Playwright adapters (Apple) can short-circuit during pagination
+    without re-deriving the dedup state.
     """
 
     def test_returns_empty_set_when_key_absent(self) -> None:
         assert _known_urls_from_config({}) == set()
 
     def test_returns_set_when_key_present(self) -> None:
-        urls = {"https://jobs.apple.com/x/details/1", "https://wellfound.com/jobs/2"}
+        urls = {
+            "https://jobs.apple.com/x/details/1",
+            "https://remoteok.com/remote-jobs/2",
+        }
         assert _known_urls_from_config({"_known_urls": urls}) == urls
 
 
