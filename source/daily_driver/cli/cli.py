@@ -34,8 +34,6 @@ _COMMANDS = [
     ("focus", "daily_driver.cli.commands.focus"),
     ("jobs", "daily_driver.cli.commands.jobs"),
     ("paths", "daily_driver.cli.commands.paths"),
-    ("read", "daily_driver.cli.commands.read_"),
-    ("ensure-daily-dir", "daily_driver.cli.commands.ensure_daily_dir"),
     ("gather", "daily_driver.cli.commands.gather"),
     ("day-start", "daily_driver.cli.commands.day_start"),
     ("day-end", "daily_driver.cli.commands.day_end"),
@@ -87,7 +85,7 @@ def app(argv: list[str] | None = None) -> int:
     # day-to-day user-facing CLI verbs. Hidden from `daily-driver --help`
     # listing while remaining fully callable. Keep this set in sync with
     # source/daily_driver/commands/daily-driver/*.md.
-    _HIDDEN_FROM_TOP_HELP = {"paths", "read", "ensure-daily-dir", "gather"}
+    _HIDDEN_FROM_TOP_HELP = {"paths"}
 
     # Deferred imports keep --version / --help fast and avoid circular imports
     # at module load time.  All command modules are shipped in-package; an
