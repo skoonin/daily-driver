@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
+
 from daily_driver.cli.commands.init import run
 from daily_driver.core.config import load
 
@@ -92,16 +94,59 @@ def test_init_config_parses_via_load(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_second_init_without_force_fails(tmp_path: Path) -> None:
+def test_second_init_is_idempotent_and_exits_zero(tmp_path: Path) -> None:
+    """Second init on the same path must succeed (exit 0), not error out."""
     run(_args(str(tmp_path)))
     result = run(_args(str(tmp_path)))
-    assert result == 1
+    assert result == 0
 
 
 def test_second_init_with_force_succeeds(tmp_path: Path) -> None:
     run(_args(str(tmp_path)))
     result = run(_args(str(tmp_path), force=True))
     assert result == 0
+
+
+def test_second_init_summary_lists_skipped_artifacts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Second-run summary must enumerate skipped artifacts so users see
+    the system isn't silently no-op'ing."""
+    run(_args(str(tmp_path)))
+    capsys.readouterr()  # clear first-run output
+    rc = run(_args(str(tmp_path)))
+    assert rc == 0
+    out = capsys.readouterr().err  # init prints summary to stderr
+    # Summary terminology: Created / Skipped sections must both appear
+    # so the user can audit what changed.
+    assert "Skipped" in out
+    assert ".dd-config.yaml" in out
+
+
+def test_first_init_summary_lists_created_artifacts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = run(_args(str(tmp_path)))
+    assert rc == 0
+    out = capsys.readouterr().err
+    assert "Created" in out
+    assert ".dd-config.yaml" in out
+
+
+def test_partial_reinit_creates_missing_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If a non-config artifact is removed, re-init must restore it."""
+    run(_args(str(tmp_path)))
+    (tmp_path / "context.md").unlink()
+    capsys.readouterr()
+    rc = run(_args(str(tmp_path)))
+    assert rc == 0
+    assert (tmp_path / "context.md").exists()
+    out = capsys.readouterr().err
+    # Summary should now show context.md as Created (this run) while
+    # .dd-config.yaml shows as Skipped.
+    assert "Created" in out and "context.md" in out
 
 
 # ---------------------------------------------------------------------------
