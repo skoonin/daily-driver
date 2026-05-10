@@ -99,6 +99,14 @@ Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--sessio
 
 `check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the day-start session (controlled by `claude.resume_check_in` in `.dd-config.yaml`).
 
+### In-session slash commands
+
+These ship to the workspace `.claude/commands/daily-driver/` tree but are not exposed as CLI launchers — invoke them inside an existing Claude session.
+
+| Slash command | Purpose |
+|---------------|---------|
+| `/interview-prep` | 5-10 minute interview practice session (behavioral STAR, technical fundamentals, system design). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. |
+
 ## Headless Claude commands
 
 ### `summary --range SPEC`
