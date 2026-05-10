@@ -182,9 +182,24 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         run_backfill(config, csv_path)
         return 0
 
-    return run_scrape(
-        config, output_dir, dry_run=args.dry_run, sources_override=sources_override
-    )
+    try:
+        return run_scrape(
+            config,
+            output_dir,
+            dry_run=args.dry_run,
+            sources_override=sources_override,
+        )
+    except KeyboardInterrupt:
+        # SIGINT during a parallel run: pending sources were cancelled by the
+        # orchestrator, but in-flight HTTP requests run to their `timeout`
+        # before their worker threads exit. Exit 130 is the conventional
+        # SIGINT status (128 + signal number).
+        print(
+            "\ninterrupted; cancelling pending sources "
+            "(in-flight HTTP requests will finish first).",
+            file=sys.stderr,
+        )
+        return 130
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]

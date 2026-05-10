@@ -492,6 +492,54 @@ def test_prune_invalid_spec_exits_2(
     assert "invalid date spec" in capsys.readouterr().err
 
 
+# ---------------------------------------------------------------------------
+# Ctrl-C / KeyboardInterrupt at the CLI boundary
+# ---------------------------------------------------------------------------
+
+
+def test_jobs_run_keyboard_interrupt_exits_130(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C during a run prints a clean message to stderr and returns 130."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
+        raise KeyboardInterrupt
+
+    with patch("daily_driver.scraper.run", side_effect=boom):
+        rc = app(["--workspace", str(ws), "jobs", "run"])
+
+    captured = capsys.readouterr()
+    assert rc == 130, f"expected exit code 130 (SIGINT), got {rc}"
+    # No Python traceback should reach the user on a normal Ctrl-C.
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+    # Some user-facing acknowledgement of the interrupt.
+    assert "interrupt" in captured.err.lower()
+
+
+def test_jobs_run_keyboard_interrupt_no_traceback_with_verbose(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Even with -v, Ctrl-C should not surface a traceback."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
+        raise KeyboardInterrupt
+
+    with patch("daily_driver.scraper.run", side_effect=boom):
+        rc = app(["--workspace", str(ws), "-v", "jobs", "run"])
+
+    captured = capsys.readouterr()
+    assert rc == 130
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
 def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     """load_archive_dedup unions URLs/keys from jobs.archive.csv."""
     from daily_driver.core.jobs_archive import load_archive_dedup
