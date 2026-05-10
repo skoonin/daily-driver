@@ -35,20 +35,53 @@ def _algolia_response(hits: list[dict[str, Any]]) -> MagicMock:
     return resp
 
 
-def test_parse_title_with_yc_batch() -> None:
+def test_parse_title_with_yc_batch_no_location_signal() -> None:
+    """No location signal in title → defaults to 'Unknown' (not 'Remote')."""
     company, role, location = _parse_title("Mux (YC W16) Is Hiring")
     assert company == "Mux"
     assert role == ""
-    assert location == "Remote"
+    assert location == "Unknown"
 
 
-def test_parse_title_with_role_and_location_in() -> None:
+def test_parse_title_bare_in_phrase_does_not_match_location() -> None:
+    """Bare 'in X' (no comma) is not treated as a location.
+
+    Avoids polluting jobs.csv with technology terms like 'Distributed Systems',
+    'Machine Learning', etc. The trade-off is that legitimate 'in Montreal' is
+    also missed — accepted because false data is worse than missing data.
+    """
     company, role, location = _parse_title(
         "GovernGPT (YC W24) Is Hiring Engineers to Build Thinking Systems in Montreal"
     )
     assert company == "GovernGPT"
     assert "Engineers" in role
-    assert location == "Montreal"
+    assert location == "Unknown"
+
+
+def test_parse_title_does_not_misextract_technology_after_in() -> None:
+    """'in Distributed Systems' / 'in Machine Learning' must NOT become locations."""
+    for title in (
+        "Acme (YC W22) Is Hiring Engineer to Work in Distributed Systems",
+        "Acme (YC W22) Is Hiring Engineer Specializing in Machine Learning",
+        "Acme (YC W22) Is Hiring Backend Engineer in Rust",
+    ):
+        _, _, location = _parse_title(title)
+        assert location == "Unknown", title
+
+
+def test_parse_title_extracts_city_region_with_comma() -> None:
+    """'in San Francisco, CA' (comma-separated) IS extracted as location."""
+    company, _, location = _parse_title(
+        "Acme (YC W22) Is Hiring SRE in San Francisco, CA"
+    )
+    assert company == "Acme"
+    assert location == "San Francisco, CA"
+
+
+def test_parse_title_extracts_parenthesized_city() -> None:
+    """Parenthesized suffix '(City)' at end of title IS extracted."""
+    _, _, location = _parse_title("Acme (YC W22) Is Hiring SRE (Berlin)")
+    assert location == "Berlin"
 
 
 def test_parse_title_with_remote_marker() -> None:

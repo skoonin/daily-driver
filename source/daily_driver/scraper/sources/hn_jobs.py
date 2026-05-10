@@ -21,36 +21,57 @@ log = logging.getLogger(__name__)
 
 _YC_BATCH_RE = re.compile(r"\s*\(YC\s+[A-Z]\d+\)\s*", re.IGNORECASE)
 _HIRING_SPLIT_RE = re.compile(
-    r"\s+(?:Is\s+Hiring|Hiring|Seeks|Wants)\b[:\-\s]*", re.IGNORECASE
+    r"\s+(?:Is\s+Hiring|Hiring|Seeks)\b[:\-\s]*", re.IGNORECASE
 )
 _REMOTE_RE = re.compile(r"\bremote\b", re.IGNORECASE)
-_LOCATION_IN_RE = re.compile(r"\bin\s+([A-Z][A-Za-z\s,]+)$")
+# Parenthesized suffix `(City)` or `(City, Region)` — strong location signal.
+# Excluded: "(Remote)" handled separately above.
+_PAREN_LOCATION_RE = re.compile(
+    r"\(([A-Z][A-Za-z][A-Za-z\s.]*(?:,\s*[A-Z][A-Za-z.]+)*)\)\s*$"
+)
+# `in City, Region` with a comma — strong city+region signal that
+# `in {Technology Word}` (e.g. "in Distributed Systems") cannot fake.
+_IN_CITY_REGION_RE = re.compile(
+    r"\bin\s+([A-Z][A-Za-z.]+(?:\s+[A-Z][A-Za-z.]+)?,\s*[A-Z][A-Za-z.]+(?:,\s*[A-Z][A-Za-z.]+)?)\b"
+)
 
 
 def _parse_title(title: str) -> tuple[str, str, str]:
     """Split an HN /jobs title into (company, role, location).
 
+    Location extraction is conservative — defaults to "Unknown" unless a
+    strong signal is present:
+      - "(Remote)" or "remote" anywhere in role → "Remote"
+      - Parenthesized suffix at end like "(San Francisco)" → city
+      - "in City, Region" with explicit comma → city+region
+    Bare "in X" patterns (e.g. "Engineers to Build in Distributed Systems")
+    are not treated as locations to avoid technology-term pollution in the
+    `jobs.csv` location column.
+
     Title patterns observed:
-      "Mux (YC W16) Is Hiring"
-      "GovernGPT (YC W24) Is Hiring Engineers to Build ... in Montreal"
-      "Coverage Cat (YC S22) Seeks Fractional Engineer to ..."
-      "Infisical (YC W23) Is Hiring Full Stack Software Engineers (Remote)"
-      "Stardex Is Hiring a Founding Customer Success Lead"      (no YC tag)
+      "Mux (YC W16) Is Hiring"                                       → Unknown
+      "GovernGPT (YC W24) Is Hiring Engineers in Montreal"           → Unknown (no comma)
+      "Coverage Cat (YC S22) Seeks Fractional Engineer ..."          → Unknown
+      "Infisical (YC W23) Is Hiring Engineers (Remote)"              → Remote
+      "Acme (YC W22) Is Hiring SRE in San Francisco, CA"             → "San Francisco, CA"
     """
     cleaned = _YC_BATCH_RE.sub(" ", title).strip()
     parts = _HIRING_SPLIT_RE.split(cleaned, maxsplit=1)
     company = parts[0].strip().rstrip(":-,")
     role = parts[1].strip() if len(parts) > 1 else ""
 
-    location = "Remote"
     if _REMOTE_RE.search(role):
-        location = "Remote"
-    else:
-        m = _LOCATION_IN_RE.search(role)
-        if m:
-            location = m.group(1).strip().rstrip(".")
+        return company, role, "Remote"
 
-    return company, role, location
+    m = _PAREN_LOCATION_RE.search(role)
+    if m:
+        return company, role, m.group(1).strip().rstrip(".")
+
+    m = _IN_CITY_REGION_RE.search(role)
+    if m:
+        return company, role, m.group(1).strip().rstrip(".")
+
+    return company, role, "Unknown"
 
 
 def scrape_hn_jobs(config: dict) -> list[dict]:
