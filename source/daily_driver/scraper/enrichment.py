@@ -131,11 +131,15 @@ def enrich_company_descriptions(
                                     gd_rating = ""
                     cache[company] = {"product": product, "gd_rating": gd_rating}
                 except subprocess.CalledProcessError as exc:
+                    # claude CLI writes auth/limit/error messages to stdout,
+                    # not stderr. Capture both so the cause is visible in logs.
+                    stdout_tail = (exc.stdout or "").strip()[-200:]
                     stderr_tail = (exc.stderr or "").strip()[-200:]
                     log.warning(
-                        "[enrich] company=%s rc=%d stderr=%r",
+                        "[enrich] company=%s rc=%d stdout=%r stderr=%r",
                         company,
                         exc.returncode,
+                        stdout_tail,
                         stderr_tail,
                     )
                     cache[company] = {"product": "", "gd_rating": ""}
@@ -321,12 +325,14 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
                 )
                 stats["failed"] += 1
         except subprocess.CalledProcessError as exc:
+            stdout_tail = (exc.stdout or "").strip()[-200:]
             stderr_tail = (exc.stderr or "").strip()[-200:]
             log.warning(
-                "[enrich-fit-notes] company=%s role=%s rc=%d stderr=%r",
+                "[enrich-fit-notes] company=%s role=%s rc=%d stdout=%r stderr=%r",
                 company,
                 role,
                 exc.returncode,
+                stdout_tail,
                 stderr_tail,
             )
             stats["failed"] += 1
