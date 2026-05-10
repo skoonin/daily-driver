@@ -94,6 +94,7 @@ def test_generate_known_command_names_on_disk(tmp_path: Path) -> None:
         "check-in.md",
         "summary.md",
         "voice-update.md",
+        "interview-prep.md",
     }
     missing = expected - present
     assert (
