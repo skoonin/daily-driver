@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — slash command rename: `/interview-prep` → `/daily-learning`
+
+- **Renamed** `commands/daily-driver/interview-prep.md` →
+  `daily-learning.md` (frontmatter `name:` updated to match). The command
+  is broadening from interview-only practice toward a general daily
+  learning drill, and the old name no longer reflects intent.
+- **`/day-start` updated** to point users at `/daily-learning` in the
+  opt-in practice prompt. Users invoking the old `/interview-prep` slash
+  will get nothing — there is no alias.
+
 ### Fixed — enrichment-path 403/429 errors
 
 - **Skip HN detail enrichment.** `news.ycombinator.com/item?id=*` URLs no

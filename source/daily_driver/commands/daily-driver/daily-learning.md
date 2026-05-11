@@ -1,5 +1,5 @@
 ---
-name: interview-prep
+name: daily-learning
 description: Daily 5-10 minute interview practice - behavioral STAR drills, technical fundamentals, system design
 ---
 
