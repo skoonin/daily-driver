@@ -19,6 +19,15 @@ from daily_driver.scraper.sources._http import _api_get, _http_session
 if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
 
+
+def _ollama_pool_size(config: dict) -> int:
+    """Worker count for Ollama-backed enrichment; 1 forces serial."""
+    ai_cfg = ai_provider.resolve_ai_config(config)
+    if ai_cfg.enrichment.provider != "ollama":
+        return 1
+    return max(1, min(16, ai_cfg.ollama.max_parallel))
+
+
 log = logging.getLogger(__name__)
 
 

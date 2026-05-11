@@ -5,7 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DailyDriverConfig(BaseModel):
@@ -270,6 +270,10 @@ class OllamaConfig(BaseModel):
     endpoint: str = "http://localhost:11434"
     # Ollama is materially slower than the claude API; give it room.
     timeout: int = 60
+    # Worker count for parallel enrichment. Default mirrors Ollama's own
+    # OLLAMA_NUM_PARALLEL=4 default; raise the server-side env var first
+    # if going above 4. Set to 1 to force serial behavior.
+    max_parallel: int = Field(default=4, ge=1, le=16)
 
 
 class AIConfig(BaseModel):
