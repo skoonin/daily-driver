@@ -1,104 +1,77 @@
 # Ollama setup
 
-Daily Driver can route headless AI tasks (enrichment, summary) to a local
+Route headless AI tasks (enrichment, summary) to a local
 [Ollama](https://ollama.com) server instead of the `claude` CLI. Local
 models are free, have no rate limits, and run entirely on your machine —
 a good fit for high-volume tasks like `jobs --backfill`.
 
 Interactive launchers (`day-start`, `check-in`, `day-end`) always use
 `claude`. They depend on session resume, agents, and workspace context
-that Ollama does not provide.
+Ollama does not provide.
 
-## Step 1: Install Ollama
+## Steps
 
-macOS:
+| # | Step | Command | Notes |
+|---|------|---------|-------|
+| 1 | Install Ollama | `brew install ollama` | Or download from <https://ollama.com/download> |
+| 2 | Start the server | `brew services start ollama` | Listens on `http://localhost:11434`. Skip if you installed the macOS app — it auto-starts |
+| 3 | Pull a model | `ollama pull qwen2.5:14b` | ~9 GB. See model table below |
+| 4 | Verify | `ollama list` | The model should appear in the output |
+| 5 | Edit `.dd-config.yaml` | See [config block](#config-block) | Sets `ai.enrichment.provider: ollama` |
+| 6 | Confirm | `daily-driver doctor` | New `AI providers` row should report `OK` |
+| 7 | Smoke test | `daily-driver jobs run --backfill` | Populates product / fit / notes via ollama |
 
-```
-brew install ollama
-```
-
-Or download the installer from <https://ollama.com/download>.
-
-## Step 2: Start the server
-
-```
-ollama serve
-```
-
-Leave this running in a terminal (or set up a launch agent / systemd unit).
-By default it listens on `http://localhost:11434`.
-
-## Step 3: Pull a model
-
-For enrichment workloads on a 64 GB M-series Mac, a 14B-class instruction
-model is a reasonable balance of quality and throughput:
-
-```
-ollama pull qwen2.5:14b
-```
-
-Smaller / faster alternatives: `phi4`, `llama3.2:3b`. Larger / slower:
-`qwen2.5:32b`, `llama3.1:70b` (only if you have the RAM for it).
-
-## Step 4: Verify the model is available
-
-```
-ollama list
-```
-
-You should see the model you pulled in the output.
-
-## Step 5: Smoke-test the API
-
-```
-curl -s http://localhost:11434/api/tags | head
-```
-
-A JSON body listing pulled models confirms the server is reachable.
-
-## Step 6: Tune resource use (optional)
-
-Set `OLLAMA_NUM_PARALLEL` and `OLLAMA_MAX_LOADED_MODELS` to control
-concurrency and memory pressure. See
-<https://github.com/ollama/ollama/blob/main/docs/faq.md>.
-
-## Step 7: Wire up daily-driver
-
-Add an `ai:` block to your workspace's `.dd-config.yaml`:
+## Config block
 
 ```yaml
+# .dd-config.yaml
 ai:
   enrichment:
     provider: ollama
     model: qwen2.5:14b
-  # summary stays on claude by default — leave omitted, or set explicitly:
+  # summary stays on claude by default; uncomment to route it through ollama too:
   # summary:
-  #   provider: claude
+  #   provider: ollama
+  #   model: qwen2.5:14b
   ollama:
     endpoint: http://localhost:11434
     timeout: 60
 ```
 
-Verify the wiring:
+Omitting the entire `ai:` block keeps the legacy claude-only behavior. No
+migration is required for existing workspaces.
 
-```
-daily-driver doctor
-```
+## Model picks (64 GB M-series)
 
-With ollama running, you should see a new `AI providers` row reporting
-`OK`. If the server is down, the row reports `WARNING` with a hint to run
-`ollama serve`. If the model is not pulled, the hint shows
-`ollama pull <model>`.
+| Model | Size | Best for |
+|-------|------|----------|
+| `qwen2.5:14b` | ~9 GB | Default — balanced quality + throughput |
+| `phi4` | ~9 GB | Strong reasoning at the same size |
+| `llama3.2:3b` | ~2 GB | Faster iteration; lower quality |
+| `qwen2.5:32b` | ~20 GB | Higher quality if RAM permits |
 
-Quick smoke test against a real `jobs.csv`:
+Expect ~10–15 tokens/sec on a 14B model. A 50-job `--backfill` finishes
+in a few minutes.
 
-```
-daily-driver jobs run --backfill
-```
+## Doctor output reference
 
-The enrichment loop should populate the same fields as the claude path
-(product, fit, notes). On a 64 GB M-series Mac at 14B parameters, expect
-roughly 10-15 tokens/sec — a 50-job backfill takes a few minutes total.
+| State | Status | Hint |
+|-------|--------|------|
+| Reachable + model present | `OK` | — |
+| Server not running | `WARNING` | `Start the server: ollama serve` |
+| Model not pulled | `WARNING` | `Pull the model: ollama pull <model>` |
 
-If output quality is lower than the claude path, try a larger model or
-keep `summary` on claude and route only `enrichment` to ollama.
+The `AI providers` row only appears when at least one task is routed to
+ollama — no extra noise for the default claude path.
+
+## Troubleshooting
+
+- **`connection refused on 11434`** — `ollama serve` not running.
+- **First request is slow** — Ollama loads the model into RAM on demand.
+  Subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep the model
+  warm between sessions.
+- **Output quality below claude path** — try a larger model, or keep
+  `summary` on claude and route only `enrichment` to ollama.
+- **Tune resource use (optional)** — `OLLAMA_NUM_PARALLEL`,
+  `OLLAMA_MAX_LOADED_MODELS`. See
+  <https://github.com/ollama/ollama/blob/main/docs/faq.md>.
