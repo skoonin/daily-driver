@@ -567,3 +567,81 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     urls, keys = load_archive_dedup(csv_path)
     assert "https://archived/1" in urls
     assert any("pruned" in k for k in keys)
+
+
+def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
+    """Regression: jobs `run --backfill` must include the workspace's `ai:` block
+    in the config dict it passes to enrichment. Without this, every backfill
+    call silently defaults to claude regardless of ai.enrichment.provider.
+    """
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    # Inject an explicit ollama config so the test fails loudly if it's dropped.
+    (ws / ".dd-config.yaml").write_text(
+        "daily_driver:\n"
+        "  output_dir: .\n"
+        "tracker:\n"
+        "  default_category: task\n"
+        "  categories:\n"
+        "    task:\n"
+        "      required: [title]\n"
+        "ai:\n"
+        "  enrichment:\n"
+        "    provider: ollama\n"
+        "    model: qwen2.5:32b\n"
+        "  ollama:\n"
+        "    endpoint: http://localhost:11434\n"
+        "    timeout: 60\n"
+        "plugins:\n"
+        "  job_search:\n"
+        "    scraper:\n"
+        "      enabled: true\n"
+    )
+
+    with patch("daily_driver.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+
+    assert rc == 0
+    assert mock_backfill.called
+    args, _kwargs = mock_backfill.call_args
+    config = args[0]
+    assert "ai" in config, (
+        "config dict passed to run_backfill is missing the `ai` block; "
+        f"got keys: {sorted(config.keys())}"
+    )
+    assert config["ai"]["enrichment"]["provider"] == "ollama"
+    assert config["ai"]["enrichment"]["model"] == "qwen2.5:32b"
+
+
+def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
+    """Same regression for the live scrape path: ai: must flow through."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    (ws / ".dd-config.yaml").write_text(
+        "daily_driver:\n"
+        "  output_dir: .\n"
+        "tracker:\n"
+        "  default_category: task\n"
+        "  categories:\n"
+        "    task:\n"
+        "      required: [title]\n"
+        "ai:\n"
+        "  enrichment:\n"
+        "    provider: ollama\n"
+        "    model: qwen2.5:32b\n"
+        "plugins:\n"
+        "  job_search:\n"
+        "    scraper:\n"
+        "      enabled: true\n"
+    )
+
+    with patch("daily_driver.scraper.run", return_value=0) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
+
+    assert rc == 0
+    args, _kwargs = mock_run.call_args
+    config = args[0]
+    assert "ai" in config
+    assert config["ai"]["enrichment"]["provider"] == "ollama"

@@ -172,8 +172,13 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         )
         return 1
 
+    # The ai: block lives at the top level of .dd-config.yaml; ai_provider
+    # dispatch reads it via `config.get("ai")`. Without this, every job
+    # `run` and `--backfill` silently defaults to claude regardless of the
+    # workspace's `ai.enrichment.provider: ollama` setting.
     config = {
-        "job_search": plugins.job_search.model_dump(exclude_none=True, mode="json")
+        "job_search": plugins.job_search.model_dump(exclude_none=True, mode="json"),
+        "ai": workspace.config.ai.model_dump(mode="json"),
     }
     output_dir = _resolve_output_dir(workspace)
     csv_path = output_dir / "jobs.csv"
