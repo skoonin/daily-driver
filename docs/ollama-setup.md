@@ -75,3 +75,8 @@ ollama — no extra noise for the default claude path.
 - **Tune resource use (optional)** — `OLLAMA_NUM_PARALLEL`,
   `OLLAMA_MAX_LOADED_MODELS`. See
   <https://github.com/ollama/ollama/blob/main/docs/faq.md>.
+
+## See also
+
+- [usage.md](usage.md#choosing-an-ai-provider) — when to pick claude vs ollama.
+- [configuration.md](configuration.md#ai) — full `ai:` block reference.

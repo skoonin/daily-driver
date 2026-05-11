@@ -50,4 +50,9 @@ Any fields passed via `tracker add --extra key=value` land in the entry's `extra
 
 ## Context and voice profile
 
-`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. They are read by `read context` / `read voice-profile` and injected into Claude sessions. `voice-update` rewrites `voice-profile.md` from writing samples via headless `claude`.
+`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. They are injected into Claude sessions launched by `day-start`, `check-in`, `day-end`, and `summary`. `voice-update --from PATH` rewrites `voice-profile.md` from writing samples via headless `claude`.
+
+## See also
+
+- [usage.md](usage.md) — daily flow.
+- [extending.md](extending.md) — adding scraper sources or new subcommands (developer-facing).
