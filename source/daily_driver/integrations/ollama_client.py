@@ -55,7 +55,9 @@ def generate(
         resp = requests.post(url, json=body, timeout=timeout)
     except requests.ConnectionError as exc:
         raise OllamaNotReachableError(
-            f"Ollama not reachable at {endpoint}. Is `ollama serve` running?"
+            f"Ollama not reachable at {endpoint}: {exc}. "
+            "Check that the server is running (`ollama serve`) and the "
+            "endpoint URL is correct."
         ) from exc
     if resp.status_code == 404:
         raise OllamaModelNotFoundError(
@@ -83,7 +85,9 @@ def list_models(endpoint: str, timeout: int = 5) -> list[str]:
         resp = requests.get(url, timeout=timeout)
     except requests.ConnectionError as exc:
         raise OllamaNotReachableError(
-            f"Ollama not reachable at {endpoint}. Is `ollama serve` running?"
+            f"Ollama not reachable at {endpoint}: {exc}. "
+            "Check that the server is running (`ollama serve`) and the "
+            "endpoint URL is correct."
         ) from exc
     resp.raise_for_status()
     data = resp.json() or {}

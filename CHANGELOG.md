@@ -16,9 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Omitting the entire block preserves existing claude-only behavior
   (no migration required for existing workspaces).
 - **New `ai_provider.invoke_for(task, prompt, ...)` dispatch layer.**
-  Translates backend failures into a uniform `AIInvocationError` with
-  `stdout` / `stderr` / `returncode` fields, so the diagnostic warning
-  in `[enrich]` / `[enrich-fit-notes]` paths surfaces real upstream
+  Translates backend failures into a uniform `AIInvocationError` (or
+  `AITimeoutError` subclass for timeouts; same single-type catch suffices)
+  with `stdout` / `stderr` / `returncode` / `timeout_seconds` fields, so
+  the diagnostic warning in `[enrich]` / `[enrich-fit-notes]` paths
+  surfaces real upstream
   error messages for both providers.
 - **`ollama_client.generate` HTTP wrapper around `/api/generate`.**
   Non-streaming; `format=json` plumbed through for tasks that expect

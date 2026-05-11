@@ -66,13 +66,27 @@ def test_claude_called_process_error_maps_to_ai_invocation_error() -> None:
     assert exc_info.value.returncode == 1
 
 
-def test_claude_timeout_propagates_unchanged() -> None:
+def test_claude_timeout_no_longer_propagates_raw() -> None:
+    """Per I5: claude TimeoutExpired now wraps to AITimeoutError so callers
+    have one unified type to match across providers. The old contract
+    ('timeouts re-raise as subprocess.TimeoutExpired') is intentionally
+    broken — see PR #31 final review."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
     with patch.object(
         claude_cli,
         "invoke",
         side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=5),
     ):
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(AITimeoutError):
+            ai_provider.invoke_for("enrichment", "p", config={}, timeout=5)
+    # subprocess.TimeoutExpired should no longer be raised here:
+    with patch.object(
+        claude_cli,
+        "invoke",
+        side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=5),
+    ):
+        with pytest.raises(AIInvocationError):  # AITimeoutError IS AIInvocationError
             ai_provider.invoke_for("enrichment", "p", config={}, timeout=5)
 
 
@@ -115,11 +129,57 @@ def test_ollama_http_error_maps_to_ai_invocation_error_with_body() -> None:
     assert exc_info.value.returncode == 500
 
 
-def test_ollama_timeout_propagates_as_requests_timeout() -> None:
-    cfg = {"ai": {"enrichment": {"provider": "ollama", "model": "m"}}}
+def test_ollama_timeout_wraps_to_ai_timeout_error() -> None:
+    """Per I5: requests.Timeout from ollama becomes AITimeoutError (subclass
+    of AIInvocationError). Callers match a single type across providers."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
+    cfg = {
+        "ai": {
+            "enrichment": {"provider": "ollama", "model": "m"},
+            "ollama": {"endpoint": "http://localhost:11434", "timeout": 7},
+        }
+    }
     with patch.object(ollama_client, "generate", side_effect=requests.Timeout("slow")):
-        with pytest.raises(requests.Timeout):
+        with pytest.raises(AITimeoutError) as exc_info:
+            ai_provider.invoke_for("enrichment", "p", config=cfg, timeout=7)
+    assert exc_info.value.provider == "ollama"
+    assert exc_info.value.timeout_seconds == 7
+    # AITimeoutError IS an AIInvocationError — bare catch on the base still works.
+    assert isinstance(exc_info.value, AIInvocationError)
+
+
+def test_claude_timeout_wraps_to_ai_timeout_error() -> None:
+    """Per I5: subprocess.TimeoutExpired from claude becomes AITimeoutError."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
+    cfg = {"ai": {"enrichment": {"provider": "claude"}}}
+    err = subprocess.TimeoutExpired(cmd=["claude"], timeout=5)
+    with patch.object(claude_cli, "invoke", side_effect=err):
+        with pytest.raises(AITimeoutError) as exc_info:
+            ai_provider.invoke_for("enrichment", "p", config=cfg, timeout=5)
+    assert exc_info.value.provider == "claude"
+    assert exc_info.value.timeout_seconds == 5
+
+
+def test_ollama_request_exception_normalized_as_ai_invocation_error() -> None:
+    """Per I3: defense-in-depth — any leaked RequestException at the dispatch
+    boundary (DNS edge cases, SSL errors, etc.) becomes AIInvocationError
+    rather than escaping the contract callers rely on."""
+    cfg = {
+        "ai": {
+            "enrichment": {"provider": "ollama", "model": "m"},
+            "ollama": {"endpoint": "http://localhost:11434"},
+        }
+    }
+    # ConnectionError is a RequestException; if ollama_client.generate were
+    # to ever let it leak (despite current wrapping), dispatch must catch it.
+    leak = requests.ConnectionError("DNS lookup failed")
+    with patch.object(ollama_client, "generate", side_effect=leak):
+        with pytest.raises(AIInvocationError) as exc_info:
             ai_provider.invoke_for("enrichment", "p", config=cfg)
+    assert exc_info.value.provider == "ollama"
+    assert "DNS lookup failed" in str(exc_info.value)
 
 
 def test_unknown_task_raises_value_error() -> None:

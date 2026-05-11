@@ -17,7 +17,7 @@ from daily_driver.cli.commands._claude_session import (
 from daily_driver.core.config import load as load_config
 from daily_driver.core.summary import build_json_bundle, parse_range, render_prompt
 from daily_driver.integrations import ai_provider, clipboard
-from daily_driver.integrations.ai_provider import AIInvocationError
+from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +177,13 @@ def run(args: argparse.Namespace) -> int:
                 timeout=args.timeout,
                 format_json=False,
             )
+    except AITimeoutError as exc:
+        # Specific timeout case before the AIInvocationError catch-all.
+        print(
+            f"error: {exc.provider} summary timed out after {exc.timeout_seconds}s",
+            file=__import__("sys").stderr,
+        )
+        return 1
     except AIInvocationError as exc:
         msg = f"error: {exc.provider} summary failed: {exc}"
         tail = (exc.stderr or exc.stdout or "").strip()[-200:]

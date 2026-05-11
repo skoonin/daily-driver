@@ -43,6 +43,26 @@ class AIInvocationError(RuntimeError):
         self.returncode = returncode
 
 
+class AITimeoutError(AIInvocationError):
+    """A headless AI call timed out.
+
+    Subclasses AIInvocationError so callers that already catch the base
+    type don't need updating — but specific handlers can still distinguish
+    timeouts from other failures by catching this type first. Carries a
+    `timeout_seconds` field so the warning message can name the bound.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        timeout_seconds: int | None,
+    ) -> None:
+        super().__init__(message, provider=provider, stderr=message)
+        self.timeout_seconds = timeout_seconds
+
+
 def resolve_ai_config(config: dict[str, Any] | None) -> AIConfig:
     """Extract the `ai` block from a raw config dict, applying defaults.
 
@@ -69,10 +89,16 @@ def invoke_for(
     """Dispatch a headless prompt to the provider configured for `task`.
 
     task: "enrichment" | "summary".
-    Raises AIInvocationError on any backend failure (auth, rate-limit, HTTP
-    error, model-not-found, connection refused). Timeouts re-raise as
-    `subprocess.TimeoutExpired` for claude and `requests.Timeout` for ollama
-    so callers retain the option to handle them distinctly.
+
+    Failure normalization:
+        - All provider errors (auth, rate-limit, HTTP error, model-not-found,
+          connection refused, response-error) raise `AIInvocationError`.
+        - All timeouts raise `AITimeoutError` (subclass of AIInvocationError)
+          so callers can match on a single type across providers.
+
+    Catching `AIInvocationError` alone suffices for the diagnostic-warning
+    path (PR #29). Catch `AITimeoutError` first when timeouts deserve a
+    distinct message.
     """
     ai_cfg = resolve_ai_config(config)
     try:
@@ -97,6 +123,12 @@ def invoke_for(
                 stderr=exc.stderr or "",
                 returncode=exc.returncode,
             ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise AITimeoutError(
+                f"claude timed out after {timeout}s",
+                provider="claude",
+                timeout_seconds=timeout,
+            ) from exc
 
     # Pydantic Literal["claude", "ollama"] on AITaskConfig.provider rules out
     # any other value before we reach here.
@@ -116,6 +148,12 @@ def invoke_for(
         ollama_client.OllamaResponseError,
     ) as exc:
         raise AIInvocationError(str(exc), provider="ollama", stderr=str(exc)) from exc
+    except requests.Timeout as exc:
+        raise AITimeoutError(
+            f"ollama timed out after {effective_timeout}s",
+            provider="ollama",
+            timeout_seconds=effective_timeout,
+        ) from exc
     except requests.HTTPError as exc:
         body = exc.response.text if exc.response is not None else ""
         rc = exc.response.status_code if exc.response is not None else None
@@ -124,4 +162,15 @@ def invoke_for(
             provider="ollama",
             stdout=body,
             returncode=rc,
+        ) from exc
+    except requests.RequestException as exc:
+        # Defense in depth: ollama_client.generate wraps ConnectionError
+        # into OllamaNotReachableError, but if a future code path lets any
+        # other requests exception leak (DNS edge cases, SSL errors mid-
+        # stream, etc.) the dispatch layer still normalizes it instead of
+        # bypassing the AIInvocationError contract callers rely on.
+        raise AIInvocationError(
+            f"ollama request failed: {exc}",
+            provider="ollama",
+            stderr=str(exc),
         ) from exc

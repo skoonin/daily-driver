@@ -94,6 +94,22 @@ def test_generate_connection_error_raises_not_reachable() -> None:
             )
 
 
+def test_generate_connection_error_message_includes_underlying_cause() -> None:
+    """Per I2: the message must include the underlying error so DNS / typo
+    failures aren't misdiagnosed as 'ollama not running'."""
+    with patch.object(ollama_client.requests, "post") as post:
+        post.side_effect = requests.ConnectionError(
+            "Failed to resolve 'wrong-host.local'"
+        )
+        with pytest.raises(OllamaNotReachableError) as exc_info:
+            ollama_client.generate(
+                "p", model="m", endpoint="http://wrong-host.local:11434", timeout=10
+            )
+        msg = str(exc_info.value)
+        assert "Failed to resolve" in msg
+        assert "endpoint URL is correct" in msg
+
+
 def test_generate_timeout_propagates() -> None:
     with patch.object(ollama_client.requests, "post") as post:
         post.side_effect = requests.Timeout("slow")

@@ -6,14 +6,13 @@ import json
 import logging
 import re
 import shutil
-import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
 import requests
 
 from daily_driver.integrations import ai_provider, claude_cli
-from daily_driver.integrations.ai_provider import AIInvocationError
+from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 from daily_driver.scraper.parsing import _parse_detail_page
 from daily_driver.scraper.sources._http import _api_get, _http_session
 
@@ -135,6 +134,17 @@ def enrich_company_descriptions(
                                 else:
                                     gd_rating = ""
                     cache[company] = {"product": product, "gd_rating": gd_rating}
+                except AITimeoutError as exc:
+                    # AITimeoutError subclasses AIInvocationError — catch
+                    # first so the timeout gets a distinct message before
+                    # falling into the generic provider-error handler.
+                    log.warning(
+                        "[enrich] %s: AI provider timed out after %ds",
+                        company,
+                        exc.timeout_seconds or enrich_timeout(config),
+                    )
+                    cache[company] = {"product": "", "gd_rating": ""}
+                    stats["failed"] += 1
                 except AIInvocationError as exc:
                     # Provider error messages frequently land on stdout
                     # (claude CLI auth/limit prompts; ollama HTTP bodies).
@@ -150,15 +160,16 @@ def enrich_company_descriptions(
                     )
                     cache[company] = {"product": "", "gd_rating": ""}
                     stats["failed"] += 1
-                except (subprocess.TimeoutExpired, requests.Timeout):
-                    log.warning(
-                        "[enrich] %s: AI provider timed out after %ds",
-                        company,
-                        enrich_timeout(config),
-                    )
-                    cache[company] = {"product": "", "gd_rating": ""}
-                    stats["failed"] += 1
-                except (OSError, claude_cli.ClaudeNotFoundError) as exc:
+                except (
+                    FileNotFoundError,
+                    PermissionError,
+                    claude_cli.ClaudeNotFoundError,
+                ) as exc:
+                    # Narrow over bare OSError: requests.HTTPError /
+                    # ConnectionError / Timeout all inherit OSError and
+                    # would mask above. Only system-level subprocess
+                    # spawn failures and a missing claude binary survive
+                    # past the dispatch layer's normalization.
                     log.warning("[enrich] %s lookup failed: %s", company, exc)
                     cache[company] = {"product": "", "gd_rating": ""}
                     stats["failed"] += 1
@@ -334,6 +345,14 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
                     raw[:200],
                 )
                 stats["failed"] += 1
+        except AITimeoutError as exc:
+            # Specific timeout case before the AIInvocationError catch-all.
+            log.warning(
+                "[enrich-fit-notes] %s: AI provider timed out after %ds",
+                company,
+                exc.timeout_seconds or enrich_timeout(config),
+            )
+            stats["failed"] += 1
         except AIInvocationError as exc:
             stdout_tail = (exc.stdout or "").strip()[-200:]
             stderr_tail = (exc.stderr or "").strip()[-200:]
@@ -346,14 +365,15 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
                 stderr_tail,
             )
             stats["failed"] += 1
-        except (subprocess.TimeoutExpired, requests.Timeout):
-            log.warning(
-                "[enrich-fit-notes] %s: AI provider timed out after %ds",
-                company,
-                enrich_timeout(config),
-            )
-            stats["failed"] += 1
-        except (OSError, claude_cli.ClaudeNotFoundError) as exc:
+        except (
+            FileNotFoundError,
+            PermissionError,
+            claude_cli.ClaudeNotFoundError,
+        ) as exc:
+            # Narrow over bare OSError so requests.HTTPError /
+            # ConnectionError / Timeout (all OSError subclasses) can't
+            # mask above; the dispatch layer normalizes those into
+            # AIInvocationError now.
             log.warning("[enrich-fit-notes] %s failed: %s", company, exc)
             stats["failed"] += 1
         calls_made += 1
