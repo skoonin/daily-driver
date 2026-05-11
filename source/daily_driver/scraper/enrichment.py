@@ -31,6 +31,127 @@ def _ollama_pool_size(config: dict) -> int:
 log = logging.getLogger(__name__)
 
 
+def _fetch_company_info(
+    company: str,
+    config: dict | None,
+    include_gd: bool,
+    timeout: int,
+) -> tuple[str, str, bool]:
+    """Fetch product/GD-rating for one company. Returns (product, gd_rating, failed).
+
+    Worker function: catches all expected exceptions and returns failed=True
+    instead of propagating, so it is safe to call from a thread pool.
+    """
+    if include_gd:
+        prompt = (
+            f"Answer in exactly 2 lines, no preamble:\n"
+            f"Line 1: What does {company} build or do? (max 12 words)\n"
+            f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
+        )
+    else:
+        prompt = (
+            f"In one sentence (max 12 words), what does {company} build or do? "
+            "Answer only, no preamble."
+        )
+    try:
+        stdout = ai_provider.invoke_for(
+            "enrichment", prompt, config=config, timeout=timeout, format_json=False
+        )
+    except AITimeoutError as exc:
+        log.warning(
+            "[enrich] %s: AI provider timed out after %ds",
+            company,
+            exc.timeout_seconds or timeout,
+        )
+        return "", "", True
+    except AIInvocationError as exc:
+        stdout_tail = (exc.stdout or "").strip()[-200:]
+        stderr_tail = (exc.stderr or "").strip()[-200:]
+        log.warning(
+            "[enrich] company=%s rc=%s stdout=%r stderr=%r",
+            company,
+            exc.returncode,
+            stdout_tail,
+            stderr_tail,
+        )
+        return "", "", True
+    except (FileNotFoundError, PermissionError, claude_cli.ClaudeNotFoundError) as exc:
+        log.warning("[enrich] %s lookup failed: %s", company, exc)
+        return "", "", True
+
+    lines = [ln for ln in stdout.splitlines() if ln.strip()]
+    product = lines[0] if lines else ""
+    gd_rating = ""
+    if include_gd and len(lines) >= 2:
+        raw = lines[1].strip().lower()
+        if raw == "unknown":
+            gd_rating = "unknown"
+        else:
+            try:
+                gd_rating = str(round(float(raw), 1))
+            except ValueError:
+                m = re.search(r"([0-5]\.\d)", lines[1].strip())
+                if m:
+                    gd_rating = m.group(1)
+                    log.info(
+                        "[enrich] GD rating fallback regex extracted %s for %s",
+                        gd_rating,
+                        company,
+                    )
+    return product, gd_rating, False
+
+
+def _enrich_company_descriptions_parallel(
+    jobs: list[dict],
+    config: dict,
+    *,
+    budget: int,
+    include_gd: bool,
+    pool_size: int,
+    unique_companies: set[str],
+    stats: dict,
+    timeout: int,
+) -> dict:
+    """Parallel ollama path for enrich_company_descriptions."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    companies = list(unique_companies)[:budget]
+    if len(unique_companies) > budget:
+        log.warning(
+            "[enrich] budget reached (%d), %d companies unenriched",
+            budget,
+            len(unique_companies) - budget,
+        )
+
+    cache: dict[str, dict[str, str]] = {}
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        futures = {
+            pool.submit(_fetch_company_info, c, config, include_gd, timeout): c
+            for c in companies
+        }
+        for fut in as_completed(futures):
+            company = futures[fut]
+            product, gd_rating, failed = fut.result()
+            cache[company] = {"product": product, "gd_rating": gd_rating}
+            if failed:
+                stats["failed"] += 1
+
+    for job in jobs:
+        if job.get("product"):
+            stats["skipped_cached"] += 1
+            continue
+        company = job.get("company", "").strip()
+        if not company:
+            continue
+        cached = cache.get(company, {})
+        if cached.get("product"):
+            job["product"] = cached["product"]
+            stats["enriched"] += 1
+        if cached.get("gd_rating") and not job.get("gd_rating"):
+            job["gd_rating"] = cached["gd_rating"]
+    return stats
+
+
 def enrich_company_descriptions(
     jobs: list[dict], config: dict | None = None, *, budget: int = 0
 ) -> dict:
@@ -64,11 +185,25 @@ def enrich_company_descriptions(
         for job in jobs
         if not job.get("product") and job.get("company", "").strip()
     }
+    pool_size = _ollama_pool_size(config)
     log.info(
-        "[enrich] enriching up to %d companies (%d unique)...",
+        "[enrich] enriching up to %d companies (%d unique%s)...",
         budget,
         len(unique_companies),
+        f", parallel={pool_size}" if pool_size > 1 else "",
     )
+
+    if pool_size > 1 and config is not None:
+        return _enrich_company_descriptions_parallel(
+            jobs,
+            config,
+            budget=budget,
+            include_gd=include_gd,
+            pool_size=pool_size,
+            unique_companies=unique_companies,
+            stats=stats,
+            timeout=enrich_timeout(config),
+        )
 
     cache: dict[str, dict[str, str]] = {}
     calls_made = 0
@@ -101,86 +236,11 @@ def enrich_company_descriptions(
                     budget_warned = True
                 cache[company] = {"product": "", "gd_rating": ""}
             else:
-                if include_gd:
-                    prompt = (
-                        f"Answer in exactly 2 lines, no preamble:\n"
-                        f"Line 1: What does {company} build or do? (max 12 words)\n"
-                        f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
-                    )
-                else:
-                    prompt = (
-                        f"In one sentence (max 12 words), what does {company} build or do? "
-                        "Answer only, no preamble."
-                    )
-                try:
-                    stdout = ai_provider.invoke_for(
-                        "enrichment",
-                        prompt,
-                        config=config,
-                        timeout=enrich_timeout(config),
-                        format_json=False,
-                    )
-                    lines = [ln for ln in stdout.splitlines() if ln.strip()]
-                    product = lines[0] if lines else ""
-                    gd_rating = ""
-                    if include_gd and len(lines) >= 2:
-                        raw = lines[1].strip().lower()
-                        if raw == "unknown":
-                            gd_rating = "unknown"
-                        else:
-                            try:
-                                gd_rating = str(round(float(raw), 1))
-                            except ValueError:
-                                # Claude occasionally returns prose; extract any float in 0.0-5.9 range.
-                                m = re.search(r"([0-5]\.\d)", lines[1].strip())
-                                if m:
-                                    gd_rating = m.group(1)
-                                    log.info(
-                                        "[enrich] GD rating fallback regex extracted %s for %s",
-                                        gd_rating,
-                                        company,
-                                    )
-                                else:
-                                    gd_rating = ""
-                    cache[company] = {"product": product, "gd_rating": gd_rating}
-                except AITimeoutError as exc:
-                    # AITimeoutError subclasses AIInvocationError — catch
-                    # first so the timeout gets a distinct message before
-                    # falling into the generic provider-error handler.
-                    log.warning(
-                        "[enrich] %s: AI provider timed out after %ds",
-                        company,
-                        exc.timeout_seconds or enrich_timeout(config),
-                    )
-                    cache[company] = {"product": "", "gd_rating": ""}
-                    stats["failed"] += 1
-                except AIInvocationError as exc:
-                    # Provider error messages frequently land on stdout
-                    # (claude CLI auth/limit prompts; ollama HTTP bodies).
-                    # Capture both tails so the cause is visible in logs.
-                    stdout_tail = (exc.stdout or "").strip()[-200:]
-                    stderr_tail = (exc.stderr or "").strip()[-200:]
-                    log.warning(
-                        "[enrich] company=%s rc=%s stdout=%r stderr=%r",
-                        company,
-                        exc.returncode,
-                        stdout_tail,
-                        stderr_tail,
-                    )
-                    cache[company] = {"product": "", "gd_rating": ""}
-                    stats["failed"] += 1
-                except (
-                    FileNotFoundError,
-                    PermissionError,
-                    claude_cli.ClaudeNotFoundError,
-                ) as exc:
-                    # Narrow over bare OSError: requests.HTTPError /
-                    # ConnectionError / Timeout all inherit OSError and
-                    # would mask above. Only system-level subprocess
-                    # spawn failures and a missing claude binary survive
-                    # past the dispatch layer's normalization.
-                    log.warning("[enrich] %s lookup failed: %s", company, exc)
-                    cache[company] = {"product": "", "gd_rating": ""}
+                product, gd_rating, failed = _fetch_company_info(
+                    company, config, include_gd, enrich_timeout(config)
+                )
+                cache[company] = {"product": product, "gd_rating": gd_rating}
+                if failed:
                     stats["failed"] += 1
                 calls_made += 1
         cached = cache.get(company, {})
