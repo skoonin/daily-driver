@@ -12,8 +12,8 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 - **Tracker** — YAML-backed list of anything you follow up on (applications, tasks, chores, contacts). Categories are config-driven and extensible via `--extra key=value`.
 - **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
 - **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
-- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, Greenhouse, JobSpy for LinkedIn/Indeed/Glassdoor/Google, Wellfound, Apple), dedup, filter, and Claude-CLI enrichment.
-- **Gather modules** — typed readers for git history, macOS Calendar (icalBuddy), Claude Code sessions, daily notes.
+- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, JobSpy for LinkedIn/Indeed/Glassdoor/Google, Apple), dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
+- **Gather modules** — typed readers for git history and macOS Calendar (icalBuddy).
 - **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
 
 ## Install
@@ -35,7 +35,7 @@ daily-driver tracker add --category task --title "Write phase 7 tests"
 daily-driver status
 ```
 
-Full walkthrough in [docs/quick-start.md](docs/quick-start.md).
+Full first-day walkthrough in [docs/usage.md](docs/usage.md). Bare-minimum scaffold steps in [docs/quick-start.md](docs/quick-start.md).
 
 ## Workspace layout
 
@@ -64,10 +64,12 @@ Workspace discovery walks up from CWD looking for `.dd-config.yaml`. Override wi
 
 | Doc | Audience |
 |-----|----------|
+| [usage.md](docs/usage.md) | **Start here.** End-user walkthrough of the daily flow |
 | [install.md](docs/install.md) | Install, upgrade, Playwright |
-| [quick-start.md](docs/quick-start.md) | First-run walkthrough |
+| [quick-start.md](docs/quick-start.md) | Minimal scaffold checklist |
 | [commands.md](docs/commands.md) | All subcommands and non-obvious flags |
 | [configuration.md](docs/configuration.md) | `.dd-config.yaml` reference |
+| [ollama-setup.md](docs/ollama-setup.md) | Local LLM provider for enrichment/summary |
 | [customization.md](docs/customization.md) | `.claude/` ownership, custom commands/agents |
 | [troubleshooting.md](docs/troubleshooting.md) | doctor errors, launchd, flock, Playwright |
 | [developer.md](docs/developer.md) | Architecture, runtime flow, generate, init contract |
