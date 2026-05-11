@@ -21,6 +21,55 @@ Ollama does not provide.
 | 6 | Confirm | `daily-driver doctor` | New `AI providers` row should report `OK` |
 | 7 | Smoke test | `daily-driver jobs run --backfill` | Populates product / fit / notes via ollama |
 
+## Test the model
+
+Verify the pulled model actually generates before wiring it into
+daily-driver. Three quick checks, fastest to most representative:
+
+**1. CLI smoke test** — confirms the model loads and produces output:
+
+```
+ollama run qwen2.5:14b "In one sentence, what does Stripe build?"
+```
+
+Expect a single-sentence answer. First invocation is slow (model loads
+into RAM); subsequent runs are fast.
+
+**2. HTTP API test** — exactly the call shape daily-driver uses for
+free-text enrichment (`enrich_company_descriptions`):
+
+```
+curl -s http://localhost:11434/api/generate \
+  -d '{
+    "model": "qwen2.5:14b",
+    "prompt": "Answer in exactly 2 lines, no preamble:\nLine 1: What does Stripe build? (max 12 words)\nLine 2: Glassdoor rating (e.g. 4.1), or '\''unknown'\'' if unsure.",
+    "stream": false
+  }' | jq -r .response
+```
+
+You should see two short lines back. If you get an empty `response` or
+an `error` field, the model is loaded but the prompt rejected — try a
+different model.
+
+**3. JSON-mode test** — call shape used for structured enrichment
+(`enrich_fit_and_notes`). The `"format": "json"` flag forces the model
+to emit valid JSON:
+
+```
+curl -s http://localhost:11434/api/generate \
+  -d '{
+    "model": "qwen2.5:14b",
+    "prompt": "Return only valid JSON: {\"fit\": <int 1-10>, \"notes\": \"<one sentence max 15 words>\"}\nJob: Staff SRE at Cloudflare, Remote Canada, $180k-$220k USD.",
+    "stream": false,
+    "format": "json"
+  }' | jq -r .response | jq .
+```
+
+Expect a parseable object: `{"fit": 9, "notes": "..."}`. If `jq` fails
+to parse the inner `.response`, your model is drifting on JSON output
+— pick a stronger model from the [model table](#model-picks-64-gb-m-series)
+(qwen2.5 and phi4 are the most reliable here).
+
 ## Config block
 
 ```yaml
