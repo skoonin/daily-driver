@@ -459,3 +459,73 @@ def test_schedule_config_rejects_invalid_hhmm():
     for bad in ("9:99", "25:00", "noon", 99999):
         with pytest.raises(ValidationError):
             ScheduleConfig(day_start=bad)
+
+
+# ---------------------------------------------------------------------------
+# AIConfig
+# ---------------------------------------------------------------------------
+
+
+def test_ai_config_defaults_to_claude_everywhere():
+    from daily_driver.core.config_models import AIConfig
+
+    ai = AIConfig()
+    assert ai.enrichment.provider == "claude"
+    assert ai.enrichment.model is None
+    assert ai.summary.provider == "claude"
+    assert ai.summary.model is None
+    assert ai.ollama.endpoint == "http://localhost:11434"
+    assert ai.ollama.timeout == 60
+
+
+def test_ai_config_per_task_ollama_with_model():
+    from daily_driver.core.config_models import AIConfig
+
+    ai = AIConfig.model_validate(
+        {
+            "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
+            "summary": {"provider": "claude", "model": "sonnet"},
+            "ollama": {"endpoint": "http://10.0.0.5:11434", "timeout": 120},
+        }
+    )
+    assert ai.enrichment.provider == "ollama"
+    assert ai.enrichment.model == "qwen2.5:14b"
+    assert ai.summary.provider == "claude"
+    assert ai.summary.model == "sonnet"
+    assert ai.ollama.endpoint == "http://10.0.0.5:11434"
+    assert ai.ollama.timeout == 120
+
+
+def test_ai_task_rejects_unknown_provider():
+    from daily_driver.core.config_models import AITaskConfig
+
+    with pytest.raises(ValidationError):
+        AITaskConfig(provider="vertex")  # type: ignore[arg-type]
+
+
+def test_ai_config_rejects_extra_keys():
+    from daily_driver.core.config_models import AIConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig.model_validate({"unknown": {}})
+
+
+def test_ai_task_rejects_extra_keys():
+    from daily_driver.core.config_models import AITaskConfig
+
+    with pytest.raises(ValidationError):
+        AITaskConfig.model_validate({"provider": "claude", "temperature": 0.1})
+
+
+def test_ollama_config_rejects_extra_keys():
+    from daily_driver.core.config_models import OllamaConfig
+
+    with pytest.raises(ValidationError):
+        OllamaConfig.model_validate({"endpoint": "x", "format": "json"})
+
+
+def test_root_config_omitting_ai_block_uses_defaults():
+    """Backwards-compat: omitting `ai:` keeps claude-only behavior."""
+    c = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
+    assert c.ai.enrichment.provider == "claude"
+    assert c.ai.summary.provider == "claude"
