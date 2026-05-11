@@ -18,6 +18,7 @@ import os
 from datetime import date
 from pathlib import Path
 
+from daily_driver.core.jobs_lock import jobs_lock_path
 from daily_driver.core.locking import file_lock
 
 DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
@@ -125,7 +126,7 @@ def prune(
     if dry_run or not candidates:
         return candidates, 0
 
-    with file_lock(jobs_csv):
+    with file_lock(jobs_lock_path(jobs_csv)):
         _append_rows(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
 

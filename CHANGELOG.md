@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — shared jobs lock + cancel-save for backfill
+
+- **Shared sentinel lock (`.jobs.lock`)** serializes `jobs run`, `jobs
+  prune`, and `jobs run --backfill` mutations on a sibling lockfile via
+  `core.jobs_lock.jobs_lock_path`, so the three writers can no longer
+  interleave on `jobs.csv`.
+- **Ctrl-C during `jobs run --backfill` now persists partial progress.**
+  In-memory enrichment state up to the interrupt point is flushed via
+  atomic `.csv.tmp` + rename. A single timestamped `jobs.csv.bak.<unix>`
+  snapshot of the pre-enrichment CSV is taken at the start of each
+  backfill run; the interrupt message names the backup file so users
+  can recover. CLI exits 130.
+
 ### Added — Ollama provider for headless AI tasks
 
 - **`ai:` config block routes enrichment and summary to either claude or

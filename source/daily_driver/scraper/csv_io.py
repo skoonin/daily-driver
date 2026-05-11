@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
+from daily_driver.core.jobs_lock import jobs_lock_path
+from daily_driver.core.locking import file_lock
 
 if sys.platform != "win32":
     import fcntl
@@ -297,6 +299,27 @@ def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
     return row
 
 
+def _rewrite_jobs_csv(
+    csv_path: Path,
+    header: list[str],
+    jobs: list[dict[str, str]],
+) -> None:
+    """Rewrite jobs.csv atomically (via .csv.tmp + rename) from in-memory rows."""
+    tmp_path = csv_path.with_suffix(".csv.tmp")
+    with open(tmp_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=header,
+            quoting=csv.QUOTE_MINIMAL,
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        for job in jobs:
+            writer.writerow(_dict_to_row(job, header))
+
+    tmp_path.rename(csv_path)
+
+
 def backfill(config: dict, csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
     from daily_driver.scraper.enrichment import (
@@ -309,15 +332,13 @@ def backfill(config: dict, csv_path: Path) -> None:
     if not csv_path.exists():
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
-    # Hold LOCK_EX for the entire read-enrich-write cycle to prevent a
-    # concurrent scrape run from appending rows that get dropped by our rewrite.
-    with open(csv_path, "r+", newline="", encoding="utf-8") as lock_fh:
-        if sys.platform != "win32":
-            fcntl.flock(lock_fh, fcntl.LOCK_EX)
-
-        reader = csv.DictReader(lock_fh)
-        header = reader.fieldnames or CANONICAL_HEADER
-        rows = list(reader)
+    # Hold one shared sentinel lock for the entire backfill lifecycle so run/
+    # prune cannot interleave while we enrich in memory then rewrite.
+    with file_lock(jobs_lock_path(csv_path)):
+        with open(csv_path, newline="", encoding="utf-8") as lock_fh:
+            reader = csv.DictReader(lock_fh)
+            header = list(reader.fieldnames or CANONICAL_HEADER)
+            rows = list(reader)
 
         jobs = [_row_to_dict(r) for r in rows]
 
@@ -339,28 +360,25 @@ def backfill(config: dict, csv_path: Path) -> None:
             print("All rows already enriched, nothing to backfill.")
             return
 
-        enrich_company_descriptions(jobs, config, budget=sys.maxsize)
-        enrich_fit_and_notes(jobs, config, budget=sys.maxsize)
-
-        # Write to a sibling .tmp first so a crash mid-write leaves the
-        # original intact. rename() is atomic on POSIX same-filesystem paths.
+        # One pre-mutation snapshot: covers both crash recovery (on interrupt)
+        # and undo (after a successful but unwanted enrichment).
         backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
         shutil.copy2(csv_path, backup)
         log.info("[backfill] backed up to %s", backup.name)
 
-        tmp_path = csv_path.with_suffix(".csv.tmp")
-        with open(tmp_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(
-                f,
-                fieldnames=list(header),
-                quoting=csv.QUOTE_MINIMAL,
-                extrasaction="ignore",
+        try:
+            enrich_company_descriptions(jobs, config, budget=sys.maxsize)
+            enrich_fit_and_notes(jobs, config, budget=sys.maxsize)
+        except KeyboardInterrupt:
+            _rewrite_jobs_csv(csv_path, header, jobs)
+            print(
+                f"Backfill interrupted: partial progress saved to jobs.csv "
+                f"(original preserved at {backup.name})",
+                file=sys.stderr,
             )
-            writer.writeheader()
-            for job in jobs:
-                writer.writerow(_dict_to_row(job, list(header)))
+            raise
 
-        tmp_path.rename(csv_path)
+        _rewrite_jobs_csv(csv_path, header, jobs)
 
     filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
     filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))

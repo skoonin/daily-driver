@@ -540,6 +540,26 @@ def test_jobs_run_keyboard_interrupt_no_traceback_with_verbose(
     assert "Traceback" not in captured.out
 
 
+def test_jobs_run_backfill_keyboard_interrupt_exits_130(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ctrl-C during backfill should return 130 and print a clean message."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
+        raise KeyboardInterrupt
+
+    with patch("daily_driver.scraper.run_backfill", side_effect=boom):
+        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+
+    captured = capsys.readouterr()
+    assert rc == 130
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
 def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     """load_archive_dedup unions URLs/keys from jobs.archive.csv."""
     from daily_driver.core.jobs_archive import load_archive_dedup
