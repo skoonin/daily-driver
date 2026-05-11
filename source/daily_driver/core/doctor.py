@@ -98,7 +98,22 @@ def _check_optional_clis() -> list[CheckResult]:
 
 
 def _check_workspace_drift(workspace: Workspace) -> CheckResult:
-    if version_stamp.is_drifted(workspace.state_dir, workspace.version):
+    from daily_driver.core import manifest
+
+    missing = manifest.missing_files(workspace.root, workspace.state_dir)
+    version_drifted = version_stamp.is_drifted(workspace.state_dir, workspace.version)
+
+    if missing:
+        n = len(missing)
+        preview = ", ".join(missing[:3]) + (", ..." if n > 3 else "")
+        return CheckResult(
+            name="Workspace drift",
+            status="WARNING",
+            detail=f"{n} managed file(s) missing from disk: {preview}",
+            fix_hint="Run: daily-driver doctor --fix",
+            fixable=True,
+        )
+    if version_drifted:
         return CheckResult(
             name="Workspace drift",
             status="WARNING",

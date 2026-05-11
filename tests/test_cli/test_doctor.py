@@ -272,6 +272,63 @@ def test_doctor_fix_with_bad_workspace_override_errors_without_calling_generate(
 
 
 # ---------------------------------------------------------------------------
+# Missing managed files (BUG-1: doctor --fix did not restore deletions)
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_detects_deleted_managed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Plain doctor must report drift when a manifest-tracked file is missing."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+
+    victim = ws / ".claude" / "commands" / "daily-driver" / "day-start.md"
+    assert victim.is_file(), "init should have materialized day-start.md"
+    victim.unlink()
+
+    rc = app(["--workspace", str(ws), "doctor"])
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    # Drift convention is WARNING/exit 0 (matches existing version-stamp drift).
+    assert rc == 0
+    assert "Workspace drift" in combined
+    assert "WARNING" in combined
+    assert "missing" in combined.lower()
+
+
+def test_doctor_fix_restores_deleted_managed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """doctor --fix must restore deleted managed files from package data."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+
+    victim = ws / ".claude" / "commands" / "daily-driver" / "day-start.md"
+    original = victim.read_text(encoding="utf-8")
+    victim.unlink()
+    assert not victim.exists()
+
+    rc = app(["--workspace", str(ws), "doctor", "--fix"])
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert rc == 0
+    assert victim.is_file(), "doctor --fix must restore the deleted managed file"
+    assert victim.read_text(encoding="utf-8") == original
+    assert "Action" in combined or "regenerated" in combined
+
+
+# ---------------------------------------------------------------------------
 # `doctor --reset`
 # ---------------------------------------------------------------------------
 

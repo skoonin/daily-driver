@@ -76,6 +76,16 @@ def is_user_edited(workspace_root: Path, state_dir: Path, rel_path: str) -> bool
     return _sha256(target) != recorded
 
 
+def missing_files(workspace_root: Path, state_dir: Path) -> list[str]:
+    """Return rel_paths recorded in the manifest that are absent from disk.
+
+    Used by doctor to detect deletions of package-managed files. A file in the
+    manifest but not on disk is drift the user can repair with `doctor --fix`.
+    """
+    stored = load(state_dir)
+    return sorted(rel for rel in stored if not (workspace_root / rel).exists())
+
+
 def record(state_dir: Path, workspace_root: Path, paths: list[Path]) -> None:
     """Add or update SHA-256 entries for the given absolute paths, preserving existing entries."""
     stored = load(state_dir)
