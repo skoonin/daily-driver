@@ -61,6 +61,44 @@ Injected into Claude sessions as context.
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
 
+## `ai`
+
+Routes headless AI tasks (enrichment, summary) to either the `claude` CLI
+or a local [Ollama](https://ollama.com) server. Interactive launchers
+(day-start, check-in, day-end) always use `claude`; the `ai` block does
+not affect them.
+
+Default (omitting the block entirely): `claude` for every task. Existing
+workspaces need no migration.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `enrichment.provider` | `claude` \| `ollama` | `claude` | Used by `jobs run --backfill` |
+| `enrichment.model` | string or null | null | Provider-specific identifier |
+| `summary.provider` | `claude` \| `ollama` | `claude` | Used by `summary --range` |
+| `summary.model` | string or null | null | Provider-specific identifier |
+| `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
+| `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
+
+Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
+`haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,
+`llama3.2:3b`). `null` lets each provider pick its own default.
+
+See [`docs/ollama-setup.md`](ollama-setup.md) for installation and the
+`doctor` reachability check.
+
+Example: route enrichment to a local model, keep summary on claude:
+
+```yaml
+ai:
+  enrichment:
+    provider: ollama
+    model: qwen2.5:14b
+  ollama:
+    endpoint: http://localhost:11434
+    timeout: 90
+```
+
 ## `scheduler`
 
 Freeform dict passed to the Jinja launchd plist templates. Times are local wall-clock, 24-hour. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00.

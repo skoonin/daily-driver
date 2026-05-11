@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Ollama provider for headless AI tasks
+
+- **`ai:` config block routes enrichment and summary to either claude or
+  a local Ollama server.** Per-task selection: `ai.enrichment.provider`
+  and `ai.summary.provider` accept `claude` (default) or `ollama`. Each
+  task has its own `model` field — claude takes `sonnet` / `haiku` /
+  etc., ollama takes any pulled tag like `qwen2.5:14b` or `phi4`.
+  Omitting the entire block preserves existing claude-only behavior
+  (no migration required for existing workspaces).
+- **New `ai_provider.invoke_for(task, prompt, ...)` dispatch layer.**
+  Translates backend failures into a uniform `AIInvocationError` with
+  `stdout` / `stderr` / `returncode` fields, so the diagnostic warning
+  in `[enrich]` / `[enrich-fit-notes]` paths surfaces real upstream
+  error messages for both providers.
+- **`ollama_client.generate` HTTP wrapper around `/api/generate`.**
+  Non-streaming; `format=json` plumbed through for tasks that expect
+  structured output (currently `enrich_fit_and_notes`). No retries —
+  local ollama either works or it doesn't.
+- **New `AI providers` doctor row when any task is routed to ollama.**
+  Hits `GET /api/tags`, verifies the configured model is pulled. Status
+  is `OK` when reachable + model present, `WARNING` otherwise (drift
+  convention: exit 0). The row is omitted when only claude defaults are
+  in use — no extra noise for the common case.
+- **Documentation.** `docs/ollama-setup.md` walks through install,
+  pulling a model, and wiring up `.dd-config.yaml`. `docs/configuration.md`
+  documents the `ai:` block.
+
+Interactive launchers (`day-start`, `check-in`, `day-end`) remain claude-
+only — they depend on session resume, agents, and workspace `--add-dir`
+context that ollama does not provide.
+
 ### Changed — slash command rename: `/interview-prep` → `/daily-learning`
 
 - **Renamed** `commands/daily-driver/interview-prep.md` →

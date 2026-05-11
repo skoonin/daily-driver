@@ -83,6 +83,26 @@ tracker:
 #   # day and want check-in to land in it.
 #   resume_check_in: false
 
+# Optional: AI provider routing for headless tasks (enrichment, summary).
+# Interactive launchers (day-start, check-in, day-end) always use claude —
+# they need session resume / agents / workspace context that Ollama lacks.
+# Omitting the entire block keeps claude defaults for every task.
+# ai:
+#   enrichment:
+#     # provider: claude | ollama
+#     provider: claude
+#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#     # model: sonnet
+#   summary:
+#     provider: claude
+#     # model: sonnet
+#   # Only consulted when a task is routed to the ollama provider.
+#   ollama:
+#     endpoint: http://localhost:11434
+#     # Ollama is materially slower than the claude API; give it room.
+#     timeout: 60
+
 # Optional: focus mode defaults.
 # focus:
 #   # Fallback duration when `focus on` runs without `--for`.
