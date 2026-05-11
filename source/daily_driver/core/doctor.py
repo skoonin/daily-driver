@@ -187,6 +187,84 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
     return results
 
 
+def _load_workspace_config(workspace: Workspace):  # type: ignore[no-untyped-def]
+    """Load `.dd-config.yaml` for a workspace; return None on any failure."""
+    from daily_driver.core.config import load as load_config
+
+    cfg_path = workspace.root / ".dd-config.yaml"
+    if not cfg_path.is_file():
+        return None
+    try:
+        return load_config(cfg_path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
+    """Verify Ollama reachability + model presence for any task routed to it.
+
+    Returns None (no row emitted) when every task uses the claude default.
+    Only one row is rendered overall, summarizing all ollama-routed tasks.
+    Drift convention: failures are WARNING (exit 0), matching the workspace
+    drift / contract checks added in PR #30.
+    """
+    cfg = _load_workspace_config(workspace)
+    if cfg is None:
+        return None
+
+    ai_cfg = cfg.ai
+    ollama_tasks: list[tuple[str, str]] = []
+    for task_name in ("enrichment", "summary"):
+        task_cfg = getattr(ai_cfg, task_name)
+        if task_cfg.provider == "ollama":
+            model = task_cfg.model or "qwen2.5:14b"
+            ollama_tasks.append((task_name, model))
+    if not ollama_tasks:
+        return None
+
+    from daily_driver.integrations import ollama_client
+    from daily_driver.integrations.ollama_client import OllamaNotReachableError
+
+    endpoint = ai_cfg.ollama.endpoint
+    summary = ", ".join(f"{t}: ollama {m}" for t, m in ollama_tasks)
+
+    try:
+        pulled = ollama_client.list_models(endpoint, timeout=5)
+    except OllamaNotReachableError:
+        return CheckResult(
+            name="AI providers",
+            status="WARNING",
+            detail=f"ollama at {endpoint} not reachable ({summary})",
+            fix_hint="Start the server: ollama serve",
+            fixable=False,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="AI providers",
+            status="WARNING",
+            detail=f"ollama at {endpoint} returned an error: {exc}",
+            fix_hint="Verify `ollama serve` is healthy on the configured endpoint.",
+            fixable=False,
+        )
+
+    missing = [(t, m) for t, m in ollama_tasks if m not in pulled]
+    if missing:
+        miss_str = ", ".join(f"{m} ({t})" for t, m in missing)
+        first_missing_model = missing[0][1]
+        return CheckResult(
+            name="AI providers",
+            status="WARNING",
+            detail=f"ollama reachable at {endpoint}; model(s) not pulled: {miss_str}",
+            fix_hint=f"Pull the model: ollama pull {first_missing_model}",
+            fixable=False,
+        )
+    return CheckResult(
+        name="AI providers",
+        status="OK",
+        detail=f"ollama at {endpoint} reachable; {summary}",
+    )
+
+
 def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     """Run all doctor checks. If workspace is None, skip workspace-specific checks."""
     results: list[CheckResult] = []
@@ -197,6 +275,9 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
         results.append(_check_workspace_drift(workspace))
         results.append(_check_daily_state_writable(workspace))
         results.extend(_check_init_contract(workspace))
+        ai_row = _check_ai_providers(workspace)
+        if ai_row is not None:
+            results.append(ai_row)
     return results
 
 
