@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from daily_driver.integrations import claude_cli
+from daily_driver.integrations import ai_provider, claude_cli
+from daily_driver.integrations.ai_provider import AIInvocationError
 from daily_driver.scraper.parsing import _parse_detail_page
 from daily_driver.scraper.sources._http import _api_get, _http_session
 
@@ -20,6 +21,20 @@ if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
 
 log = logging.getLogger(__name__)
+
+
+def _enrichment_provider(config: dict | None) -> str:
+    """Return the provider name configured for the enrichment task.
+
+    Defaults to "claude" when `ai:` is omitted or malformed; the dispatch
+    layer will re-validate and surface any real config errors at call time.
+    """
+    try:
+        from daily_driver.integrations.ai_provider import _resolve_ai_config
+
+        return _resolve_ai_config(config).enrichment.provider
+    except Exception:  # noqa: BLE001
+        return "claude"
 
 
 def enrich_company_descriptions(
@@ -38,7 +53,7 @@ def enrich_company_descriptions(
     from daily_driver.scraper.runner import enrich_timeout, scraper_cfg
 
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-    if shutil.which("claude") is None:
+    if _enrichment_provider(config) == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return stats
 
@@ -101,11 +116,12 @@ def enrich_company_descriptions(
                         "Answer only, no preamble."
                     )
                 try:
-                    stdout = claude_cli.invoke(
+                    stdout = ai_provider.invoke_for(
+                        "enrichment",
                         prompt,
-                        headless=True,
-                        session_persistence=False,
+                        config=config,
                         timeout=enrich_timeout(config),
+                        format_json=False,
                     )
                     lines = [ln for ln in stdout.splitlines() if ln.strip()]
                     product = lines[0] if lines else ""
@@ -130,13 +146,14 @@ def enrich_company_descriptions(
                                 else:
                                     gd_rating = ""
                     cache[company] = {"product": product, "gd_rating": gd_rating}
-                except subprocess.CalledProcessError as exc:
-                    # claude CLI writes auth/limit/error messages to stdout,
-                    # not stderr. Capture both so the cause is visible in logs.
+                except AIInvocationError as exc:
+                    # Provider error messages frequently land on stdout
+                    # (claude CLI auth/limit prompts; ollama HTTP bodies).
+                    # Capture both tails so the cause is visible in logs.
                     stdout_tail = (exc.stdout or "").strip()[-200:]
                     stderr_tail = (exc.stderr or "").strip()[-200:]
                     log.warning(
-                        "[enrich] company=%s rc=%d stdout=%r stderr=%r",
+                        "[enrich] company=%s rc=%s stdout=%r stderr=%r",
                         company,
                         exc.returncode,
                         stdout_tail,
@@ -144,9 +161,9 @@ def enrich_company_descriptions(
                     )
                     cache[company] = {"product": "", "gd_rating": ""}
                     stats["failed"] += 1
-                except subprocess.TimeoutExpired:
+                except (subprocess.TimeoutExpired, requests.Timeout):
                     log.warning(
-                        "[enrich] %s: claude CLI timed out after %ds",
+                        "[enrich] %s: AI provider timed out after %ds",
                         company,
                         enrich_timeout(config),
                     )
@@ -220,7 +237,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     )
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
-    if shutil.which("claude") is None:
+    if _enrichment_provider(config) == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return stats
 
@@ -290,11 +307,12 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
         )
 
         try:
-            stdout = claude_cli.invoke(
+            stdout = ai_provider.invoke_for(
+                "enrichment",
                 prompt,
-                headless=True,
-                session_persistence=False,
+                config=config,
                 timeout=enrich_timeout(config),
+                format_json=True,
             )
             raw = stdout.strip()
             try:
@@ -324,11 +342,11 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
                     raw[:200],
                 )
                 stats["failed"] += 1
-        except subprocess.CalledProcessError as exc:
+        except AIInvocationError as exc:
             stdout_tail = (exc.stdout or "").strip()[-200:]
             stderr_tail = (exc.stderr or "").strip()[-200:]
             log.warning(
-                "[enrich-fit-notes] company=%s role=%s rc=%d stdout=%r stderr=%r",
+                "[enrich-fit-notes] company=%s role=%s rc=%s stdout=%r stderr=%r",
                 company,
                 role,
                 exc.returncode,
@@ -336,9 +354,9 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
                 stderr_tail,
             )
             stats["failed"] += 1
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, requests.Timeout):
             log.warning(
-                "[enrich-fit-notes] %s: claude CLI timed out after %ds",
+                "[enrich-fit-notes] %s: AI provider timed out after %ds",
                 company,
                 enrich_timeout(config),
             )

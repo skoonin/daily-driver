@@ -14,10 +14,39 @@ from daily_driver.cli.commands._claude_session import (
     require_claude_available,
     resolve_workspace,
 )
+from daily_driver.core.config import load as load_config
 from daily_driver.core.summary import build_json_bundle, parse_range, render_prompt
-from daily_driver.integrations import clipboard
+from daily_driver.integrations import ai_provider, clipboard
+from daily_driver.integrations.ai_provider import AIInvocationError
 
 log = logging.getLogger(__name__)
+
+
+def _load_config_dict(workspace_root) -> dict[str, object]:  # type: ignore[no-untyped-def]
+    """Load `.dd-config.yaml` as a dict for the provider dispatch layer.
+
+    Returns an empty dict on missing file / load failure so defaults apply.
+    """
+    import yaml
+
+    cfg_path = workspace_root / ".dd-config.yaml"
+    if not cfg_path.is_file():
+        return {}
+    try:
+        with cfg_path.open(encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _summary_provider(workspace_root) -> str:  # type: ignore[no-untyped-def]
+    """Return the configured provider for the summary task ("claude" default)."""
+    try:
+        cfg = load_config(workspace_root / ".dd-config.yaml")
+        return cfg.ai.summary.provider
+    except Exception:  # noqa: BLE001
+        return "claude"
 
 
 def add_parser(
@@ -110,24 +139,46 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps(bundle))
         return 0
 
-    # Headless claude path
+    # Headless path: dispatch through the provider layer so users can route
+    # summary to ollama via `ai.summary.provider: ollama`. Claude remains the
+    # default and keeps its workspace / agent / session context.
     try:
         workspace = resolve_workspace(args)
-        require_claude_available()
         prompt = render_prompt(
             range_start=range_start,
             range_end=range_end,
             detail=args.detail,
             match=match,
         )
-        output = launch_headless(
-            slash_command=prompt,
-            workspace=workspace,
-            session_name=default_session_name("summary", args.session_name),
-            agent=args.agent,
-            model=args.model,
-            timeout=args.timeout,
-        )
+        provider = _summary_provider(workspace.root)
+        if provider == "claude":
+            require_claude_available()
+            output = launch_headless(
+                slash_command=prompt,
+                workspace=workspace,
+                session_name=default_session_name("summary", args.session_name),
+                agent=args.agent,
+                model=args.model,
+                timeout=args.timeout,
+            )
+        else:
+            # Ollama (and any future non-claude provider) has no workspace /
+            # agent / session concept — send the prompt as-is.
+            config_dict = _load_config_dict(workspace.root)
+            output = ai_provider.invoke_for(
+                "summary",
+                prompt,
+                config=config_dict,
+                timeout=args.timeout,
+                format_json=False,
+            )
+    except AIInvocationError as exc:
+        msg = f"error: {exc.provider} summary failed: {exc}"
+        tail = (exc.stderr or exc.stdout or "").strip()[-200:]
+        if tail:
+            msg = f"{msg}\n{tail}"
+        print(msg, file=__import__("sys").stderr)
+        return 1
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
 
