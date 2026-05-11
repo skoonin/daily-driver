@@ -23,20 +23,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def _enrichment_provider(config: dict | None) -> str:
-    """Return the provider name configured for the enrichment task.
-
-    Defaults to "claude" when `ai:` is omitted or malformed; the dispatch
-    layer will re-validate and surface any real config errors at call time.
-    """
-    try:
-        from daily_driver.integrations.ai_provider import _resolve_ai_config
-
-        return _resolve_ai_config(config).enrichment.provider
-    except Exception:  # noqa: BLE001
-        return "claude"
-
-
 def enrich_company_descriptions(
     jobs: list[dict], config: dict | None = None, *, budget: int = 0
 ) -> dict:
@@ -53,7 +39,10 @@ def enrich_company_descriptions(
     from daily_driver.scraper.runner import enrich_timeout, scraper_cfg
 
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-    if _enrichment_provider(config) == "claude" and shutil.which("claude") is None:
+    if (
+        ai_provider.resolve_ai_config(config).enrichment.provider == "claude"
+        and shutil.which("claude") is None
+    ):
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return stats
 
@@ -237,7 +226,10 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     )
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
-    if _enrichment_provider(config) == "claude" and shutil.which("claude") is None:
+    if (
+        ai_provider.resolve_ai_config(config).enrichment.provider == "claude"
+        and shutil.which("claude") is None
+    ):
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return stats
 

@@ -212,3 +212,60 @@ def test_init_gitignore_not_overwritten_on_force(tmp_path: Path) -> None:
     run(_args(str(tmp_path), force=True))
 
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == custom
+
+
+def test_init_skips_inner_generate_on_second_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Idempotent re-init at the same version must NOT call generate()'s
+    work path. The version-stamp fast-path should return None, suppressing
+    the misleading 'Copied N command(s)' / 'Version stamp written' INFO
+    logs that previously fired on every init invocation.
+    """
+    # First init — full work expected.
+    run(_args(str(tmp_path)))
+
+    # Second init — count calls to the inner generate wrapper.
+    from daily_driver.cli.commands import init as init_module
+
+    call_count = {"n": 0, "args_seen": []}
+    real_generate = init_module.generate
+
+    def counting_generate(workspace, **kwargs):
+        call_count["n"] += 1
+        call_count["args_seen"].append(kwargs)
+        return real_generate(workspace, **kwargs)
+
+    monkeypatch.setattr(init_module, "generate", counting_generate)
+    run(_args(str(tmp_path)))
+
+    assert call_count["n"] == 1, "generate should be called exactly once"
+    seen = call_count["args_seen"][0]
+    assert (
+        seen.get("ignore_drift") is False
+    ), "second init (no --force) must enable the version-stamp fast-path"
+    assert (
+        seen.get("force_overwrite") is False
+    ), "second init (no --force) must not wipe managed files"
+
+
+def test_init_force_still_regenerates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--force must keep the legacy ignore_drift=True / force_overwrite=True path."""
+    run(_args(str(tmp_path)))
+
+    from daily_driver.cli.commands import init as init_module
+
+    args_seen = []
+    real_generate = init_module.generate
+
+    def capturing_generate(workspace, **kwargs):
+        args_seen.append(kwargs)
+        return real_generate(workspace, **kwargs)
+
+    monkeypatch.setattr(init_module, "generate", capturing_generate)
+    run(_args(str(tmp_path), force=True))
+
+    assert args_seen[0].get("ignore_drift") is True
+    assert args_seen[0].get("force_overwrite") is True

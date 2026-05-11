@@ -43,19 +43,18 @@ class AIInvocationError(RuntimeError):
         self.returncode = returncode
 
 
-def _resolve_ai_config(config: dict[str, Any] | None) -> AIConfig:
+def resolve_ai_config(config: dict[str, Any] | None) -> AIConfig:
     """Extract the `ai` block from a raw config dict, applying defaults.
 
-    Accepts the dict shape used elsewhere in daily_driver. Missing or absent
-    `ai:` key resolves to `AIConfig()` (claude defaults everywhere).
+    Missing or absent `ai:` key resolves to `AIConfig()` (claude defaults
+    everywhere). Public so callers like `enrichment.py` can read the
+    configured provider without going through `invoke_for`.
     """
     if not config:
         return AIConfig()
     raw = config.get("ai")
     if raw is None:
         return AIConfig()
-    if isinstance(raw, AIConfig):
-        return raw
     return AIConfig.model_validate(raw)
 
 
@@ -75,7 +74,7 @@ def invoke_for(
     `subprocess.TimeoutExpired` for claude and `requests.Timeout` for ollama
     so callers retain the option to handle them distinctly.
     """
-    ai_cfg = _resolve_ai_config(config)
+    ai_cfg = resolve_ai_config(config)
     try:
         task_cfg = getattr(ai_cfg, task)
     except AttributeError as exc:
@@ -98,36 +97,30 @@ def invoke_for(
                 stderr=exc.stderr or "",
                 returncode=exc.returncode,
             ) from exc
-    if task_cfg.provider == "ollama":
-        effective_timeout = timeout if timeout is not None else ai_cfg.ollama.timeout
-        model = task_cfg.model or "qwen2.5:14b"
-        try:
-            return ollama_client.generate(
-                prompt,
-                model=model,
-                endpoint=ai_cfg.ollama.endpoint,
-                timeout=effective_timeout,
-                format_json=format_json,
-            )
-        except ollama_client.OllamaNotReachableError as exc:
-            raise AIInvocationError(
-                str(exc), provider="ollama", stderr=str(exc)
-            ) from exc
-        except ollama_client.OllamaModelNotFoundError as exc:
-            raise AIInvocationError(
-                str(exc), provider="ollama", stderr=str(exc)
-            ) from exc
-        except requests.HTTPError as exc:
-            body = ""
-            try:
-                body = exc.response.text if exc.response is not None else ""
-            except Exception:  # noqa: BLE001
-                body = ""
-            rc = exc.response.status_code if exc.response is not None else None
-            raise AIInvocationError(
-                f"ollama HTTP {rc}",
-                provider="ollama",
-                stdout=body,
-                returncode=rc,
-            ) from exc
-    raise ValueError(f"unknown provider: {task_cfg.provider!r}")
+
+    # Pydantic Literal["claude", "ollama"] on AITaskConfig.provider rules out
+    # any other value before we reach here.
+    effective_timeout = timeout if timeout is not None else ai_cfg.ollama.timeout
+    model = task_cfg.model or "qwen2.5:14b"
+    try:
+        return ollama_client.generate(
+            prompt,
+            model=model,
+            endpoint=ai_cfg.ollama.endpoint,
+            timeout=effective_timeout,
+            format_json=format_json,
+        )
+    except (
+        ollama_client.OllamaNotReachableError,
+        ollama_client.OllamaModelNotFoundError,
+    ) as exc:
+        raise AIInvocationError(str(exc), provider="ollama", stderr=str(exc)) from exc
+    except requests.HTTPError as exc:
+        body = exc.response.text if exc.response is not None else ""
+        rc = exc.response.status_code if exc.response is not None else None
+        raise AIInvocationError(
+            f"ollama HTTP {rc}",
+            provider="ollama",
+            stdout=body,
+            returncode=rc,
+        ) from exc
