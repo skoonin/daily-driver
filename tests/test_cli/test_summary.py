@@ -12,6 +12,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -340,3 +341,39 @@ def test_standup_subcommand_no_longer_registered() -> None:
     names = [name for name, _ in _COMMANDS]
     assert "standup" not in names
     assert "summary" in names
+
+
+def test_summary_provider_propagates_yaml_error(tmp_path):
+    """Malformed YAML in .dd-config.yaml must NOT silently default to claude.
+
+    Regression test for the silent-failure pattern flagged in PR #31 sk-review.
+    """
+    from daily_driver.cli.commands.summary import _summary_provider
+
+    (tmp_path / ".dd-config.yaml").write_text(": : : invalid\n", encoding="utf-8")
+
+    with pytest.raises(yaml.YAMLError):
+        _summary_provider(tmp_path)
+
+
+def test_summary_provider_propagates_validation_error(tmp_path):
+    """Typo'd `ai.summary.provider: oloma` must raise, not silently fall back."""
+    from pydantic import ValidationError
+
+    from daily_driver.cli.commands.summary import _summary_provider
+
+    (tmp_path / ".dd-config.yaml").write_text(
+        "tracker:\n  default_category: task\n  categories:\n    task: {required: [title]}\n"
+        "ai:\n  summary:\n    provider: oloma\n",  # typo
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError):
+        _summary_provider(tmp_path)
+
+
+def test_summary_provider_missing_file_returns_claude(tmp_path):
+    """Missing config file is the only acceptable claude fallback (default)."""
+    from daily_driver.cli.commands.summary import _summary_provider
+
+    assert _summary_provider(tmp_path) == "claude"

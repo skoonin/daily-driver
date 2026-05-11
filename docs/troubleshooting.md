@@ -1,10 +1,13 @@
 # Troubleshooting
 
+> See also: [usage.md](usage.md) for the day-to-day flow.
+
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`
-and resolves most "missing file" errors. If the error row mentions a missing
-dependency (`dep:claude`, `dep:pbcopy`), install it and re-run.
+Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`,
+restores managed files you may have deleted, and resolves most "missing file"
+errors. If the error row mentions a missing dependency (`dep:claude`,
+`dep:pbcopy`), install it and re-run.
 
 ```bash
 daily-driver doctor
@@ -20,18 +23,22 @@ The workspace version stamp does not match the installed package version. Safe
 to ignore for minor version bumps; `doctor --fix` picks up new shipped commands
 and agents.
 
-## `jobs` fails on Wellfound or Apple
+## `jobs` fails on Apple (or another Playwright source)
 
-Those two sources use Playwright. Install it:
+The Apple careers scraper (and any user-added source with `type: playwright`)
+needs Playwright browsers. Install them:
 
 ```bash
 pip install playwright
 playwright install chromium
 ```
 
-Other sources keep working without Playwright. If you want to restrict to
-non-Playwright sources while debugging, configure only those sources in
-`.dd-config.yaml` under `plugins.job_search.sources:`.
+Other sources keep working without Playwright. To restrict a run to
+non-Playwright sources while debugging:
+
+```bash
+daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring,greenhouse,jobspy
+```
 
 ## launchd plist won't load
 
@@ -100,6 +107,13 @@ Fix it with:
 pip install --force-reinstall pydantic pydantic-core
 pip install -e .
 ```
+
+## Ollama provider issues
+
+If you routed `ai.enrichment.provider` or `ai.summary.provider` to `ollama`,
+see [ollama-setup.md](ollama-setup.md#troubleshooting). Common cases:
+server not running (`connection refused on 11434`), model not pulled
+(visible in `doctor` as a WARNING row), first request slow (cold load).
 
 ## Resetting a workspace
 

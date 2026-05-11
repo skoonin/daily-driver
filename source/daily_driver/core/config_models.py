@@ -250,6 +250,45 @@ class ClaudeConfig(BaseModel):
     resume_check_in: bool = False
 
 
+class AITaskConfig(BaseModel):
+    """Provider + model selection for a single headless AI task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["claude", "ollama"] = "claude"
+    # Provider-specific model identifier. For claude: "sonnet", "haiku", etc.;
+    # for ollama: a pulled tag like "qwen2.5:14b". None lets the provider pick
+    # its own default.
+    model: str | None = None
+
+
+class OllamaConfig(BaseModel):
+    """Settings consulted when a task is routed to the ollama provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    endpoint: str = "http://localhost:11434"
+    # Ollama is materially slower than the claude API; give it room.
+    timeout: int = 60
+
+
+class AIConfig(BaseModel):
+    """Per-task provider routing for headless AI calls.
+
+    Default resolves to `provider: claude` for every task, so omitting the
+    `ai:` block in `.dd-config.yaml` preserves the existing claude-only
+    behavior. Interactive launchers (day-start, check-in, day-end) ignore
+    this block — they always use the `claude` CLI directly for session /
+    agent / workspace-context features Ollama doesn't have.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enrichment: AITaskConfig = AITaskConfig()
+    summary: AITaskConfig = AITaskConfig()
+    ollama: OllamaConfig = OllamaConfig()
+
+
 class FocusConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -284,6 +323,7 @@ class Config(BaseModel):
     tracker: TrackerConfig
     gather: GatherConfig = GatherConfig()
     claude: ClaudeConfig = ClaudeConfig()
+    ai: AIConfig = AIConfig()
     schedule: ScheduleConfig = ScheduleConfig()
     focus: FocusConfig = FocusConfig()
     plugins: PluginsConfig = PluginsConfig()

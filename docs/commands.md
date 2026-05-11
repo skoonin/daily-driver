@@ -1,6 +1,8 @@
 # Commands
 
-`daily-driver --help` lists every subcommand. `daily-driver <cmd> --help` shows per-command flags. This page covers the non-obvious behavior that isn't in `--help`.
+`daily-driver --help` lists every subcommand. `daily-driver <cmd> --help` shows per-command flags. `daily-driver help [TOPIC]` is the in-CLI reference for discoverable values (statuses, categories, sources, date grammar, cadences). This page covers the non-obvious behavior that isn't in `--help`.
+
+> For an end-user walkthrough of the daily flow, start with [usage.md](usage.md). For configuration, see [configuration.md](configuration.md).
 
 ## Global flags
 
@@ -162,7 +164,7 @@ These ship to the workspace `.claude/commands/daily-driver/` tree but are not ex
 
 | Slash command | Purpose |
 |---------------|---------|
-| `/interview-prep` | 5-10 minute interview practice session (behavioral STAR, technical fundamentals, system design). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. |
+| `/daily-learning` | 5-10 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. Renamed from `/interview-prep`. |
 
 ## Headless Claude commands
 
@@ -196,7 +198,9 @@ Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](confi
 
 ### `jobs run [-n|--dry-run] [--backfill] [--sources LIST | --list-sources]`
 
-Runs enabled scrapers, appends new rows to `jobs.csv`, enriches via `claude` CLI. `--dry-run` prints matches without writing. `--backfill` re-enriches empty fields on existing rows. `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits.
+Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via the provider configured under `ai.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). `--dry-run` prints matches without writing. `--backfill` re-enriches empty fields on existing rows. `-S` / `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits.
+
+Available sources: `apple`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `jobspy`, `remoteok`, `weworkremotely`. Run `daily-driver help sources` for the same list at runtime.
 
 ### `jobs status [--json]`
 
@@ -231,3 +235,9 @@ Prints a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`,
 ### `gather {calendar,git} [--since|--until|--json]`
 
 Structured external state readers. `gather git` also accepts `--repo PATH`; without it, repos are discovered under `gather.git.search_paths` from `.dd-config.yaml` (falling back to the current working directory).
+
+## See also
+
+- [usage.md](usage.md) — end-user walkthrough.
+- [configuration.md](configuration.md) — `.dd-config.yaml` reference.
+- [cli-tree.md](cli-tree.md) — at-a-glance command tree.

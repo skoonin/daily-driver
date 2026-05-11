@@ -4,6 +4,8 @@ All workspace configuration lives in `.dd-config.yaml` at the workspace root. Va
 
 Authoritative schema: `source/daily_driver/core/config_models.py`.
 
+> For the end-user flow that exercises these settings, see [usage.md](usage.md). For Ollama provider setup, see [ollama-setup.md](ollama-setup.md).
+
 ## Top-level keys
 
 | Key | Type | Default | Notes |
@@ -58,8 +60,47 @@ Injected into Claude sessions as context.
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
+| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used elsewhere. Set `false` to silence. |
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
+
+## `ai`
+
+Routes headless AI tasks (enrichment, summary) to either the `claude` CLI
+or a local [Ollama](https://ollama.com) server. Interactive launchers
+(day-start, check-in, day-end) always use `claude`; the `ai` block does
+not affect them.
+
+Default (omitting the block entirely): `claude` for every task. Existing
+workspaces need no migration.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `enrichment.provider` | `claude` \| `ollama` | `claude` | Used by `jobs run --backfill` |
+| `enrichment.model` | string or null | null | Provider-specific identifier |
+| `summary.provider` | `claude` \| `ollama` | `claude` | Used by `summary --range` |
+| `summary.model` | string or null | null | Provider-specific identifier |
+| `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
+| `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
+
+Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
+`haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,
+`llama3.2:3b`). `null` lets each provider pick its own default.
+
+See [`docs/ollama-setup.md`](ollama-setup.md) for installation and the
+`doctor` reachability check.
+
+Example: route enrichment to a local model, keep summary on claude:
+
+```yaml
+ai:
+  enrichment:
+    provider: ollama
+    model: qwen2.5:14b
+  ollama:
+    endpoint: http://localhost:11434
+    timeout: 90
+```
 
 ## `scheduler`
 
@@ -193,3 +234,9 @@ plugins:
         search_terms: ["site reliability engineer"]
         pages: 3
 ```
+
+## See also
+
+- [usage.md](usage.md) — the daily flow that exercises these settings.
+- [ollama-setup.md](ollama-setup.md) — local-LLM provider walkthrough.
+- [commands.md](commands.md) — subcommand flag reference.

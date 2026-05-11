@@ -102,18 +102,32 @@ def _scaffold_gitignore(root: Path, *, force: bool = False) -> bool:
 
 
 def _format_summary(
-    root: Path, created: list[str], skipped: list[str], generated: int
+    root: Path,
+    created: list[str],
+    skipped: list[str],
+    generate_result: object,
 ) -> str:
-    """Render the post-init summary block. Created/Skipped omitted if empty."""
+    """Render the post-init summary block. Created/Skipped omitted if empty.
+
+    `generate_result` is the return value of `core.generate.generate()`:
+    None when the version-stamp fast-path skipped all work; a
+    GenerationResult with `n_written` / `n_preserved` otherwise.
+    """
     lines = [f"Initialized workspace at {root}"]
     if created:
         lines.append(f"  Created: {', '.join(created)}")
     if skipped:
         lines.append(f"  Skipped: {', '.join(skipped)} (already present)")
-    lines.append(
-        f"  Generated: .claude/*/daily-driver/* ({generated} file"
-        f"{'s' if generated != 1 else ''})"
-    )
+    if generate_result is None:
+        lines.append("  Generated: unchanged (managed assets already current)")
+    else:
+        count = getattr(generate_result, "n_written", 0) + getattr(
+            generate_result, "n_preserved", 0
+        )
+        lines.append(
+            f"  Generated: .claude/*/daily-driver/* ({count} file"
+            f"{'s' if count != 1 else ''})"
+        )
     return "\n".join(lines)
 
 
@@ -180,8 +194,15 @@ def run(args: argparse.Namespace) -> int:
     else:
         skipped.append(".gitignore")
 
+    # Idempotence: when re-running without --force on a workspace at the
+    # current version, skip the inner generate work entirely. The version-
+    # stamp fast-path in generate() returns None and no logs fire. With
+    # --force, wipe and rewrite (legacy behavior — user explicitly asked).
     try:
-        result = generate(workspace, ignore_drift=True, force_overwrite=True)
+        if args.force:
+            result = generate(workspace, ignore_drift=True, force_overwrite=True)
+        else:
+            result = generate(workspace, ignore_drift=False, force_overwrite=False)
     except Exception as exc:  # noqa: BLE001
         _restore_backup()
         print(f"error during workspace generation: {exc}", file=sys.stderr)
@@ -192,9 +213,5 @@ def run(args: argparse.Namespace) -> int:
     if backup is not None and backup.exists():
         backup.unlink()
 
-    generated_count = getattr(result, "n_written", 0) + getattr(
-        result, "n_preserved", 0
-    )
-
-    print(_format_summary(root, created, skipped, generated_count), file=sys.stderr)
+    print(_format_summary(root, created, skipped, result), file=sys.stderr)
     return 0

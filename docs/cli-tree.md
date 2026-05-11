@@ -1,19 +1,22 @@
 # daily-driver CLI tree
 
-Generated 2026-05-04 from `source/daily_driver/cli/`. Snapshot of the v0.1.x command surface for use as a planning reference.
+Snapshot of the v0.1.x command surface, generated 2026-05-11 from
+`source/daily_driver/cli/`. For prose explanations see
+[commands.md](commands.md); for the daily flow see [usage.md](usage.md).
 
-Global flags (registered via `cli/_common.py:add_global_flags(parser)`, called at the END of the top-level parser and every leaf so they render under a "global options" group at the BOTTOM of `--help`):
+Global flags (registered via `cli/_common.py:add_global_flags(parser)`, called
+at the END of the top-level parser and every leaf so they render under a
+"global options" group at the BOTTOM of `--help`):
 
 - `-v, --verbose` — Enable debug-level logging
 - `-q, --quiet` — Suppress all output below WARNING (mutually exclusive with `-v`)
 - `--no-color` — Disable Rich color/formatting output
-- `--workspace PATH` — Path to daily-driver workspace root
+- `-w, --workspace PATH` — Path to daily-driver workspace root
 - `--version` — Print version and exit (top-level only)
 
 > Both `daily-driver -v tracker list` and `daily-driver tracker list -v` parse correctly. Global args use `default=argparse.SUPPRESS`, so a value set at one level is never silently clobbered by a later level's default — reads must use `getattr(args, "workspace", None)`.
 >
 > **Date specifiers convention**: `--since SPEC` is forward-looking (matches entries with `date >= SPEC`). `--older-than SPEC` is backward-looking (matches `date < SPEC`). Same grammar via `core.dates.parse_since`: `today | yesterday | tomorrow`, `week | month | quarter | year`, `Nd | Nw | Nm | Ny`, `YYYY-MM-DD`.
->
 
 ```text
 daily-driver/
@@ -21,7 +24,7 @@ daily-driver/
 │   ├── -v, --verbose
 │   ├── -q, --quiet
 │   ├── --no-color
-│   ├── --workspace PATH
+│   ├── -w, --workspace PATH
 │   └── --version
 ├── init
 │   ├── [path=.]
@@ -31,113 +34,114 @@ daily-driver/
 │   └── --reset
 ├── tracker
 │   ├── add
-│   │   ├── --category CAT (required)
-│   │   ├── --title TEXT (required)
-│   │   ├── --status STATUS
-│   │   ├── --tags a,b
-│   │   ├── --link URL
-│   │   ├── --note TEXT
+│   │   ├── -c, --category CAT (required)
+│   │   ├── -T, --title TEXT (required)
+│   │   ├── -s, --status STATUS
+│   │   ├── -t, --tags a,b
+│   │   ├── -l, --link URL
+│   │   ├── -N, --note TEXT
 │   │   ├── --next-action TEXT
-│   │   ├── --due YYYY-MM-DD
+│   │   ├── -d, --due YYYY-MM-DD
 │   │   └── --extra KEY=VALUE (repeatable)
 │   ├── update
 │   │   ├── id (positional)
-│   │   ├── --status STATUS
-│   │   ├── --note TEXT
+│   │   ├── -s, --status STATUS
+│   │   ├── -N, --note TEXT
 │   │   ├── --next-action TEXT
-│   │   ├── --tags a,b
+│   │   ├── -t, --tags a,b
 │   │   └── --extra KEY=VALUE (repeatable)
+│   ├── delete
+│   │   └── id (positional)
+│   ├── prune
+│   │   ├── -c, --category CAT
+│   │   ├── -s, --status STATUS
+│   │   ├── --older-than SPEC
+│   │   └── -n, --dry-run
+│   ├── show
+│   │   ├── id (positional)
+│   │   └── -j, --json
 │   ├── list
-│   │   ├── --category CAT
-│   │   ├── --status FILTER
-│   │   ├── --tag TAG
+│   │   ├── -c, --category CAT
+│   │   ├── -s, --status FILTER
+│   │   ├── -t, --tag TAG
 │   │   ├── --since SPEC
-│   │   └── --json
+│   │   └── -j, --json
 │   ├── follow-ups
 │   │   ├── --overdue
-│   │   └── --json
+│   │   └── -j, --json
 │   └── stats
-│       └── --json
+│       └── -j, --json
 ├── status
-│   └── --json
+│   └── -j, --json
 ├── focus
 │   ├── on
-│   │   ├── --for DURATION (required)
+│   │   ├── --for DURATION
 │   │   └── --reason TEXT
 │   ├── off
 │   └── status
-│       └── --json
+│       └── -j, --json
 ├── jobs
 │   ├── run
 │   │   ├── -n, --dry-run
-│   │   └── --backfill
+│   │   ├── --backfill
+│   │   ├── -S, --sources LIST
+│   │   └── --list-sources
 │   ├── status
-│   │   └── --json
+│   │   └── -j, --json
 │   └── prune
 │       ├── --older-than SPEC (required)
-│       ├── --status STATUS (repeatable; default: dropped, rejected, closed)
+│       ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed)
 │       └── -n, --dry-run
 ├── paths
-│   ├── [kind: root|output|state|ephemeral|daily|daily-plan|daily-notes]
-│   ├── --date YYYY-MM-DD
-│   └── --json
-├── read
-│   ├── context
-│   ├── voice-profile
-│   └── plan
-│       ├── --date YYYY-MM-DD
-│       └── --frontmatter
-├── ensure-daily-dir
-│   └── --date YYYY-MM-DD
+│   ├── [kind: root|output|state|ephemeral|daily|daily-plan|daily-notes|daily-state]
+│   ├── -d, --date YYYY-MM-DD
+│   └── -j, --json
 ├── gather
 │   ├── calendar
-│   │   ├── --since
-│   │   ├── --until
-│   │   └── --json
-│   ├── git
-│   │   ├── --since
-│   │   ├── --until
-│   │   └── --json
-│   ├── sessions
-│   │   ├── --since
-│   │   ├── --until
-│   │   └── --json
-│   └── notes
-│       ├── --since
-│       ├── --until
-│       └── --json
+│   │   ├── --since SPEC
+│   │   ├── --until SPEC
+│   │   └── -j, --json
+│   └── git
+│       ├── --repo PATH
+│       ├── --since SPEC
+│       ├── --until SPEC
+│       └── -j, --json
 ├── day-start
-│   ├── --session-name
-│   ├── --agent (default: work-planner)
-│   └── --model
+│   ├── --session-name NAME
+│   ├── --agent NAME (default: work-planner)
+│   └── --model {sonnet,opus,haiku}
 ├── day-end
-│   ├── --session-name
-│   ├── --agent (default: work-planner)
-│   └── --model
+│   ├── --session-name NAME
+│   ├── --agent NAME (default: work-planner)
+│   └── --model {sonnet,opus,haiku}
 ├── check-in
-│   ├── --session-name
-│   ├── --agent (default: work-planner)
-│   └── --model
+│   ├── --session-name NAME
+│   ├── --agent NAME (default: work-planner)
+│   ├── --model {sonnet,opus,haiku}
+│   └── --no-resume
 ├── summary
-│   ├── --range SPEC (required)
+│   ├── -r, --range SPEC (required)
 │   ├── --detail {low,med,high}
 │   ├── --match KW (repeatable)
-│   ├── --json
+│   ├── -j, --json
 │   ├── --no-clipboard
-│   ├── --session-name
-│   ├── --agent (default: work-planner)
-│   ├── --model
+│   ├── --session-name NAME
+│   ├── --agent NAME (default: work-planner)
+│   ├── --model {sonnet,opus,haiku}
 │   └── --timeout SECONDS
 ├── scheduler
 │   ├── install
 │   ├── uninstall
-│   └── status [--json]
-└── voice-update
-    ├── --from PATH ... (required)
-    ├── --append | --replace
-    ├── -n, --dry-run
-    ├── --no-clipboard
-    ├── --session-name
-    ├── --model
-    └── --timeout SECONDS
+│   └── status [-j, --json]
+├── voice-update
+│   ├── --from PATH ... (required, repeatable)
+│   ├── --append | --replace
+│   ├── -n, --dry-run
+│   ├── --no-clipboard
+│   ├── --session-name NAME
+│   ├── --model {sonnet,opus,haiku}
+│   └── --timeout SECONDS
+└── help
+    ├── [topic: commands|statuses|categories|sources|dates|cadences]
+    └── -j, --json
 ```
