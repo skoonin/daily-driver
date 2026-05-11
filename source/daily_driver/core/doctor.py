@@ -188,16 +188,22 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
 
 
 def _load_workspace_config(workspace: Workspace):  # type: ignore[no-untyped-def]
-    """Load `.dd-config.yaml` for a workspace; return None on any failure."""
+    """Load `.dd-config.yaml` for a workspace.
+
+    Returns the parsed Config on success, the literal string "missing" when
+    no config file exists, or the exception object when parsing fails so
+    callers can render a useful diagnostic row instead of silently
+    omitting it.
+    """
     from daily_driver.core.config import load as load_config
 
     cfg_path = workspace.root / ".dd-config.yaml"
     if not cfg_path.is_file():
-        return None
+        return "missing"
     try:
         return load_config(cfg_path)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001
+        return exc
 
 
 def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
@@ -209,8 +215,20 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
     drift / contract checks added in PR #30.
     """
     cfg = _load_workspace_config(workspace)
-    if cfg is None:
+    if cfg == "missing":
         return None
+    if isinstance(cfg, Exception):
+        # User has a broken .dd-config.yaml. Don't silently skip the AI
+        # row — that's exactly the failure mode where a misrouted task
+        # (e.g. typo'd `ai.enrichment.provdier: ollama`) would surprise
+        # the user with no explanation.
+        return CheckResult(
+            name="AI providers",
+            status="WARNING",
+            detail=f".dd-config.yaml failed to parse: {cfg}",
+            fix_hint="Fix the YAML / schema in .dd-config.yaml.",
+            fixable=False,
+        )
 
     ai_cfg = cfg.ai
     ollama_tasks: list[tuple[str, str]] = []

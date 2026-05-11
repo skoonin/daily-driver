@@ -144,3 +144,30 @@ def test_reachable_false_on_http_error() -> None:
     with patch.object(ollama_client.requests, "get") as get:
         get.return_value = _fake_response(500)
         assert ollama_client.reachable("http://localhost:11434") is False
+
+
+def test_generate_raises_on_200_with_error_field() -> None:
+    """Ollama can return 200 OK with `error` in body on mid-stream failures."""
+    from daily_driver.integrations.ollama_client import OllamaResponseError
+
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(
+            200, {"error": "model 'foo' not found, try pulling it first"}
+        )
+        with pytest.raises(OllamaResponseError) as exc_info:
+            ollama_client.generate(
+                "hi", model="foo", endpoint="http://localhost:11434", timeout=5
+            )
+        assert "model 'foo' not found" in str(exc_info.value)
+
+
+def test_generate_raises_on_200_with_empty_response_field() -> None:
+    """Empty `response` is a silent failure mode; must surface explicitly."""
+    from daily_driver.integrations.ollama_client import OllamaResponseError
+
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": ""})
+        with pytest.raises(OllamaResponseError):
+            ollama_client.generate(
+                "hi", model="qwen2.5:14b", endpoint="http://localhost:11434", timeout=5
+            )

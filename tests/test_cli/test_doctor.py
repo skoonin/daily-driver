@@ -523,3 +523,27 @@ def test_doctor_fix_and_reset_are_mutually_exclusive(
     assert exc.value.code == 2
     captured = capsys.readouterr()
     assert "not allowed" in captured.err or "mutually exclusive" in captured.err
+
+
+def test_check_ai_providers_warning_when_config_unparseable(tmp_path: Path) -> None:
+    """Broken .dd-config.yaml must surface as a WARNING row, NOT silently
+    skip the AI providers check. Regression: previously _load_workspace_config
+    returned None on any exception, which made _check_ai_providers also
+    return None — hiding the issue exactly when the user most needed
+    feedback. Tests the function directly because full-CLI workspace
+    discovery fails earlier on a malformed config.
+    """
+    from daily_driver.core.doctor import _check_ai_providers
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+    workspace = Workspace.discover_or_fail(override=ws)
+    # Overwrite with malformed YAML so the AI-providers config load raises.
+    (ws / ".dd-config.yaml").write_text(": : : invalid\n", encoding="utf-8")
+
+    result = _check_ai_providers(workspace)
+    assert result is not None, "config error must produce a row, not None"
+    assert result.status == "WARNING"
+    assert result.name == "AI providers"
+    assert "failed to parse" in result.detail.lower()

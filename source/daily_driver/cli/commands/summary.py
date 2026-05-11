@@ -23,30 +23,35 @@ log = logging.getLogger(__name__)
 
 
 def _load_config_dict(workspace_root) -> dict[str, object]:  # type: ignore[no-untyped-def]
-    """Load `.dd-config.yaml` as a dict for the provider dispatch layer.
+    """Load `.dd-config.yaml` as a raw dict for the provider dispatch layer.
 
-    Returns an empty dict on missing file / load failure so defaults apply.
+    Missing file → empty dict (defaults apply, no error). Parse errors
+    (malformed YAML, permission denied, etc.) propagate to the caller —
+    silent fallback to claude defaults on a typo'd `ai:` block would
+    misroute the user's request without explanation.
     """
     import yaml
 
     cfg_path = workspace_root / ".dd-config.yaml"
     if not cfg_path.is_file():
         return {}
-    try:
-        with cfg_path.open(encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        return data if isinstance(data, dict) else {}
-    except Exception:  # noqa: BLE001
-        return {}
+    with cfg_path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    return data if isinstance(data, dict) else {}
 
 
 def _summary_provider(workspace_root) -> str:  # type: ignore[no-untyped-def]
-    """Return the configured provider for the summary task ("claude" default)."""
-    try:
-        cfg = load_config(workspace_root / ".dd-config.yaml")
-        return cfg.ai.summary.provider
-    except Exception:  # noqa: BLE001
+    """Return the configured provider for the summary task ("claude" default).
+
+    Missing config file → "claude" (default). Parse / validation errors
+    propagate so the user sees the real cause; silent fallback to claude
+    on a typo'd `ai.summary.provider: ollama` would route the request
+    through the wrong backend without warning.
+    """
+    cfg_path = workspace_root / ".dd-config.yaml"
+    if not cfg_path.is_file():
         return "claude"
+    return load_config(cfg_path).ai.summary.provider
 
 
 def add_parser(

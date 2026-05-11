@@ -20,6 +20,17 @@ class OllamaModelNotFoundError(RuntimeError):
     """Raised when the requested model is not pulled on the server."""
 
 
+class OllamaResponseError(RuntimeError):
+    """Raised when Ollama returns 200 but the JSON body signals an error.
+
+    Some failure modes (model crash mid-generation, runner OOM, certain
+    schema errors with non-streaming requests) come back as 200 OK with
+    an `error` field or an empty `response` field. Treating those as
+    silent successes caches empty strings and never retries — surface
+    them as real errors instead.
+    """
+
+
 def generate(
     prompt: str,
     *,
@@ -51,7 +62,13 @@ def generate(
             f"model {model!r} not pulled. Run: ollama pull {model}"
         )
     resp.raise_for_status()
-    response_text = resp.json().get("response", "")
+    data = resp.json() or {}
+    err = data.get("error")
+    if err:
+        raise OllamaResponseError(f"ollama returned error: {err}")
+    response_text = data.get("response", "")
+    if not response_text:
+        raise OllamaResponseError(f"ollama returned no response field (body: {data!r})")
     return str(response_text)
 
 

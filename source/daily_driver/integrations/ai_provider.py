@@ -113,6 +113,7 @@ def invoke_for(
     except (
         ollama_client.OllamaNotReachableError,
         ollama_client.OllamaModelNotFoundError,
+        ollama_client.OllamaResponseError,
     ) as exc:
         raise AIInvocationError(str(exc), provider="ollama", stderr=str(exc)) from exc
     except requests.HTTPError as exc:
