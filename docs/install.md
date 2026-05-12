@@ -9,7 +9,7 @@ macOS arm64 only in v0.1.0. Intel Mac likely works but is untested. Linux is on 
 | Python 3.11+ | 3.12 recommended |
 | `claude` CLI on `$PATH` | Required for `day-start`, `day-end`, `check-in`, `summary`, `voice-update`. See [Anthropic install docs](https://docs.anthropic.com/en/docs/claude-code/install). |
 | macOS CLI tools | `pbcopy`, `osascript`, `launchctl` — ship with macOS |
-| Playwright browsers | Optional; needed only for the Apple careers scraper (and any user-added `type: playwright` sources) |
+| Playwright browser binaries | Optional; needed only for the Apple careers scraper (and any user-added `type: playwright` sources) |
 
 Do not install into the system Python. Both Homebrew Python and pyenv work. Homebrew replaces Python on `brew upgrade`; if the minor version shifts, your venv breaks. pyenv pins the interpreter independently.
 
@@ -29,10 +29,9 @@ make setup         # creates .venv, installs .[dev], installs pre-commit hooks
 make test
 ```
 
-## Playwright (optional)
+## Playwright browser install (optional)
 
 ```bash
-pip install playwright
 playwright install chromium
 ```
 

@@ -82,6 +82,7 @@ workspaces need no migration.
 | `summary.model` | string or null | null | Provider-specific identifier |
 | `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
 | `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
+| `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
 
 Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
 `haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,

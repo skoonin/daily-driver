@@ -168,11 +168,11 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     output_dir = _resolve_output_dir(workspace)
     csv_path = output_dir / "jobs.csv"
 
-    if args.backfill:
-        run_backfill(config, csv_path)
-        return 0
-
     try:
+        if args.backfill:
+            run_backfill(config, csv_path)
+            return 0
+
         return run_scrape(
             config,
             output_dir,
@@ -180,6 +180,10 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             sources_override=sources_override,
         )
     except KeyboardInterrupt:
+        if args.backfill:
+            # csv_io.backfill already printed the interrupt + backup-path message.
+            return 130
+
         # SIGINT during a parallel run: pending sources were cancelled by the
         # orchestrator, but in-flight HTTP requests run to their `timeout`
         # before their worker threads exit. Exit 130 is the conventional

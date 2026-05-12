@@ -61,20 +61,20 @@ class Console:
     @classmethod
     def _setup_consoles(cls) -> None:
         is_piped = not sys.stdout.isatty()
+        # color_system=None handles color suppression; markup and highlight
+        # are orthogonal Rich features and stay on regardless of --no-color.
         color: Literal["auto"] | None = None if cls._no_color else "auto"
         theme = Theme(cls.THEME)
 
         cls._user_console = rich_console.Console(
             theme=theme,
             color_system=color,
-            highlight=not cls._no_color,
             soft_wrap=is_piped,
         )
         cls._log_console = rich_console.Console(
             theme=theme,
             stderr=True,
             color_system=color,
-            highlight=not cls._no_color,
         )
 
     @classmethod
@@ -102,41 +102,35 @@ class Console:
         """Print to stdout. Suppressed in quiet mode."""
         if cls.quiet_mode:
             return
-        cls.get_user_console().print(message, style=style, markup=not cls._no_color)
+        cls.get_user_console().print(message, style=style)
 
     @classmethod
     def info(cls, message: str) -> None:
         """Print an informational status line to stderr. Suppressed in quiet mode."""
         if cls.quiet_mode:
             return
-        cls.get_log_console().print(message, style="info", markup=not cls._no_color)
+        cls.get_log_console().print(message, style="info")
 
     @classmethod
     def success(cls, message: str) -> None:
         """Print a success line to stderr. Suppressed in quiet mode."""
         if cls.quiet_mode:
             return
-        cls.get_log_console().print(message, style="success", markup=not cls._no_color)
+        cls.get_log_console().print(message, style="success")
 
     @classmethod
     def warning(cls, message: str) -> None:
         """Print a warning to stderr. Always visible."""
-        cls.get_log_console().print(
-            f"Warning: {message}", style="warning", markup=not cls._no_color
-        )
+        cls.get_log_console().print(f"Warning: {message}", style="warning")
 
     @classmethod
     def error(cls, message: str) -> None:
         """Print an error to stderr. Always visible."""
-        cls.get_log_console().print(
-            f"Error: {message}", style="error", markup=not cls._no_color
-        )
+        cls.get_log_console().print(f"Error: {message}", style="error")
 
     @classmethod
     def debug(cls, message: str) -> None:
         """Print a debug line to stderr. Only shown when verbose_mode is True."""
         if not cls.verbose_mode:
             return
-        cls.get_log_console().print(
-            f"DEBUG: {message}", style="debug", markup=not cls._no_color
-        )
+        cls.get_log_console().print(f"DEBUG: {message}", style="debug")

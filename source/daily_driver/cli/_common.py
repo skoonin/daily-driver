@@ -85,7 +85,7 @@ def configure(args: argparse.Namespace) -> None:
 
     Console.setup_for_user(
         quiet=quiet,
-        verbose=verbose_count >= 1,
+        verbose=verbose_count >= 2,
         no_color=no_color,
     )
 
