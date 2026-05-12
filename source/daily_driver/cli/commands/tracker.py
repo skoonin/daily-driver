@@ -5,14 +5,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 from rich.table import Table
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 
 
 def add_parser(
@@ -270,10 +270,7 @@ def _parse_extras(raw: list[str] | None) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for item in raw:
         if "=" not in item:
-            print(
-                f"error: --extra argument must be KEY=VALUE, got: {item!r}",
-                file=sys.stderr,
-            )
+            Console.error(f"--extra argument must be KEY=VALUE, got: {item!r}")
             raise SystemExit(1)
         key, _, value = item.partition("=")
         result[key.strip()] = value
@@ -286,7 +283,7 @@ def _parse_due(raw: str | None) -> datetime.date | None:
     try:
         return datetime.date.fromisoformat(raw)
     except ValueError:
-        print(f"error: --due must be YYYY-MM-DD, got: {raw!r}", file=sys.stderr)
+        Console.error(f"--due must be YYYY-MM-DD, got: {raw!r}")
         raise SystemExit(1)
 
 
@@ -294,7 +291,7 @@ def _entry_to_dict(entry: Any) -> dict[str, Any]:
     return entry.model_dump()
 
 
-def _render_entries_table(entries: list[Any], console: Console) -> None:
+def _render_entries_table(entries: list[Any], console: RichConsole) -> None:
     table = Table(show_header=True, header_style="bold")
     table.add_column("ID")
     table.add_column("Category")
@@ -330,7 +327,7 @@ def _run_add(args: argparse.Namespace, tracker: Any) -> int:
         due=due,
         extras=extras if extras else None,
     )
-    print(f"Added {entry.id}: {entry.title}", file=sys.stderr)
+    Console.success(f"Added {entry.id}: {entry.title}")
     return 0
 
 
@@ -359,7 +356,7 @@ def _run_update(args: argparse.Namespace, tracker: Any) -> int:
         changes["extras"] = extras
 
     entry = tracker.update(args.id, **changes)
-    print(f"Updated {entry.id}: {entry.title}", file=sys.stderr)
+    Console.success(f"Updated {entry.id}: {entry.title}")
     return 0
 
 
@@ -367,9 +364,9 @@ def _run_delete(args: argparse.Namespace, tracker: Any) -> int:
     try:
         entry = tracker.delete(args.id)
     except KeyError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
-    print(f"Deleted {entry.id}: {entry.title}", file=sys.stderr)
+    Console.success(f"Deleted {entry.id}: {entry.title}")
     return 0
 
 
@@ -381,7 +378,7 @@ def _run_prune(args: argparse.Namespace, tracker: Any) -> int:
         try:
             older_than = parse_since(args.older_than)
         except ValueError as exc:
-            print(f"error: --older-than: {exc}", file=sys.stderr)
+            Console.error(f"--older-than: {exc}")
             return 2
     try:
         removed = tracker.prune(
@@ -391,23 +388,19 @@ def _run_prune(args: argparse.Namespace, tracker: Any) -> int:
             dry_run=args.dry_run,
         )
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 2
 
     if not removed:
-        print("No matching entries.", file=sys.stderr)
+        Console.info("No matching entries.")
         return 0
 
     label = "Would delete" if args.dry_run else "Deleted"
     for entry in removed:
-        print(
-            f"{label} {entry.id} [{entry.category}/{entry.status}]: {entry.title}",
-            file=sys.stderr,
+        Console.info(
+            f"{label} {entry.id} [{entry.category}/{entry.status}]: {entry.title}"
         )
-    print(
-        f"{label} {len(removed)} entr{'y' if len(removed) == 1 else 'ies'}.",
-        file=sys.stderr,
-    )
+    Console.info(f"{label} {len(removed)} entr{'y' if len(removed) == 1 else 'ies'}.")
     return 0
 
 
@@ -415,7 +408,7 @@ def _run_show(args: argparse.Namespace, tracker: Any) -> int:
     try:
         entry = tracker.get(args.id)
     except KeyError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
     if getattr(args, "json", False):
         print(
@@ -426,7 +419,7 @@ def _run_show(args: argparse.Namespace, tracker: Any) -> int:
             )
         )
         return 0
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     table = Table(show_header=False, box=None, title=f"Entry {entry.id}")
     table.add_column("Field", style="bold")
     table.add_column("Value")
@@ -456,7 +449,7 @@ def _run_list(args: argparse.Namespace, tracker: Any) -> int:
         try:
             since = parse_since(args.since)
         except ValueError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            Console.error(str(exc))
             return 2
     entries = tracker.list(
         category=args.category,
@@ -472,7 +465,7 @@ def _run_list(args: argparse.Namespace, tracker: Any) -> int:
         }
         print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
         return 0
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     _render_entries_table(entries, console)
     return 0
 
@@ -486,7 +479,7 @@ def _run_follow_ups(args: argparse.Namespace, tracker: Any) -> int:
         }
         print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
         return 0
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     _render_entries_table(entries, console)
     return 0
 
@@ -496,7 +489,7 @@ def _run_stats(args: argparse.Namespace, tracker: Any) -> int:
     if getattr(args, "json", False):
         print(json.dumps({"schema": 1, "data": stats}, indent=2, default=str))
         return 0
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     table = Table(show_header=True, header_style="bold", title="Tracker Stats")
     table.add_column("Group")
     table.add_column("Value")
@@ -524,10 +517,9 @@ def run(args: argparse.Namespace) -> int:
     if not hasattr(args, "func") or args.func is run:
         # No nested action selected — print help and exit.
         # Retrieve the tracker subparser's help via re-parse with -h.
-        print("usage: daily-driver tracker <action> ...", file=sys.stderr)
-        print(
-            "actions: add, update, delete, prune, show, list, follow-ups, stats",
-            file=sys.stderr,
+        Console.error("usage: daily-driver tracker <action> ...")
+        Console.error(
+            "actions: add, update, delete, prune, show, list, follow-ups, stats"
         )
         return 2
 
@@ -536,7 +528,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         workspace = Workspace.discover_or_fail(override=workspace_path)
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     tracker = Tracker(workspace)
@@ -544,5 +536,5 @@ def run(args: argparse.Namespace) -> int:
     try:
         return args.func(args, tracker)
     except Exception as exc:  # noqa: BLE001
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1

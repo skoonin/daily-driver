@@ -17,6 +17,7 @@ import sys
 from typing import NoReturn
 
 import daily_driver.core.logging as dd_logging
+from daily_driver.core.console import Console
 
 
 class HelpfulArgumentParser(argparse.ArgumentParser):
@@ -41,16 +42,16 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
     verbosity.add_argument(
         "-v",
         "--verbose",
-        action="store_true",
+        action="count",
         default=argparse.SUPPRESS,
-        help="Enable debug-level logging.",
+        help="Increase logging detail (-v: INFO, -vv: DEBUG).",
     )
     verbosity.add_argument(
         "-q",
         "--quiet",
         action="store_true",
         default=argparse.SUPPRESS,
-        help="Suppress all output below WARNING.",
+        help="Show errors only.",
     )
     g.add_argument(
         "--no-color",
@@ -69,12 +70,24 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
 
 def configure(args: argparse.Namespace) -> None:
     """Apply verbosity + NO_COLOR side effects from parsed global flags."""
-    if getattr(args, "verbose", False):
-        dd_logging.configure("verbose")
-    elif getattr(args, "quiet", False):
+    verbose_count = getattr(args, "verbose", 0) or 0
+    quiet = getattr(args, "quiet", False)
+    no_color = getattr(args, "no_color", False)
+
+    if quiet:
         dd_logging.configure("quiet")
+    elif verbose_count >= 2:
+        dd_logging.configure("debug")
+    elif verbose_count >= 1:
+        dd_logging.configure("verbose")
     else:
         dd_logging.configure("normal")
 
-    if getattr(args, "no_color", False):
+    Console.setup_for_user(
+        quiet=quiet,
+        verbose=verbose_count >= 1,
+        no_color=no_color,
+    )
+
+    if no_color:
         os.environ["NO_COLOR"] = "1"

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 
 
 def add_parser(
@@ -66,14 +66,14 @@ def _resolve_workspace(args: argparse.Namespace) -> Any:
     try:
         return Workspace.discover_or_fail(override=workspace_path)
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return None
 
 
 def _run_install(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, install_all
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     workspace = _resolve_workspace(args)
     if workspace is None:
         return 1
@@ -81,7 +81,7 @@ def _run_install(args: argparse.Namespace) -> int:
     try:
         installed = install_all(workspace)
     except SchedulerError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     if not installed:
@@ -100,7 +100,7 @@ def _run_install(args: argparse.Namespace) -> int:
 def _run_uninstall(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, uninstall_all
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     workspace = _resolve_workspace(args)
     if workspace is None:
         return 1
@@ -108,7 +108,7 @@ def _run_uninstall(args: argparse.Namespace) -> int:
     try:
         removed = uninstall_all(workspace)
     except SchedulerError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     if not removed:
@@ -136,7 +136,7 @@ def _run_status(args: argparse.Namespace) -> int:
     try:
         jobs = build_jobs(workspace)
     except SchedulerError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     state_dir = workspace.ephemeral_dir / "launchd"
@@ -158,7 +158,7 @@ def _run_status(args: argparse.Namespace) -> int:
         print(_json.dumps({"schema": 1, "data": rows}, indent=2))
         return 0
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     if not rows:
         console.print(
             "[dim]No scheduler jobs configured.[/dim]"
@@ -180,9 +180,6 @@ def _run_status(args: argparse.Namespace) -> int:
 def run(args: argparse.Namespace) -> int:
     """Bare `scheduler` (no action) prints help and returns 2."""
     if not hasattr(args, "func") or args.func is run:
-        print(
-            "usage: daily-driver scheduler {install,uninstall,status} ...",
-            file=sys.stderr,
-        )
+        Console.error("usage: daily-driver scheduler {install,uninstall,status} ...")
         return 2
     return args.func(args)

@@ -19,6 +19,7 @@ import requests
 import yaml
 
 from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
+from daily_driver.core.console import Console
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
 from daily_driver.scraper.sources._http import COUNTRY_NAMES
@@ -758,9 +759,10 @@ def run(
     csv_path = output_dir / "jobs.csv"
 
     validate_config(config)
+    Console.info("Starting jobs run...")
 
     if not scraper_cfg(config).enabled:
-        print(
+        Console.warning(
             "Scraper disabled. Set plugins.job_search.scraper.enabled: true "
             "in .dd-config.yaml"
         )
@@ -794,12 +796,19 @@ def run(
         len(known_keys),
         csv_path,
     )
+    Console.info(
+        f"Loaded existing job index ({len(known_urls)} URLs, {len(known_keys)} keys)."
+    )
 
     # Stuff the merged dedup set into the config dict so adapters that build
     # their URL deterministically (Apple, Wellfound) can short-circuit during
     # pagination instead of waiting for the post-scrape filter below.
     config["_known_urls"] = known_urls
 
+    if sources_override:
+        Console.info(f"Scraping selected sources: {', '.join(sources_override)}")
+    else:
+        Console.info("Scraping enabled sources from config...")
     all_jobs, failed_sources = run_all_scrapers(
         config, sources_override=sources_override
     )
@@ -819,20 +828,24 @@ def run(
         )
     new_jobs = [j for j in new_jobs if j.get("url")]
 
+    Console.info(f"Scrape complete: {len(all_jobs)} total jobs, {len(new_jobs)} new.")
     log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
 
     pre_filter = len(new_jobs)
     new_jobs = [j for j in new_jobs if location_matches(j, config)]
     filtered = pre_filter - len(new_jobs)
     if filtered:
+        Console.info(f"Filtered {filtered} jobs by location preferences.")
         log.info("Filtered %d jobs by location preferences", filtered)
 
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
     if not dry_run:
+        Console.info("Enriching job details...")
         enrich_job_details(new_jobs, config)
     else:
+        Console.info("Dry-run mode: skipping job-detail enrichment.")
         log.info("[dry-run] skipping enrich_job_details (claude calls)")
     new_jobs = [normalize_job(j, j.get("source", "")) for j in new_jobs]
 
@@ -870,6 +883,7 @@ def run(
         )
 
     if dry_run:
+        Console.info("Dry-run mode: skipping product + fit/notes enrichment.")
         log.info(
             "[dry-run] skipping enrich_company_descriptions and enrich_fit_and_notes (claude calls)"
         )
@@ -899,15 +913,22 @@ def run(
         product_stats["skipped_cached"],
         product_stats["failed"],
     )
+    Console.info(
+        "Enrichment complete: "
+        f"fit+notes {fn_stats['enriched']}/{n}, product {product_stats['enriched']}/{n}."
+    )
 
     if dry_run:
+        Console.success(
+            f"Dry-run complete: {len(new_jobs)} new jobs ready (nothing written)."
+        )
         _print_dry_run_table(new_jobs)
         return 1 if failed_sources else 0
 
     written = append_jobs(csv_path, new_jobs, header)
-    print(
+    Console.success(
         f"Scraper complete: {written} new jobs appended to {csv_path} "
-        f"({skipped_below_comp} skipped below comp threshold)"
+        f"({skipped_below_comp} skipped below comp threshold)."
     )
 
     run_manifest = {

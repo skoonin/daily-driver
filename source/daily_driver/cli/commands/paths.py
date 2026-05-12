@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import date
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._utils import resolve_date
+from daily_driver.core.console import Console
 from daily_driver.core.daily_state import state_path as daily_state_path
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -68,7 +68,7 @@ def run(args: argparse.Namespace) -> int:
             override=Path(override) if override else None
         )
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     try:

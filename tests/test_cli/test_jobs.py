@@ -53,6 +53,19 @@ def test_jobs_help_exits_0() -> None:
     assert exc.value.code == 0
 
 
+def test_jobs_help_lists_core_actions(capsys: pytest.CaptureFixture[str]) -> None:
+    from daily_driver.cli.cli import app
+
+    with pytest.raises(SystemExit):
+        app(["jobs", "--help"])
+
+    captured = capsys.readouterr()
+    combined = (captured.out + captured.err).lower()
+    assert "run" in combined
+    assert "status" in combined
+    assert "prune" in combined
+
+
 def test_jobs_no_action_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -126,7 +139,7 @@ def test_jobs_run_scraper_disabled_returns_zero(
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert "Scraper disabled" in captured.out
+    assert "Scraper disabled" in captured.err
 
 
 def test_jobs_run_backfill_dispatches(tmp_path: Path) -> None:
@@ -275,6 +288,21 @@ def test_jobs_status_json_no_run(
     assert payload["data"]["last_run"] is None
     assert payload["data"]["job_counts"] == {}
     assert payload["data"]["awaiting_action"] == 0
+
+
+@pytest.mark.parametrize("verbosity_flag", ["-q", "-v", "-vv"])
+def test_jobs_status_json_stays_parseable_with_verbosity_flags(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], verbosity_flag: str
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), verbosity_flag, "jobs", "status", "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert "data" in payload
 
 
 def test_jobs_status_json_with_last_run(

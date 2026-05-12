@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.integrations import claude_cli
@@ -155,34 +155,34 @@ def launch_headless(
 def handle_launch_exception(exc: BaseException) -> int:
     """Translate subprocess / launcher failures into CLI exit codes with a user-visible message."""
     if isinstance(exc, SessionError):
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
     if isinstance(exc, claude_cli.ClaudeNotFoundError):
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
     if isinstance(exc, DailyStateError):
         # F1 raises this with the on-disk path baked in; surface it cleanly so
         # the user can hand-edit / delete the offending YAML.
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
     if isinstance(exc, subprocess.TimeoutExpired):
-        print(f"error: claude session timed out after {exc.timeout}s", file=sys.stderr)
+        Console.error(f"claude session timed out after {exc.timeout}s")
         return 1
     if isinstance(exc, subprocess.CalledProcessError):
         stderr = (exc.stderr or "").strip()
-        msg = f"error: claude exited {exc.returncode}"
+        msg = f"claude exited {exc.returncode}"
         if stderr:
             msg = f"{msg}: {stderr}"
-        print(msg, file=sys.stderr)
+        Console.error(msg)
         return exc.returncode or 1
     if isinstance(exc, ValueError):
         # Programming-error guard surfaces (e.g. session_id + resume_session_id
         # passed together). Exit 2 = usage error, distinct from runtime failure.
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 2
     if isinstance(exc, OSError):
         # Disk full / permission denied during plan-stub or state write. Print
         # the system error verbatim — the message already includes the path.
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
     raise

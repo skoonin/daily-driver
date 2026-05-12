@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import logging
 import subprocess
-import sys
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._claude_session import (
@@ -25,6 +24,7 @@ from daily_driver.cli.commands._claude_session import (
     resolve_workspace,
 )
 from daily_driver.core import clock
+from daily_driver.core.console import Console
 from daily_driver.core.daily_state import (
     DailyState,
     DailyStateError,
@@ -123,10 +123,9 @@ def run(args: argparse.Namespace) -> int:
                 resume_id,
                 exc.returncode,
             )
-            print(
-                f"warning: could not resume session {resume_id} "
-                f"(claude exit {exc.returncode}); starting fresh",
-                file=sys.stderr,
+            Console.warning(
+                f"could not resume session {resume_id} "
+                f"(claude exit {exc.returncode}); starting fresh"
             )
             rc = claude_cli.spawn_interactive(
                 prompt=_SLASH_COMMAND,
@@ -144,10 +143,9 @@ def run(args: argparse.Namespace) -> int:
                 _record_check_in(workspace)
             except (DailyStateError, OSError) as state_exc:
                 _log.warning("check-in succeeded but state write failed: %s", state_exc)
-                print(
-                    "warning: check-in completed but failed to record "
-                    f"last_check_in_at: {state_exc}",
-                    file=sys.stderr,
+                Console.warning(
+                    "check-in completed but failed to record "
+                    f"last_check_in_at: {state_exc}"
                 )
         return rc
     except Exception as exc:  # noqa: BLE001

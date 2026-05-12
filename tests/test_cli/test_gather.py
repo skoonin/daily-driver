@@ -205,10 +205,10 @@ def test_gather_git_search_paths_no_repos_prints_placeholder(
     config_path.write_text(text)
 
     rc = app(["--workspace", str(ws), "gather", "git"])
-    out = capsys.readouterr().out
+    err = capsys.readouterr().err
 
     assert rc == 0
-    assert "no git repos discovered" in out
+    assert "no git repos discovered" in err
 
 
 def test_gather_bare_prints_usage_returns_2(

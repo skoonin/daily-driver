@@ -168,7 +168,20 @@ def test_help_commands_lists_top_level_subcommands(
     data = json.loads(capsys.readouterr().out)["data"]
     names = {entry["name"] for entry in data["commands"]}
     # A representative slice; we don't pin the full set here.
-    assert {"init", "tracker", "doctor", "status", "focus", "help"} <= names
+    assert {"init", "tracker", "doctor", "status", "focus", "jobs", "help"} <= names
+
+
+def test_help_commands_includes_jobs_search_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Workspace.init(tmp_path)
+    rc = app(["--workspace", str(tmp_path), "help", "commands", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    jobs_entry = next(item for item in data["commands"] if item["name"] == "jobs")
+    summary = jobs_entry["summary"].lower()
+    assert "job" in summary
+    assert "search" in summary or "workflow" in summary
 
 
 # ---------------------------------------------------------------------------

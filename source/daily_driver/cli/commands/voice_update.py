@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
@@ -15,6 +14,7 @@ from daily_driver.cli.commands._claude_session import (
     require_claude_available,
     resolve_workspace,
 )
+from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.voice import (
     VoiceUpdateError,
@@ -101,7 +101,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         source_files = collect_source_files(source_paths)
     except VoiceUpdateError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     try:
@@ -118,8 +118,8 @@ def run(args: argparse.Namespace) -> int:
     prompt = build_prompt(source_files, current_profile=current_profile, mode=mode)
 
     if args.dry_run:
-        print(f"dry-run: would invoke claude with {len(prompt)} char prompt")
-        print(f"dry-run: would write to {profile_path}")
+        Console.info(f"dry-run: would invoke claude with {len(prompt)} char prompt")
+        Console.info(f"dry-run: would write to {profile_path}")
         return 0
 
     try:
@@ -140,7 +140,7 @@ def run(args: argparse.Namespace) -> int:
         with file_lock(profile_path):
             apply_update(profile_path, new_content=normalized, mode=mode)
     except VoiceUpdateError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     log.debug("voice-profile.md updated at %s", profile_path)

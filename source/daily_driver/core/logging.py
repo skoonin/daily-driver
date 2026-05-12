@@ -11,16 +11,18 @@ import logging as stdlog
 from datetime import datetime
 from typing import Literal
 
-from rich.console import Console
 from rich.logging import RichHandler
 
+from daily_driver.core.console import Console
 
-def configure(verbosity: Literal["quiet", "normal", "verbose"]) -> None:
+
+def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None:
     """Set up the daily_driver logger with a Rich stderr handler."""
     level_map: dict[str, int] = {
-        "quiet": stdlog.WARNING,
-        "normal": stdlog.INFO,
-        "verbose": stdlog.DEBUG,
+        "quiet": stdlog.ERROR,
+        "normal": stdlog.WARNING,
+        "verbose": stdlog.INFO,
+        "debug": stdlog.DEBUG,
     }
     logger = stdlog.getLogger("daily_driver")
 
@@ -29,7 +31,7 @@ def configure(verbosity: Literal["quiet", "normal", "verbose"]) -> None:
             logger.removeHandler(handler)
 
     handler = RichHandler(
-        console=Console(stderr=True),
+        console=Console.get_log_console(),
         show_path=False,
         markup=True,
     )
@@ -55,7 +57,7 @@ def log_query_window(
 ) -> None:
     """Emit a debug-level line describing the resolved gather window.
 
-    Visible only at ``-v`` (verbose). Helps diagnose empty-result false
+    Visible only at ``-vv`` (debug). Helps diagnose empty-result false
     negatives where the bug is in window math rather than data extraction.
     """
     logger.debug("%s: window since=%s until=%s", label, _fmt_dt(since), _fmt_dt(until))

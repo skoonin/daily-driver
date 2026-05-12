@@ -15,6 +15,7 @@ from daily_driver.cli.commands._claude_session import (
     resolve_workspace,
 )
 from daily_driver.core.config import load as load_config
+from daily_driver.core.console import Console
 from daily_driver.core.summary import build_json_bundle, parse_range, render_prompt
 from daily_driver.integrations import ai_provider, clipboard
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
@@ -129,7 +130,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         range_start, range_end = parse_range(args.range_spec)
     except ValueError as exc:
-        print(f"error: {exc}", file=__import__("sys").stderr)
+        Console.error(str(exc))
         return 1
 
     match = args.match or []
@@ -178,18 +179,14 @@ def run(args: argparse.Namespace) -> int:
                 format_json=False,
             )
     except AITimeoutError as exc:
-        # Specific timeout case before the AIInvocationError catch-all.
-        print(
-            f"error: {exc.provider} summary timed out after {exc.timeout_seconds}s",
-            file=__import__("sys").stderr,
-        )
+        Console.error(f"{exc.provider} summary timed out after {exc.timeout_seconds}s")
         return 1
     except AIInvocationError as exc:
-        msg = f"error: {exc.provider} summary failed: {exc}"
+        msg = f"{exc.provider} summary failed: {exc}"
         tail = (exc.stderr or exc.stdout or "").strip()[-200:]
         if tail:
             msg = f"{msg}\n{tail}"
-        print(msg, file=__import__("sys").stderr)
+        Console.error(msg)
         return 1
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)

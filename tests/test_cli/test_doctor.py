@@ -140,8 +140,8 @@ def test_doctor_on_empty_dir_errors_with_no_workspace(
     captured = capsys.readouterr()
     assert rc == 1
     assert "no workspace at" in captured.err
-    assert str(tmp_path) in captured.err
-    assert "daily-driver init" in captured.err
+    assert str(tmp_path) in captured.err.replace("\n", "")
+    assert "daily-driver init" in captured.err.replace("\n", "")
     # No check table is rendered — error short-circuits before checks.
     assert "Python version" not in captured.out + captured.err
 
@@ -162,7 +162,7 @@ def test_doctor_with_bad_workspace_override_errors_with_no_workspace(
     captured = capsys.readouterr()
     assert rc == 1
     assert "no workspace at" in captured.err
-    assert str(bad_path) in captured.err
+    assert str(bad_path) in captured.err.replace("\n", "")
 
 
 # ---------------------------------------------------------------------------
@@ -268,7 +268,7 @@ def test_doctor_fix_with_bad_workspace_override_errors_without_calling_generate(
     assert rc == 1
     assert calls == []
     assert "no workspace at" in captured.err
-    assert str(bad_path) in captured.err
+    assert str(bad_path) in captured.err.replace("\n", "")
 
 
 # ---------------------------------------------------------------------------

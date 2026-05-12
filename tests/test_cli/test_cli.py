@@ -124,7 +124,7 @@ def test_unknown_subcommand_exits_2(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 6. -v sets DEBUG logging level
+# 6. -v sets INFO logging level
 # ---------------------------------------------------------------------------
 
 
@@ -147,7 +147,7 @@ def _make_doctor_stub_for_verbosity():
     return _Stub
 
 
-def test_verbose_flag_sets_debug_level(monkeypatch):
+def test_verbose_flag_sets_info_level(monkeypatch):
     DoctorStub = _make_doctor_stub_for_verbosity()
 
     import sys
@@ -172,6 +172,33 @@ def test_verbose_flag_sets_debug_level(monkeypatch):
 
     result = app(["-v", "doctor"])
     assert result == 0
+    assert DoctorStub.captured_level == logging.INFO
+
+
+def test_double_verbose_flag_sets_debug_level(monkeypatch):
+    DoctorStub = _make_doctor_stub_for_verbosity()
+
+    import sys
+    import types
+
+    pkg = types.ModuleType("daily_driver.cli.commands")
+    doctor_mod = types.ModuleType("daily_driver.cli.commands.doctor")
+    doctor_mod.add_parser = DoctorStub.add_parser
+    doctor_mod.run = DoctorStub.run
+
+    monkeypatch.setitem(sys.modules, "daily_driver.cli.commands", pkg)
+    monkeypatch.setitem(
+        sys.modules,
+        "daily_driver.cli.commands.init",
+        types.ModuleType("daily_driver.cli.commands.init"),
+    )
+    monkeypatch.setitem(sys.modules, "daily_driver.cli.commands.doctor", doctor_mod)
+
+    init_mod = sys.modules["daily_driver.cli.commands.init"]
+    init_mod.add_parser = lambda subparsers, parents: subparsers.add_parser("init")
+
+    result = app(["-vv", "doctor"])
+    assert result == 0
     assert DoctorStub.captured_level == logging.DEBUG
 
 
@@ -180,7 +207,7 @@ def test_verbose_flag_sets_debug_level(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_verbose_after_subcommand_sets_debug(tmp_path):
+def test_verbose_after_subcommand_sets_info(tmp_path):
     """`daily-driver doctor -v` was a parse error pre-Q5; now valid."""
     ws = tmp_path / "ws"
     ws.mkdir()

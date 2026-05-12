@@ -1,14 +1,13 @@
-"""jobs subcommand: run job-board scraper or show run status."""
+"""jobs subcommand: job-search workflows (run, status, prune)."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import logging
-import sys
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 
 
 def add_parser(
@@ -18,13 +17,15 @@ def add_parser(
     parser = subparsers.add_parser(
         "jobs",
         parents=parents,
-        help="Search job boards and manage your jobs.csv (run | status | prune)",
+        help="Job search: scrape boards, inspect status, prune stale rows",
     )
 
     nested = parser.add_subparsers(dest="jobs_action", metavar="<action>")
 
     p_run = nested.add_parser(
-        "run", parents=parents, help="Search the configured job boards"
+        "run",
+        parents=parents,
+        help="Run the configured job-board search pipeline",
     )
     p_run.add_argument(
         "-n",
@@ -129,46 +130,30 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     if raw_sources:
         sources_override = [s.strip() for s in raw_sources.split(",") if s.strip()]
         if not sources_override:
-            print(
-                "error: --sources parsed to an empty list (only commas/whitespace?)",
-                file=sys.stderr,
-            )
+            Console.error("--sources parsed to an empty list (only commas/whitespace?)")
             return 2
         unknown = [s for s in sources_override if s not in SCRAPERS]
         if unknown:
-            print(
-                f"error: unknown source(s): {', '.join(unknown)}. "
-                f"Known: {', '.join(sorted(SCRAPERS))}",
-                file=sys.stderr,
+            Console.error(
+                f"unknown source(s): {', '.join(unknown)}. "
+                f"Known: {', '.join(sorted(SCRAPERS))}"
             )
             return 2
 
     legacy = workspace.root / "config.yaml"
     if legacy.exists():
-        print(
-            f"error: {legacy} is a legacy config file. "
+        Console.error(
+            f"{legacy} is a legacy config file. "
             "Move settings to plugins.job_search in .dd-config.yaml. "
-            "See docs/configuration.md.",
-            file=sys.stderr,
+            "See docs/configuration.md."
         )
         return 1
 
-    if not logging.getLogger().handlers:
-        verbosity = getattr(args, "verbose", 0) or 0
-        level = logging.DEBUG if verbosity >= 2 else logging.INFO
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            datefmt="%H:%M:%S",
-            stream=sys.stdout,
-        )
-
     plugins = workspace.config.plugins
     if plugins is None or plugins.job_search is None:
-        print(
-            "error: no plugins.job_search found in .dd-config.yaml. "
-            "See docs/configuration.md.",
-            file=sys.stderr,
+        Console.error(
+            "no plugins.job_search found in .dd-config.yaml. "
+            "See docs/configuration.md."
         )
         return 1
 
@@ -199,16 +184,15 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         # orchestrator, but in-flight HTTP requests run to their `timeout`
         # before their worker threads exit. Exit 130 is the conventional
         # SIGINT status (128 + signal number).
-        print(
+        Console.warning(
             "\ninterrupted; cancelling pending sources "
-            "(in-flight HTTP requests will finish first).",
-            file=sys.stderr,
+            "(in-flight HTTP requests will finish first)."
         )
         return 130
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from rich.console import Console
+    from rich.console import Console as RichConsole
     from rich.table import Table
 
     from daily_driver.core.dates import parse_since
@@ -217,7 +201,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     try:
         cutoff = parse_since(args.older_than)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 2
 
     if args.status:
@@ -232,7 +216,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run
     )
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     if not candidates:
         console.print("[dim]No rows match prune criteria.[/dim]")
         return 0
@@ -261,7 +245,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
 
 
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from rich.console import Console
+    from rich.console import Console as RichConsole
     from rich.table import Table
 
     from daily_driver.core.scraper_status import build_status
@@ -274,7 +258,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         print(json.dumps({"schema": 1, "data": status}, indent=2))
         return 0
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
 
     last_run = status["last_run"]
     if last_run is None:
@@ -309,8 +293,8 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
     if not hasattr(args, "func") or args.func is run:
-        print("usage: daily-driver jobs <action> ...", file=sys.stderr)
-        print("actions: run, status, prune", file=sys.stderr)
+        Console.error("usage: daily-driver jobs <action> ...")
+        Console.error("actions: run, status, prune")
         return 2
 
     workspace_override = getattr(args, "workspace", None)
@@ -318,11 +302,11 @@ def run(args: argparse.Namespace) -> int:
     try:
         workspace = Workspace.discover_or_fail(override=workspace_path)
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     try:
         return args.func(args, workspace)
     except Exception as exc:  # noqa: BLE001
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
