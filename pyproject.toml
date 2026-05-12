@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "daily-driver"
 dynamic = ["version"]
-description = "Daily Driver: ADHD-aware personal productivity assistant. Durable data record + Claude conversational layer for daily planning, tracking, and job search."
+description = "Daily Driver: Personal productivity assistant. Durable data record + Claude conversational layer for daily planning, tracking, and job search."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Shawn Koonin" }]
-keywords = ["productivity", "adhd", "cli", "daily-planning", "job-search"]
+keywords = ["productivity", "cli", "daily-planning", "job-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -28,6 +28,7 @@ dependencies = [
     "rich>=13.7.0",
     "jinja2>=3.1.0",
     "python-jobspy>=1.1.82",
+    "playwright>=1.40.0",
     "httpx>=0.27.0",
 ]
 

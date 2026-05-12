@@ -369,12 +369,12 @@ context that ollama does not provide.
 - `--json` output on `tracker list`, `tracker stats`, `tracker follow-ups`, `focus status`, `paths`, `gather calendar|git|sessions|notes`. All query commands now emit `{"schema": 1, "data": <payload>}` envelope. `status --json` also wrapped in the same envelope (was raw payload; now versioned for future field additions).
 - `docs/usage/config-reference.md` — full catalogue of every `.dd-config.yaml` key derived from pydantic models with type/default/description/example per field and worked examples at the bottom.
 - `docs/usage/tracker.md` — tracker deep-dive with per-subcommand examples and custom-category definition walk-through.
-- `docs/developer/architecture/purpose.md` — product framing: ADHD-friendly personal assistant; program owns durable record; Claude is conversational layer; jobs is one plugin.
+- `docs/developer/architecture/purpose.md` — product framing: Personal assistant; program owns durable record; Claude is conversational layer; jobs is one plugin.
 - `docs/developer/architecture/decisions.md`: 8 new entries covering config-driven tracker categories, required-category rationale, pydantic retention, no-DB-for-MVP, plugin extension seam, macOS-only scope, lockfile deferral, and forward-looking `ui.terminal_app` config for any future scheduled interactive commands.
 
 ### Changed -- MVP Wave 1
 
-- `CLAUDE.md`: reframed to lead with ADHD-friendly personal assistant purpose; command-surface section now lists all 16 shipped subcommands including the previously-omitted `read`, `paths`, `ensure-daily-dir`, `gather`, and `install-scheduler`/`uninstall-scheduler`.
+- `CLAUDE.md`: reframed to lead with Personal assistant purpose; command-surface section now lists all 16 shipped subcommands including the previously-omitted `read`, `paths`, `ensure-daily-dir`, `gather`, and `install-scheduler`/`uninstall-scheduler`.
 - `docs/usage/README.md`, `docs/usage/commands.md`: reframed as tasks-of-any-kind (jobs is one built-in category example, not the product framing).
 - Canonical Claude Code install URL unified across `doctor.py` and `_claude_session.py`: both now point to `https://claude.ai/download`.
 - `integrations/launchd.py` defines `LaunchdUnavailableError`; every public function checks darwin at entry and raises this class (previously raised generic `FileNotFoundError`). `core/scheduler.py` no longer duplicates the darwin check.

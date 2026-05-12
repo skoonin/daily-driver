@@ -65,7 +65,7 @@ def app(argv: list[str] | None = None) -> int:
     parser = HelpfulArgumentParser(
         prog="daily-driver",
         description=(
-            "Daily Driver — ADHD-friendly daily planning, focus, and "
+            "Daily Driver — Personal daily planning, focus, and "
             "task tracking. Drives professional work, job search, and errands."
         ),
     )

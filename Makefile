@@ -1,4 +1,4 @@
-# Daily Driver — ADHD-aware personal productivity assistant
+# Daily Driver — Personal productivity assistant
 # Requires Python 3.11+ and macOS (arm64 target for v0.1.0)
 
 .ONESHELL:
