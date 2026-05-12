@@ -364,7 +364,7 @@ def _run_delete(args: argparse.Namespace, tracker: Any) -> int:
     try:
         entry = tracker.delete(args.id)
     except KeyError as exc:
-        Console.error(str(exc))
+        Console.error(exc.args[0])
         return 1
     Console.success(f"Deleted {entry.id}: {entry.title}")
     return 0
@@ -408,7 +408,7 @@ def _run_show(args: argparse.Namespace, tracker: Any) -> int:
     try:
         entry = tracker.get(args.id)
     except KeyError as exc:
-        Console.error(str(exc))
+        Console.error(exc.args[0])
         return 1
     if getattr(args, "json", False):
         print(

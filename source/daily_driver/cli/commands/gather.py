@@ -139,10 +139,11 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
         else:
             repos = [Path.cwd()]
 
-    commits: list[gather_git.GitCommit] = []
+    seen: dict[str, gather_git.GitCommit] = {}
     for repo in repos:
-        commits.extend(gather_git.gather_commits(repo, since_dt, until_dt))
-    commits.sort(key=lambda c: c.timestamp)
+        for c in gather_git.gather_commits(repo, since_dt, until_dt):
+            seen.setdefault(c.sha, c)
+    commits = sorted(seen.values(), key=lambda c: c.timestamp)
 
     if args.json:
         payload = {
