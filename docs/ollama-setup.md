@@ -85,6 +85,7 @@ ai:
   ollama:
     endpoint: http://localhost:11434
     timeout: 60
+    # max_parallel: 4   # default; raise after raising server-side OLLAMA_NUM_PARALLEL
 ```
 
 Omitting the entire `ai:` block keeps the legacy claude-only behavior. No
@@ -123,7 +124,16 @@ ollama — no extra noise for the default claude path.
   `summary` on claude and route only `enrichment` to ollama.
 - **Tune resource use (optional)** — `OLLAMA_NUM_PARALLEL`,
   `OLLAMA_MAX_LOADED_MODELS`. See
-  <https://github.com/ollama/ollama/blob/main/docs/faq.md>.
+  <https://github.com/ollama/ollama/blob/main/docs/faq.md>. The
+  client-side counterpart is `ai.ollama.max_parallel` in
+  `.dd-config.yaml` (default 4); raise it only after raising the
+  server-side `OLLAMA_NUM_PARALLEL` first. Set to `1` to force serial
+  enrichment.
+- **Ctrl-C during a long backfill** — first press shows
+  `Stopping — waiting for N companies still being enriched...`. The
+  command finishes the in-flight model calls (up to `ai.ollama.timeout`
+  each), saves partial progress, and exits. Press Ctrl-C again to
+  force-quit immediately and lose what's in progress.
 
 ## See also
 

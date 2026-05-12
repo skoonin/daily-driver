@@ -276,10 +276,12 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             fix_hint=f"Pull the model: ollama pull {first_missing_model}",
             fixable=False,
         )
+    parallel = ai_cfg.ollama.max_parallel
+    parallel_hint = f", parallel={parallel}" if parallel > 1 else ""
     return CheckResult(
         name="AI providers",
         status="OK",
-        detail=f"ollama at {endpoint} reachable; {summary}",
+        detail=f"ollama at {endpoint} reachable; {summary}{parallel_hint}",
     )
 
 
