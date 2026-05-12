@@ -6,26 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added — parallel Ollama enrichment
-
-- **`ai.ollama.max_parallel` fans out enrichment across a thread pool.**
-  Default 4, matching Ollama's server-side `OLLAMA_NUM_PARALLEL`. Cuts a
-  ~100-row `jobs run --backfill` from minutes to under a minute on a
-  warm model. Set to 1 to force serial behavior. Claude path is
-  unchanged — subprocess fan-out is not worth the blast radius.
-- **Ctrl-C during parallel backfill preserves the cancel-save
-  guarantee.** Completed worker results are stitched into `jobs.csv`
-  before the interrupt propagates; the `.bak` snapshot still names the
-  pre-run state. A SIGINT handler prints an immediate acknowledgment
-  ("Stopping — waiting for N companies still being enriched...") so the
-  user knows the press registered, even when workers are mid-request.
-  Second Ctrl-C force-quits.
-- **Per-worker log tag.** `[enrich w2]` / `[enrich-fit-notes w3]` lets
-  interleaved failures be traced to their worker without grepping by
-  company name. Only emitted when `max_parallel > 1`.
-- **Doctor row shows effective parallelism.** When ollama is reachable
-  and `max_parallel > 1`, the `AI providers` row appends `parallel=N`.
-
 ### Added — shared jobs lock + cancel-save for backfill
 
 - **Shared sentinel lock (`.jobs.lock`)** serializes `jobs run`, `jobs
@@ -37,7 +17,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   atomic `.csv.tmp` + rename. A single timestamped `jobs.csv.bak.<unix>`
   snapshot of the pre-enrichment CSV is taken at the start of each
   backfill run; the interrupt message names the backup file so users
-  can recover. CLI exits 130.
+  can recover. If the partial-save itself fails (disk full, etc.) the
+  message says so and still names the `.bak` file for rollback. CLI
+  exits 130.
+
+### Added — parallel Ollama enrichment
+
+- **`ai.ollama.max_parallel` fans out enrichment across a thread pool.**
+  Default 4, matching Ollama's server-side `OLLAMA_NUM_PARALLEL`. Applies
+  to both `jobs run` and `jobs run --backfill` — anywhere
+  `enrich_company_descriptions` or `enrich_fit_and_notes` runs under the
+  ollama provider. Cuts a ~100-row backfill from minutes to under a
+  minute on a warm model. Set to 1 to force serial behavior. Claude path
+  is unchanged — subprocess fan-out is not worth the blast radius.
+- **Builds on the cancel-save guarantee above.** Completed worker
+  results are stitched into `jobs.csv` before the interrupt propagates,
+  so partial progress survives Ctrl-C. A SIGINT handler prints an
+  immediate user-facing acknowledgment ("Stopping — waiting for N
+  companies still being enriched...") so the press is never silent,
+  even when workers are mid-call. Second Ctrl-C restores the previous
+  signal handler and re-sends SIGINT, force-quitting.
+- **Per-worker log tag.** `[enrich w2]` / `[enrich-fit-notes w3]` lets
+  interleaved failures be traced to their worker without grepping by
+  company name. Only emitted when `max_parallel > 1`.
+- **Doctor row shows effective parallelism.** The `AI providers` row
+  always appends `parallel=N` when ollama is reachable, so the
+  configured value is visible at a glance.
+- **New doctor row: `Jobs backups`.** Warns when more than 5
+  `jobs.csv.bak.*` files have accumulated next to `jobs.csv` — these
+  are produced one per `--backfill` run and pile up silently otherwise.
 
 ### Added — Ollama provider for headless AI tasks
 

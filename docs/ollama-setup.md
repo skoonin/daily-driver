@@ -103,6 +103,12 @@ migration is required for existing workspaces.
 Expect ~10–15 tokens/sec on a 14B model. A 50-job `--backfill` finishes
 in a few minutes.
 
+> **RAM caveat for `max_parallel > 1`.** Each parallel call holds its own
+> KV cache, which scales with model size. Default `max_parallel: 4` with
+> a 14 GB model can drive ~50 GB peak RAM under load. On a 32 GB Mac drop
+> to `max_parallel: 2`, or pick `llama3.2:3b`. `daily-driver doctor`
+> shows the configured value; tune in `.dd-config.yaml`.
+
 ## Doctor output reference
 
 | State | Status | Hint |
@@ -134,6 +140,11 @@ ollama — no extra noise for the default claude path.
   command finishes the in-flight model calls (up to `ai.ollama.timeout`
   each), saves partial progress, and exits. Press Ctrl-C again to
   force-quit immediately and lose what's in progress.
+- **Old `jobs.csv.bak.*` files piling up** — each `--backfill` run drops
+  a timestamped backup before mutating `jobs.csv`. `daily-driver doctor`
+  warns once you have more than 5; keep the 2–3 most recent and delete
+  the rest with `rm <output_dir>/jobs.csv.bak.*` (then re-create one
+  manually if you want a current rollback point).
 
 ## See also
 
