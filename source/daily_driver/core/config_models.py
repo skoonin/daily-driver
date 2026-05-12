@@ -272,8 +272,11 @@ class OllamaConfig(BaseModel):
     timeout: int = 60
     # Worker count for parallel enrichment. Default mirrors Ollama's own
     # OLLAMA_NUM_PARALLEL=4 default; raise the server-side env var first
-    # if going above 4. Set to 1 to force serial behavior.
-    max_parallel: int = Field(default=4, ge=1, le=16)
+    # if going above 4. Set to 1 to force serial behavior. No upper bound
+    # enforced — Ollama queues to OLLAMA_MAX_QUEUE so over-subscription
+    # degrades to slow, not crash, but each parallel call costs ~model-size
+    # of RAM (KV cache).
+    max_parallel: int = Field(default=4, ge=1)
 
 
 class AIConfig(BaseModel):

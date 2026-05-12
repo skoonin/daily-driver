@@ -9,6 +9,7 @@ import importlib.metadata
 import shutil
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from daily_driver.core import version_stamp
@@ -276,12 +277,52 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             fix_hint=f"Pull the model: ollama pull {first_missing_model}",
             fixable=False,
         )
-    parallel = ai_cfg.ollama.max_parallel
-    parallel_hint = f", parallel={parallel}" if parallel > 1 else ""
     return CheckResult(
         name="AI providers",
         status="OK",
-        detail=f"ollama at {endpoint} reachable; {summary}{parallel_hint}",
+        detail=(
+            f"ollama at {endpoint} reachable; {summary}, "
+            f"parallel={ai_cfg.ollama.max_parallel}"
+        ),
+    )
+
+
+def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
+    """Warn if `jobs.csv.bak.*` snapshots have accumulated.
+
+    Each `--backfill` run drops a `.bak.<unix>` snapshot before mutating
+    jobs.csv. Users won't notice them, so over months of use they pile up.
+    """
+    try:
+        cfg = workspace.config
+    except Exception:
+        return None
+    output_dir_raw = cfg.daily_driver.output_dir
+    output_dir = Path(output_dir_raw).expanduser()
+    if not output_dir.is_absolute():
+        output_dir = (workspace.root / output_dir).resolve()
+    if not output_dir.exists():
+        return None
+    baks = sorted(output_dir.glob("jobs.csv.bak.*"))
+    if len(baks) <= 5:
+        return None
+    keep = baks[-3:]
+    drop = baks[:-3]
+    drop_names = ", ".join(p.name for p in drop[:3]) + (
+        f", … (+{len(drop) - 3} more)" if len(drop) > 3 else ""
+    )
+    return CheckResult(
+        name="Jobs backups",
+        status="WARNING",
+        detail=(
+            f"{len(baks)} jobs.csv.bak.* files in {output_dir}; "
+            f"keeping {len(keep)} most recent is plenty. Old: {drop_names}"
+        ),
+        fix_hint=(
+            f"Delete old snapshots: rm {output_dir}/jobs.csv.bak.* "
+            f"(then re-create the most recent if you want a rollback point)"
+        ),
+        fixable=False,
     )
 
 
@@ -298,6 +339,9 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
         ai_row = _check_ai_providers(workspace)
         if ai_row is not None:
             results.append(ai_row)
+        bak_row = _check_jobs_backups(workspace)
+        if bak_row is not None:
+            results.append(bak_row)
     return results
 
 

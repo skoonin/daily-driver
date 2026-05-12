@@ -28,7 +28,7 @@ def _ollama_pool_size(config: dict) -> int:
     ai_cfg = ai_provider.resolve_ai_config(config)
     if ai_cfg.enrichment.provider != "ollama":
         return 1
-    return max(1, min(16, ai_cfg.ollama.max_parallel))
+    return max(1, ai_cfg.ollama.max_parallel)
 
 
 def _enrich_tag(prefix: str) -> str:
@@ -61,20 +61,21 @@ def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str):
         interrupt_count[0] += 1
         if interrupt_count[0] == 1:
             in_flight = sum(1 for f in futures if not f.done())
-            wait_phrase = (
-                "up to a minute"
-                if timeout_s <= 90
-                else f"up to {timeout_s // 60} minutes"
-            )
             print(
                 f"\nStopping — waiting for {in_flight} {item} still being "
-                f"enriched ({wait_phrase}). Press Ctrl-C again to quit "
-                "now and lose what's in progress.",
+                f"enriched (up to {timeout_s}s each). Press Ctrl-C again "
+                "to quit now and lose what's in progress.",
                 file=sys.stderr,
                 flush=True,
             )
             raise KeyboardInterrupt
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        # Second press: hand control back to whatever handler the parent had
+        # before we installed ours, then re-raise the signal. Falls back to
+        # SIG_DFL if `previous` isn't installable (e.g. a non-callable token).
+        try:
+            signal.signal(signal.SIGINT, previous)
+        except (TypeError, ValueError):
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
         os.kill(os.getpid(), signal.SIGINT)
 
     signal.signal(signal.SIGINT, handler)
@@ -197,14 +198,14 @@ def _enrich_company_descriptions_parallel(
                 job["gd_rating"] = cached["gd_rating"]
 
     pool = ThreadPoolExecutor(max_workers=pool_size)
+    # Populate `futures` incrementally so the SIGINT handler always sees a
+    # mapping that reflects what's actually been submitted. A bulk
+    # `futures.update({comprehension})` replaces the dict atomically, leaving
+    # a window where the handler would read {} and report "0 in progress".
     futures: dict = {}
     previous_handler = _install_interrupt_notifier(futures, timeout, "companies")
-    futures.update(
-        {
-            pool.submit(_fetch_company_info, c, config, include_gd, timeout): c
-            for c in companies
-        }
-    )
+    for c in companies:
+        futures[pool.submit(_fetch_company_info, c, config, include_gd, timeout)] = c
     try:
         for fut in as_completed(futures):
             company = futures[fut]
@@ -501,10 +502,11 @@ def _enrich_fit_and_notes_parallel(
         stats["enriched"] += 1
 
     pool = ThreadPoolExecutor(max_workers=pool_size)
+    # See companies path for why this is incremental rather than a bulk update.
     futures: dict = {}
     previous_handler = _install_interrupt_notifier(futures, timeout, "jobs")
-    futures.update(
-        {
+    for j in targets:
+        futures[
             pool.submit(
                 _fetch_fit_notes_for_job,
                 j,
@@ -513,10 +515,11 @@ def _enrich_fit_and_notes_parallel(
                 hc,
                 config,
                 timeout,
-            ): j
-            for j in targets
-        }
-    )
+            )
+        ] = j
+    # `applied` tracks futures whose result has been written to `jobs`/`stats`,
+    # so the interrupt drain doesn't double-count. The companies path gets the
+    # same guarantee for free via its `cache` keyed on unique company names.
     applied: set = set()
     try:
         for fut in as_completed(futures):
@@ -561,7 +564,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     On description absent:
         {"fit": 7, "notes": ""}
     On insufficient info:
-        {"fit": 50, "notes": ""}
+        {"fit": 5, "notes": ""}
 
     Example prompt response for "Staff SRE at Acme, Remote":
         {"fit": 8, "notes": "AWS/k8s; fully remote; no comp range listed"}

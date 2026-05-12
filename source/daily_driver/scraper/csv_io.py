@@ -370,12 +370,22 @@ def backfill(config: dict, csv_path: Path) -> None:
             enrich_company_descriptions(jobs, config, budget=sys.maxsize)
             enrich_fit_and_notes(jobs, config, budget=sys.maxsize)
         except KeyboardInterrupt:
-            _rewrite_jobs_csv(csv_path, header, jobs)
-            print(
-                f"Backfill interrupted: partial progress saved to jobs.csv "
-                f"(original preserved at {backup.name})",
-                file=sys.stderr,
-            )
+            try:
+                _rewrite_jobs_csv(csv_path, header, jobs)
+                save_status = (
+                    f"partial progress saved to jobs.csv "
+                    f"(original preserved at {backup.name})"
+                )
+            except OSError as exc:
+                # Disk full / permission denied / etc. Original jobs.csv is
+                # intact (atomic-rename only fires on a successful tmp write)
+                # and the .bak from before this run still exists, so the
+                # user has a clean rollback path even when we can't write.
+                save_status = (
+                    f"could not save partial progress ({exc}). "
+                    f"Original preserved at {backup.name}"
+                )
+            print(f"Backfill interrupted: {save_status}", file=sys.stderr)
             raise
 
         _rewrite_jobs_csv(csv_path, header, jobs)
