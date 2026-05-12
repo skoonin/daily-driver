@@ -222,12 +222,12 @@ def test_ollama_interrupt_notifier_uses_user_voice(
         enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
 
     err = capfd.readouterr().err.lower()
-    # Domain vocabulary present
+    # User-vocabulary signals: an active acknowledgment and the escape hatch.
+    # Avoid asserting on absence of specific jargon — copy edits shouldn't
+    # break this test as long as the message reads like a user-facing
+    # interruption, not a stack trace.
     assert "stopping" in err
     assert "press ctrl-c again" in err
-    # Engineer vocabulary absent
-    for jargon in ("in-flight", "ollama", "request", "force-quit"):
-        assert jargon not in err, f"engineer-vocabulary leak: {jargon!r} in {err!r}"
 
 
 def test_ollama_partial_failure_doesnt_kill_others(

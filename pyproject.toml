@@ -169,6 +169,9 @@ exclude_lines = [
 addopts = "--import-mode=importlib -p no:warnings -p no:cacheprovider -m 'not smoke'"
 pythonpath = ["source", "tests"]
 testpaths = ["tests"]
+# Bound any single test at 30s; protects CI when a SIGINT/threading test
+# regresses into a hang. Individual tests can override with @pytest.mark.timeout.
+timeout = 30
 markers = [
     "platform_macos: tests requiring macOS",
     "needs_claude: tests requiring claude CLI",
