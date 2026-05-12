@@ -28,6 +28,19 @@ def _ollama_pool_size(config: dict) -> int:
     return max(1, min(16, ai_cfg.ollama.max_parallel))
 
 
+def _enrich_tag(prefix: str) -> str:
+    """Return [prefix] in main thread, [prefix wN] in a pool worker."""
+    import threading
+
+    name = threading.current_thread().name
+    if name == "MainThread":
+        return f"[{prefix}]"
+    suffix = name.rsplit("_", 1)
+    if len(suffix) == 2 and suffix[1].isdigit():
+        return f"[{prefix} w{suffix[1]}]"
+    return f"[{prefix}]"
+
+
 log = logging.getLogger(__name__)
 
 
@@ -59,7 +72,8 @@ def _fetch_company_info(
         )
     except AITimeoutError as exc:
         log.warning(
-            "[enrich] %s: AI provider timed out after %ds",
+            "%s %s: AI provider timed out after %ds",
+            _enrich_tag("enrich"),
             company,
             exc.timeout_seconds or timeout,
         )
@@ -68,7 +82,8 @@ def _fetch_company_info(
         stdout_tail = (exc.stdout or "").strip()[-200:]
         stderr_tail = (exc.stderr or "").strip()[-200:]
         log.warning(
-            "[enrich] company=%s rc=%s stdout=%r stderr=%r",
+            "%s company=%s rc=%s stdout=%r stderr=%r",
+            _enrich_tag("enrich"),
             company,
             exc.returncode,
             stdout_tail,
@@ -76,7 +91,7 @@ def _fetch_company_info(
         )
         return "", "", True
     except (FileNotFoundError, PermissionError, claude_cli.ClaudeNotFoundError) as exc:
-        log.warning("[enrich] %s lookup failed: %s", company, exc)
+        log.warning("%s %s lookup failed: %s", _enrich_tag("enrich"), company, exc)
         return "", "", True
 
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
@@ -94,7 +109,8 @@ def _fetch_company_info(
                 if m:
                     gd_rating = m.group(1)
                     log.info(
-                        "[enrich] GD rating fallback regex extracted %s for %s",
+                        "%s GD rating fallback regex extracted %s for %s",
+                        _enrich_tag("enrich"),
                         gd_rating,
                         company,
                     )
@@ -271,6 +287,173 @@ def _location_summary(config: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+def _build_fit_notes_prompt(
+    job: dict, role_persona: str, loc_summary: str, hc: str
+) -> str:
+    role = job.get("role", "unknown")
+    company = job.get("company", "unknown")
+    location = job.get("location", "unknown")
+    product = job.get("product", "")
+    desc = job.get("description_text", "")
+
+    desc_section = ""
+    if desc:
+        words = desc.split()
+        if len(words) > 500:
+            desc = " ".join(words[:500]) + " ..."
+        desc_section = f"\nDescription: {desc}"
+
+    prompt = (
+        f"You are evaluating a job for a {role_persona}.\n"
+        f"Location preferences: {loc_summary}\n"
+        f"Job: {role} at {company}, {location}\n"
+    )
+    if product:
+        prompt += f"Company: {product}\n"
+    prompt += (
+        f"{desc_section}\n\n"
+        "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
+        '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}\n\n'
+        "fit: rate 1-10 how well this role fits the candidate based on role/company/location. "
+        "If you truly lack enough information to assess, return 5.\n"
+        "notes: one-line summary including key tech stack, remote policy "
+        f"(e.g. 'Remote US-only', 'Hybrid {hc}', 'Remote {hc} OK'), red flags. "
+        "If description is absent, return notes as empty string. "
+        "Do not guess or hallucinate notes when you have no description.\n"
+        "Do not include any preamble, explanation, or markdown -- only the JSON object."
+    )
+    return prompt
+
+
+def _fetch_fit_notes_for_job(
+    job: dict,
+    role_persona: str,
+    loc_summary: str,
+    hc: str,
+    config: dict | None,
+    timeout: int,
+) -> tuple[str, str, bool]:
+    """Worker: fetch fit/notes for one job. Returns (fit_str, notes_str, failed)."""
+    company = job.get("company", "unknown")
+    role = job.get("role", "unknown")
+    prompt = _build_fit_notes_prompt(job, role_persona, loc_summary, hc)
+
+    try:
+        stdout = ai_provider.invoke_for(
+            "enrichment", prompt, config=config, timeout=timeout, format_json=True
+        )
+    except AITimeoutError as exc:
+        log.warning(
+            "%s %s: AI provider timed out after %ds",
+            _enrich_tag("enrich-fit-notes"),
+            company,
+            exc.timeout_seconds or timeout,
+        )
+        return "", "", True
+    except AIInvocationError as exc:
+        stdout_tail = (exc.stdout or "").strip()[-200:]
+        stderr_tail = (exc.stderr or "").strip()[-200:]
+        log.warning(
+            "%s company=%s role=%s rc=%s stdout=%r stderr=%r",
+            _enrich_tag("enrich-fit-notes"),
+            company,
+            role,
+            exc.returncode,
+            stdout_tail,
+            stderr_tail,
+        )
+        return "", "", True
+    except (FileNotFoundError, PermissionError, claude_cli.ClaudeNotFoundError) as exc:
+        log.warning("%s %s failed: %s", _enrich_tag("enrich-fit-notes"), company, exc)
+        return "", "", True
+
+    raw = stdout.strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        log.warning(
+            "%s company=%s role=%s: non-JSON response: %r",
+            _enrich_tag("enrich-fit-notes"),
+            company,
+            role,
+            raw[:200],
+        )
+        return "", "", True
+
+    fit_val = parsed.get("fit")
+    notes_val = parsed.get("notes", "")
+    if not isinstance(fit_val, (int, float)):
+        log.warning(
+            "%s company=%s role=%s: JSON missing valid fit field: %r",
+            _enrich_tag("enrich-fit-notes"),
+            company,
+            role,
+            raw[:200],
+        )
+        return "", "", True
+
+    score = min(int(fit_val), 10)
+    notes_str = notes_val if isinstance(notes_val, str) else ""
+    return f"{score}/10", notes_str, False
+
+
+def _enrich_fit_and_notes_parallel(
+    jobs: list[dict],
+    config: dict,
+    *,
+    budget: int,
+    pool_size: int,
+    role_persona: str,
+    loc_summary: str,
+    hc: str,
+    stats: dict,
+    timeout: int,
+) -> dict:
+    """Parallel ollama path for enrich_fit_and_notes."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    eligible = [
+        j
+        for j in jobs
+        if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+    ]
+    targets = eligible[:budget]
+    if len(eligible) > budget:
+        log.warning(
+            "[enrich-fit-notes] budget reached (%d), skipping %d jobs",
+            budget,
+            len(eligible) - budget,
+        )
+        stats["skipped_budget"] += len(eligible) - budget
+
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        futures = {
+            pool.submit(
+                _fetch_fit_notes_for_job,
+                j,
+                role_persona,
+                loc_summary,
+                hc,
+                config,
+                timeout,
+            ): j
+            for j in targets
+        }
+        for fut in as_completed(futures):
+            job = futures[fut]
+            fit_str, notes_str, failed = fut.result()
+            if failed:
+                stats["failed"] += 1
+                continue
+            if not job.get("fit"):
+                job["fit"] = fit_str
+            if not job.get("notes"):
+                job["notes"] = notes_str
+            stats["enriched"] += 1
+
+    return stats
+
+
 def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> dict:
     """Populate Fit score and Notes in-place for new jobs via a single Claude CLI call per job.
 
@@ -324,6 +507,20 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     role_persona = persona(config)
     hc = home_city(config)
 
+    pool_size = _ollama_pool_size(config)
+    if pool_size > 1 and config is not None:
+        return _enrich_fit_and_notes_parallel(
+            jobs,
+            config,
+            budget=budget,
+            pool_size=pool_size,
+            role_persona=role_persona,
+            loc_summary=loc_summary,
+            hc=hc,
+            stats=stats,
+            timeout=enrich_timeout(config),
+        )
+
     calls_made = 0
     for idx, job in enumerate(jobs):
         if job.get("status") == "skipped":
@@ -345,107 +542,19 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
             stats["skipped_budget"] += remaining
             break
 
-        role = job.get("role", "unknown")
-        company = job.get("company", "unknown")
-        location = job.get("location", "unknown")
-        product = job.get("product", "")
-        desc = job.get("description_text", "")
-
-        desc_section = ""
-        if desc:
-            words = desc.split()
-            if len(words) > 500:
-                desc = " ".join(words[:500]) + " ..."
-            desc_section = f"\nDescription: {desc}"
-
-        prompt = (
-            f"You are evaluating a job for a {role_persona}.\n"
-            f"Location preferences: {loc_summary}\n"
-            f"Job: {role} at {company}, {location}\n"
+        fit_str, notes_str, failed = _fetch_fit_notes_for_job(
+            job, role_persona, loc_summary, hc, config, enrich_timeout(config)
         )
-        if product:
-            prompt += f"Company: {product}\n"
-        prompt += (
-            f"{desc_section}\n\n"
-            "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
-            '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}\n\n'
-            "fit: rate 1-10 how well this role fits the candidate based on role/company/location. "
-            "If you truly lack enough information to assess, return 5.\n"
-            "notes: one-line summary including key tech stack, remote policy "
-            f"(e.g. 'Remote US-only', 'Hybrid {hc}', 'Remote {hc} OK'), red flags. "
-            "If description is absent, return notes as empty string. "
-            "Do not guess or hallucinate notes when you have no description.\n"
-            "Do not include any preamble, explanation, or markdown -- only the JSON object."
-        )
-
-        try:
-            stdout = ai_provider.invoke_for(
-                "enrichment",
-                prompt,
-                config=config,
-                timeout=enrich_timeout(config),
-                format_json=True,
-            )
-            raw = stdout.strip()
-            try:
-                parsed = json.loads(raw)
-                fit_val = parsed.get("fit")
-                notes_val = parsed.get("notes", "")
-                if isinstance(fit_val, (int, float)):
-                    score = min(int(fit_val), 10)
-                    if not job.get("fit"):
-                        job["fit"] = f"{score}/10"
-                    if not job.get("notes") and isinstance(notes_val, str):
-                        job["notes"] = notes_val
-                    stats["enriched"] += 1
-                else:
-                    log.warning(
-                        "[enrich-fit-notes] company=%s role=%s: JSON missing valid fit field: %r",
-                        company,
-                        role,
-                        raw[:200],
-                    )
-                    stats["failed"] += 1
-            except json.JSONDecodeError:
-                log.warning(
-                    "[enrich-fit-notes] company=%s role=%s: non-JSON response: %r",
-                    company,
-                    role,
-                    raw[:200],
-                )
-                stats["failed"] += 1
-        except AITimeoutError as exc:
-            # Specific timeout case before the AIInvocationError catch-all.
-            log.warning(
-                "[enrich-fit-notes] %s: AI provider timed out after %ds",
-                company,
-                exc.timeout_seconds or enrich_timeout(config),
-            )
-            stats["failed"] += 1
-        except AIInvocationError as exc:
-            stdout_tail = (exc.stdout or "").strip()[-200:]
-            stderr_tail = (exc.stderr or "").strip()[-200:]
-            log.warning(
-                "[enrich-fit-notes] company=%s role=%s rc=%s stdout=%r stderr=%r",
-                company,
-                role,
-                exc.returncode,
-                stdout_tail,
-                stderr_tail,
-            )
-            stats["failed"] += 1
-        except (
-            FileNotFoundError,
-            PermissionError,
-            claude_cli.ClaudeNotFoundError,
-        ) as exc:
-            # Narrow over bare OSError so requests.HTTPError /
-            # ConnectionError / Timeout (all OSError subclasses) can't
-            # mask above; the dispatch layer normalizes those into
-            # AIInvocationError now.
-            log.warning("[enrich-fit-notes] %s failed: %s", company, exc)
-            stats["failed"] += 1
         calls_made += 1
+        if failed:
+            stats["failed"] += 1
+            continue
+        if not job.get("fit"):
+            job["fit"] = fit_str
+        if not job.get("notes"):
+            job["notes"] = notes_str
+        stats["enriched"] += 1
+
     return stats
 
 

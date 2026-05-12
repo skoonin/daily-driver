@@ -105,6 +105,53 @@ def test_ollama_budget_respected_under_parallel(
     assert call_count == 3, f"budget=3 should cap at 3 calls, got {call_count}"
 
 
+def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """enrich_fit_and_notes must also fan out under ollama provider."""
+    barrier = threading.Barrier(parties=2, timeout=2.0)
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        barrier.wait()
+        return '{"fit": 7, "notes": "ok"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [
+        {
+            "company": f"Co{i}",
+            "role": "SRE",
+            "location": "Remote",
+            "fit": "",
+            "notes": "",
+        }
+        for i in range(4)
+    ]
+    enrichment.enrich_fit_and_notes(jobs, _ollama_config())
+
+    assert all(j["fit"] == "7/10" for j in jobs)
+
+
+def test_worker_log_tag_in_parallel_path(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When pool_size > 1, worker log lines carry [enrich wN] tag."""
+    import logging
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        raise ai_provider.AIInvocationError(
+            "boom", provider="ollama", returncode=1, stdout="", stderr="boom"
+        )
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [_job(f"Co{i}") for i in range(2)]
+
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=2))
+
+    tagged = [r for r in caplog.records if "[enrich w" in r.getMessage()]
+    assert (
+        tagged
+    ), f"expected [enrich wN] tagged log, got: {[r.getMessage() for r in caplog.records]}"
+
+
 def test_ollama_partial_failure_doesnt_kill_others(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
