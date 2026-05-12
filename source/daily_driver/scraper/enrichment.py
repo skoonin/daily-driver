@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
 
 
-def _ollama_pool_size(config: dict) -> int:
+def _ollama_pool_size(config: dict | None) -> int:
     """Worker count for Ollama-backed enrichment; 1 forces serial."""
     ai_cfg = ai_provider.resolve_ai_config(config)
     if ai_cfg.enrichment.provider != "ollama":
@@ -44,7 +44,7 @@ def _enrich_tag(prefix: str) -> str:
     return f"[{prefix}]"
 
 
-def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str):
+def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str) -> Any:
     """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
 
     Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
@@ -57,7 +57,7 @@ def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str):
     interrupt_count = [0]
     previous = signal.getsignal(signal.SIGINT)
 
-    def handler(_signum, _frame):
+    def handler(_signum: int, _frame: Any) -> None:
         interrupt_count[0] += 1
         if interrupt_count[0] == 1:
             in_flight = sum(1 for f in futures if not f.done())
