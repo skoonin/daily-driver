@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — shared jobs lock + cancel-save for backfill
+
+- **Shared sentinel lock (`.jobs.lock`)** serializes `jobs run`, `jobs
+  prune`, and `jobs run --backfill` mutations on a sibling lockfile via
+  `core.jobs_lock.jobs_lock_path`, so the three writers can no longer
+  interleave on `jobs.csv`.
+- **Ctrl-C during `jobs run --backfill` now persists partial progress.**
+  In-memory enrichment state up to the interrupt point is flushed via
+  atomic `.csv.tmp` + rename. A single timestamped `jobs.csv.bak.<unix>`
+  snapshot of the pre-enrichment CSV is taken at the start of each
+  backfill run; the interrupt message names the backup file so users
+  can recover. If the partial-save itself fails (disk full, etc.) the
+  message says so and still names the `.bak` file for rollback. CLI
+  exits 130.
+
+### Added — parallel Ollama enrichment
+
+- **`ai.ollama.max_parallel` fans out enrichment across a thread pool.**
+  Default 4, matching Ollama's server-side `OLLAMA_NUM_PARALLEL`. Applies
+  to both `jobs run` and `jobs run --backfill` — anywhere
+  `enrich_company_descriptions` or `enrich_fit_and_notes` runs under the
+  ollama provider. Cuts a ~100-row backfill from minutes to under a
+  minute on a warm model. Set to 1 to force serial behavior. Claude path
+  is unchanged — subprocess fan-out is not worth the blast radius.
+- **Builds on the cancel-save guarantee above.** Completed worker
+  results are stitched into `jobs.csv` before the interrupt propagates,
+  so partial progress survives Ctrl-C. A SIGINT handler prints an
+  immediate user-facing acknowledgment ("Stopping — waiting for N
+  companies still being enriched...") so the press is never silent,
+  even when workers are mid-call. Second Ctrl-C restores the previous
+  signal handler and re-sends SIGINT, force-quitting.
+- **Per-worker log tag.** `[enrich w2]` / `[enrich-fit-notes w3]` lets
+  interleaved failures be traced to their worker without grepping by
+  company name. Only emitted when `max_parallel > 1`.
+- **Doctor row shows effective parallelism.** The `AI providers` row
+  always appends `parallel=N` when ollama is reachable, so the
+  configured value is visible at a glance.
+- **New doctor row: `Jobs backups`.** Warns when more than 5
+  `jobs.csv.bak.*` files have accumulated next to `jobs.csv` — these
+  are produced one per `--backfill` run and pile up silently otherwise.
+
 ### Added — Ollama provider for headless AI tasks
 
 - **`ai:` config block routes enrichment and summary to either claude or
@@ -328,12 +369,12 @@ context that ollama does not provide.
 - `--json` output on `tracker list`, `tracker stats`, `tracker follow-ups`, `focus status`, `paths`, `gather calendar|git|sessions|notes`. All query commands now emit `{"schema": 1, "data": <payload>}` envelope. `status --json` also wrapped in the same envelope (was raw payload; now versioned for future field additions).
 - `docs/usage/config-reference.md` — full catalogue of every `.dd-config.yaml` key derived from pydantic models with type/default/description/example per field and worked examples at the bottom.
 - `docs/usage/tracker.md` — tracker deep-dive with per-subcommand examples and custom-category definition walk-through.
-- `docs/developer/architecture/purpose.md` — product framing: ADHD-friendly personal assistant; program owns durable record; Claude is conversational layer; jobs is one plugin.
+- `docs/developer/architecture/purpose.md` — product framing: Personal assistant; program owns durable record; Claude is conversational layer; jobs is one plugin.
 - `docs/developer/architecture/decisions.md`: 8 new entries covering config-driven tracker categories, required-category rationale, pydantic retention, no-DB-for-MVP, plugin extension seam, macOS-only scope, lockfile deferral, and forward-looking `ui.terminal_app` config for any future scheduled interactive commands.
 
 ### Changed -- MVP Wave 1
 
-- `CLAUDE.md`: reframed to lead with ADHD-friendly personal assistant purpose; command-surface section now lists all 16 shipped subcommands including the previously-omitted `read`, `paths`, `ensure-daily-dir`, `gather`, and `install-scheduler`/`uninstall-scheduler`.
+- `CLAUDE.md`: reframed to lead with Personal assistant purpose; command-surface section now lists all 16 shipped subcommands including the previously-omitted `read`, `paths`, `ensure-daily-dir`, `gather`, and `install-scheduler`/`uninstall-scheduler`.
 - `docs/usage/README.md`, `docs/usage/commands.md`: reframed as tasks-of-any-kind (jobs is one built-in category example, not the product framing).
 - Canonical Claude Code install URL unified across `doctor.py` and `_claude_session.py`: both now point to `https://claude.ai/download`.
 - `integrations/launchd.py` defines `LaunchdUnavailableError`; every public function checks darwin at entry and raises this class (previously raised generic `FileNotFoundError`). `core/scheduler.py` no longer duplicates the darwin check.

@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "daily-driver"
 dynamic = ["version"]
-description = "Daily Driver: ADHD-aware personal productivity assistant. Durable data record + Claude conversational layer for daily planning, tracking, and job search."
+description = "Daily Driver: Personal productivity assistant. Durable data record + Claude conversational layer for daily planning, tracking, and job search."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Shawn Koonin" }]
-keywords = ["productivity", "adhd", "cli", "daily-planning", "job-search"]
+keywords = ["productivity", "cli", "daily-planning", "job-search"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -28,6 +28,7 @@ dependencies = [
     "rich>=13.7.0",
     "jinja2>=3.1.0",
     "python-jobspy>=1.1.82",
+    "playwright>=1.40.0",
     "httpx>=0.27.0",
 ]
 
@@ -169,6 +170,9 @@ exclude_lines = [
 addopts = "--import-mode=importlib -p no:warnings -p no:cacheprovider -m 'not smoke'"
 pythonpath = ["source", "tests"]
 testpaths = ["tests"]
+# Bound any single test at 30s; protects CI when a SIGINT/threading test
+# regresses into a hang. Individual tests can override with @pytest.mark.timeout.
+timeout = 30
 markers = [
     "platform_macos: tests requiring macOS",
     "needs_claude: tests requiring claude CLI",

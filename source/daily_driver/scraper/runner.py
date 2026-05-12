@@ -19,6 +19,8 @@ import requests
 import yaml
 
 from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
+from daily_driver.core.jobs_lock import jobs_lock_path
+from daily_driver.core.locking import file_lock
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
 from daily_driver.scraper.sources._http import COUNTRY_NAMES
@@ -756,6 +758,7 @@ def run(
 
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
+    lock_path = jobs_lock_path(csv_path)
 
     validate_config(config)
 
@@ -766,27 +769,28 @@ def run(
         )
         return 0
 
-    known_urls, known_keys, header = load_existing_jobs(csv_path)
-
-    # Union archive-table dedup state so triaged listings (pruned to
-    # jobs.archive.csv) are never re-discovered.
     from daily_driver.core.jobs_archive import load_archive_dedup
 
-    archive_urls, archive_keys = load_archive_dedup(csv_path)
-    known_urls |= archive_urls
-    known_keys |= archive_keys
+    with file_lock(lock_path):
+        known_urls, known_keys, header = load_existing_jobs(csv_path)
 
-    if not header:
-        header = CANONICAL_HEADER
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow(header)
-        except OSError as exc:
-            log.error("Cannot initialize %s: %s", csv_path, exc)
-            return 1
-    else:
-        header = _migrate_legacy_header(csv_path, header)
+        # Union archive-table dedup state so triaged listings (pruned to
+        # jobs.archive.csv) are never re-discovered.
+        archive_urls, archive_keys = load_archive_dedup(csv_path)
+        known_urls |= archive_urls
+        known_keys |= archive_keys
+
+        if not header:
+            header = CANONICAL_HEADER
+            csv_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                    csv.writer(f).writerow(header)
+            except OSError as exc:
+                log.error("Cannot initialize %s: %s", csv_path, exc)
+                return 1
+        else:
+            header = _migrate_legacy_header(csv_path, header)
 
     log.info(
         "Loaded %d existing URLs, %d existing keys from %s",
@@ -904,7 +908,10 @@ def run(
         _print_dry_run_table(new_jobs)
         return 1 if failed_sources else 0
 
-    written = append_jobs(csv_path, new_jobs, header)
+    # Re-acquire the sentinel only for the append. The lock was dropped during
+    # enrichment above so slow LLM calls don't block concurrent prune/backfill.
+    with file_lock(lock_path):
+        written = append_jobs(csv_path, new_jobs, header)
     print(
         f"Scraper complete: {written} new jobs appended to {csv_path} "
         f"({skipped_below_comp} skipped below comp threshold)"

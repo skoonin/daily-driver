@@ -1,6 +1,6 @@
 # Daily Driver
 
-ADHD-aware personal productivity assistant. A durable data layer for daily planning, tracking, and job search with a Claude-powered conversational layer on top.
+Personal productivity assistant. A durable data layer for daily planning, tracking, and job search with a Claude-powered conversational layer on top.
 
 > **Status: v0.1.0.** Pure-Python CLI installable from source (macOS arm64).
 

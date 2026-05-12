@@ -188,7 +188,7 @@ def _playwright_browser(config: dict) -> Any:
 
     if not _has_playwright():
         raise ImportError(
-            "playwright not installed — run: pip install playwright && playwright install chromium"
+            "playwright not installed — reinstall daily-driver and run: playwright install chromium"
         )
 
     from playwright.sync_api import Error as PWError
