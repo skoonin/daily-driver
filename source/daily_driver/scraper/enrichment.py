@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
+import signal
+import sys
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +42,43 @@ def _enrich_tag(prefix: str) -> str:
     if len(suffix) == 2 and suffix[1].isdigit():
         return f"[{prefix} w{suffix[1]}]"
     return f"[{prefix}]"
+
+
+def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str):
+    """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
+
+    Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
+    process exits the way it would have without us. Returns the previous
+    handler so the caller can restore it in a finally clause.
+
+    `item` is the user-vocabulary noun ("companies" or "jobs"); `futures`
+    is the live mapping so the message can name how many are in progress.
+    """
+    interrupt_count = [0]
+    previous = signal.getsignal(signal.SIGINT)
+
+    def handler(_signum, _frame):
+        interrupt_count[0] += 1
+        if interrupt_count[0] == 1:
+            in_flight = sum(1 for f in futures if not f.done())
+            wait_phrase = (
+                "up to a minute"
+                if timeout_s <= 90
+                else f"up to {timeout_s // 60} minutes"
+            )
+            print(
+                f"\nStopping — waiting for {in_flight} {item} still being "
+                f"enriched ({wait_phrase}). Press Ctrl-C again to quit "
+                "now and lose what's in progress.",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise KeyboardInterrupt
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    signal.signal(signal.SIGINT, handler)
+    return previous
 
 
 log = logging.getLogger(__name__)
@@ -140,31 +180,55 @@ def _enrich_company_descriptions_parallel(
         )
 
     cache: dict[str, dict[str, str]] = {}
-    with ThreadPoolExecutor(max_workers=pool_size) as pool:
-        futures = {
+
+    def _stitch() -> None:
+        for job in jobs:
+            if job.get("product"):
+                stats["skipped_cached"] += 1
+                continue
+            company = job.get("company", "").strip()
+            if not company:
+                continue
+            cached = cache.get(company, {})
+            if cached.get("product"):
+                job["product"] = cached["product"]
+                stats["enriched"] += 1
+            if cached.get("gd_rating") and not job.get("gd_rating"):
+                job["gd_rating"] = cached["gd_rating"]
+
+    pool = ThreadPoolExecutor(max_workers=pool_size)
+    futures: dict = {}
+    previous_handler = _install_interrupt_notifier(futures, timeout, "companies")
+    futures.update(
+        {
             pool.submit(_fetch_company_info, c, config, include_gd, timeout): c
             for c in companies
         }
+    )
+    try:
         for fut in as_completed(futures):
             company = futures[fut]
             product, gd_rating, failed = fut.result()
             cache[company] = {"product": product, "gd_rating": gd_rating}
             if failed:
                 stats["failed"] += 1
+        pool.shutdown(wait=True)
+    except KeyboardInterrupt:
+        pool.shutdown(wait=False, cancel_futures=True)
+        for fut in futures:
+            if fut.done() and not fut.cancelled():
+                company = futures[fut]
+                if company not in cache:
+                    product, gd_rating, failed = fut.result()
+                    cache[company] = {"product": product, "gd_rating": gd_rating}
+                    if failed:
+                        stats["failed"] += 1
+        _stitch()
+        raise
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
 
-    for job in jobs:
-        if job.get("product"):
-            stats["skipped_cached"] += 1
-            continue
-        company = job.get("company", "").strip()
-        if not company:
-            continue
-        cached = cache.get(company, {})
-        if cached.get("product"):
-            job["product"] = cached["product"]
-            stats["enriched"] += 1
-        if cached.get("gd_rating") and not job.get("gd_rating"):
-            job["gd_rating"] = cached["gd_rating"]
+    _stitch()
     return stats
 
 
@@ -426,8 +490,21 @@ def _enrich_fit_and_notes_parallel(
         )
         stats["skipped_budget"] += len(eligible) - budget
 
-    with ThreadPoolExecutor(max_workers=pool_size) as pool:
-        futures = {
+    def _apply(job: dict, fit_str: str, notes_str: str, failed: bool) -> None:
+        if failed:
+            stats["failed"] += 1
+            return
+        if not job.get("fit"):
+            job["fit"] = fit_str
+        if not job.get("notes"):
+            job["notes"] = notes_str
+        stats["enriched"] += 1
+
+    pool = ThreadPoolExecutor(max_workers=pool_size)
+    futures: dict = {}
+    previous_handler = _install_interrupt_notifier(futures, timeout, "jobs")
+    futures.update(
+        {
             pool.submit(
                 _fetch_fit_notes_for_job,
                 j,
@@ -439,17 +516,27 @@ def _enrich_fit_and_notes_parallel(
             ): j
             for j in targets
         }
+    )
+    applied: set = set()
+    try:
         for fut in as_completed(futures):
             job = futures[fut]
             fit_str, notes_str, failed = fut.result()
-            if failed:
-                stats["failed"] += 1
+            _apply(job, fit_str, notes_str, failed)
+            applied.add(id(fut))
+        pool.shutdown(wait=True)
+    except KeyboardInterrupt:
+        pool.shutdown(wait=False, cancel_futures=True)
+        for fut in futures:
+            if id(fut) in applied:
                 continue
-            if not job.get("fit"):
-                job["fit"] = fit_str
-            if not job.get("notes"):
-                job["notes"] = notes_str
-            stats["enriched"] += 1
+            if fut.done() and not fut.cancelled():
+                job = futures[fut]
+                fit_str, notes_str, failed = fut.result()
+                _apply(job, fit_str, notes_str, failed)
+        raise
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
 
     return stats
 

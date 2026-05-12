@@ -7,7 +7,10 @@ for the regression guard.
 
 from __future__ import annotations
 
+import os
+import signal
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -150,6 +153,81 @@ def test_worker_log_tag_in_parallel_path(
     assert (
         tagged
     ), f"expected [enrich wN] tagged log, got: {[r.getMessage() for r in caplog.records]}"
+
+
+def test_ollama_keyboard_interrupt_preserves_partial_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C mid-fan-out: completed worker results must land in jobs."""
+    completed_event = threading.Event()
+    invocation_count = [0]
+    count_lock = threading.Lock()
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        # Slow first 3 calls so the main thread can interrupt; fast 4th
+        # never gets to run because we SIGINT after 3 finish.
+        with count_lock:
+            invocation_count[0] += 1
+            n = invocation_count[0]
+        if n <= 3:
+            return f"Product{n}"
+        # 4th+ blocks forever (the test is over before this matters).
+        completed_event.wait(timeout=5.0)
+        return "neverarrives"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [_job(f"Co{i}") for i in range(8)]
+
+    # Schedule SIGINT after the first 3 results arrive.
+    def trip_sigint() -> None:
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with count_lock:
+                if invocation_count[0] >= 3:
+                    break
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    threading.Thread(target=trip_sigint, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
+
+    enriched = [j for j in jobs if j["product"].startswith("Product")]
+    assert len(enriched) >= 1, f"expected partial results stitched, got: {jobs}"
+
+
+def test_ollama_interrupt_notifier_uses_user_voice(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """SIGINT message must use user-vocabulary, not engineer-vocabulary."""
+    started = threading.Event()
+    proceed = threading.Event()
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        started.set()
+        proceed.wait(timeout=2.0)
+        return "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [_job(f"Co{i}") for i in range(4)]
+
+    def trip_sigint() -> None:
+        started.wait(timeout=2.0)
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.05)
+        proceed.set()
+
+    threading.Thread(target=trip_sigint, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
+
+    err = capfd.readouterr().err.lower()
+    # Domain vocabulary present
+    assert "stopping" in err
+    assert "press ctrl-c again" in err
+    # Engineer vocabulary absent
+    for jargon in ("in-flight", "ollama", "request", "force-quit"):
+        assert jargon not in err, f"engineer-vocabulary leak: {jargon!r} in {err!r}"
 
 
 def test_ollama_partial_failure_doesnt_kill_others(
