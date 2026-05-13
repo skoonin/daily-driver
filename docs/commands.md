@@ -8,8 +8,8 @@
 
 | Flag | Purpose |
 |------|---------|
-| `-v`, `--verbose` | Debug-level logging |
-| `-q`, `--quiet` | Suppress output below WARNING |
+| `-v`, `--verbose` | Increase logging detail (`-v` = INFO, `-vv` = DEBUG) |
+| `-q`, `--quiet` | Errors only (suppresses non-error status/log output) |
 | `--no-color` | Disable Rich color |
 | `-w`, `--workspace PATH` | Override CWD-upward workspace discovery |
 

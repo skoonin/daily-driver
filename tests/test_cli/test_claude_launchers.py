@@ -134,7 +134,7 @@ def test_interactive_launcher_missing_workspace_exits_1(
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "error:" in captured.err
+    assert "error" in captured.err.lower()
 
 
 def test_day_start_writes_plan_stub_and_records_session_id(
@@ -314,8 +314,8 @@ def test_day_start_surfaces_daily_state_error_cleanly(
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "error:" in err
-    assert str(target) in err
+    assert "error" in err.lower()
+    assert str(target) in err.replace("\n", "")
     # No raw traceback should have surfaced.
     assert "Traceback" not in err
 
@@ -343,7 +343,7 @@ def test_day_start_surfaces_oserror_from_plan_stub_cleanly(
     err = capsys.readouterr().err
 
     assert rc == 1
-    assert "error:" in err
+    assert "error" in err.lower()
     assert "simulated read-only filesystem" in err
     assert "Traceback" not in err
 
@@ -558,7 +558,7 @@ def test_check_in_state_write_failure_does_not_mask_session_success(
     err = capsys.readouterr().err
 
     assert rc == 0
-    assert "warning:" in err
+    assert "warning" in err.lower()
     assert "last_check_in_at" in err
     assert "simulated read-only" in err
     assert "Traceback" not in err

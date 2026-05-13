@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — two-stream console output + repeatable verbosity
+
+- **Centralized stderr/stdout routing via `core.console.Console`.** All
+  CLI status, warning, and error output flows through
+  `Console.info/success/warning/error` on stderr; data payloads stay on
+  stdout. Module loggers continue to use stdlib `logging`; their
+  RichHandler shares `Console.get_log_console()` for color consistency.
+- **`-v` is now repeatable.** `-v` enables INFO logging;  `-vv`
+  enables DEBUG logging and `Console.debug`. `--quiet` shows errors
+  only. Previous behavior (single `-v` flipping straight to DEBUG) is
+  gone; existing `-v` callers see INFO instead.
+- **`--no-color` decoupled from markup.** `color_system=None` handles
+  color suppression; Rich markup and highlight remain enabled so
+  structured output (tables, styled prefixes) still renders cleanly in
+  no-color mode.
+
 ### Added — shared jobs lock + cancel-save for backfill
 
 - **Shared sentinel lock (`.jobs.lock`)** serializes `jobs run`, `jobs

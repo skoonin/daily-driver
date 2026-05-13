@@ -15,6 +15,7 @@ import traceback
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 from daily_driver.core.generate import generate
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
@@ -167,7 +168,7 @@ def run(args: argparse.Namespace) -> int:
             created.append(".dd-config.yaml")
     except WorkspaceError as exc:
         _restore_backup()
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     # Static files: only write when absent, even under --force. Tracking the
@@ -205,13 +206,13 @@ def run(args: argparse.Namespace) -> int:
             result = generate(workspace, ignore_drift=False, force_overwrite=False)
     except Exception as exc:  # noqa: BLE001
         _restore_backup()
-        print(f"error during workspace generation: {exc}", file=sys.stderr)
-        if getattr(args, "verbose", False):
+        Console.error(f"workspace generation: {exc}")
+        if (getattr(args, "verbose", 0) or 0) >= 1:
             traceback.print_exc(file=sys.stderr)
         return 1
 
     if backup is not None and backup.exists():
         backup.unlink()
 
-    print(_format_summary(root, created, skipped, result), file=sys.stderr)
+    Console.info(_format_summary(root, created, skipped, result))
     return 0

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.core.clock import today
+from daily_driver.core.console import Console
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.gathers import calendar as gather_calendar
 from daily_driver.gathers import git as gather_git
@@ -86,7 +86,7 @@ def _run_calendar(args: argparse.Namespace, workspace: Workspace) -> int:
         since_d = _parse_date(args.since, today())
         until_d = _parse_date(args.until, today() + timedelta(days=1))
     except ValueError as exc:
-        print(f"error: invalid date: {exc}", file=sys.stderr)
+        Console.error(f"invalid date: {exc}")
         return 2
 
     events = gather_calendar.gather_events(_as_dt(since_d), _as_dt(until_d))
@@ -115,7 +115,7 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
         since_d = _parse_date(args.since, today() - timedelta(days=1))
         until_d = _parse_date(args.until, today() + timedelta(days=1))
     except ValueError as exc:
-        print(f"error: invalid date: {exc}", file=sys.stderr)
+        Console.error(f"invalid date: {exc}")
         return 2
 
     since_dt = _as_dt(since_d)
@@ -131,7 +131,7 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
             expanded = [Path(p).expanduser() for p in configured]
             repos = discover_repos(expanded)
             if not repos:
-                print(
+                Console.info(
                     "(no git repos discovered under configured search_paths: "
                     f"{', '.join(str(p) for p in expanded)})"
                 )
@@ -139,10 +139,11 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
         else:
             repos = [Path.cwd()]
 
-    commits: list[gather_git.GitCommit] = []
+    seen: dict[str, gather_git.GitCommit] = {}
     for repo in repos:
-        commits.extend(gather_git.gather_commits(repo, since_dt, until_dt))
-    commits.sort(key=lambda c: c.timestamp)
+        for c in gather_git.gather_commits(repo, since_dt, until_dt):
+            seen.setdefault(c.sha, c)
+    commits = sorted(seen.values(), key=lambda c: c.timestamp)
 
     if args.json:
         payload = {
@@ -163,8 +164,8 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
 
 def run(args: argparse.Namespace) -> int:
     if not hasattr(args, "func") or args.func is run:
-        print("usage: daily-driver gather <what> ...", file=sys.stderr)
-        print("what: calendar, git", file=sys.stderr)
+        Console.error("usage: daily-driver gather <what> ...")
+        Console.error("what: calendar, git")
         return 2
 
     override = getattr(args, "workspace", None)
@@ -173,7 +174,7 @@ def run(args: argparse.Namespace) -> int:
             override=Path(override) if override else None
         )
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     return args.func(args, workspace)

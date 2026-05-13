@@ -71,4 +71,4 @@ def test_run_returns_zero_when_scraper_disabled(
 
     assert rc == 0
     captured = capsys.readouterr()
-    assert "Scraper disabled" in captured.out
+    assert "Scraper disabled" in captured.err

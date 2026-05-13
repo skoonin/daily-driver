@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 from rich.table import Table
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 
 
 def add_parser(
@@ -40,7 +40,7 @@ def add_parser(
     return p
 
 
-def _render_table(results: list[Any], console: Console) -> None:
+def _render_table(results: list[Any], console: RichConsole) -> None:
     table = Table(show_header=True, header_style="bold")
     table.add_column("Check")
     table.add_column("Status")
@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.doctor import reset, run_checks
     from daily_driver.core.workspace import Workspace, WorkspaceError
 
-    console = Console(stderr=True)
+    console = RichConsole(stderr=True)
 
     workspace = None
     workspace_override = getattr(args, "workspace", None)
@@ -74,10 +74,9 @@ def run(args: argparse.Namespace) -> int:
 
     if workspace is None:
         attempted = workspace_path if workspace_path is not None else Path.cwd()
-        print(
-            f"error: no workspace at {attempted} "
-            f"(run 'daily-driver init {attempted}' to scaffold one)",
-            file=sys.stderr,
+        Console.error(
+            f"no workspace at {attempted} "
+            f"(run 'daily-driver init {attempted}' to scaffold one)"
         )
         return 1
 

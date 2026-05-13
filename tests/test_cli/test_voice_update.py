@@ -275,8 +275,8 @@ def test_voice_update_dry_run_does_not_write(
 
     assert rc == 0
     assert profile_path.read_text(encoding="utf-8") == "# Preserved\n"
-    out = capsys.readouterr().out
-    assert "dry-run" in out.lower() or "dry run" in out.lower()
+    err = capsys.readouterr().err
+    assert "dry-run" in err.lower() or "dry run" in err.lower()
 
 
 def test_voice_update_dry_run_does_not_invoke_claude(

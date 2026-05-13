@@ -6,15 +6,15 @@ import argparse
 import datetime
 import importlib.resources
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 from rich.table import Table
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.core import clock
+from daily_driver.core.console import Console
 
 # Statuses considered terminal — entries in these are excluded from "stalled".
 _TERMINAL_STATUSES: frozenset[str] = frozenset(
@@ -163,7 +163,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         workspace = Workspace.discover_or_fail(override=workspace_path)
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     tracker = Tracker(workspace)
@@ -171,7 +171,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         all_entries = tracker.list()
     except Exception as exc:  # noqa: BLE001
-        print(f"error loading tracker: {exc}", file=sys.stderr)
+        Console.error(f"loading tracker: {exc}")
         return 1
 
     now = clock.now()
@@ -217,7 +217,7 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
         return 0
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
 
     # --- Setup gaps (printed first so it's visible above the tables) ---
     if setup_gaps:

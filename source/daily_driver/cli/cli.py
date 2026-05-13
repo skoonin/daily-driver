@@ -22,6 +22,7 @@ from daily_driver.cli._common import (
     add_global_flags,
     configure,
 )
+from daily_driver.core.console import Console
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -127,8 +128,8 @@ def app(argv: list[str] | None = None) -> int:
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
         logger = logging.getLogger("daily_driver")
-        if getattr(args, "verbose", False):
+        if (getattr(args, "verbose", 0) or 0) >= 1:
             logger.exception("unhandled error in %r", args.cmd)
         else:
-            print(f"error: {exc}", file=sys.stderr)
+            Console.error(str(exc))
         return 1

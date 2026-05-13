@@ -1,6 +1,6 @@
 # Daily Driver
 
-Daily Driver is an Personal assistant for driving daily work —
+Daily Driver is a personal assistant for driving daily work —
 professional tasks, job search, errands, and anything else you need to track.
 It helps users overcome task paralysis and task overwhelming by keeping a
 durable record on disk and giving Claude the context it needs to help.

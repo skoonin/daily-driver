@@ -12,19 +12,24 @@ def _daily_driver_logger() -> logging.Logger:
     return logging.getLogger("daily_driver")
 
 
-def test_configure_normal_sets_info_level() -> None:
+def test_configure_normal_sets_warning_level() -> None:
     configure("normal")
+    assert _daily_driver_logger().level == logging.WARNING
+
+
+def test_configure_verbose_sets_info_level() -> None:
+    configure("verbose")
     assert _daily_driver_logger().level == logging.INFO
 
 
-def test_configure_verbose_sets_debug_level() -> None:
-    configure("verbose")
+def test_configure_debug_sets_debug_level() -> None:
+    configure("debug")
     assert _daily_driver_logger().level == logging.DEBUG
 
 
-def test_configure_quiet_sets_warning_level() -> None:
+def test_configure_quiet_sets_error_level() -> None:
     configure("quiet")
-    assert _daily_driver_logger().level == logging.WARNING
+    assert _daily_driver_logger().level == logging.ERROR
 
 
 def test_handler_is_rich() -> None:
@@ -47,7 +52,7 @@ def test_get_logger_namespace() -> None:
 
 
 def test_log_message_captured() -> None:
-    configure("normal")
+    configure("verbose")
     lg = get_logger("memory_test")
     records: list[logging.LogRecord] = []
 
@@ -67,7 +72,7 @@ def test_log_message_captured() -> None:
 
 
 def test_log_query_window_emits_debug_with_bounds(caplog) -> None:
-    configure("verbose")
+    configure("debug")
     caplog.set_level(logging.DEBUG, logger="daily_driver")
     lg = get_logger("window_test")
     since = datetime(2026, 4, 10, 0, 0)
@@ -83,7 +88,7 @@ def test_caplog_captures_daily_driver_records(caplog) -> None:
     """The root conftest installs an autouse fixture that mirrors caplog's
     handler onto the `daily_driver` logger. Without it, pytest's caplog
     misses records because `configure()` sets `propagate=False`."""
-    configure("normal")
+    configure("verbose")
     caplog.set_level(logging.INFO, logger="daily_driver")
     lg = get_logger("caplog_test")
     lg.info("captured via caplog")

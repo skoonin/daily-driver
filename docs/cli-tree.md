@@ -8,8 +8,8 @@ Global flags (registered via `cli/_common.py:add_global_flags(parser)`, called
 at the END of the top-level parser and every leaf so they render under a
 "global options" group at the BOTTOM of `--help`):
 
-- `-v, --verbose` — Enable debug-level logging
-- `-q, --quiet` — Suppress all output below WARNING (mutually exclusive with `-v`)
+- `-v, --verbose` — Increase logging detail (`-v` = INFO, `-vv` = DEBUG)
+- `-q, --quiet` — Errors only (suppresses non-error status/log output; mutually exclusive with `-v`)
 - `--no-color` — Disable Rich color/formatting output
 - `-w, --workspace PATH` — Path to daily-driver workspace root
 - `--version` — Print version and exit (top-level only)
@@ -21,7 +21,7 @@ at the END of the top-level parser and every leaf so they render under a
 ```text
 daily-driver/
 ├── (global flags)
-│   ├── -v, --verbose
+│   ├── -v, --verbose (repeat for more detail)
 │   ├── -q, --quiet
 │   ├── --no-color
 │   ├── -w, --workspace PATH

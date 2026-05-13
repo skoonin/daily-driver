@@ -6,12 +6,12 @@ import argparse
 import datetime
 import json
 import re
-import sys
 from pathlib import Path
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 
 from daily_driver.cli._common import add_global_flags
+from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
 
@@ -98,7 +98,7 @@ def _lock_path(workspace: Workspace) -> Path:
 def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.core.clock import now
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
 
     duration_minutes = args.duration
     if duration_minutes is None:
@@ -106,14 +106,8 @@ def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unty
         try:
             duration_minutes = _parse_duration(configured)
         except argparse.ArgumentTypeError as exc:
-            print(
-                f"error: invalid focus.default_duration in .dd-config.yaml: {exc}",
-                file=sys.stderr,
-            )
-            print(
-                "Run: daily-driver focus on --help",
-                file=sys.stderr,
-            )
+            Console.error(f"invalid focus.default_duration in .dd-config.yaml: {exc}")
+            Console.error("Run: daily-driver focus on --help")
             return 2
         args.duration = duration_minutes
 
@@ -142,7 +136,7 @@ def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unty
 
 
 def _run_off(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     lock = _lock_path(workspace)
     if lock.exists():
         with file_lock(lock, shared=False):
@@ -156,7 +150,7 @@ def _run_off(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unt
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.core.clock import now
 
-    console = Console(stderr=False)
+    console = RichConsole(stderr=False)
     lock = _lock_path(workspace)
     emit_json = getattr(args, "json", False)
 
@@ -171,7 +165,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     try:
         data = json.loads(lock.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        print(f"error reading focus lock: {exc}", file=sys.stderr)
+        Console.error(f"reading focus lock: {exc}")
         return 1
 
     current = now()
@@ -210,8 +204,8 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import WorkspaceError
 
     if not hasattr(args, "func") or args.func is run:
-        print("usage: daily-driver focus <action> ...", file=sys.stderr)
-        print("actions: on, off, status", file=sys.stderr)
+        Console.error("usage: daily-driver focus <action> ...")
+        Console.error("actions: on, off, status")
         return 2
 
     workspace_override = getattr(args, "workspace", None)
@@ -219,11 +213,11 @@ def run(args: argparse.Namespace) -> int:
     try:
         workspace = Workspace.discover_or_fail(override=workspace_path)
     except WorkspaceError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
 
     try:
         return args.func(args, workspace)
     except Exception as exc:  # noqa: BLE001
-        print(f"error: {exc}", file=sys.stderr)
+        Console.error(str(exc))
         return 1
