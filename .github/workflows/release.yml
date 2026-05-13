@@ -17,14 +17,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install build tooling
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run test suite before release build
         run: |
-          python -m pip install --upgrade pip
-          pip install build
+          pip install -e '.[dev]'
+          tox -e py311,py312
+      - name: Install build tooling
+        run: pip install build
       - name: Build sdist and wheel
         run: python -m build
       - name: Verify artifacts
         run: ls -la dist/
+      - name: Install smoke (post-build)
+        run: |
+          pip install dist/daily_driver-*.whl
+          daily-driver --version
+          daily-driver init /tmp/dd-release-ws
+          daily-driver --workspace /tmp/dd-release-ws doctor
+          test -d /tmp/dd-release-ws/.claude/commands/daily-driver
       - name: Create GitHub Release and attach artifacts
         uses: softprops/action-gh-release@v2
         with:

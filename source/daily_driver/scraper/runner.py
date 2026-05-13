@@ -7,8 +7,6 @@ import csv
 import json
 import logging
 import re
-import shutil
-import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -22,6 +20,7 @@ from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperC
 from daily_driver.core.console import Console
 from daily_driver.core.jobs_lock import jobs_lock_path
 from daily_driver.core.locking import file_lock
+from daily_driver.integrations.notify import desktop_notify
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
 from daily_driver.scraper.sources._http import COUNTRY_NAMES
@@ -639,32 +638,7 @@ def run_all_scrapers(
 
 
 def _notify_new_jobs(count: int, csv_path: Path) -> None:
-    title = "Job Scraper"
-    message = f"{count} new jobs found"
-    file_url = csv_path.as_uri()
-
-    if shutil.which("terminal-notifier"):
-        subprocess.run(
-            [
-                "terminal-notifier",
-                "-title",
-                title,
-                "-message",
-                message,
-                "-open",
-                file_url,
-            ],
-            check=False,
-        )
-    else:
-        subprocess.run(
-            [
-                "osascript",
-                "-e",
-                f'display notification "{message}" with title "{title}" subtitle "{csv_path.name}"',
-            ],
-            check=False,
-        )
+    desktop_notify(f"{count} new jobs found", "Job Scraper", csv_path)
 
 
 # ── Public entry points ──────────────────────────────────────────────────────

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>We Work Remotely: Remote Programming Jobs</title>
+    <link>https://weworkremotely.com</link>
+    <description>Remote Programming Jobs</description>
+    <item>
+      <title><![CDATA[Acme Corp: Senior Software Engineer]]></title>
+      <link>https://weworkremotely.com/remote-jobs/acme-senior-engineer</link>
+      <region><![CDATA[Worldwide]]></region>
+    </item>
+    <item>
+      <title><![CDATA[Globex: Staff Engineer]]></title>
+      <link>https://weworkremotely.com/remote-jobs/globex-staff-engineer</link>
+      <region><![CDATA[USA Only]]></region>
+    </item>
+    <item>
+      <title><![CDATA[No Colon Title Without Role]]></title>
+      <link>https://weworkremotely.com/remote-jobs/no-colon</link>
+      <region><![CDATA[Remote]]></region>
+    </item>
+  </channel>
+</rss>

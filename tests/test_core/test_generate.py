@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from rich.console import Console
@@ -259,6 +260,82 @@ def test_concurrent_invocations_no_corruption(tmp_path: Path) -> None:
     outcomes = [results.get_nowait() for _ in range(2)]
     assert outcomes == ["ok", "ok"], f"unexpected outcomes: {outcomes}"
     assert version_stamp.read(state_dir) == version
+
+
+def _wipe_counting_worker(
+    root: Path,
+    version: str,
+    results: multiprocessing.Queue[str],  # type: ignore[type-arg]
+    wipe_calls: Any,
+) -> None:
+    """Worker that patches _wipe_and_recreate to count invocations via a shared Manager list."""
+    try:
+        from unittest.mock import patch
+
+        from daily_driver.core import generate as gen_mod
+        from tests.test_core.test_generate import _FakeWorkspace
+
+        real_wipe = gen_mod._wipe_and_recreate
+
+        def counting_wipe(path: Path) -> None:
+            wipe_calls.append(1)
+            real_wipe(path)
+
+        import logging
+
+        from rich.console import Console as RichConsole
+
+        ws = _FakeWorkspace(
+            root=root,
+            state_dir=root / ".daily-driver",
+            version=version,
+            logger=logging.getLogger("test.wipe_count"),
+            console=RichConsole(stderr=True),
+        )
+        with patch.object(gen_mod, "_wipe_and_recreate", counting_wipe):
+            gen_mod.generate(ws, ignore_drift=False, force_overwrite=True)
+        results.put("ok")
+    except Exception as exc:
+        results.put(f"error: {exc}")
+
+
+def test_concurrent_invocations_only_one_wipe(tmp_path: Path) -> None:
+    """Double-checked locking: only one process runs the generate body.
+
+    Both processes see a stale stamp before entering the lock. After the
+    first process generates and writes the stamp, the second re-checks drift
+    inside the lock and short-circuits. _wipe_and_recreate must be called
+    exactly twice total (commands + agents from one process, not four).
+    """
+    state_dir = tmp_path / ".daily-driver"
+    state_dir.mkdir()
+    version = "2.0.0"
+
+    manager = multiprocessing.Manager()
+    wipe_calls = manager.list()  # ListProxy; supports len() and append()
+    results: multiprocessing.Queue[str] = multiprocessing.Queue()
+
+    p1 = multiprocessing.Process(
+        target=_wipe_counting_worker, args=(tmp_path, version, results, wipe_calls)
+    )
+    p2 = multiprocessing.Process(
+        target=_wipe_counting_worker, args=(tmp_path, version, results, wipe_calls)
+    )
+    p1.start()
+    p2.start()
+    p1.join(timeout=15)
+    p2.join(timeout=15)
+
+    outcomes = [results.get_nowait() for _ in range(2)]
+    assert outcomes == ["ok", "ok"], f"unexpected outcomes: {outcomes}"
+
+    # _wipe_and_recreate is called once for commands/ and once for agents/.
+    # If the double-check fails, both processes would wipe (total 4 calls).
+    total_wipes = len(wipe_calls)
+    assert total_wipes == 2, (
+        f"expected 2 wipe calls (one process), got {total_wipes} — "
+        "double-checked locking may be missing or broken"
+    )
 
 
 # ---------------------------------------------------------------------------

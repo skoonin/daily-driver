@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch: {}
 
@@ -35,5 +36,15 @@ jobs:
         run: |
           source /tmp/smoke-venv/bin/activate
           python -c "import daily_driver; print(daily_driver.__version__)"
+      - name: Workspace smoke (init + doctor + tracker)
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          daily-driver init /tmp/dd-ws
+          daily-driver --workspace /tmp/dd-ws doctor
+          daily-driver --workspace /tmp/dd-ws tracker add --category task --title "smoke task"
+          daily-driver --workspace /tmp/dd-ws tracker list --json \
+            | python -c "import json,sys; d=json.load(sys.stdin); assert d['data']['entries'][0]['title']=='smoke task', d"
+          test -d /tmp/dd-ws/.claude/commands/daily-driver
+          test -s /tmp/dd-ws/.claude/settings.local.json
 
 # Linux parity deferred to a future release.
