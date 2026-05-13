@@ -154,7 +154,7 @@ Freeform dict passed to the Jinja launchd plist templates. Times are local wall-
 | Key | Type | Default |
 |-----|------|---------|
 | `enabled` | bool | false |
-| `user_agent` | string | Chrome/124 UA |
+| `user_agent` | string | Firefox/128 UA |
 | `timeout` | int | 30 |
 | `enrich_timeout` | int | 30 |
 | `max_enrich_companies` | int | 50 |

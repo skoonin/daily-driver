@@ -32,7 +32,7 @@ make test
 ## Playwright browser install (optional)
 
 ```bash
-playwright install chromium
+playwright install firefox
 ```
 
 The scraper logs a warning and skips Playwright-only sources when unavailable. All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, JobSpy) keep working.

@@ -46,7 +46,7 @@ The Apple careers scraper (and any user-added source with `type: playwright`)
 needs Playwright browsers. Install them:
 
 ```bash
-playwright install chromium
+playwright install firefox
 ```
 
 Other sources keep working without Playwright. To restrict a run to
