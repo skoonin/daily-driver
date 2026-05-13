@@ -16,7 +16,7 @@ owns the conversation.
 
 Jobs search is one plugin. The tracker is designed to hold tasks of any kind:
 errands, project milestones, support tickets, job applications. See
-`docs/developer.md` for product framing and architecture.
+`docs/dev/developer.md` for product framing and architecture.
 
 ## Install for development
 
@@ -57,10 +57,10 @@ End-user reference: `docs/commands.md`. Short list:
 
 ## Architecture
 
-All code lives under `source/daily_driver/`. Read `docs/developer.md` for the
+All code lives under `source/daily_driver/`. Read `docs/dev/developer.md` for the
 architecture map, runtime flow, init contract, generate lifecycle, and
 extensibility rules. Recipes for adding subcommands or scraper sources live
-in `docs/extending.md`. Release workflow is in `docs/releasing.md`.
+in `docs/dev/extending.md`. Release workflow is in `docs/dev/releasing.md`.
 
 Key conventions:
 

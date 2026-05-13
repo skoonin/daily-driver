@@ -402,6 +402,13 @@ def _fetch_fit_notes_for_job(
     company = job.get("company", "unknown")
     role = job.get("role", "unknown")
     prompt = _build_fit_notes_prompt(job, role_persona, loc_summary, hc)
+    log.debug(
+        "%s company=%s role=%s prompt=%r",
+        _enrich_tag("enrich-fit-notes"),
+        company,
+        role,
+        prompt,
+    )
 
     try:
         stdout = ai_provider.invoke_for(
@@ -433,6 +440,13 @@ def _fetch_fit_notes_for_job(
         return "", "", True
 
     raw = stdout.strip()
+    log.debug(
+        "%s company=%s role=%s raw_response=%r",
+        _enrich_tag("enrich-fit-notes"),
+        company,
+        role,
+        raw,
+    )
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
@@ -459,6 +473,14 @@ def _fetch_fit_notes_for_job(
 
     score = min(int(fit_val), 10)
     notes_str = notes_val if isinstance(notes_val, str) else ""
+    log.debug(
+        "%s company=%s role=%s parsed fit=%d/10 notes=%r",
+        _enrich_tag("enrich-fit-notes"),
+        company,
+        role,
+        score,
+        notes_str,
+    )
     return f"{score}/10", notes_str, False
 
 
@@ -492,14 +514,36 @@ def _enrich_fit_and_notes_parallel(
         stats["skipped_budget"] += len(eligible) - budget
 
     def _apply(job: dict, fit_str: str, notes_str: str, failed: bool) -> None:
+        company = job.get("company", "unknown")
+        pre_fit = job.get("fit", "")
+        pre_notes = job.get("notes", "")
         if failed:
             stats["failed"] += 1
+            log.debug(
+                "[enrich-fit-notes] %s: call failed, no write " "(pre fit=%r notes=%r)",
+                company,
+                pre_fit,
+                pre_notes,
+            )
             return
+        wrote_fit = not job.get("fit") and bool(fit_str)
+        wrote_notes = not job.get("notes") and bool(notes_str)
         if not job.get("fit"):
             job["fit"] = fit_str
         if not job.get("notes"):
             job["notes"] = notes_str
         stats["enriched"] += 1
+        log.debug(
+            "[enrich-fit-notes] %s: pre fit=%r notes=%r -> "
+            "got fit=%r notes=%r (wrote_fit=%s wrote_notes=%s)",
+            company,
+            pre_fit,
+            pre_notes,
+            fit_str,
+            notes_str,
+            wrote_fit,
+            wrote_notes,
+        )
 
     pool = ThreadPoolExecutor(max_workers=pool_size)
     # See companies path for why this is incremental rather than a bulk update.
@@ -598,8 +642,33 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     hc = home_city(config)
 
     pool_size = _ollama_pool_size(config)
+    eligible_count = sum(
+        1
+        for j in jobs
+        if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+    )
+    no_desc = sum(
+        1
+        for j in jobs
+        if j.get("status") != "skipped"
+        and not (j.get("fit") and j.get("notes"))
+        and not (j.get("description_text") or "").strip()
+    )
+    log.info(
+        "[enrich-fit-notes] enriching up to %d jobs (%d eligible%s)...",
+        budget,
+        eligible_count,
+        f", parallel={pool_size}" if pool_size > 1 else "",
+    )
+    if no_desc:
+        log.info(
+            "[enrich-fit-notes] %d eligible jobs have no description_text on row "
+            "(notes will be left empty by prompt design — only Fit can be filled)",
+            no_desc,
+        )
+
     if pool_size > 1 and config is not None:
-        return _enrich_fit_and_notes_parallel(
+        stats = _enrich_fit_and_notes_parallel(
             jobs,
             config,
             budget=budget,
@@ -610,6 +679,13 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
             stats=stats,
             timeout=enrich_timeout(config),
         )
+        log.info(
+            "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
+            stats["enriched"],
+            stats["failed"],
+            stats["skipped_budget"],
+        )
+        return stats
 
     calls_made = 0
     for idx, job in enumerate(jobs):
@@ -636,15 +712,43 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
             job, role_persona, loc_summary, hc, config, enrich_timeout(config)
         )
         calls_made += 1
+        company = job.get("company", "unknown")
+        pre_fit = job.get("fit", "")
+        pre_notes = job.get("notes", "")
         if failed:
             stats["failed"] += 1
+            log.debug(
+                "[enrich-fit-notes] %s: call failed, no write " "(pre fit=%r notes=%r)",
+                company,
+                pre_fit,
+                pre_notes,
+            )
             continue
+        wrote_fit = not job.get("fit") and bool(fit_str)
+        wrote_notes = not job.get("notes") and bool(notes_str)
         if not job.get("fit"):
             job["fit"] = fit_str
         if not job.get("notes"):
             job["notes"] = notes_str
         stats["enriched"] += 1
+        log.debug(
+            "[enrich-fit-notes] %s: pre fit=%r notes=%r -> "
+            "got fit=%r notes=%r (wrote_fit=%s wrote_notes=%s)",
+            company,
+            pre_fit,
+            pre_notes,
+            fit_str,
+            notes_str,
+            wrote_fit,
+            wrote_notes,
+        )
 
+    log.info(
+        "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
+        stats["enriched"],
+        stats["failed"],
+        stats["skipped_budget"],
+    )
     return stats
 
 

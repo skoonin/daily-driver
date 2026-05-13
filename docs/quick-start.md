@@ -34,7 +34,7 @@ the static files.
 
 The `.claude/*/daily-driver/` subdirs are package-managed. Top-level entries
 under `.claude/commands/` and `.claude/agents/` are yours and never touched.
-See [customization.md](customization.md).
+See [Customization](configuration.md#customization) in `configuration.md`.
 
 ## 2. Health check
 
@@ -68,6 +68,17 @@ daily-driver scheduler install
 Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins
 and overnight job searches. Uninstall with `daily-driver scheduler uninstall`.
 Show installed jobs with `daily-driver scheduler status`. macOS only.
+
+## If something looks off
+
+Re-run the command with `-v` (or `-vv` for full debug traces). Status and log output goes to stderr, so `-v` is safe to add even when piping stdout into another tool:
+
+```bash
+daily-driver doctor -v
+daily-driver jobs run -vv 2>&1 | tee /tmp/jobs-run.log
+```
+
+`-q` does the opposite — errors only — for scheduled or scripted runs where you only care about failures.
 
 ## Next
 

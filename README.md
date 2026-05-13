@@ -62,19 +62,24 @@ Workspace discovery walks up from CWD looking for `.dd-config.yaml`. Override wi
 
 ## Documentation
 
-| Doc | Audience |
-|-----|----------|
-| [usage.md](docs/usage.md) | **Start here.** End-user walkthrough of the daily flow |
-| [install.md](docs/install.md) | Install, upgrade, Playwright |
+Full index: [docs/README.md](docs/README.md).
+
+**Users** — start with [quick-start.md](docs/quick-start.md) to scaffold, then [usage.md](docs/usage.md) for the daily flow. Read [concepts.md](docs/concepts.md) once for the mental model.
+
+**Developers** — start with [docs/dev/developer.md](docs/dev/developer.md).
+
+| Doc | What it covers |
+| --- | --- |
+| [concepts.md](docs/concepts.md) | Mental model: workspace layout, surfaces, design decisions |
 | [quick-start.md](docs/quick-start.md) | Minimal scaffold checklist |
-| [commands.md](docs/commands.md) | All subcommands and non-obvious flags |
-| [configuration.md](docs/configuration.md) | `.dd-config.yaml` reference |
+| [usage.md](docs/usage.md) | End-to-end daily flow with worked examples |
+| [commands.md](docs/commands.md) | Every subcommand and non-obvious flags |
+| [configuration.md](docs/configuration.md) | `.dd-config.yaml` schema and customization |
 | [ollama-setup.md](docs/ollama-setup.md) | Local LLM provider for enrichment/summary |
-| [customization.md](docs/customization.md) | `.claude/` ownership, custom commands/agents |
-| [troubleshooting.md](docs/troubleshooting.md) | doctor errors, launchd, flock, Playwright |
-| [developer.md](docs/developer.md) | Architecture, runtime flow, generate, init contract |
-| [extending.md](docs/extending.md) | Adding subcommands and scraper sources |
-| [releasing.md](docs/releasing.md) | Release workflow, semver, CHANGELOG |
+| [troubleshooting.md](docs/troubleshooting.md) | Failure modes and recovery |
+| [dev/developer.md](docs/dev/developer.md) | Architecture, runtime flow, init contract |
+| [dev/extending.md](docs/dev/extending.md) | Adding subcommands and scraper sources |
+| [dev/releasing.md](docs/dev/releasing.md) | Release workflow, semver, CHANGELOG |
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and commit conventions.
 

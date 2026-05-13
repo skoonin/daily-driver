@@ -15,7 +15,7 @@ __version__ = "0.1.0"
 `pyproject.toml` reads this dynamically (`[tool.setuptools.dynamic] version = { attr = "daily_driver.__version__" }`). Do not hardcode a version anywhere else. `make release` rewrites this file automatically.
 
 | Context | Format | Example |
-|---------|--------|---------|
+| --- | --- | --- |
 | Source `__init__.py` | `X.Y.Z` | `0.2.0` |
 | Git tag | `vX.Y.Z` | `v0.2.0` |
 | Commit message | `release: vX.Y.Z` | `release: v0.2.0` |
@@ -50,7 +50,7 @@ Pushes commit + tag to origin. `release.yml` CI fires on `v*` tag push, builds w
 ## Semver
 
 | Increment | Trigger |
-|-----------|---------|
+| --- | --- |
 | MAJOR | Breaking CLI surface, workspace schema, or plugin API |
 | MINOR | New commands or backwards-compatible features |
 | PATCH | Bug fixes, documentation, dependency updates |
