@@ -525,3 +525,23 @@ def test_ignore_drift_true_force_overwrite_false_preserves_edits(
     generate.generate(ws, ignore_drift=True, force_overwrite=False)
 
     assert dest_file.read_text(encoding="utf-8") == "user edit"
+
+
+# ---------------------------------------------------------------------------
+# Workspace README lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_readme_written_on_init(tmp_path: Path) -> None:
+    """generate() must write README.md to workspace root and record its SHA."""
+    from daily_driver.core import manifest as _manifest
+
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+
+    readme = tmp_path / "README.md"
+    assert readme.exists(), "README.md must exist in workspace root after generate"
+    assert "daily-driver" in readme.read_text(encoding="utf-8")
+
+    stored = _manifest.load(ws.state_dir)
+    assert "README.md" in stored, "manifest must record SHA for README.md"

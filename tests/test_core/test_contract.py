@@ -63,6 +63,7 @@ def _scaffold_valid_workspace(root: Path) -> None:
     (root / ".gitignore").write_text(
         ".claude/commands/daily-driver/\n", encoding="utf-8"
     )
+    (root / "README.md").write_text("# Daily Driver Workspace\n", encoding="utf-8")
 
 
 def test_check_passes_on_valid_workspace(tmp_path: Path) -> None:

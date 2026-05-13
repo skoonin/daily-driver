@@ -26,6 +26,26 @@ MIN_AGENTS = 1
 
 
 @dataclass(frozen=True)
+class ContractEntry:
+    """A single package-managed template that generate() must render into the workspace root.
+
+    src: filename of the Jinja2 template in daily_driver/templates/.
+    dst: workspace-relative destination path.
+    """
+
+    src: str
+    dst: str
+
+
+# Authoritative list of package-managed template files written to the workspace root.
+# generate() iterates this list; adding an entry here is sufficient to register a new
+# managed file — no other changes to generate.py are needed.
+ENTRIES: list[ContractEntry] = [
+    ContractEntry(src="workspace-readme.md.j2", dst="README.md"),
+]
+
+
+@dataclass(frozen=True)
 class ContractViolation:
     rel_path: str
     detail: str
@@ -88,6 +108,11 @@ def check(workspace_root: Path) -> list[ContractViolation]:
     for rel in ("context.md", "voice-profile.md", ".gitignore"):
         if not (workspace_root / rel).is_file():
             v.append(ContractViolation(rel, "missing file"))
+
+    # Package-managed workspace-root files rendered from ENTRIES.
+    for entry in ENTRIES:
+        if not (workspace_root / entry.dst).is_file():
+            v.append(ContractViolation(entry.dst, "missing file"))
 
     # Package-managed Claude trees — count_gte on bundled .md files.
     _count_check(

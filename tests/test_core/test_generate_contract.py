@@ -113,3 +113,15 @@ def test_generate_known_agent_names_on_disk(tmp_path: Path) -> None:
     assert (
         "work-planner.md" in present
     ), f"work-planner.md missing from .claude/agents/daily-driver/; found: {present}"
+
+
+def test_workspace_readme_written_on_init(tmp_path: Path) -> None:
+    """generate(force_overwrite=True) must write README.md to the workspace root."""
+    ws = _FakeWorkspace.make(tmp_path)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+
+    readme = tmp_path / "README.md"
+    assert readme.exists(), "README.md must exist in workspace root after generate"
+    assert "daily-driver" in readme.read_text(
+        encoding="utf-8"
+    ), "README.md must contain 'daily-driver'"
