@@ -94,5 +94,5 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
   install smoke, build wheel/sdist, rewrite CHANGELOG `[Unreleased]` →
   `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
 - `make release-push` — push commit + tag (separate deliberate step).
-- `release.yml` CI fires on tag, builds and attaches artifacts to the
+- `release.yaml` CI fires on tag, builds and attaches artifacts to the
   GitHub Release.

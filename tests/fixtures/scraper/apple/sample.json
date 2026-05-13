@@ -1,0 +1,31 @@
+{
+  "res": {
+    "searchResults": [
+      {
+        "postingTitle": "Senior Site Reliability Engineer",
+        "positionId": "SRE-200984369",
+        "id": "200984369",
+        "transformedPostingTitle": "senior-site-reliability-engineer",
+        "locations": [
+          {"name": "Cupertino, California, United States"}
+        ]
+      },
+      {
+        "postingTitle": "Staff Software Engineer",
+        "positionId": "SSE-200984370",
+        "id": "200984370",
+        "transformedPostingTitle": "staff-software-engineer",
+        "locations": [
+          {"name": "Remote, United States"}
+        ]
+      },
+      {
+        "postingTitle": "",
+        "positionId": "",
+        "id": "",
+        "transformedPostingTitle": "",
+        "locations": []
+      }
+    ]
+  }
+}

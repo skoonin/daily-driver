@@ -6,6 +6,19 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **install-smoke CI**: workspace scaffold step (`init + doctor + tracker add/list`) catches missing package-data regressions; smoke now also runs on direct pushes to `main`.
+- **Scraper tests**: dedicated test modules for `weworkremotely` (RSS) and `apple` (Playwright/JSON API) with committed fixtures under `tests/fixtures/scraper/`.
+- **`integrations/notify.py`**: `desktop_notify()` wrapper lifts osascript/terminal-notifier subprocess calls out of `scraper/runner.py` into the integrations layer; tests in `tests/test_integrations/test_notify.py`.
+- **generate double-check locking test**: `test_concurrent_invocations_only_one_wipe` asserts the flock + re-check-inside-lock pattern prevents duplicate wipes under concurrent invocation.
+- **release CI gate**: `tox -e py311,py312` (both interpreters set up explicitly) runs before `python -m build`; post-build wheel install smoke confirms package-data before artifacts attach to the GitHub Release.
+- **SHA-pinned GitHub Actions**: all four third-party Actions (`checkout`, `setup-python`, `upload-artifact`, `softprops/action-gh-release`) pinned to 40-char commit SHAs with trailing version comments. Bumped to current latest (major-version jumps across the board). Dependabot `github-actions` ecosystem keeps SHAs current.
+
+### Changed
+
+- **Console stream tests**: rewrote four placeholder tests in `test_console.py` to actually capture stdout/stderr with `capsys` and assert routing; added `test_user_output_is_stdout_not_stderr` regression guard.
+
 ### AI providers
 
 - **Ollama backend for headless tasks** via the `ai:` config block.

@@ -39,30 +39,51 @@ def test_setup_no_color():
 
 
 def test_error_always_shown_in_quiet_mode(capsys):
-    """Console.error() must fire even when quiet=True."""
-    Console.setup_for_user(quiet=True, verbose=False, no_color=False)
+    """Console.error() must write to stderr even when quiet=True."""
+    Console.setup_for_user(quiet=True, verbose=False, no_color=True)
     Console.error("something broke")
-    # error goes to stderr via Rich; check via Rich's console capture instead
-    # (capsys won't catch Rich's stderr directly, so we test via get_log_console)
-    # We just assert no exception is raised and the method is callable.
+    captured = capsys.readouterr()
+    assert "something broke" in captured.err
+    assert captured.out == ""
 
 
-def test_warning_always_shown_in_quiet_mode():
-    Console.setup_for_user(quiet=True, verbose=False, no_color=False)
-    # Should not raise; warnings always fire
+def test_warning_always_shown_in_quiet_mode(capsys):
+    """Console.warning() must write to stderr even when quiet=True."""
+    Console.setup_for_user(quiet=True, verbose=False, no_color=True)
     Console.warning("heads up")
+    captured = capsys.readouterr()
+    assert "heads up" in captured.err
+    assert captured.out == ""
 
 
-def test_debug_hidden_when_not_verbose():
-    """Console.debug() should be a no-op when verbose=False."""
-    Console.setup_for_user(quiet=False, verbose=False, no_color=False)
-    # No exception; just verify it runs without side effects visible
+def test_debug_hidden_when_not_verbose(capsys):
+    """Console.debug() must be a no-op when verbose=False."""
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
     Console.debug("internal detail")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
-def test_debug_visible_when_verbose():
-    Console.setup_for_user(quiet=False, verbose=True, no_color=False)
+def test_debug_visible_when_verbose(capsys):
+    """Console.debug() must write to stderr when verbose=True."""
+    Console.setup_for_user(quiet=False, verbose=True, no_color=True)
     Console.debug("internal detail")
+    captured = capsys.readouterr()
+    assert "internal detail" in captured.err
+
+
+def test_user_output_is_stdout_not_stderr(capsys):
+    """Console.print() must appear on stdout, not stderr.
+
+    Regression guard: daily-driver tracker list --json | jq relies on
+    user output being on stdout only.
+    """
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
+    Console.print("user facing message")
+    captured = capsys.readouterr()
+    assert "user facing message" in captured.out
+    assert "user facing message" not in captured.err
 
 
 def test_get_log_console_returns_rich_console():
