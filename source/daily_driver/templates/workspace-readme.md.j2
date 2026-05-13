@@ -1,0 +1,59 @@
+# Daily Driver Workspace
+
+This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace.
+It holds your personal context, task tracker, job search data, and Claude session scaffolding.
+
+## Day-to-day commands
+
+```
+daily-driver day-start        # open a Claude session to plan your day
+daily-driver check-in         # mid-day check-in with Claude
+daily-driver day-end          # close-out session and capture learnings
+```
+
+## Task tracker
+
+```
+daily-driver tracker add      # add a task (job, errand, milestone, etc.)
+daily-driver tracker list     # list tracked tasks
+daily-driver tracker update   # update status or notes on a task
+daily-driver tracker stats    # summary counts by status/category
+```
+
+## Job search
+
+```
+daily-driver jobs run         # run configured job board scrapers
+daily-driver jobs status      # show last-run metadata per source
+daily-driver jobs prune       # archive stale rows from jobs.csv
+```
+
+## Status and focus
+
+```
+daily-driver status           # dashboard table (Rich or --json)
+daily-driver focus on         # suppress check-ins while deep-focused
+daily-driver focus off        # re-enable check-ins
+```
+
+## Maintenance
+
+```
+daily-driver doctor           # verify workspace integrity
+daily-driver doctor --fix     # repair drift, preserve your edits
+daily-driver doctor --reset   # repair drift, overwrite managed files
+```
+
+## Configuration
+
+Edit `.dd-config.yaml` in this directory to configure categories, job sources,
+daily schedule, and other workspace settings.
+
+## Managed files
+
+Files under `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/`
+are package-managed. They are updated automatically on version upgrades.
+`doctor --fix` preserves your edits; `doctor --reset` overwrites them with
+fresh copies from the installed package.
+
+This `README.md` is also package-managed and follows the same lifecycle.

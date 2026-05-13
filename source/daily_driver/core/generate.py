@@ -22,6 +22,7 @@ from pathlib import Path
 
 from daily_driver.core import manifest as _manifest
 from daily_driver.core import version_stamp
+from daily_driver.core.contract import ENTRIES
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
@@ -33,9 +34,9 @@ _logger = get_logger("generate")
 class GenerationResult:
     """Counts surfaced after a successful generate() run.
 
-    n_written counts package-managed .md files written this run (commands +
-    agents). n_preserved counts files skipped because the SHA-256 manifest
-    detected user edits.
+    n_written counts all package-managed files written this run (commands,
+    agents, and contract-entry templates such as README.md). n_preserved counts
+    files skipped because the SHA-256 manifest detected user edits.
     """
 
     n_written: int
@@ -231,6 +232,12 @@ def generate(
         if all_written:
             _manifest.record(workspace.state_dir, workspace.root, all_written)
 
+        entry_paths = _render_contract_entries(
+            workspace, force_overwrite=force_overwrite
+        )
+        if entry_paths:
+            _manifest.record(workspace.state_dir, workspace.root, entry_paths)
+
         _render_settings(workspace)
         _copy_hooks(workspace)
 
@@ -240,7 +247,8 @@ def generate(
 
         n_preserved = len(cmd_skipped) + len(agent_skipped)
         return GenerationResult(
-            n_written=n_commands + n_agents, n_preserved=n_preserved
+            n_written=n_commands + n_agents + len(entry_paths),
+            n_preserved=n_preserved,
         )
 
 
@@ -271,6 +279,69 @@ def _merge_settings(existing_text: str, rendered_text: str) -> str:
         if key not in defaults:
             merged[key] = value
     return json.dumps(merged, indent=2)
+
+
+def _render_contract_entries(
+    workspace: Workspace,
+    *,
+    force_overwrite: bool,
+) -> list[Path]:
+    """Render each ContractEntry template into the workspace root.
+
+    Returns the list of paths that were written (skipped files are excluded).
+    User-edited files are preserved unless force_overwrite=True.
+    """
+    import jinja2
+    from jinja2 import Environment, StrictUndefined
+
+    env = Environment(undefined=StrictUndefined)
+    written: list[Path] = []
+    for entry in ENTRIES:
+        # Guard against traversal attacks in case ENTRIES ever gains dynamic sources.
+        if "/" in entry.dst or entry.dst.startswith(".") or ".." in entry.dst:
+            _logger.warning("Skipping suspicious ContractEntry dst: %r", entry.dst)
+            continue
+        if "/" in entry.src or entry.src.startswith(".") or ".." in entry.src:
+            _logger.warning("Skipping suspicious ContractEntry src: %r", entry.src)
+            continue
+
+        dest = workspace.root / entry.dst
+        rel = entry.dst
+
+        if not force_overwrite and _manifest.is_user_edited(
+            workspace.root, workspace.state_dir, rel
+        ):
+            _logger.warning(
+                "Preserving user-edited package-managed file: %s (use --reset to overwrite)",
+                rel,
+            )
+            continue
+
+        try:
+            tmpl_traversable = importlib.resources.files(
+                "daily_driver.templates"
+            ).joinpath(entry.src)
+            template_text = tmpl_traversable.read_text(encoding="utf-8")
+        except (FileNotFoundError, TypeError):
+            _logger.warning(
+                "%s not found in daily_driver.templates — skipping %s",
+                entry.src,
+                rel,
+            )
+            continue
+
+        try:
+            rendered = env.from_string(template_text).render(workspace=workspace)
+        except jinja2.TemplateError as exc:
+            _logger.warning("Failed to render %s: %s — skipping", entry.src, exc)
+            continue
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(dest, rendered)
+        written.append(dest)
+        _logger.info("Rendered %s -> %s", entry.src, rel)
+
+    return written
 
 
 def _copy_hooks(workspace: Workspace) -> None:

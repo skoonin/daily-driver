@@ -267,3 +267,58 @@ def test_fix_resolves_workspace_drift(
 
     drift_after = next(r for r in post_fix if r.name == "Workspace drift")
     assert drift_after.status == "OK"
+
+
+# ---------------------------------------------------------------------------
+# 7. README.md is package-managed: preserved on fix, overwritten on reset
+# ---------------------------------------------------------------------------
+
+
+def test_fix_preserves_user_edited_readme(tmp_path: Path) -> None:
+    """doctor --fix must not overwrite README.md when the user has edited it."""
+    from daily_driver.core import generate as gen_mod
+
+    ws = _FakeWorkspace.make(tmp_path)
+
+    # First generate writes README.md and records its SHA.
+    gen_mod.generate(ws, ignore_drift=True, force_overwrite=True)
+    readme = ws.root / "README.md"
+    assert readme.exists()
+
+    # Simulate user edit.
+    readme.write_text("# My custom README\n\nI edited this.\n", encoding="utf-8")
+
+    # Drift stamp so fix() triggers regenerate.
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    # fix() calls generate with force_overwrite=False — user edit must survive.
+    from daily_driver.core.doctor import fix, run_checks
+
+    results = run_checks(ws)  # type: ignore[arg-type]
+    fix(results, ws)  # type: ignore[arg-type]
+
+    assert (
+        readme.read_text(encoding="utf-8") == "# My custom README\n\nI edited this.\n"
+    )
+
+
+def test_reset_overwrites_user_edited_readme(tmp_path: Path) -> None:
+    """doctor --reset must overwrite README.md even when the user has edited it."""
+    from daily_driver.core import generate as gen_mod
+    from daily_driver.core.doctor import reset
+
+    ws = _FakeWorkspace.make(tmp_path)
+
+    gen_mod.generate(ws, ignore_drift=True, force_overwrite=True)
+    readme = ws.root / "README.md"
+    original_content = readme.read_text(encoding="utf-8")
+
+    # Simulate user edit.
+    readme.write_text("# custom\n", encoding="utf-8")
+
+    reset(ws)  # type: ignore[arg-type]
+
+    restored = readme.read_text(encoding="utf-8")
+    assert (
+        restored == original_content
+    ), "reset must restore README.md to package content"
