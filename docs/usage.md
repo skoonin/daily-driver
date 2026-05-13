@@ -1,46 +1,11 @@
 # Using Daily Driver
 
-This is the end-user guide. It walks through what Daily Driver does, the
-mental model behind the workspace, a first-day flow, and reference tables
-for each major surface (tracker, focus, jobs, day-cycle launchers,
-scheduler, help). For installation see [install.md](install.md). For
-configuration syntax see [configuration.md](configuration.md). For
+End-to-end guide to the daily flow plus the surfaces you'll touch most
+often: tracker, focus, jobs, day-cycle launchers, summary, voice, and
+scheduler. For the mental model and workspace layout, start with
+[concepts.md](concepts.md). For installation see [install.md](install.md).
+For configuration syntax see [configuration.md](configuration.md). For
 exhaustive per-flag detail see [commands.md](commands.md).
-
-## What it does
-
-Daily Driver keeps the durable record of your day on disk (tracker,
-plans, notes, job search) and hands a `claude` session the context it
-needs to help you plan, check in, and wind down. The program owns the
-data. Claude is the conversation layer.
-
-You drive it from one CLI: `daily-driver`. Everything else lives in a
-workspace directory you scaffold once.
-
-## Mental model
-
-```
-workspace/                 your data
-├── .dd-config.yaml        what daily-driver knows about you
-├── context.md             biographical context for claude
-├── voice-profile.md       writing-style profile for claude
-├── tracker.yaml           anything you follow up on
-├── jobs.csv               job-search rows (if you use the jobs plugin)
-├── 2026/05/11/            today's plan + notes (created on demand)
-└── .claude/, .daily-driver/  managed by daily-driver; mostly leave alone
-```
-
-| Surface | What it does | Commands |
-|---|---|---|
-| **Workspace** | Holds your data. One per machine, typically. | `init`, `doctor`, `paths` |
-| **Tracker** | YAML store for tasks, jobs, errands, contacts, anything. | `tracker {add,list,update,show,delete,prune,stats,follow-ups}` |
-| **Focus** | File-lock toggle that suppresses scheduled check-ins. | `focus {on,off,status}` |
-| **Day cycle** | Interactive `claude` sessions for morning / mid-day / evening. | `day-start`, `check-in`, `day-end` |
-| **Jobs** | Multi-board scraper plus AI enrichment for `jobs.csv`. | `jobs {run,status,prune}` |
-| **Summary** | Headless period summary copied to clipboard. | `summary -r SPEC` |
-| **Voice** | Rewrite `voice-profile.md` from real writing samples. | `voice-update --from PATH` |
-| **Scheduler** | macOS launchd plists for unattended runs. | `scheduler {install,uninstall,status}` |
-| **Help** | Built-in reference for discoverable values. | `help [TOPIC]` |
 
 ## First day
 
@@ -409,6 +374,31 @@ unloads, rewrites, and reloads in one step.
 
 Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
 
+## Output and verbosity
+
+Daily Driver writes data on stdout and status messages on stderr. Tables, JSON payloads, and resolved paths go to stdout; informational lines, warnings, and log output go to stderr. That split is what lets these pipelines work without ceremony:
+
+```bash
+daily-driver tracker list -s open -j | jq '.[].title'
+daily-driver paths daily-plan | xargs $EDITOR
+daily-driver summary -r week -j > /tmp/week.json
+```
+
+The status banners ("Starting jobs run...", "Scrape complete: ...") still print to your terminal because they are on stderr — they do not contaminate the piped data.
+
+Verbosity is controlled by two mutually exclusive flags:
+
+| Flag | Effect |
+|---|---|
+| (default) | WARNING and ERROR logs; normal status lines |
+| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts) |
+| `-vv` | Adds DEBUG logs (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
+| `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and warnings-as-status |
+
+Use `-v` for "tell me what just happened" — e.g. why a `jobs run` produced few rows, or which calendar window `gather calendar` resolved. Use `-vv` when chasing a specific data bug: ollama returning malformed JSON, enrichment writing fewer fields than expected, or a tracker entry that vanished from a filter.
+
+`--no-color` disables ANSI color but keeps Rich markup and table layout intact, which is what you want when piping output through a pager or redirecting to a file that another tool will read.
+
 ## Troubleshooting
 
 The full guide is [troubleshooting.md](troubleshooting.md). Quick map:
@@ -423,9 +413,9 @@ The full guide is [troubleshooting.md](troubleshooting.md). Quick map:
 
 ## Reference
 
+- [concepts.md](concepts.md) — mental model and workspace overview
 - [commands.md](commands.md) — per-subcommand flag detail
-- [configuration.md](configuration.md) — `.dd-config.yaml` schema
+- [configuration.md](configuration.md) — `.dd-config.yaml` schema and customization
 - [cli-tree.md](cli-tree.md) — at-a-glance command tree
 - [ollama-setup.md](ollama-setup.md) — local-LLM provider
-- [customization.md](customization.md) — overriding shipped commands / agents
 - [troubleshooting.md](troubleshooting.md) — failure modes and recovery

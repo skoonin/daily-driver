@@ -1,6 +1,6 @@
 # Contributing to Daily Driver
 
-Daily Driver is v0.1.0 alpha; internal surface is churning. Dev workflow below is stable. All docs live under `docs/` — see [docs/developer.md](docs/developer.md) for architecture, [docs/extending.md](docs/extending.md) for subcommand/scraper recipes, and [docs/releasing.md](docs/releasing.md) for releases.
+Daily Driver is v0.1.0 alpha; internal surface is churning. Dev workflow below is stable. All docs live under `docs/` — see [docs/dev/developer.md](docs/dev/developer.md) for architecture, [docs/dev/extending.md](docs/dev/extending.md) for subcommand/scraper recipes, and [docs/dev/releasing.md](docs/dev/releasing.md) for releases.
 
 ## Setup
 

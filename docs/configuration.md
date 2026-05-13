@@ -176,7 +176,7 @@ Freeform dict passed to the Jinja launchd plist templates. Times are local wall-
 
 ### `sources`
 
-Freeform dict. Each key is a source identifier; values are passed to the scraper adapter. Marking a source with `type: playwright` routes it to the serial Playwright phase. See [extending.md](extending.md) for adapter details.
+Freeform dict. Each key is a source identifier; values are passed to the scraper adapter. Marking a source with `type: playwright` routes it to the serial Playwright phase. See [dev/extending.md](dev/extending.md) for adapter details.
 
 ## Example
 
@@ -236,8 +236,63 @@ plugins:
         pages: 3
 ```
 
+## Customization
+
+### `.claude/` ownership
+
+Generation only touches three paths. Everything else is yours.
+
+| Path | Owner | Behavior on generate |
+| --- | --- | --- |
+| `.claude/commands/daily-driver/` | Daily Driver | Wiped and recopied from package |
+| `.claude/agents/daily-driver/` | Daily Driver | Wiped and recopied from package |
+| `.claude/settings.local.json` | Daily Driver + user merge | Re-rendered from template; user-added top-level keys preserved |
+| `.claude/commands/*.md` (top level, outside `daily-driver/`) | You | Untouched |
+| `.claude/agents/*.md` (top level, outside `daily-driver/`) | You | Untouched |
+| Anything else under `.claude/` | You | Untouched |
+
+User edits to files under `.claude/*/daily-driver/` are detected via SHA-256 manifest and preserved by `doctor --fix` on version drift. `doctor --reset` force-overwrites managed files regardless of edits.
+
+### Custom Claude commands
+
+Place a markdown file at `.claude/commands/my-command.md` (any path outside `daily-driver/`). Invoke with `/my-command` inside any `claude` session launched with `--add-dir <workspace>`.
+
+### Custom Claude agents
+
+Place a markdown file at `.claude/agents/my-reviewer.md`. Invoke with `claude --agent my-reviewer ...`.
+
+### Override a shipped command
+
+Do not edit a file under `.claude/commands/daily-driver/` — your edit will survive `--fix` but be lost on `--reset`. Instead, copy the file up one level:
+
+```bash
+cp .claude/commands/daily-driver/day-start.md .claude/commands/day-start.md
+```
+
+Edit the top-level copy. Claude Code resolves top-level before namespaced, so your version wins.
+
+### Custom tracker categories
+
+Categories are config-driven; no code changes needed. Edit `.dd-config.yaml`:
+
+```yaml
+tracker:
+  default_category: task
+  categories:
+    task:    {required: [title]}
+    ticket:  {required: [title]}
+    contact: {required: [title]}
+```
+
+Any fields passed via `tracker add --extra key=value` land in the entry's `extras:` block without schema changes.
+
+### Context and voice profile
+
+`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. They are injected into Claude sessions launched by `day-start`, `check-in`, `day-end`, and `summary`. `voice-update --from PATH` rewrites `voice-profile.md` from writing samples via headless `claude`.
+
 ## See also
 
 - [usage.md](usage.md) — the daily flow that exercises these settings.
 - [ollama-setup.md](ollama-setup.md) — local-LLM provider walkthrough.
 - [commands.md](commands.md) — subcommand flag reference.
+- [dev/extending.md](dev/extending.md) — adding scraper sources or new subcommands.

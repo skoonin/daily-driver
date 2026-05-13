@@ -2,6 +2,23 @@
 
 > See also: [usage.md](usage.md) for the day-to-day flow.
 
+## Start with `-v` or `-vv`
+
+Most "why did it do that?" questions answer themselves with a more verbose re-run. Verbose output goes to stderr, so it does not corrupt piped data.
+
+```bash
+daily-driver jobs run -v               # INFO: per-source progress, enrichment counts
+daily-driver jobs run --backfill -vv   # DEBUG: per-job prompts, AI responses, write decisions
+daily-driver gather calendar -vv       # DEBUG: resolved since/until window
+```
+
+Read these lines first when filing a bug or before deeper digging:
+
+- `-v` is enough to see which scraper produced zero rows, how many jobs were filtered by location, how many were eligible for enrichment, and the final `done: X enriched, Y failed, Z skipped` line.
+- `-vv` adds the prompt sent to the AI provider, the raw response, the parsed values, and whether each field was actually written (`wrote_fit=true/false`). This is the layer to use when ollama enrichment "succeeds" but the column stays empty.
+
+If a script that consumes Daily Driver output starts misbehaving, run it without `-q` first — quiet mode hides warnings that often explain the issue (e.g. config drift, unknown statuses).
+
 ## `doctor` reports ERROR
 
 Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`,
@@ -95,7 +112,7 @@ python3 -m site --user-base
 
 ## Pydantic import error
 
-```
+```text
 ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
 ```
 

@@ -8,10 +8,21 @@
 
 | Flag | Purpose |
 |------|---------|
-| `-v`, `--verbose` | Increase logging detail (`-v` = INFO, `-vv` = DEBUG) |
+| `-v`, `--verbose` | Increase logging detail (`-v` = INFO, `-vv` = DEBUG). Repeatable, mutually exclusive with `-q` |
 | `-q`, `--quiet` | Errors only (suppresses non-error status/log output) |
-| `--no-color` | Disable Rich color |
+| `--no-color` | Disable Rich color (markup and highlighting stay on) |
 | `-w`, `--workspace PATH` | Override CWD-upward workspace discovery |
+
+### Output streams
+
+Daily Driver splits output across two streams:
+
+- **stdout** — data payloads only (tables, JSON, `paths` output, summary text). Safe to pipe into `jq`, `grep`, `pbcopy`, or a file.
+- **stderr** — every status line, warning, and error, plus all log output (INFO/DEBUG when `-v`/`-vv` is set).
+
+This means `daily-driver tracker list -j | jq` and `daily-driver paths daily-plan | xargs $EDITOR` work cleanly while status messages still print to your terminal. Add `2>/dev/null` if you want to silence stderr in scripts, or use `-q` to suppress non-error chatter at the source.
+
+`-q` and `-v` apply to both the program's own status lines and to Python logger output; the two are aligned so a single flag controls verbosity end-to-end.
 
 ## Short flags
 
@@ -20,7 +31,7 @@ Short flags follow Unix conventions and are scoped per-subcommand. The mapping b
 Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--force` on `init`), `-v`/`-q` (verbosity).
 
 | Subcommand | Long flag | Short |
-|---|---|---|
+| --- | --- | --- |
 | (global) | `--workspace` | `-w` |
 | `init` | `--force` | `-f` |
 | `tracker add` | `--category` | `-c` |
@@ -93,7 +104,7 @@ Statuses are free-form, but `tracker add` / `tracker update` print a one-line st
 ### `tracker add --category CAT --title TEXT [flags]`
 
 | Flag | Description |
-|------|-------------|
+| --- | --- |
 | `--status STATUS` | Initial status |
 | `--tags a,b` | Comma-separated tags |
 | `--link URL` | Related URL |
@@ -149,7 +160,7 @@ daily-driver focus off
 Spawn a nested `claude` session with the `work-planner` agent, the workspace as `--add-dir`, and a timestamped session name. Each invokes a slash command:
 
 | Command | Slash command |
-|---------|---------------|
+| --- | --- |
 | `day-start` | `/day-start` |
 | `check-in` | `/check-in` |
 | `day-end` | `/day-end` |
@@ -163,7 +174,7 @@ Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--sessio
 These ship to the workspace `.claude/commands/daily-driver/` tree but are not exposed as CLI launchers — invoke them inside an existing Claude session.
 
 | Slash command | Purpose |
-|---------------|---------|
+| --- | --- |
 | `/daily-learning` | 5-10 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. Renamed from `/interview-prep`. |
 
 ## Headless Claude commands
@@ -173,7 +184,7 @@ These ship to the workspace `.claude/commands/daily-driver/` tree but are not ex
 Generates a period summary non-interactively and copies to clipboard.
 
 | Flag | Notes |
-|------|-------|
+| --- | --- |
 | `--range SPEC` | Required. `today`, `yesterday`, `week`, `month`, `YYYY-MM-DD`, or `YYYY-MM-DD:YYYY-MM-DD` |
 | `--detail low\|med\|high` | Verbosity |
 | `--match KW` | Repeatable keyword filter |
@@ -186,7 +197,7 @@ Generates a period summary non-interactively and copies to clipboard.
 Rewrites `voice-profile.md` from writing samples via headless `claude`.
 
 | Flag | Notes |
-|------|-------|
+| --- | --- |
 | `--from PATH` | Required; repeatable; files or directories |
 | `--append` / `--replace` | Default `--append` |
 | `-n`, `--dry-run` | Print diff only |

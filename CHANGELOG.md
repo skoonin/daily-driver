@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — docs restructured into Diataxis quadrants
+
+- **New `docs/README.md` navigation index** with user vs. developer
+  audience split and recommended reading order.
+- **New `docs/concepts.md`** holds the mental model, workspace layout,
+  and design decisions previously buried mid-`usage.md`. `usage.md` now
+  starts at the daily-flow walkthrough and lists the surfaces it owns.
+- **`docs/customization.md` merged into `docs/configuration.md`** as a
+  new `## Customization` section (`.claude/` ownership, custom commands
+  and agents, shipped-command overrides, tracker categories, context
+  and voice profile). `customization.md` deleted.
+- **Developer docs moved to `docs/dev/`**: `developer.md`,
+  `extending.md`, `releasing.md`, plus a `dev/README.md` index. All
+  cross-references in `README.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+  `docs/configuration.md`, `docs/quick-start.md`, and `docs/usage.md`
+  updated accordingly.
+- **`docs/cli-tree.md` intro clarified** as orientation-only reference.
+
 ### Fixed — backfill counter accuracy and visibility
 
 - **Backfill eligibility counters now exclude `status=skipped` rows.**

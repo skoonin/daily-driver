@@ -122,6 +122,13 @@ ollama — no extra noise for the default claude path.
 
 ## Troubleshooting
 
+- **Start with `-vv`.** Per-job enrichment traces (prompt sent, raw response, parsed fit/notes, whether each field was actually written) are at DEBUG level. Re-run with `-vv` when a backfill "succeeds" but cells stay empty:
+
+  ```bash
+  daily-driver jobs run --backfill -vv 2>&1 | tee /tmp/backfill.log
+  ```
+
+  Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or where the model returned an empty string. `-v` alone gives the startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
 - **`connection refused on 11434`** — `ollama serve` not running.
 - **First request is slow** — Ollama loads the model into RAM on demand.
   Subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep the model

@@ -1,8 +1,9 @@
 # daily-driver CLI tree
 
-Snapshot of the v0.1.x command surface, generated 2026-05-11 from
-`source/daily_driver/cli/`. For prose explanations see
-[commands.md](commands.md); for the daily flow see [usage.md](usage.md).
+Orientation reference only — use this to find a flag name at a glance.
+For non-obvious flag behavior see [commands.md](commands.md); for the
+daily flow and worked examples see [usage.md](usage.md); for the full
+docs index see [README.md](README.md).
 
 Global flags (registered via `cli/_common.py:add_global_flags(parser)`, called
 at the END of the top-level parser and every leaf so they render under a
