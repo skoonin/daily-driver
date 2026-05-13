@@ -34,9 +34,9 @@ _logger = get_logger("generate")
 class GenerationResult:
     """Counts surfaced after a successful generate() run.
 
-    n_written counts package-managed .md files written this run (commands +
-    agents). n_preserved counts files skipped because the SHA-256 manifest
-    detected user edits.
+    n_written counts all package-managed files written this run (commands,
+    agents, and contract-entry templates such as README.md). n_preserved counts
+    files skipped because the SHA-256 manifest detected user edits.
     """
 
     n_written: int
@@ -247,7 +247,8 @@ def generate(
 
         n_preserved = len(cmd_skipped) + len(agent_skipped)
         return GenerationResult(
-            n_written=n_commands + n_agents, n_preserved=n_preserved
+            n_written=n_commands + n_agents + len(entry_paths),
+            n_preserved=n_preserved,
         )
 
 
@@ -290,6 +291,7 @@ def _render_contract_entries(
     Returns the list of paths that were written (skipped files are excluded).
     User-edited files are preserved unless force_overwrite=True.
     """
+    import jinja2
     from jinja2 import Environment, StrictUndefined
 
     env = Environment(undefined=StrictUndefined)
@@ -330,7 +332,7 @@ def _render_contract_entries(
 
         try:
             rendered = env.from_string(template_text).render(workspace=workspace)
-        except Exception as exc:
+        except jinja2.TemplateError as exc:
             _logger.warning("Failed to render %s: %s — skipping", entry.src, exc)
             continue
 

@@ -532,7 +532,7 @@ def test_ignore_drift_true_force_overwrite_false_preserves_edits(
 # ---------------------------------------------------------------------------
 
 
-def test_workspace_readme_written_on_init(tmp_path: Path) -> None:
+def test_workspace_readme_manifest_recorded(tmp_path: Path) -> None:
     """generate() must write README.md to workspace root and record its SHA."""
     from daily_driver.core import manifest as _manifest
 
