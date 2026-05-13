@@ -463,18 +463,20 @@ def _search_terms(config: dict) -> list[str]:
     return _compress_search_terms(roles_list(config))
 
 
-def _non_headless_sources(config: dict) -> frozenset[str]:
-    """Derive the set of sources that require a visible browser from config.
+# Sources that require a full (non-headless) browser. SourceToggle has
+# extra="forbid" so a config-based `type: playwright` key is rejected by
+# pydantic — browser classification must live in code, not config.
+_PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
-    A source entry with type: playwright in job_search.scraper.sources signals
-    that it must run in non-headless mode. Plain bool entries default to headless.
+
+def _non_headless_sources(config: dict) -> frozenset[str]:  # noqa: ARG001
+    """Return the set of sources that must run in a visible (non-headless) browser.
+
+    Uses the code-level _PLAYWRIGHT_SOURCES registry. SourceToggle's
+    extra="forbid" prevents config-based type annotations, so this is the
+    only reliable classification path.
     """
-    sources = scraper_cfg(config).sources
-    return frozenset(
-        sid
-        for sid, entry in sources.items()
-        if isinstance(entry, dict) and entry.get("type") == "playwright"
-    )
+    return _PLAYWRIGHT_SOURCES
 
 
 def _config_with_headless(config: dict, headless: bool) -> dict:
@@ -1011,6 +1013,7 @@ __all__ = [
     "matches_roles",
     "_compress_search_terms",
     "_search_terms",
+    "_PLAYWRIGHT_SOURCES",
     "_non_headless_sources",
     "_config_with_headless",
     "_run_one",
