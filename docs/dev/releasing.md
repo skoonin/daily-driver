@@ -45,7 +45,7 @@ The tag message body is the changelog section for this release.
 make release-push
 ```
 
-Pushes commit + tag to origin. `release.yml` CI fires on `v*` tag push, builds wheel + sdist on macOS-latest, attaches them to a GitHub Release with auto-generated notes. Releases are marked pre-release automatically when the tag contains `dev`, `rc`, `alpha`, or `beta`.
+Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push, builds wheel + sdist on macOS-latest, attaches them to a GitHub Release with auto-generated notes. Releases are marked pre-release automatically when the tag contains `dev`, `rc`, `alpha`, or `beta`.
 
 ## Semver
 
