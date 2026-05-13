@@ -77,7 +77,9 @@ def test_registry_is_explicit_not_dynamic() -> None:
         "hn_who_is_hiring",
         "hn_jobs",
         "greenhouse",
-        "jobspy",
+        "jobspy_linkedin",
+        "jobspy_indeed",
+        "jobspy_google",
         "apple",
     }
     assert set(SOURCE_REGISTRY.keys()) == expected_sources

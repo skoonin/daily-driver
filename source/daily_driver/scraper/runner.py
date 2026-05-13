@@ -570,6 +570,12 @@ def run_all_scrapers(
     else:
 
         def _is_enabled(sid: str) -> bool:
+            if sid.startswith("jobspy_"):
+                site = sid[len("jobspy_") :]
+                toggle = source_cfg.get("jobspy")
+                if toggle is None or not toggle.enabled:
+                    return False
+                return getattr(toggle, site, True)
             toggle = source_cfg.get(sid)
             return toggle.enabled if toggle is not None else False
 

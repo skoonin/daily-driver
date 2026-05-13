@@ -12,7 +12,11 @@ from .apple import scrape_apple
 from .greenhouse import scrape_greenhouse
 from .hn_jobs import scrape_hn_jobs
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
-from .jobspy import scrape_jobspy
+from .jobspy import (
+    scrape_jobspy_google,
+    scrape_jobspy_indeed,
+    scrape_jobspy_linkedin,
+)
 from .remoteok import scrape_remoteok
 from .weworkremotely import scrape_weworkremotely
 
@@ -25,7 +29,9 @@ SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
     "hn_jobs": scrape_hn_jobs,
     "greenhouse": scrape_greenhouse,
-    "jobspy": scrape_jobspy,
+    "jobspy_linkedin": scrape_jobspy_linkedin,
+    "jobspy_indeed": scrape_jobspy_indeed,
+    "jobspy_google": scrape_jobspy_google,
     "apple": scrape_apple,
 }
 

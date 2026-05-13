@@ -174,11 +174,13 @@ tracker:
 #         # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #         apple: false                     # jobs.apple.com (API intercept)
 #
-#         # python-jobspy aggregator (one toggle, multiple upstream sites;
-#         # requires `python-jobspy>=1.1.82`). Internally fetches linkedin +
-#         # indeed + google with linkedin_fetch_description=True. Glassdoor
-#         # is intentionally disabled in code — JobSpy's Glassdoor path
-#         # returns HTTP 400 ("location not parsed") on every request as of
-#         # 2026-04. Disable this only if you don't want LinkedIn/Indeed/
-#         # Google coverage; there is no other scraper for those sites.
-#         jobspy: false                    # linkedin + indeed + google
+#         # python-jobspy aggregator. Each site runs as a separate parallel
+#         # scraper (requires `python-jobspy>=1.1.82`, fetched with
+#         # linkedin_fetch_description=True). Glassdoor is intentionally
+#         # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
+#         # not parsed") on every request as of 2026-04.
+#         jobspy:
+#           enabled: true
+#           linkedin: true
+#           indeed: true
+#           google: true

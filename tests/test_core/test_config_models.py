@@ -320,6 +320,37 @@ def test_scraper_config_sources_typed_form():
     assert m.sources["linkedin"].enabled is True
 
 
+def test_jobspy_toggle_per_site_flags():
+    """jobspy entry coerces to JobspyToggle with per-site bool flags."""
+    from daily_driver.core.config_models import JobspyToggle
+
+    m = ScraperConfig(
+        sources={
+            "jobspy": {
+                "enabled": True,
+                "linkedin": False,
+                "indeed": True,
+                "google": True,
+            }
+        }
+    )
+    toggle = m.sources["jobspy"]
+    assert isinstance(toggle, JobspyToggle)
+    assert toggle.enabled is True
+    assert toggle.linkedin is False
+    assert toggle.indeed is True
+    assert toggle.google is True
+
+
+def test_jobspy_toggle_legacy_bool_coerced():
+    from daily_driver.core.config_models import JobspyToggle
+
+    m = ScraperConfig(sources={"jobspy": False})
+    assert isinstance(m.sources["jobspy"], JobspyToggle)
+    assert m.sources["jobspy"].enabled is False
+    assert m.sources["jobspy"].linkedin is True
+
+
 def test_scraper_config_playwright_delays_typed():
     from daily_driver.core.config_models import PlaywrightDelays
 
