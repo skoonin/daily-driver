@@ -25,21 +25,21 @@ log = logging.getLogger(__name__)
 
 CANONICAL_HEADER = [
     "Status",
-    "Notes",
     "Company",
-    "Location",
     "Role",
     "Fit",
     "Comp",
+    "Location",
+    "Product/Purpose",
+    "GD Rating",
+    "Notes",
     "Date Found",
+    "Date Applied",
     # Date Last Seen drives `jobs prune --older-than`. Today scraper
     # only sets it on insert (defaults to Date Found); the upsert-on-rescan
     # path is owned by W5/W6 — until then prune ages from first-discovery.
     "Date Last Seen",
-    "Date Applied",
     "Link",
-    "Product/Purpose",
-    "GD Rating",
     "Source",
 ]
 
@@ -371,8 +371,8 @@ def backfill(config: dict, csv_path: Path) -> None:
         log.info("[backfill] backed up to %s", backup.name)
 
         try:
-            enrich_company_descriptions(jobs, config, budget=sys.maxsize)
-            enrich_fit_and_notes(jobs, config, budget=sys.maxsize)
+            enrich_company_descriptions(jobs, config, budget=0)
+            enrich_fit_and_notes(jobs, config, budget=0)
         except KeyboardInterrupt:
             try:
                 _rewrite_jobs_csv(csv_path, header, jobs)
