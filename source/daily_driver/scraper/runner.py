@@ -465,18 +465,8 @@ def _search_terms(config: dict) -> list[str]:
 
 # Sources that require a full (non-headless) browser. SourceToggle has
 # extra="forbid" so a config-based `type: playwright` key is rejected by
-# pydantic — browser classification must live in code, not config.
+# pydantic -- browser classification must live in code, not config.
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
-
-
-def _non_headless_sources(config: dict) -> frozenset[str]:  # noqa: ARG001
-    """Return the set of sources that must run in a visible (non-headless) browser.
-
-    Uses the code-level _PLAYWRIGHT_SOURCES registry. SourceToggle's
-    extra="forbid" prevents config-based type annotations, so this is the
-    only reliable classification path.
-    """
-    return _PLAYWRIGHT_SOURCES
 
 
 def _config_with_headless(config: dict, headless: bool) -> dict:
@@ -589,7 +579,7 @@ def run_all_scrapers(
     for sid in disabled:
         log.info("[%s] disabled in config, skipping", sid)
 
-    non_headless = _non_headless_sources(config)
+    non_headless = _PLAYWRIGHT_SOURCES
     headless_sources = [sid for sid in enabled if sid not in non_headless]
     visible_sources = [sid for sid in enabled if sid in non_headless]
 
@@ -1014,7 +1004,6 @@ __all__ = [
     "_compress_search_terms",
     "_search_terms",
     "_PLAYWRIGHT_SOURCES",
-    "_non_headless_sources",
     "_config_with_headless",
     "_run_one",
     "_merge_and_dedup",

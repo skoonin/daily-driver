@@ -94,11 +94,11 @@ def test_run_all_scrapers_phase2_summary_lists_source_names(
     assert "apple" in phase2[0], f"expected `apple` in phase2 summary, got: {phase2[0]}"
 
 
-def test_non_headless_sources_includes_apple() -> None:
-    """apple is always classified as non-headless regardless of config."""
-    from daily_driver.scraper.runner import _non_headless_sources
+def test_apple_is_classified_as_playwright_source() -> None:
+    """apple is always classified as non-headless via the code-level registry."""
+    from daily_driver.scraper.runner import _PLAYWRIGHT_SOURCES
 
-    assert "apple" in _non_headless_sources({})
+    assert "apple" in _PLAYWRIGHT_SOURCES
 
 
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
