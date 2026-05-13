@@ -85,12 +85,6 @@ def test_run_all_scrapers_phase2_summary_lists_source_names(
 
     fake = lambda _cfg: []  # noqa: E731
     monkeypatch.setattr(runner, "SCRAPERS", {"apple": fake})
-    # Bypass schema-checked classification of non-headless sources; the
-    # SourceToggle model rejects extra `type` keys, but the orchestration
-    # logic only cares about the frozenset returned here.
-    monkeypatch.setattr(
-        runner, "_non_headless_sources", lambda _cfg: frozenset({"apple"})
-    )
 
     runner.run_all_scrapers(_cfg_with_sources(["apple"], workers=1))
 
@@ -98,6 +92,13 @@ def test_run_all_scrapers_phase2_summary_lists_source_names(
     phase2 = [m for m in msgs if m.startswith("[phase2]")]
     assert phase2, f"expected a [phase2] summary line, got {msgs}"
     assert "apple" in phase2[0], f"expected `apple` in phase2 summary, got: {phase2[0]}"
+
+
+def test_apple_is_classified_as_playwright_source() -> None:
+    """apple is always classified as non-headless via the code-level registry."""
+    from daily_driver.scraper.runner import _PLAYWRIGHT_SOURCES
+
+    assert "apple" in _PLAYWRIGHT_SOURCES
 
 
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(

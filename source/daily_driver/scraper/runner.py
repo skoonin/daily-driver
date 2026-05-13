@@ -462,18 +462,10 @@ def _search_terms(config: dict) -> list[str]:
     return _compress_search_terms(roles_list(config))
 
 
-def _non_headless_sources(config: dict) -> frozenset[str]:
-    """Derive the set of sources that require a visible browser from config.
-
-    A source entry with type: playwright in job_search.scraper.sources signals
-    that it must run in non-headless mode. Plain bool entries default to headless.
-    """
-    sources = scraper_cfg(config).sources
-    return frozenset(
-        sid
-        for sid, entry in sources.items()
-        if isinstance(entry, dict) and entry.get("type") == "playwright"
-    )
+# Sources that require a full (non-headless) browser. SourceToggle has
+# extra="forbid" so a config-based `type: playwright` key is rejected by
+# pydantic -- browser classification must live in code, not config.
+_PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
 
 def _config_with_headless(config: dict, headless: bool) -> dict:
@@ -557,7 +549,7 @@ def run_all_scrapers(
       Phase 1 — headless-safe sources run in parallel via ThreadPoolExecutor
       Phase 2 — non-headless sources (apple) run serially
 
-    Phase 2 stays serial by design: running multiple visible Chromium windows
+    Phase 2 stays serial by design: running multiple visible Firefox windows
     concurrently is RAM-heavy and makes bot detection easier. Deduplicates by
     both URL and company+role key so the same job appearing on multiple boards
     is only kept once (first scraper wins).
@@ -586,7 +578,7 @@ def run_all_scrapers(
     for sid in disabled:
         log.info("[%s] disabled in config, skipping", sid)
 
-    non_headless = _non_headless_sources(config)
+    non_headless = _PLAYWRIGHT_SOURCES
     headless_sources = [sid for sid in enabled if sid not in non_headless]
     visible_sources = [sid for sid in enabled if sid in non_headless]
 
@@ -985,7 +977,7 @@ __all__ = [
     "matches_roles",
     "_compress_search_terms",
     "_search_terms",
-    "_non_headless_sources",
+    "_PLAYWRIGHT_SOURCES",
     "_config_with_headless",
     "_run_one",
     "_merge_and_dedup",

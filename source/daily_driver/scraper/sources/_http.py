@@ -178,9 +178,9 @@ def _has_playwright() -> bool:
 
 @contextmanager
 def _playwright_browser(config: dict) -> Any:
-    """Yield a Playwright Page with non-headless Chromium and realistic settings.
+    """Yield a Playwright Page with non-headless Firefox and realistic settings.
 
-    Non-headless by default — avoids most bot-detection heuristics on LinkedIn,
+    Non-headless by default -- avoids most bot-detection heuristics on LinkedIn,
     Indeed, and Wellfound without requiring a logged-in session.
     Set job_search.scraper.headless: true in config to run headless.
     """
@@ -188,7 +188,7 @@ def _playwright_browser(config: dict) -> Any:
 
     if not _has_playwright():
         raise ImportError(
-            "playwright not installed — reinstall daily-driver and run: playwright install chromium"
+            "playwright not installed -- reinstall daily-driver and run: playwright install firefox"
         )
 
     from playwright.sync_api import Error as PWError
@@ -199,10 +199,10 @@ def _playwright_browser(config: dict) -> Any:
 
     with sync_playwright() as pw:
         try:
-            browser = pw.chromium.launch(headless=headless)
+            browser = pw.firefox.launch(headless=headless)
         except (PWError, OSError) as exc:
             log.error(
-                "browser launch failed (run: playwright install chromium): %s", exc
+                "browser launch failed (run: playwright install firefox): %s", exc
             )
             raise
         ctx = browser.new_context(

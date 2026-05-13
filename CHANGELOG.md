@@ -35,6 +35,16 @@ log`. Versioned release history starts at 1.0.
 
 ### Jobs scraper
 
+- **Fix: Apple scraper now runs in non-headless mode.** `_non_headless_sources`
+  previously relied on a `type: playwright` config key that `SourceToggle`
+  (`extra="forbid"`) silently rejects, so Apple always fell into the headless
+  phase and crashed on macOS with a Mach port error. Classification now uses
+  the code-level `_PLAYWRIGHT_SOURCES` constant.
+- **Playwright browser switched from Chromium to Firefox.** `playwright install
+  firefox` is now required for the Apple scraper. Default `user_agent` updated
+  to a Firefox/128 UA to match. Validated parity: 120 jobs / 115s (Firefox) vs
+  121 jobs / 114.5s (Chromium).
+
 - **Shared `.jobs.lock`** serializes `jobs run` / `jobs prune` / `jobs run
   --backfill` mutations on `jobs.csv`.
 - **Ctrl-C during `--backfill` flushes partial progress** and names the
