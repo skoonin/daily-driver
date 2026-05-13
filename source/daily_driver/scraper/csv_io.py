@@ -342,14 +342,18 @@ def backfill(config: dict, csv_path: Path) -> None:
 
         jobs = [_row_to_dict(r) for r in rows]
 
-        needs_product = sum(1 for j in jobs if not j.get("product"))
-        needs_fit = sum(1 for j in jobs if not j.get("fit"))
-        needs_gd = sum(1 for j in jobs if not j.get("gd_rating"))
-        needs_notes = sum(1 for j in jobs if not j.get("notes"))
+        active = [j for j in jobs if j.get("status") != "skipped"]
+        needs_product = sum(1 for j in active if not j.get("product"))
+        needs_fit = sum(1 for j in active if not j.get("fit"))
+        needs_gd = sum(1 for j in active if not j.get("gd_rating"))
+        needs_notes = sum(1 for j in active if not j.get("notes"))
+        skipped_count = len(jobs) - len(active)
 
         log.info(
-            "[backfill] %d rows: %d need Product, %d need GD, %d need Fit, %d need Notes",
+            "[backfill] %d rows (%d skipped excluded): "
+            "%d need Product, %d need GD, %d need Fit, %d need Notes",
             len(jobs),
+            skipped_count,
             needs_product,
             needs_gd,
             needs_fit,
@@ -390,11 +394,13 @@ def backfill(config: dict, csv_path: Path) -> None:
 
         _rewrite_jobs_csv(csv_path, header, jobs)
 
-    filled_product = needs_product - sum(1 for j in jobs if not j.get("product"))
-    filled_fit = needs_fit - sum(1 for j in jobs if not j.get("fit"))
-    filled_gd = needs_gd - sum(1 for j in jobs if not j.get("gd_rating"))
+    filled_product = needs_product - sum(1 for j in active if not j.get("product"))
+    filled_fit = needs_fit - sum(1 for j in active if not j.get("fit"))
+    filled_gd = needs_gd - sum(1 for j in active if not j.get("gd_rating"))
+    filled_notes = needs_notes - sum(1 for j in active if not j.get("notes"))
     print(
-        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, +{filled_fit} Fit"
+        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
+        f"+{filled_fit} Fit, +{filled_notes} Notes"
     )
 
 

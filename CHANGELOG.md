@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — backfill counter accuracy and visibility
+
+- **Backfill eligibility counters now exclude `status=skipped` rows.**
+  `csv_io.backfill` previously reported "N need Fit" against all rows
+  including skipped ones, which are filtered out by enrichment. The
+  startup INFO line now mirrors the enrichment filter and also reports
+  the skipped-excluded count: `N rows (S skipped excluded): ...`.
+- **`Backfill complete` line now reports `+N Notes`.** Previously
+  surfaced only Product/GD/Fit deltas, hiding any notes work.
+- **`enrich-fit-notes` now logs a startup and end-of-pass INFO line.**
+  Mirrors the companies path: `enriching up to N jobs (M eligible,
+  parallel=K)` and a final `done: X enriched, Y failed, Z skipped`
+  so silent ollama failures and no-op writes are visible.
+- **Backfill-from-CSV no-description case is now explicit.** When
+  eligible rows lack `description_text` (the column isn't persisted
+  to `jobs.csv`), an INFO line warns that the LLM will return empty
+  notes by prompt design — explaining why such rows can yield
+  `+0 Notes` despite the call succeeding.
+- **DEBUG (`-vv`) traces per-job enrichment.** Logs prompt, raw
+  AI response, parsed result, and pre/post field state with explicit
+  `wrote_fit` / `wrote_notes` flags. Failure path also logs at DEBUG
+  instead of being silent.
+
 ### Changed — two-stream console output + repeatable verbosity
 
 - **Centralized stderr/stdout routing via `core.console.Console`.** All
