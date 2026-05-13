@@ -13,11 +13,11 @@ jobs:
     name: Build and attach to GitHub Release
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: "3.11"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: "3.12"
       - name: Run test suite before release build
@@ -38,7 +38,7 @@ jobs:
           daily-driver --workspace /tmp/dd-release-ws doctor
           test -d /tmp/dd-release-ws/.claude/commands/daily-driver
       - name: Create GitHub Release and attach artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
         with:
           files: |
             dist/*.whl
