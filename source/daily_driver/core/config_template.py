@@ -336,7 +336,6 @@ def _render_keyed_value(
         out = [f"{indent}{name}:"]
         if all(not isinstance(v, (dict, list)) for v in value):
             for item in value:
-                quote = isinstance(item, str) and any(ch not in _BARE_OK for ch in item)
                 # Force-quote example block-list scalars to match the original
                 # template style for `search_paths: ["~/git"]`.
                 out.append(f"{indent}  - {_format_scalar(item, force_quote=True)}")

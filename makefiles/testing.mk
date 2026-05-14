@@ -35,8 +35,9 @@ config-template: ## Regenerate .dd-config.yaml.j2 from config_models.py
 
 .PHONY: check-config-template
 check-config-template: ## Verify template matches what codegen would produce
-	@PYTHONPATH=source $(PYTHON) -m daily_driver.core.config_template > /tmp/config-template-fresh.j2
-	@diff -u source/daily_driver/templates/.dd-config.yaml.j2 /tmp/config-template-fresh.j2 \
+	@TMP=$$(mktemp -t dd-config-template.XXXXXX) && trap 'rm -f "$$TMP"' EXIT; \
+		PYTHONPATH=source $(PYTHON) -m daily_driver.core.config_template > "$$TMP" && \
+		diff -u source/daily_driver/templates/.dd-config.yaml.j2 "$$TMP" \
 		|| { echo "config template is stale; run 'make config-template' to regenerate"; exit 1; }
 
 .PHONY: format
