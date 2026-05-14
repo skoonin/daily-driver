@@ -55,3 +55,12 @@ repos:
       - id: flake8
         files: ^(source|tests)/
         additional_dependencies: [Flake8-pyproject>=1.2.3]
+
+  - repo: local
+    hooks:
+      - id: config-template-fresh
+        name: config template is up to date
+        entry: make check-config-template
+        language: system
+        pass_filenames: false
+        files: ^(source/daily_driver/core/config_models\.py|source/daily_driver/core/config_template\.py|source/daily_driver/templates/\.dd-config\.yaml\.j2)$

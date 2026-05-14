@@ -25,8 +25,20 @@ test-e2e: ## Run end-to-end tests (timeout 300s)
 	@$(TOX) -e test-e2e
 
 .PHONY: lint
-lint: ## Run all linters
+lint: check-config-template ## Run all linters
 	@$(TOX) -e lint
+
+.PHONY: config-template
+config-template: ## Regenerate .dd-config.yaml.j2 from config_models.py
+	@PYTHONPATH=source $(PYTHON) -m daily_driver.core.config_template > source/daily_driver/templates/.dd-config.yaml.j2
+	@echo "regenerated .dd-config.yaml.j2"
+
+.PHONY: check-config-template
+check-config-template: ## Verify template matches what codegen would produce
+	@TMP=$$(mktemp -t dd-config-template.XXXXXX) && trap 'rm -f "$$TMP"' EXIT; \
+		PYTHONPATH=source $(PYTHON) -m daily_driver.core.config_template > "$$TMP" && \
+		diff -u source/daily_driver/templates/.dd-config.yaml.j2 "$$TMP" \
+		|| { echo "config template is stale; run 'make config-template' to regenerate"; exit 1; }
 
 .PHONY: format
 format: ## Auto-format code with black + isort
