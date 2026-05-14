@@ -6,7 +6,7 @@ import csv
 import logging
 import shutil
 import sys
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,21 +44,50 @@ CANONICAL_HEADER = [
 ]
 
 
-def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[str]:
-    """Rewrite jobs.csv from the legacy '#'-first header to the new layout.
+def _make_backup(csv_path: Path) -> Path:
+    """Snapshot jobs.csv into <output_dir>/backups/ with a UTC ISO-8601 stamp.
 
-    Creates jobs.csv.bak.<timestamp> so the migration is reversible. Idempotent:
-    if the header is already current, this is a no-op and no backup is written.
+    Filename pattern: jobs.csv.bak.YYYY-MM-DDTHH-MM-SS-ffffffZ. Colons in the
+    time portion are replaced with hyphens so the filename is portable across
+    filesystems (Windows forbids ':'). Microseconds prevent same-second
+    collisions when two callers (migration + backfill) run back-to-back under
+    the same jobs lock.
     """
-    if current_header == CANONICAL_HEADER:
-        return CANONICAL_HEADER
-
-    backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
+    backups_dir = csv_path.parent / "backups"
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S-%fZ")
+    backup = backups_dir / f"{csv_path.name}.bak.{stamp}"
     shutil.copy2(csv_path, backup)
-    log.info("[migrate] jobs.csv backed up to %s", backup.name)
+    return backup
+
+
+def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[str]:
+    """Rewrite jobs.csv to the canonical header + status taxonomy.
+
+    Two on-disk migrations live here:
+      1. legacy '#'-first header  → CANONICAL_HEADER
+      2. legacy Status = 'archived' → 'dropped' (JobStatus rename)
+
+    Creates a backup under <output_dir>/backups/ so the migration is reversible.
+    Idempotent: if the header is already canonical AND no rows still carry the
+    legacy status value, this is a no-op and no backup is written.
+    """
+    needs_header_rewrite = current_header != CANONICAL_HEADER
 
     with open(csv_path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
+    rewritten = 0
+    for row in rows:
+        if row.get("Status") == "archived":
+            row["Status"] = "dropped"
+            rewritten += 1
+
+    if not (needs_header_rewrite or rewritten):
+        return CANONICAL_HEADER
+
+    backup = _make_backup(csv_path)
+    log.info("[migrate] jobs.csv backed up to %s", backup.name)
+
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
@@ -70,7 +99,10 @@ def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[st
         for row in rows:
             row.pop("#", None)
             writer.writerow(row)
-    log.info("[migrate] jobs.csv rewritten to new column layout")
+    if needs_header_rewrite:
+        log.info("[migrate] jobs.csv rewritten to new column layout")
+    if rewritten:
+        log.info("[migrate] %d row(s) rewritten: status archived → dropped", rewritten)
     return CANONICAL_HEADER
 
 
@@ -366,8 +398,7 @@ def backfill(config: dict, csv_path: Path) -> None:
 
         # One pre-mutation snapshot: covers both crash recovery (on interrupt)
         # and undo (after a successful but unwanted enrichment).
-        backup = csv_path.with_suffix(f".csv.bak.{int(time.time())}")
-        shutil.copy2(csv_path, backup)
+        backup = _make_backup(csv_path)
         log.info("[backfill] backed up to %s", backup.name)
 
         try:

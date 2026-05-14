@@ -15,9 +15,9 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
 
 # Convention, not enforcement — `tracker add/update` accepts any string but
-# emits a one-line stderr nudge when the resolved status is outside this set
-# (and not already in use by another entry in the workspace). Silenced by
-# `tracker.warn_unknown_status: false` in .dd-config.yaml.
+# emits a one-line stderr nudge when the resolved status is outside the set
+# applicable to its category (and not already in use by another entry).
+# Silenced by `tracker.warn_unknown_status: false` in .dd-config.yaml.
 RECOMMENDED_STATUSES: tuple[str, ...] = (
     "open",
     "in-progress",
@@ -25,6 +25,22 @@ RECOMMENDED_STATUSES: tuple[str, ...] = (
     "done",
     "ruled-out",
 )
+
+# job-category lifecycle mirrors scraper.models.JobStatus values plus the
+# tracker-only `dropped` terminal state (was `archived` pre-rename).
+JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
+    "found",
+    "skipped",
+    "applied",
+    "rejected",
+    "dropped",
+)
+
+
+def _recommended_for_category(category: str) -> tuple[str, ...]:
+    if category == "job":
+        return JOB_RECOMMENDED_STATUSES
+    return RECOMMENDED_STATUSES
 
 
 class TrackerEntry(BaseModel):
@@ -113,21 +129,28 @@ class Tracker:
             self._save_unlocked(data)
 
     def _warn_unknown_status(
-        self, status: str, existing_entries: list[TrackerEntry]
+        self,
+        status: str,
+        existing_entries: list[TrackerEntry],
+        category: str,
     ) -> None:
         """Print a one-line stderr nudge when status is outside the recommended set.
 
-        Suppressed when (a) the workspace config sets warn_unknown_status=False,
-        (b) the status is in RECOMMENDED_STATUSES, or (c) another entry in the
-        same workspace already uses the same custom status.
+        The recommended set is category-aware — `job` entries warn against
+        anything outside the JobStatus lifecycle; other categories use the
+        generic tuple. Suppressed when (a) the workspace config sets
+        warn_unknown_status=False, (b) the status is in the category's
+        recommended set, or (c) another entry in the same workspace already
+        uses the same custom status.
         """
         if not self._workspace.config.tracker.warn_unknown_status:
             return
-        if status in RECOMMENDED_STATUSES:
+        recommended_set = _recommended_for_category(category)
+        if status in recommended_set:
             return
         if any(e.status == status for e in existing_entries):
             return
-        recommended = ", ".join(RECOMMENDED_STATUSES)
+        recommended = ", ".join(recommended_set)
         print(
             f"warning: '{status}' is not in the recommended set ({recommended})\n"
             "         Set tracker.warn_unknown_status: false in "
@@ -182,7 +205,7 @@ class Tracker:
         with file_lock(self._lock_path(), shared=False):
             data = self.load()
 
-            self._warn_unknown_status(status, data.entries)
+            self._warn_unknown_status(status, data.entries, category)
 
             max_n = 0
             for entry in data.entries:
@@ -227,7 +250,9 @@ class Tracker:
                     # the warning when the user changes it.
                     if "status" in changes:
                         peers = [e for e in data.entries if e.id != entry_id]
-                        self._warn_unknown_status(updated.status, peers)
+                        self._warn_unknown_status(
+                            updated.status, peers, updated.category
+                        )
                     data.entries[i] = updated
                     self._save_unlocked(data)
                     return updated

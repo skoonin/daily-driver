@@ -90,7 +90,8 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
     assert rows[0]["Product/Purpose"] == "Saved before interrupt"
     assert rows[0]["GD Rating"] == "4.2"
 
-    backups = [p for p in tmp_path.iterdir() if p.name.startswith("jobs.csv.bak.")]
+    backups_dir = tmp_path / "backups"
+    backups = [p for p in backups_dir.iterdir() if p.name.startswith("jobs.csv.bak.")]
     assert len(backups) == 1
     # Backup must capture pre-mutation state (made before enrichment ran).
     backup_rows = _read_jobs_csv(backups[0])
@@ -139,7 +140,8 @@ def test_backfill_uses_shared_jobs_lock_path(
 
     assert lock_calls == [jobs_lock_path(csv_path)]
     # Exactly one .bak per backfill run (taken at the start, before mutations).
-    backups = [p for p in tmp_path.iterdir() if p.name.startswith("jobs.csv.bak.")]
+    backups_dir = tmp_path / "backups"
+    backups = [p for p in backups_dir.iterdir() if p.name.startswith("jobs.csv.bak.")]
     assert len(backups) == 1
 
 

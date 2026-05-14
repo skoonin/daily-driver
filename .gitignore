@@ -7,6 +7,7 @@
 .playwright-mcp/
 .mcp.json
 .session.lock
+backups/
 # settings.json
 # context.md
 coverage.json

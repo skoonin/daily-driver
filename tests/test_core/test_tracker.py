@@ -445,6 +445,28 @@ def test_warn_silenced_when_status_already_used(
     assert "warning" not in err.lower()
 
 
+def test_job_category_warns_on_generic_status(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`category=job` uses the JobStatus lifecycle — generic statuses warn."""
+    tracker = Tracker(workspace)
+    tracker.add(category="job", title="Acme", status="open")
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert "open" in err
+    # The recommended set in the warning should list job-lifecycle values.
+    assert "applied" in err
+
+
+def test_job_category_accepts_job_statuses(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tracker = Tracker(workspace)
+    tracker.add(category="job", title="Acme", status="applied")
+    err = capsys.readouterr().err
+    assert "warning" not in err.lower()
+
+
 def test_warn_silenced_by_config_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
