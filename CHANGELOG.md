@@ -35,6 +35,13 @@ log`. Versioned release history starts at 1.0.
 
 ### Jobs scraper
 
+- **JobSpy split into per-site scrapers.** `jobspy` now expands to three
+  registry entries — `jobspy_linkedin`, `jobspy_indeed`, `jobspy_google` —
+  so all three sites run concurrently in the Phase 1 parallel pool instead
+  of serially inside one upstream call. Config stays under a single
+  `jobspy:` key, now a nested block with per-site flags (`enabled`,
+  `linkedin`, `indeed`, `google`); the legacy `jobspy: true|false` bool
+  still coerces.
 - **Fix: Apple scraper now runs in non-headless mode.** `_non_headless_sources`
   previously relied on a `type: playwright` config key that `SourceToggle`
   (`extra="forbid"`) silently rejects, so Apple always fell into the headless

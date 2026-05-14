@@ -134,6 +134,14 @@ class SourceToggle(BaseModel):
     enabled: bool = True
 
 
+class JobspyToggle(SourceToggle):
+    """Per-site enable flags for the JobSpy aggregator."""
+
+    linkedin: bool = True
+    indeed: bool = True
+    google: bool = True
+
+
 class ScraperConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -172,7 +180,11 @@ class ScraperConfig(BaseModel):
             return v
         out: dict[str, Any] = {}
         for key, val in v.items():
-            if isinstance(val, bool):
+            if key == "jobspy":
+                out[key] = JobspyToggle.model_validate(
+                    val if isinstance(val, dict) else {"enabled": bool(val)}
+                )
+            elif isinstance(val, bool):
                 out[key] = SourceToggle(enabled=val)
             else:
                 out[key] = val

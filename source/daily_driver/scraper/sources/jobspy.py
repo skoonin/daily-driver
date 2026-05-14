@@ -130,7 +130,7 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def scrape_jobspy(config: dict) -> list[dict]:
+def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]:
     """Headless multi-source scraper via JobSpy (LinkedIn, Indeed, Glassdoor, Google).
 
     Imported lazily so the module still loads when python-jobspy is not yet
@@ -175,10 +175,10 @@ def scrape_jobspy(config: dict) -> list[dict]:
             location_name = COUNTRY_NAMES.get(country_code, [country])[0]
             # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
             # ("location not parsed") on every request and retries for minutes.
-            sites = ["linkedin", "indeed", "google"]
+            run_sites = sites if sites is not None else ["linkedin", "indeed", "google"]
             try:
                 df = jobspy_scrape(
-                    site_name=sites,
+                    site_name=run_sites,
                     search_term=term,
                     location=location_name,
                     results_wanted=results_wanted,
@@ -236,10 +236,25 @@ def scrape_jobspy(config: dict) -> list[dict]:
     return jobs
 
 
+def scrape_jobspy_linkedin(config: dict) -> list[dict]:
+    return scrape_jobspy(config, sites=["linkedin"])
+
+
+def scrape_jobspy_indeed(config: dict) -> list[dict]:
+    return scrape_jobspy(config, sites=["indeed"])
+
+
+def scrape_jobspy_google(config: dict) -> list[dict]:
+    return scrape_jobspy(config, sites=["google"])
+
+
 __all__ = [
     "_jobspy_str",
     "_format_jobspy_comp",
     "jobspy_row_to_raw",
     "normalize_jobspy_row",
     "scrape_jobspy",
+    "scrape_jobspy_linkedin",
+    "scrape_jobspy_indeed",
+    "scrape_jobspy_google",
 ]

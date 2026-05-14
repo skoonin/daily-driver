@@ -59,11 +59,13 @@ def test_run_all_scrapers_phase1_summary_lists_source_names(
 
     fake = lambda _cfg: []  # noqa: E731
     monkeypatch.setattr(
-        runner, "SCRAPERS", {"remoteok": fake, "greenhouse": fake, "jobspy": fake}
+        runner,
+        "SCRAPERS",
+        {"remoteok": fake, "greenhouse": fake, "weworkremotely": fake},
     )
 
     runner.run_all_scrapers(
-        _cfg_with_sources(["remoteok", "greenhouse", "jobspy"], workers=2)
+        _cfg_with_sources(["remoteok", "greenhouse", "weworkremotely"], workers=2)
     )
 
     msgs = [r.getMessage() for r in caplog.records]
@@ -71,7 +73,7 @@ def test_run_all_scrapers_phase1_summary_lists_source_names(
     assert phase1, f"expected a [phase1] summary line, got {msgs}"
     # Source names appear in the summary (order-insensitive check).
     summary = phase1[0]
-    for sid in ("remoteok", "greenhouse", "jobspy"):
+    for sid in ("remoteok", "greenhouse", "weworkremotely"):
         assert sid in summary, f"expected {sid} in phase1 summary, got: {summary}"
 
 

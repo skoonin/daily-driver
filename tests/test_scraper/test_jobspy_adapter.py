@@ -10,6 +10,10 @@ from daily_driver.scraper.models import RawScrapedJob
 from daily_driver.scraper.sources.jobspy import (
     jobspy_row_to_raw,
     normalize_jobspy_row,
+    scrape_jobspy,
+    scrape_jobspy_google,
+    scrape_jobspy_indeed,
+    scrape_jobspy_linkedin,
 )
 
 
@@ -106,3 +110,70 @@ def test_url_stripped_at_boundary(bad_url: str) -> None:
     raw = jobspy_row_to_raw(_row(job_url=bad_url))
     assert raw is not None
     assert raw.url == "https://x"
+
+
+class TestPerSiteScrapers:
+    """The thin per-site wrappers forward the correct ``site_name`` list."""
+
+    @staticmethod
+    def _config() -> dict[str, object]:
+        return {
+            "job_search": {
+                "roles": ["software engineer"],
+                "locations": {"countries": ["US"]},
+                "scraper": {
+                    "enabled": True,
+                    "search_terms": ["software engineer"],
+                },
+            }
+        }
+
+    @staticmethod
+    def _install_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+        import pandas as pd
+
+        calls: dict[str, object] = {}
+
+        def fake(**kwargs: object) -> pd.DataFrame:
+            calls["site_name"] = kwargs.get("site_name")
+            return pd.DataFrame()
+
+        import jobspy as jobspy_pkg
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        return calls
+
+    def test_scrape_jobspy_linkedin_calls_correct_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy_linkedin(self._config())
+        assert calls["site_name"] == ["linkedin"]
+
+    def test_scrape_jobspy_indeed_calls_correct_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy_indeed(self._config())
+        assert calls["site_name"] == ["indeed"]
+
+    def test_scrape_jobspy_google_calls_correct_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy_google(self._config())
+        assert calls["site_name"] == ["google"]
+
+    def test_scrape_jobspy_sites_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config(), sites=["indeed"])
+        assert calls["site_name"] == ["indeed"]
+
+    def test_scrape_jobspy_default_uses_all_three(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config())
+        assert calls["site_name"] == ["linkedin", "indeed", "google"]
