@@ -50,7 +50,7 @@ class UserProfile(BaseModel):
         default=None,
         description="",
         json_schema_extra={
-            "template_example": date(2026, 4, 6),
+            "template_example": date(2026, 4, 6),  # type: ignore[dict-item]
             "inline_comment": "YYYY-MM-DD when active job search began",
         },
     )
@@ -636,7 +636,7 @@ class Config(BaseModel):
         description="",
         json_schema_extra={
             "block_comment": "Required: tracker configuration.",
-            "template_default": TrackerConfig(
+            "template_default": TrackerConfig(  # type: ignore[dict-item]
                 categories={"task": TrackerCategoryConfig(required=["title"])}
             ),
         },
@@ -660,8 +660,8 @@ class Config(BaseModel):
                 },
             ],
             "template_example_inline_comments_by_index": {
-                0: {"cadence": "daily | weekly | monthly"},
-                1: {"day": "only valid when cadence is weekly"},
+                0: {"cadence": "daily | weekly | monthly"},  # type: ignore[dict-item]
+                1: {"day": "only valid when cadence is weekly"},  # type: ignore[dict-item]
             },
         },
     )

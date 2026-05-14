@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from typing import Any, get_args, get_origin
+from typing import Any, cast, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
@@ -32,7 +32,8 @@ _PREAMBLE = """\
 
 
 def _extra(info: FieldInfo) -> dict[str, Any]:
-    return dict(info.json_schema_extra or {})
+    extra = info.json_schema_extra
+    return dict(extra) if isinstance(extra, dict) else {}
 
 
 def _is_model_type(tp: Any) -> bool:
@@ -49,7 +50,7 @@ def _unwrap_model(annotation: Any) -> type[BaseModel] | None:
     `dict[str, Model]` — those are handled by separate helpers.
     """
     if _is_model_type(annotation):
-        return annotation
+        return cast("type[BaseModel]", annotation)
     origin = get_origin(annotation)
     if origin is None:
         return None
@@ -58,7 +59,7 @@ def _unwrap_model(annotation: Any) -> type[BaseModel] | None:
         return None
     non_none = [a for a in args if a is not type(None)]
     if len(non_none) == 1 and _is_model_type(non_none[0]):
-        return non_none[0]
+        return cast("type[BaseModel]", non_none[0])
     return None
 
 
@@ -374,7 +375,7 @@ def _render_keyed_value(
 
 
 def _render_dict_default(
-    name: str, value: dict, info: FieldInfo, indent: str
+    name: str, value: dict[str, Any], info: FieldInfo, indent: str
 ) -> list[str]:
     """dict[str, SomeModel] with concrete default entries."""
     out = [f"{indent}{name}:"]
