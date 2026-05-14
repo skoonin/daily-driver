@@ -288,10 +288,11 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
 
 
 def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
-    """Warn if `jobs.csv.bak.*` snapshots have accumulated.
+    """Warn if `jobs.csv.bak.*` snapshots have accumulated under backups/.
 
-    Each `--backfill` run drops a `.bak.<unix>` snapshot before mutating
-    jobs.csv. Users won't notice them, so over months of use they pile up.
+    Each backfill / migration run drops a `.bak.<utc-stamp>` snapshot before
+    mutating jobs.csv. Users won't notice them, so over months of use they
+    pile up.
     """
     try:
         cfg = workspace.config
@@ -301,9 +302,10 @@ def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
     output_dir = Path(output_dir_raw).expanduser()
     if not output_dir.is_absolute():
         output_dir = (workspace.root / output_dir).resolve()
-    if not output_dir.exists():
+    backups_dir = output_dir / "backups"
+    if not backups_dir.exists():
         return None
-    baks = sorted(output_dir.glob("jobs.csv.bak.*"))
+    baks = sorted(backups_dir.glob("jobs.csv.bak.*"))
     if len(baks) <= 5:
         return None
     keep = baks[-3:]
@@ -315,11 +317,11 @@ def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
         name="Jobs backups",
         status="WARNING",
         detail=(
-            f"{len(baks)} jobs.csv.bak.* files in {output_dir}; "
+            f"{len(baks)} jobs.csv.bak.* files in {backups_dir}; "
             f"keeping {len(keep)} most recent is plenty. Old: {drop_names}"
         ),
         fix_hint=(
-            f"Delete old snapshots: rm {output_dir}/jobs.csv.bak.* "
+            f"Delete old snapshots: rm {backups_dir}/jobs.csv.bak.* "
             f"(then re-create the most recent if you want a rollback point)"
         ),
         fixable=False,

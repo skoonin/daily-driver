@@ -59,6 +59,22 @@ log`. Versioned release history starts at 1.0.
   visible.
 - **`Jobs backups` doctor row** warns when more than 5 `jobs.csv.bak.*`
   files accumulate.
+- **Backups moved to `<output_dir>/backups/`** with human-readable UTC
+  ISO-8601 stamps (`jobs.csv.bak.YYYY-MM-DDTHH-MM-SS-ffffffZ`, hyphens
+  for Windows filesystem portability). The `Jobs backups` doctor row
+  globs the new location; existing `jobs.csv.bak.<unix>` snapshots in
+  `output_dir/` are left in place for manual cleanup.
+- **`jobs run` per-source progress on stdout**: each scraper prints
+  `Now checking <id>...` before starting and a `<id>: N jobs (Xs)` or
+  `<id>: failed (reason)` summary on completion, so the user sees
+  activity before any scraper finishes. Lines are atomic; ordering
+  across the parallel phase is non-deterministic.
+- **JobStatus rename**: `archived` → `dropped`. `_migrate_legacy_header`
+  rewrites legacy `Status=archived` rows on next scraper / backfill
+  invocation. Hard break per the MVP no-compat policy.
+- **Category-aware tracker statuses**: `category=job` entries warn
+  against statuses outside `{found, skipped, applied, rejected,
+  dropped}`; other categories keep the generic recommended set.
 
 ### Logging and output
 

@@ -147,3 +147,24 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
         # Release any worker still cooperatively waiting so it doesn't bleed
         # into other tests.
         stop.set()
+
+
+def test_run_emits_user_progress_per_source(capsys, monkeypatch) -> None:
+    """`_run_one` prints a `Now checking <id>...` line to stdout (not stderr)
+    before the scraper starts, and a completion summary line after success."""
+    from daily_driver.core.console import Console
+    from daily_driver.scraper import runner
+
+    # Reset Rich consoles so they bind to the current capsys-wrapped stdio.
+    Console._user_console = None
+    Console._log_console = None
+    Console.quiet_mode = False
+
+    monkeypatch.setattr(runner, "SCRAPERS", {"fake_src": lambda _cfg: [{"x": 1}]})
+    runner._run_one("fake_src", _cfg_with_sources(["fake_src"]))
+
+    captured = capsys.readouterr()
+    assert "Now checking fake_src" in captured.out
+    assert "fake_src: 1 jobs" in captured.out
+    # The start line must not leak onto stderr.
+    assert "Now checking fake_src" not in captured.err

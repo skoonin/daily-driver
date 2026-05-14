@@ -403,3 +403,10 @@ def test_source_protocol_runtime_checkable() -> None:
         return []
 
     assert isinstance(fake, Source)
+
+
+def test_jobstatus_dropped_replaces_archived() -> None:
+    """JobStatus.ARCHIVED was renamed to DROPPED; the old value is gone."""
+    assert JobStatus("dropped") is JobStatus.DROPPED
+    with pytest.raises(ValueError):
+        JobStatus("archived")

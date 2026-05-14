@@ -485,24 +485,35 @@ def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
 
     Returns the job list on success, or the caught exception on failure. The
     orchestrator classifies exceptions into failed_sources during merge.
+
+    Emits an unconditional user-facing start/finish pair on stdout (bypassing
+    quiet-mode and verbosity gates) so `daily-driver jobs run` shows progress
+    before any scraper completes. The matching log lines stay on stderr for
+    the debug stream.
     """
     scraper_fn = SCRAPERS[source_id]
     timeout = timeout_seconds(cfg)
+    user_console = Console.get_user_console()
+    user_console.print(f"Now checking {source_id}...")
     log.info("[%s] starting", source_id)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(cfg)
     except requests.exceptions.Timeout as exc:
         log.warning("[%s] timed out after %ds", source_id, timeout)
+        user_console.print(f"  {source_id}: failed (timed out after {timeout}s)")
         return exc
     except requests.exceptions.RequestException as exc:
         log.warning("[%s] request failed: %s", source_id, exc)
+        user_console.print(f"  {source_id}: failed ({exc})")
         return exc
     except Exception as exc:  # noqa: BLE001
         log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
+        user_console.print(f"  {source_id}: failed ({exc})")
         return exc
     elapsed = time.perf_counter() - start
     log.info("[%s] took %.1fs (%d jobs)", source_id, elapsed, len(jobs))
+    user_console.print(f"  {source_id}: {len(jobs)} jobs ({elapsed:.1f}s)")
     return jobs
 
 

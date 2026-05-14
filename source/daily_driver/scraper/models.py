@@ -38,7 +38,7 @@ class JobStatus(str, Enum):
     SKIPPED = "skipped"
     APPLIED = "applied"
     REJECTED = "rejected"
-    ARCHIVED = "archived"
+    DROPPED = "dropped"
 
 
 CompPeriod = Literal["hour", "month", "year"]

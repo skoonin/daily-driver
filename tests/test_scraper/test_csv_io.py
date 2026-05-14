@@ -187,6 +187,64 @@ def test_legacy_column_order_migrated_to_new(tmp_path: Path) -> None:
     assert row["Date Applied"] == "2026-01-05"
 
 
+def test_migrate_rewrites_archived_status_to_dropped(tmp_path: Path) -> None:
+    """Rows carrying the legacy Status='archived' value get rewritten to 'dropped'."""
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL
+        )
+        writer.writeheader()
+        for status in ("archived", "found", "archived"):
+            row = {col: "" for col in CANONICAL_HEADER}
+            row["Status"] = status
+            row["Company"] = "Acme"
+            row["Role"] = "SRE"
+            row["Link"] = f"https://example.com/{status}"
+            row["Source"] = "remoteok"
+            row["Date Found"] = "2026-01-01"
+            row["Date Last Seen"] = "2026-01-01"
+            writer.writerow(row)
+
+    result = _migrate_legacy_header(csv_path, list(CANONICAL_HEADER))
+    assert result == CANONICAL_HEADER
+
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    statuses = [r["Status"] for r in rows]
+    assert statuses == ["dropped", "found", "dropped"]
+
+    # Backup written under output_dir/backups/ with a UTC-ISO stamp.
+    backups = list((tmp_path / "backups").glob("jobs.csv.bak.*"))
+    assert len(backups) == 1
+
+
+def test_backup_path_uses_utc_iso_stamp(tmp_path: Path) -> None:
+    """Backups must live under backups/ with the YYYY-MM-DDTHH-MM-SSZ stamp."""
+    import re
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_minimal_csv(csv_path)
+    # Force a backup by including a row that triggers the status migration.
+    rows = list(csv.DictReader(open(csv_path, newline="", encoding="utf-8")))
+    rows[0]["Status"] = "archived"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    _migrate_legacy_header(csv_path, list(CANONICAL_HEADER))
+
+    backups = list((tmp_path / "backups").glob("jobs.csv.bak.*"))
+    assert len(backups) == 1
+    assert re.match(
+        r"^jobs\.csv\.bak\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z$",
+        backups[0].name,
+    ), backups[0].name
+
+
 def test_migrate_legacy_header_idempotent(tmp_path: Path) -> None:
     """If header already matches CANONICAL_HEADER, no backup is created and data is unchanged."""
     csv_path = tmp_path / "jobs.csv"
