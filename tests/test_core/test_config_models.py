@@ -560,3 +560,23 @@ def test_root_config_omitting_ai_block_uses_defaults():
     c = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
     assert c.ai.enrichment.provider == "claude"
     assert c.ai.summary.provider == "claude"
+
+
+def test_every_field_has_description():
+    """Each model field must carry a non-None description for codegen."""
+    from pydantic import BaseModel as _BM
+
+    import daily_driver.core.config_models as cm
+
+    failures: list[str] = []
+    for name in dir(cm):
+        obj = getattr(cm, name)
+        if not isinstance(obj, type) or not issubclass(obj, _BM) or obj is _BM:
+            continue
+        for fname, finfo in obj.model_fields.items():
+            extra = dict(finfo.json_schema_extra or {})
+            if extra.get("template_skip"):
+                continue
+            if finfo.description is None:
+                failures.append(f"{obj.__name__}.{fname}")
+    assert not failures, f"missing description: {failures}"
