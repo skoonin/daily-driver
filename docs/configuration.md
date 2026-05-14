@@ -14,8 +14,13 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `user_profile` | object | empty | |
 | `recurring_tasks` | list | `[]` | |
 | `scheduler` | object or null | null | Freeform; passed to launchd templates |
+| `schedule` | object | empty | day-start / day-end scheduled times |
 | `voice_profile` | object | empty | |
 | `tracker` | object | — | **Required** |
+| `gather` | object | empty | |
+| `claude` | object | empty | |
+| `ai` | object | empty | |
+| `focus` | object | empty | |
 | `plugins` | object | empty | |
 
 ## `daily_driver`
@@ -23,6 +28,8 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | Key | Type | Default |
 |-----|------|---------|
 | `output_dir` | string | `.` (relative to workspace root) |
+
+Rotated `jobs.csv` backups land in `<output_dir>/backups/` with UTC ISO-8601 timestamps (e.g. `jobs.csv.bak.2026-05-13T05-45-00Z`). `doctor` flags accumulated backups there.
 
 ## `user_profile`
 
@@ -60,7 +67,7 @@ Injected into Claude sessions as context.
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
-| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used elsewhere. Set `false` to silence. |
+| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. `job` category → `found, skipped, applied, rejected, dropped`. All other categories → `open, in-progress, blocked, done, ruled-out`. Set `false` to silence. |
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
 
@@ -107,11 +114,47 @@ ai:
 
 Freeform dict passed to the Jinja launchd plist templates. Times are local wall-clock, 24-hour. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00.
 
+## `schedule`
+
+Scheduled times for `day-start` and `day-end` (HH:MM, 24-hour). When set, `scheduler install` creates launchd jobs for those commands. Also drives `is_late_day` evaluation in day-start prompts. **Quote times in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML.
+
+| Key | Type | Default |
+|-----|------|---------|
+| `day_start` | string (HH:MM) or null | null |
+| `day_end` | string (HH:MM) or null | null |
+
+## `claude`
+
+Controls `claude` CLI session behavior for interactive launchers.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `resume_check_in` | bool | false | When true, `check-in` resumes the prior day-start session instead of starting fresh |
+
+## `gather`
+
+Controls what `daily-driver gather <kind>` reads from external sources.
+
+### `gather.git`
+
+| Key | Type | Default |
+|-----|------|---------|
+| `search_paths` | list[path] | `[]` |
+
+Directories to scan recursively for git checkouts. Paths may be absolute or tilde-prefixed (e.g. `~/git`).
+
+## `focus`
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `default_duration` | string | `25m` | Fallback for `focus on` when `--for` is omitted. Accepts `30m`, `2h`, `1h30m`, or bare minutes. |
+
 ## `plugins.job_search`
 
 | Key | Type | Default |
 |-----|------|---------|
 | `persona` | string or null | null |
+| `home_city` | string or null | null |
 | `locations` | object or null | null |
 | `compensation` | object or null | null |
 | `role_filters` | object or null | null |
@@ -119,6 +162,7 @@ Freeform dict passed to the Jinja launchd plist templates. Times are local wall-
 | `domain_keywords` | list[string] | `[]` |
 | `seniority_keywords` | list[string] | `[]` |
 | `min_comp_usd` | int | 180000 |
+| `primary_currency` | `USD`\|`CAD`\|`EUR`\|`GBP` or null | null |
 | `scraper` | object | see `ScraperConfig` below |
 | `sources` | dict | `{}` (freeform, keyed by source id) |
 
@@ -168,15 +212,51 @@ Freeform dict passed to the Jinja launchd plist templates. Times are local wall-
 | `wwr_categories` | list[string] | `[]` |
 | `hn_max_posts` | int | 100 |
 | `greenhouse_boards` | list[string] | `[anthropic]` |
-| `jobspy` | object | `{results_wanted_per_query: 50, hours_old: 168, country_indeed: USA}` |
+| `jobs` | object | `{results_wanted_per_query: 50, hours_old: 168, country_indeed: USA}` |
 | `playwright_delays` | dict | `{}` |
 | `sources` | dict | `{}` |
 | `parallel_workers` | int | 4 |
 | `max_pages` | int | 3 |
+| `max_retries` | int | 3 |
+| `max_age_days` | int | 30 |
+
+### `scraper.jobs`
+
+Sub-fields of the `jobs:` block under `scraper:` (jobspy aggregator settings).
+
+| Key | Type | Default |
+|-----|------|---------|
+| `results_wanted_per_query` | int | 50 |
+| `hours_old` | int | 168 (7 days) |
+| `country_indeed` | string | `USA` |
+
+### `scraper.playwright_delays`
+
+Per-source Playwright timing overrides (milliseconds). Keys are source IDs (e.g. `apple`). Omitted sources use the defaults.
+
+| Key | Type | Default |
+|-----|------|---------|
+| `page_load_ms` | int | 3000 |
+| `interaction_ms` | int | 500 |
+| `settle_ms` | int | 250 |
 
 ### `sources`
 
-Freeform dict. Each key is a source identifier; values are passed to the scraper adapter. Marking a source with `type: playwright` routes it to the serial Playwright phase. See [dev/extending.md](dev/extending.md) for adapter details.
+Freeform dict under `job_search` (not `scraper`). Keys are source identifiers; values are passed to the scraper adapter as-is. See [dev/extending.md](dev/extending.md) for adapter details.
+
+The enable/disable toggles for built-in sources live under `scraper.sources`. Bool values coerce to `{enabled: <bool>}`. The reserved `jobspy` key coerces to a `JobspyToggle` with per-site flags:
+
+```yaml
+scraper:
+  sources:
+    jobspy:
+      enabled: true
+      linkedin: true
+      indeed: true
+      google: true     # glassdoor intentionally excluded (HTTP 400 from JobSpy)
+```
+
+Each enabled JobSpy site runs as its own parallel scraper. Omitted sub-flags default to `true`.
 
 ## Example
 
