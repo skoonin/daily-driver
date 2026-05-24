@@ -147,7 +147,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 | `subprocess.run(...)` in `core/` or `cli/` | Add a wrapper in `integrations/` |
 | Reading/writing YAML without `file_lock` | Always guard with `core.locking.file_lock(path)` |
 | Editing `.claude/*/daily-driver/` expecting persistence | That subdir is package-managed; `--fix` preserves edits via manifest but `--reset` overwrites |
-| Unknown keys under the config root | Root is `extra="forbid"`. Nest under `plugins.<namespace>:` |
+| Unknown keys under the config root | Root is `extra="forbid"`; typos error out. Stash user-only keys the program does not interpret under `custom:`; plugin config goes under `plugins.<namespace>:` |
 | Bare `print(...)` for status text | Use `Console.info/success/warning/error` from `core/console.py` — those route to stderr. Reserve bare `print()` for stdout data contracts (machine-readable JSON) |
 | `logging.getLogger(__name__)` outside `daily_driver` root | Use `dd_logging.get_logger(__name__)` so the logger is under the `daily_driver.*` namespace and inherits the configured handler |
 

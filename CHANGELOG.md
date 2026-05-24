@@ -18,6 +18,7 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Config root schema is strict; `custom:` namespace added for user keys.** The root `Config` model flipped from `extra="allow"` to `extra="forbid"` so typos (`tracer:` for `tracker:`) surface as pydantic errors instead of being silently absorbed. A typed `custom: dict[str, Any]` field is the documented hatch for ad-hoc workspace tracking the program does not interpret. **Migration:** any top-level user keys (`personal: foo`, `notes: ...`, etc.) must move under `custom:` — e.g. `personal: foo` becomes `custom:\n  personal: foo`.
 - **Console stream tests**: rewrote four placeholder tests in `test_console.py` to actually capture stdout/stderr with `capsys` and assert routing; added `test_user_output_is_stdout_not_stderr` regression guard.
 
 ### AI providers

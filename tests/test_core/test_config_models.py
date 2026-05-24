@@ -421,14 +421,28 @@ def test_config_minimal_valid():
     assert m.plugins.job_search is None
 
 
-def test_config_allows_extra_top_level():
-    """Root Config is extra='allow' so users can stash workspace-local keys."""
+def test_config_rejects_extra_top_level():
+    """Root Config is extra='forbid'; stray top-level keys (typos) hard-fail."""
+    with pytest.raises(ValidationError):
+        Config(
+            tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
+            unknown_section={"foo": "bar"},
+        )
+
+
+def test_config_custom_namespace_round_trips():
+    """`custom:` accepts arbitrary user keys the program does not interpret."""
     m = Config(
         tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
-        unknown_section={"foo": "bar"},
+        custom={"personal": {"motto": "ship it"}, "scratch": [1, 2, 3]},
     )
-    # The unknown key is preserved on the model.
-    assert m.model_dump()["unknown_section"] == {"foo": "bar"}
+    assert m.custom == {"personal": {"motto": "ship it"}, "scratch": [1, 2, 3]}
+
+
+def test_config_custom_defaults_empty():
+    """`custom:` defaults to an empty dict when unset."""
+    m = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
+    assert m.custom == {}
 
 
 def test_config_rejects_extra_in_plugins():

@@ -617,7 +617,7 @@ class GatherConfig(BaseModel):
 
 
 class Config(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     daily_driver: DailyDriverConfig = Field(
         default=DailyDriverConfig(),
@@ -762,5 +762,20 @@ class Config(BaseModel):
             "block_comment": (
                 "Optional: plugins. Each plugin schema is strict — typos error out."
             ),
+        },
+    )
+    custom: dict[str, Any] = Field(
+        default_factory=dict,
+        description="",
+        json_schema_extra={
+            "template_commented": True,
+            "block_comment": (
+                "Optional: free-form namespace for user-only keys the program does\n"
+                "not interpret. Use this for ad-hoc workspace tracking instead of\n"
+                "adding keys at the config root (root is strict — typos error out)."
+            ),
+            "template_example": {
+                "personal": {"motto": "ship it"},
+            },
         },
     )

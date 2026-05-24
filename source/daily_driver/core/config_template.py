@@ -19,10 +19,11 @@ _PREAMBLE = """\
 # daily-driver workspace configuration
 #
 # Structured settings live here; narrative prose stays in Markdown files
-# (context.md, voice-profile.md). Top-level keys not listed below are
-# preserved on parse — the root model is `extra="allow"` so you can stash
-# workspace-local notes without a schema bump. Plugin schemas are strict
-# (`extra="forbid"`); typos there are real errors.
+# (context.md, voice-profile.md). The root model is `extra="forbid"` —
+# unknown top-level keys (typos like `tracer:` for `tracker:`) error out.
+# Stash workspace-local notes under the `custom:` namespace; plugin config
+# goes under `plugins.<namespace>:`. Both plugin schemas and the root are
+# strict — typos there are real errors.
 #
 # To enable a commented block: uncomment the header (at column 0) AND
 # every nested line together. Don't uncomment a single inner field on
