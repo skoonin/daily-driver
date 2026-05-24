@@ -86,8 +86,8 @@ def _is_stale(
 ) -> bool:
     """Row qualifies for prune when status matches AND last-seen date is < cutoff.
 
-    Falls back to ``Date Found`` when ``Date Last Seen`` is empty — the on-rescan
-    upsert path is owned by W5/W6, so existing rows often only have ``Date Found``.
+    Falls back to ``Date Found`` when ``Date Last Seen`` is empty — without an
+    on-rescan upsert path, existing rows often only have ``Date Found``.
     """
     status = (row.get("Status") or "").strip().lower()
     if status not in statuses:

@@ -119,10 +119,9 @@ module = ["daily_driver.cli.commands.*"]
 warn_return_any = false
 
 [[tool.mypy.overrides]]
-# WS-K K7: ignore_errors carve-out dropped; remaining laxness limited to
-# bare-dict annotations (helper utilities, not the typed RawScrapedJob /
-# NormalizedJob / EnrichedJob hot path) and BeautifulSoup attribute access.
-# Adapter rewrite to native list[RawScrapedJob] returns is post-WS-K (W7).
+# Remaining laxness is limited to bare-dict annotations (helper utilities,
+# not the typed RawScrapedJob / NormalizedJob / EnrichedJob hot path) and
+# BeautifulSoup attribute access.
 module = [
     "daily_driver.scraper.runner",
     "daily_driver.scraper.csv_io",

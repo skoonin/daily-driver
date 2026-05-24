@@ -36,8 +36,8 @@ CANONICAL_HEADER = [
     "Date Found",
     "Date Applied",
     # Date Last Seen drives `jobs prune --older-than`. Today scraper
-    # only sets it on insert (defaults to Date Found); the upsert-on-rescan
-    # path is owned by W5/W6 — until then prune ages from first-discovery.
+    # only sets it on insert (defaults to Date Found); without an
+    # upsert-on-rescan path, prune ages from first-discovery.
     "Date Last Seen",
     "Link",
     "Source",
@@ -158,8 +158,7 @@ def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
     """Append new jobs to CSV. Returns count of rows written.
 
     Legacy dict-based entry point. Typed callers should use
-    ``append_jobs_typed`` (K6) which routes through
-    ``EnrichedJob.to_csv_row()``.
+    ``append_jobs_typed`` which routes through ``EnrichedJob.to_csv_row()``.
     """
     from daily_driver.scraper.runner import ScraperError
 
@@ -203,7 +202,7 @@ def append_jobs_typed(
     jobs: list[EnrichedJob],  # noqa: F821
     header: list[str],
 ) -> int:
-    """Typed CSV writer (K6): one row per ``EnrichedJob.to_csv_row()``.
+    """Typed CSV writer: one row per ``EnrichedJob.to_csv_row()``.
 
     Header is still passed in so callers can pin the column order to whatever
     is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
@@ -234,7 +233,7 @@ def _enriched_to_dict(job: EnrichedJob) -> dict[str, Any]:  # noqa: F821
     """Project an EnrichedJob into the legacy working-dict shape.
 
     Used by typed enricher wrappers so existing dict-based enricher bodies
-    (which mutate in place) can run unchanged. K9 collapses these wrappers.
+    (which mutate in place) can run unchanged.
     """
     return {
         "company": job.company,

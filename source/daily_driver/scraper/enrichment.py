@@ -854,7 +854,7 @@ def enrich_company_descriptions_typed(
     *,
     budget: int = 0,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
-    """Typed wrapper around ``enrich_company_descriptions`` (K8).
+    """Typed wrapper around ``enrich_company_descriptions``.
 
     Round-trips through a working-dict list because the legacy body mutates
     in place; returns a fresh list of frozen EnrichedJob instances built via
@@ -880,7 +880,7 @@ def enrich_fit_and_notes_typed(
     *,
     budget: int = 0,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
-    """Typed wrapper around ``enrich_fit_and_notes`` (K8)."""
+    """Typed wrapper around ``enrich_fit_and_notes``."""
     from daily_driver.scraper.csv_io import (
         _dict_to_enriched_updates,
         _enriched_to_dict,
@@ -899,7 +899,7 @@ def enrich_job_details_typed(
     jobs: list[EnrichedJob],  # noqa: F821
     config: dict[str, Any],
 ) -> list[EnrichedJob]:  # noqa: F821
-    """Typed wrapper around ``enrich_job_details`` (K8).
+    """Typed wrapper around ``enrich_job_details``.
 
     The legacy ``enrich_job_details`` returns ``None`` and mutates in place;
     this wrapper produces a fresh list with each job's description_text /

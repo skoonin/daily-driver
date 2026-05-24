@@ -72,13 +72,13 @@ def _format_jobspy_comp(row: dict) -> str:
 
 
 def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F821
-    """Validate a JobSpy DataFrame row through RawScrapedJob (Q15: extra='ignore').
+    """Validate a JobSpy DataFrame row through RawScrapedJob (extra='ignore').
 
     Returns None when the role is empty (jobspy yields these for ads / non-job
     cards); pydantic would otherwise reject NonEmptyStr role.
     """
     # Local import: models.py uses deferred imports from this module
-    # (`_parse_comp`, `_REMOTE_*`); top-level import would cycle until K4/K9.
+    # (`_parse_comp`, `_REMOTE_*`); top-level import would cycle.
     from daily_driver.scraper.models import RawScrapedJob
 
     role = _jobspy_str(row.get("title"))
@@ -101,7 +101,7 @@ def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F82
 def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
     """Adapt a single JobSpy DataFrame record to the scraper dict shape.
 
-    Validates through RawScrapedJob at the boundary (Q15) and dumps back to
+    Validates through RawScrapedJob at the boundary and dumps back to
     the legacy dict shape for the dict-based pipeline. Carries `description`
     separately because RawScrapedJob does not model enrichment fields.
     """

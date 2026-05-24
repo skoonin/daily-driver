@@ -75,7 +75,6 @@ def _parse_comp(comp_str: str) -> dict:
     Kept for the dict-based pipeline and ``comp_meets_threshold``. Returns
     ``comp_min_native``, ``comp_max_native``, ``comp_currency``, ``comp_period``,
     ``comp_min_usd``, ``comp_max_usd``. All ``None`` / ``""`` on unparseable input.
-    Collapses into ``Comp.parse`` direct calls at K8/K9.
     """
     from daily_driver.scraper.models import Comp
 

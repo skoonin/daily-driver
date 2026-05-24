@@ -23,7 +23,7 @@ from daily_driver.core import clock
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
 
-# Q11: 2 hours past schedule.day_start counts as "late". Hardcoded — YAGNI on a
+# 2 hours past schedule.day_start counts as "late". Hardcoded — YAGNI on a
 # per-user knob until someone asks. Fallback (no schedule.day_start configured)
 # is "after 11:00 absolute".
 LATE_DAY_GRACE = timedelta(hours=2)
@@ -117,7 +117,7 @@ def is_late_day(workspace: Workspace, now: datetime | None = None) -> bool:
 
     Single source of truth: `config.schedule.day_start` (HH:MM). When set,
     the cutoff is `day_start + LATE_DAY_GRACE`. When unset, the cutoff is
-    `LATE_DAY_FALLBACK_TIME` absolute. Q11 spec.
+    `LATE_DAY_FALLBACK_TIME` absolute.
     """
     current = now if now is not None else clock.now()
     schedule_day_start = workspace.config.schedule.day_start
