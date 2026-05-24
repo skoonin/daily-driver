@@ -143,10 +143,10 @@ def _categories(workspace: Any | None) -> dict[str, Any]:
 
 
 def _sources() -> dict[str, Any]:
-    from daily_driver.scraper.sources import SOURCE_REGISTRY
+    from daily_driver.scraper.sources import SCRAPERS
 
     return {
-        "sources": sorted(SOURCE_REGISTRY.keys()),
+        "sources": sorted(SCRAPERS),
         "consumers": ["jobs run --sources", "scraper.sources.<name>.enabled"],
     }
 
