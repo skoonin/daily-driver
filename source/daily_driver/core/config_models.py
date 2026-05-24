@@ -617,7 +617,24 @@ class GatherConfig(BaseModel):
 
 
 class Config(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    """Root daily-driver config schema.
+
+    Strict at the root: unknown top-level keys raise pydantic
+    ``ValidationError`` so typos like ``tracer:`` for ``tracker:`` fail loudly
+    at parse time instead of being silently ignored.
+
+    User extensions belong on one of the existing seams, not on freeform root
+    keys:
+
+    - Per-entry user data: a tracker entry's ``extras`` map (set via
+      ``daily-driver tracker add --extra key=value``), not a root config key.
+    - Per-category required fields and custom categories:
+      ``tracker.categories.<name>``.
+    - Narrative / free-form user context: ``voice-profile.md`` in the
+      workspace, not the YAML config.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     daily_driver: DailyDriverConfig = Field(
         default=DailyDriverConfig(),

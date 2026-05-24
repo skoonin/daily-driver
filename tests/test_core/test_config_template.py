@@ -83,7 +83,7 @@ def test_render_marks_optional_blocks_commented():
 def test_render_preserves_preamble():
     text = render_config_template()
     assert text.startswith("# daily-driver workspace configuration")
-    assert 'extra="allow"' in text
+    assert 'extra="forbid"' in text
 
 
 _COMMENTED_BLOCKS = [

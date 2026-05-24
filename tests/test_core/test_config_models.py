@@ -421,14 +421,13 @@ def test_config_minimal_valid():
     assert m.plugins.job_search is None
 
 
-def test_config_allows_extra_top_level():
-    """Root Config is extra='allow' so users can stash workspace-local keys."""
-    m = Config(
-        tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
-        unknown_section={"foo": "bar"},
-    )
-    # The unknown key is preserved on the model.
-    assert m.model_dump()["unknown_section"] == {"foo": "bar"}
+def test_config_rejects_extra_top_level():
+    """Root Config is extra='forbid' so typos fail loudly at parse time."""
+    with pytest.raises(ValidationError):
+        Config(
+            tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),
+            unknown_section={"foo": "bar"},
+        )
 
 
 def test_config_rejects_extra_in_plugins():
