@@ -137,7 +137,10 @@ def run(args: argparse.Namespace) -> int:
     normalized = new_content.strip() + "\n"
 
     try:
-        with file_lock(profile_path):
+        # Lock a sentinel, not the data file itself: apply_update does an
+        # os.replace, which would sever a lock held on the original inode and
+        # break mutual exclusion between concurrent runs.
+        with file_lock(profile_path.with_suffix(".md.lock")):
             apply_update(profile_path, new_content=normalized, mode=mode)
     except VoiceUpdateError as exc:
         Console.error(str(exc))

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import threading
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -287,6 +289,57 @@ def test_concurrent_write_serialized_by_lock(workspace: Workspace) -> None:
 
     ids = [e.id for e in entries]
     assert len(set(ids)) == 20, "all IDs must be unique"
+
+
+# ---------------------------------------------------------------------------
+# 10b. R1 — concurrent append_note must not lose an append
+# ---------------------------------------------------------------------------
+
+
+# Module-level so multiprocessing spawn can pickle it.
+def _append_note_worker(
+    workspace_root: str, entry_id: str, note: str, ready: Any, go: Any
+) -> None:
+    ws = Workspace.discover_or_fail(override=Path(workspace_root))
+    tracker = Tracker(ws)
+    # Barrier both workers so they contend for the lock simultaneously — this is
+    # what surfaced the lost-append bug when the read-modify-write spanned
+    # outside the lock.
+    ready.set()
+    go.wait(timeout=10)
+    tracker.update(entry_id, append_note=note)
+
+
+def test_concurrent_append_note_preserves_both(workspace: Workspace) -> None:
+    tracker = Tracker(workspace)
+    entry = tracker.add(category="task", title="Append race")
+
+    ready_a = multiprocessing.Event()
+    ready_b = multiprocessing.Event()
+    go = multiprocessing.Event()
+
+    proc_a = multiprocessing.Process(
+        target=_append_note_worker,
+        args=(str(workspace.root), entry.id, "note-A", ready_a, go),
+    )
+    proc_b = multiprocessing.Process(
+        target=_append_note_worker,
+        args=(str(workspace.root), entry.id, "note-B", ready_b, go),
+    )
+    proc_a.start()
+    proc_b.start()
+    assert ready_a.wait(timeout=5)
+    assert ready_b.wait(timeout=5)
+    go.set()
+    proc_a.join(timeout=10)
+    proc_b.join(timeout=10)
+    assert proc_a.exitcode == 0
+    assert proc_b.exitcode == 0
+
+    notes = Tracker(workspace).get(entry.id).notes
+    lines = set(notes.splitlines())
+    assert "note-A" in lines, f"note-A lost: {notes!r}"
+    assert "note-B" in lines, f"note-B lost: {notes!r}"
 
 
 # ---------------------------------------------------------------------------

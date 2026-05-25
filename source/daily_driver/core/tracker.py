@@ -236,13 +236,25 @@ class Tracker:
             self._save_unlocked(data)
             return new_entry
 
-    def update(self, entry_id: str, **changes: Any) -> TrackerEntry:
+    def update(
+        self, entry_id: str, *, append_note: str | None = None, **changes: Any
+    ) -> TrackerEntry:
         with file_lock(self._lock_path(), shared=False):
             data = self.load()
             for i, entry in enumerate(data.entries):
                 if entry.id == entry_id:
                     current = entry.model_dump()
                     current.update(changes)
+                    # Append note from the freshly-loaded entry inside the lock —
+                    # building the joined string in the caller would lose a
+                    # concurrent append (the stale read-modify-write window).
+                    if append_note is not None:
+                        existing_notes = current.get("notes") or ""
+                        current["notes"] = (
+                            existing_notes + "\n" + append_note
+                            if existing_notes
+                            else append_note
+                        )
                     current["updated_at"] = now()
                     updated = TrackerEntry.model_validate(current)
                     # Exclude the entry being updated from the "already in use"
