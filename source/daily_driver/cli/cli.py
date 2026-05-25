@@ -23,18 +23,24 @@ from daily_driver.cli._common import (
 )
 from daily_driver.core.console import Console
 from daily_driver.core.logging import get_logger
+from daily_driver.plugins import PLUGINS
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # Module-path entries must resolve when dispatched — ImportError is a
 # packaging bug, not a graceful-degradation case. Consumed by help.py to
 # walk the command set; keep the 2-tuple shape it unpacks.
-_COMMANDS = [
+#
+# Plugin commands (PLUGINS) are spliced in at _PLUGIN_INSERT_INDEX so their
+# listing position matches the pre-extraction order rather than landing at the
+# tail.
+_PLUGIN_INSERT_INDEX = 5
+
+_CORE_COMMANDS = [
     ("init", "daily_driver.cli.commands.init"),
     ("doctor", "daily_driver.cli.commands.doctor"),
     ("tracker", "daily_driver.cli.commands.tracker"),
     ("status", "daily_driver.cli.commands.status"),
     ("focus", "daily_driver.cli.commands.focus"),
-    ("jobs", "daily_driver.cli.commands.jobs"),
     ("paths", "daily_driver.cli.commands.paths"),
     ("gather", "daily_driver.cli.commands.gather"),
     ("day-start", "daily_driver.cli.commands.day_start"),
@@ -45,6 +51,14 @@ _COMMANDS = [
     ("voice-update", "daily_driver.cli.commands.voice_update"),
     ("help", "daily_driver.cli.commands.help"),
 ]
+
+_PLUGIN_COMMANDS = [(p.command_name, p.command_module) for p in PLUGINS]
+
+_COMMANDS = (
+    _CORE_COMMANDS[:_PLUGIN_INSERT_INDEX]
+    + _PLUGIN_COMMANDS
+    + _CORE_COMMANDS[_PLUGIN_INSERT_INDEX:]
+)
 
 # Top-level `daily-driver --help` summaries, mirroring each module's own
 # add_parser `help=`. Stored alongside (not in) _COMMANDS so the listing
@@ -60,7 +74,6 @@ _TOP_HELP = {
     ),
     "status": "Show workspace status and tracker summary",
     "focus": "Manage focus mode (on / off / status)",
-    "jobs": "Job search: scrape boards, inspect status, prune stale rows",
     "paths": "Print resolved workspace paths (output, state, daily plan/notes)",
     "gather": "Pull data from calendar or git",
     "day-start": "Interactive morning planning session (runs /day-start via claude)",
@@ -71,6 +84,7 @@ _TOP_HELP = {
     "voice-update": "Update voice-profile.md from writing samples (uses Claude)",
     "help": "Show reference: subcommands and discoverable values",
 }
+_TOP_HELP.update({p.command_name: p.command_help for p in PLUGINS})
 
 _COMMAND_MODULES = {name: module_path for name, module_path in _COMMANDS}
 

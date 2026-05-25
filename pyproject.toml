@@ -80,6 +80,7 @@ daily_driver = [
     "templates/*.md",
     "templates/*.yaml",
     "templates/hooks/*.sh",
+    "plugins/job_search/templates/*.j2",
 ]
 
 [tool.black]
@@ -113,9 +114,13 @@ ignore_missing_imports = true
 
 # argparse stubs return Any from add_parser() and Namespace attributes;
 # strict mode's warn_return_any fires on every CLI command. Scope it off
-# for this subpackage rather than annotating around stdlib friction.
+# for CLI subpackages rather than annotating around stdlib friction. Plugin
+# CLI modules (e.g. daily_driver.plugins.job_search.cli) share the friction.
 [[tool.mypy.overrides]]
-module = ["daily_driver.cli.commands.*"]
+module = [
+    "daily_driver.cli.commands.*",
+    "daily_driver.plugins.*.cli",
+]
 warn_return_any = false
 
 [[tool.mypy.overrides]]
@@ -123,13 +128,13 @@ warn_return_any = false
 # not the typed RawScrapedJob / NormalizedJob / EnrichedJob hot path) and
 # BeautifulSoup attribute access.
 module = [
-    "daily_driver.scraper.runner",
-    "daily_driver.scraper.csv_io",
-    "daily_driver.scraper.enrichment",
-    "daily_driver.scraper.parsing",
-    "daily_driver.scraper.comp",
-    "daily_driver.scraper.sources",
-    "daily_driver.scraper.sources.*",
+    "daily_driver.plugins.job_search.scraper.runner",
+    "daily_driver.plugins.job_search.scraper.csv_io",
+    "daily_driver.plugins.job_search.scraper.enrichment",
+    "daily_driver.plugins.job_search.scraper.parsing",
+    "daily_driver.plugins.job_search.scraper.comp",
+    "daily_driver.plugins.job_search.scraper.sources",
+    "daily_driver.plugins.job_search.scraper.sources.*",
 ]
 disallow_any_generics = false
 warn_return_any = false

@@ -26,8 +26,31 @@ from daily_driver.core.contract import ENTRIES
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
+from daily_driver.plugins._base import PackageDataDir
 
 _logger = get_logger("generate")
+
+# Core's own package-data: the daily-driver workflow commands + agents. Each
+# plugin appends its own dirs (see _package_data_dirs); the daily-driver subdir
+# has a hyphen so it's reached via joinpath rather than a module identifier.
+_CORE_PACKAGE_DATA: tuple[PackageDataDir, ...] = (
+    PackageDataDir("daily_driver.commands", "commands/daily-driver"),
+    PackageDataDir("daily_driver.agents", "agents/daily-driver"),
+)
+
+
+def _package_data_dirs() -> list[PackageDataDir]:
+    """Core baseline package-data dirs plus every registered plugin's.
+
+    PLUGINS is imported lazily here so importing core.generate does not pull in
+    plugin implementation modules at import time.
+    """
+    from daily_driver.plugins import PLUGINS
+
+    dirs = list(_CORE_PACKAGE_DATA)
+    for plugin in PLUGINS:
+        dirs.extend(plugin.package_data_dirs)
+    return dirs
 
 
 @dataclass(frozen=True)
@@ -104,22 +127,11 @@ def _wipe_and_recreate(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def _remove_stale_files(
-    dest_dir: Path,
+def _package_md_names(
     pkg_traversable: importlib.resources.abc.Traversable,
-    *,
-    workspace_root: Path,
-    state_dir: Path,
-) -> None:
-    """Remove files from dest_dir that are not present in pkg_traversable.
-
-    Only removes files that are NOT user-edited (per the SHA-256 manifest).
-    User-edited files are preserved even if they no longer exist in the package.
-    """
-    if not dest_dir.exists():
-        return
-
-    pkg_names = {
+) -> set[str]:
+    """Names of the safe .md files a package-data source contributes."""
+    return {
         entry.name
         for entry in pkg_traversable.iterdir()
         if entry.name.endswith(".md")
@@ -127,6 +139,24 @@ def _remove_stale_files(
         and not entry.name.startswith(".")
         and ".." not in entry.name
     }
+
+
+def _remove_stale_files(
+    dest_dir: Path,
+    pkg_names: set[str],
+    *,
+    workspace_root: Path,
+    state_dir: Path,
+) -> None:
+    """Remove files from dest_dir whose names are not in pkg_names.
+
+    pkg_names is the union of every package-data source mapped to this dest, so
+    co-located sources do not delete each other's files. Only files that are NOT
+    user-edited (per the SHA-256 manifest) are removed; user-edited files are
+    preserved even when absent from the package.
+    """
+    if not dest_dir.exists():
+        return
 
     for existing in dest_dir.iterdir():
         if not existing.name.endswith(".md"):
@@ -178,57 +208,61 @@ def generate(
 
         claude_root = workspace.root / ".claude"
 
-        commands_dest = claude_root / "commands" / "daily-driver"
-        agents_dest = claude_root / "agents" / "daily-driver"
+        # Resolve each package-data source to its (traversable, dest) pair. The
+        # .md files live in a hyphenated leaf subdir (e.g. commands/daily-driver)
+        # that is not a valid module identifier, so reach it via joinpath on the
+        # source package's traversable using the dest's leaf name. Two sources may
+        # map to the same dest; the per-dest passes below dedupe so a later source
+        # does not erase files an earlier one wrote.
+        resolved: list[tuple[importlib.resources.abc.Traversable, Path]] = []
+        for data_dir in _package_data_dirs():
+            dest_path = Path(data_dir.dest)
+            pkg_traversable = importlib.resources.files(
+                data_dir.source_package
+            ).joinpath(dest_path.name)
+            resolved.append((pkg_traversable, claude_root / dest_path))
 
-        # Copy *.md from package data. daily-driver subdir has a hyphen so it's not
-        # a valid Python module identifier; navigate via joinpath on the parent traversable.
-        commands_pkg = importlib.resources.files("daily_driver.commands").joinpath(
-            "daily-driver"
-        )
-        agents_pkg = importlib.resources.files("daily_driver.agents").joinpath(
-            "daily-driver"
-        )
-
-        # When overwriting user edits (force_overwrite), wipe the entire subdir first
-        # for a clean slate. When preserving user edits, do a targeted cleanup: remove
-        # only stale files that are absent from the package and not user-edited.
-        if force_overwrite:
-            _wipe_and_recreate(commands_dest)
-            _wipe_and_recreate(agents_dest)
-        else:
-            commands_dest.mkdir(parents=True, exist_ok=True)
-            agents_dest.mkdir(parents=True, exist_ok=True)
-            _remove_stale_files(
-                commands_dest,
-                commands_pkg,
-                workspace_root=workspace.root,
-                state_dir=workspace.state_dir,
-            )
-            _remove_stale_files(
-                agents_dest,
-                agents_pkg,
-                workspace_root=workspace.root,
-                state_dir=workspace.state_dir,
+        # Union of valid .md names per dest, so a dest fed by two sources keeps
+        # files from both during stale removal rather than treating the other
+        # source's files as stale.
+        names_by_dest: dict[Path, set[str]] = {}
+        for pkg_traversable, dest_dir in resolved:
+            names_by_dest.setdefault(dest_dir, set()).update(
+                _package_md_names(pkg_traversable)
             )
 
-        n_commands, cmd_paths, cmd_skipped = _copy_package_md(
-            commands_pkg,
-            commands_dest,
-            workspace_root=workspace.root,
-            state_dir=workspace.state_dir,
-            force_overwrite=force_overwrite,
-        )
-        n_agents, agent_paths, agent_skipped = _copy_package_md(
-            agents_pkg,
-            agents_dest,
-            workspace_root=workspace.root,
-            state_dir=workspace.state_dir,
-            force_overwrite=force_overwrite,
-        )
-        _logger.info("Copied %d command(s), %d agent(s)", n_commands, n_agents)
+        # When overwriting user edits (force_overwrite), wipe each dest subdir once
+        # for a clean slate. When preserving user edits, do a targeted cleanup:
+        # remove only stale files absent from the package and not user-edited.
+        # Both passes run once per unique dest so co-located sources coexist.
+        for dest_dir, pkg_names in names_by_dest.items():
+            if force_overwrite:
+                _wipe_and_recreate(dest_dir)
+            else:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                _remove_stale_files(
+                    dest_dir,
+                    pkg_names,
+                    workspace_root=workspace.root,
+                    state_dir=workspace.state_dir,
+                )
 
-        all_written = cmd_paths + agent_paths
+        n_copied = 0
+        n_preserved = 0
+        all_written: list[Path] = []
+        for pkg_traversable, dest_dir in resolved:
+            count, paths, skipped = _copy_package_md(
+                pkg_traversable,
+                dest_dir,
+                workspace_root=workspace.root,
+                state_dir=workspace.state_dir,
+                force_overwrite=force_overwrite,
+            )
+            n_copied += count
+            n_preserved += len(skipped)
+            all_written.extend(paths)
+        _logger.info("Copied %d package-managed file(s)", n_copied)
+
         if all_written:
             _manifest.record(workspace.state_dir, workspace.root, all_written)
 
@@ -245,9 +279,8 @@ def generate(
         version_stamp.write(workspace.state_dir, workspace.version)
         _logger.info("Version stamp written: %s", workspace.version)
 
-        n_preserved = len(cmd_skipped) + len(agent_skipped)
         return GenerationResult(
-            n_written=n_commands + n_agents + len(entry_paths),
+            n_written=n_copied + len(entry_paths),
             n_preserved=n_preserved,
         )
 

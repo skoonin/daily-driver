@@ -286,37 +286,24 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
     )
 
 
-def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
-    """Warn if `jobs.csv.bak.*` snapshots have accumulated under backups/.
+def _plugin_checks(workspace: Workspace) -> list[CheckResult]:
+    """Run each plugin's doctor checks.
 
-    Each backfill / migration run drops a `.bak.<utc-stamp>` snapshot before
-    mutating jobs.csv. Users won't notice them, so over months of use they
-    pile up.
+    Plugin check functions are resolved by dotted path and imported lazily so
+    core never eagerly loads plugin implementation modules at import time.
     """
-    backups_dir = workspace.output_dir / "backups"
-    if not backups_dir.exists():
-        return None
-    baks = sorted(backups_dir.glob("jobs.csv.bak.*"))
-    if len(baks) <= 5:
-        return None
-    keep = baks[-3:]
-    drop = baks[:-3]
-    drop_names = ", ".join(p.name for p in drop[:3]) + (
-        f", … (+{len(drop) - 3} more)" if len(drop) > 3 else ""
-    )
-    return CheckResult(
-        name="Jobs backups",
-        status="WARNING",
-        detail=(
-            f"{len(baks)} jobs.csv.bak.* files in {backups_dir}; "
-            f"keeping {len(keep)} most recent is plenty. Old: {drop_names}"
-        ),
-        fix_hint=(
-            f"Delete old snapshots: rm {backups_dir}/jobs.csv.bak.* "
-            f"(then re-create the most recent if you want a rollback point)"
-        ),
-        fixable=False,
-    )
+    import importlib
+
+    from daily_driver.plugins import PLUGINS
+
+    results: list[CheckResult] = []
+    for plugin in PLUGINS:
+        if plugin.doctor_checks is None:
+            continue
+        module_path, _, attr = plugin.doctor_checks.rpartition(".")
+        run = getattr(importlib.import_module(module_path), attr)
+        results.extend(run(workspace))
+    return results
 
 
 def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
@@ -332,9 +319,7 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
         ai_row = _check_ai_providers(workspace)
         if ai_row is not None:
             results.append(ai_row)
-        bak_row = _check_jobs_backups(workspace)
-        if bak_row is not None:
-            results.append(bak_row)
+        results.extend(_plugin_checks(workspace))
     return results
 
 

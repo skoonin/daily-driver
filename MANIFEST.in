@@ -8,6 +8,7 @@ recursive-include source/daily_driver/agents *.md
 recursive-include source/daily_driver/commands *.md
 recursive-include source/daily_driver/launchd *.j2
 recursive-include source/daily_driver/templates *.j2 *.md *.yaml
+recursive-include source/daily_driver/plugins/job_search/templates *.j2
 
 include source/daily_driver/py.typed
 

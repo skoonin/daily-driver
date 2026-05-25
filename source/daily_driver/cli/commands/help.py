@@ -140,7 +140,7 @@ def _categories(workspace: Any | None) -> dict[str, Any]:
 
 
 def _sources() -> dict[str, Any]:
-    from daily_driver.scraper.sources import SCRAPERS
+    from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 
     return {
         "sources": sorted(SCRAPERS),

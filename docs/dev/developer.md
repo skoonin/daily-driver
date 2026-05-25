@@ -131,13 +131,18 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 
 ### Requires a fork
 
-- New subcommand — static `_COMMANDS` table in `cli/cli.py`; no runtime plugin loader.
-- New scraper source — add `scraper/sources/<name>.py` with a `scrape_<name>(config) -> list[dict]` function and register it in `scraper/sources/__init__.py:SCRAPERS`. See [extending.md](extending.md).
+- New core subcommand — static `_COMMANDS` table in `cli/cli.py`; no runtime discovery.
 - New config fields — Pydantic model in `core.config_models`. `extra="forbid"` is strict.
+- New plugin — see [extending.md](extending.md) and "Plugins" below.
 
-### Why `plugins/` is empty
+### Plugins
 
-`source/daily_driver/plugins/` is a forward-compat seam. In v0.1.0 it holds no code. Its purpose: scoping feature-specific config under `plugins.<namespace>:` today so a future release can add dynamic loading (discovering `daily_driver.plugins` entry-points at startup) without repainting the config model. Adding a loader now, without a second concrete plugin to validate the API, would freeze the wrong shape.
+`source/daily_driver/plugins/` holds feature slices that core wires through a static registry — no runtime discovery. `job_search` is the one shipped plugin; its config, CLI, scraper sources, scheduler, and doctor checks all live under `plugins/job_search/`.
+
+- **Registry.** `plugins/__init__.py` exposes `PLUGINS: tuple[Plugin, ...]`, listed explicitly. `_validate_registry` runs at import and `find_spec`-checks every declared hook module (command, scheduled-jobs builder, doctor checks, package-data sources) so a typo'd path fails at startup, not on first use.
+- **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs copied into the workspace `.claude/` tree).
+- **Core iterates `PLUGINS`.** `core.scheduler`, `core.doctor`, and `core.generate` walk the registry (importing `PLUGINS` lazily inside the function so core stays import-light) and pull each plugin's contribution. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
+- **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`), but the path is exercised by a synthetic-plugin test.
 
 ## Common mistakes
 

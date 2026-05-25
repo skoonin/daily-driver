@@ -2,41 +2,34 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from pathlib import Path
 
 
-def desktop_notify(message: str, title: str, csv_path: Path) -> None:
-    """Send a macOS desktop notification for a completed scrape run.
+def desktop_notify(
+    title: str,
+    message: str,
+    *,
+    open_url: str | None = None,
+    subtitle: str | None = None,
+) -> None:
+    """Send a best-effort macOS desktop notification.
 
-    Prefers terminal-notifier (opens the CSV on click) and falls back to
-    osascript. Both calls use check=False — notifications are best-effort and
-    must never abort the scraper.
+    Prefers terminal-notifier (clickable, honoring ``open_url``) and falls back
+    to osascript. Both calls use ``check=False`` — notifications are best-effort
+    and must never abort the caller. A generic OS capability: callers supply
+    their own title/message and an optional ``open_url`` (e.g. a ``file://``
+    link opened on click) plus an optional ``subtitle``.
     """
-    file_url = csv_path.as_uri()
-
     try:
         if shutil.which("terminal-notifier"):
-            subprocess.run(
-                [
-                    "terminal-notifier",
-                    "-title",
-                    title,
-                    "-message",
-                    message,
-                    "-open",
-                    file_url,
-                ],
-                check=False,
-            )
+            args = ["terminal-notifier", "-title", title, "-message", message]
+            if open_url is not None:
+                args += ["-open", open_url]
+            subprocess.run(args, check=False)
         else:
-            subprocess.run(
-                [
-                    "osascript",
-                    "-e",
-                    f'display notification "{message}" with title "{title}" subtitle "{csv_path.name}"',
-                ],
-                check=False,
-            )
+            script = f'display notification "{message}" with title "{title}"'
+            if subtitle is not None:
+                script += f' subtitle "{subtitle}"'
+            subprocess.run(["osascript", "-e", script], check=False)
     except OSError:
         pass
 
