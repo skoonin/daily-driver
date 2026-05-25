@@ -70,9 +70,13 @@ Key conventions:
   package-data on `init` and on version drift. `doctor --fix` preserves
   user-edited managed files (SHA-256 manifest); `doctor --reset` overwrites.
   Top-level `.claude/commands/` and `.claude/agents/` are user territory.
-- **Plugin namespacing.** `plugins.job_search:` in `.dd-config.yaml` is
-  the one shipped plugin namespace; the root Config is pydantic
-  `extra="forbid"`.
+- **Plugins are a real boundary.** Each plugin lives under
+  `source/daily_driver/plugins/<name>/` and exposes a `PLUGIN` (`plugins/_base.py`
+  `Plugin` dataclass) registered in the static `plugins.PLUGINS` tuple — no runtime
+  discovery. Core iterates `PLUGINS` (lazily, by dotted path) for CLI command, config
+  model, scheduled jobs, doctor checks, and package data. `job_search` is the one
+  shipped plugin; its config namespace is `plugins.job_search:` in `.dd-config.yaml`.
+  The root Config and `PluginsConfig` are both pydantic `extra="forbid"`.
 
 ## Testing
 
@@ -82,7 +86,8 @@ Key conventions:
 - `make lint` / `make format` / `make type` — black + isort + flake8 + mypy.
 
 Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
-`tests/test_scraper/`, `tests/test_gathers/`, `tests/test_integrations/`.
+`tests/test_plugins/job_search/` (incl. `scraper/`), `tests/test_gathers/`,
+`tests/test_integrations/`.
 
 ## Release
 
