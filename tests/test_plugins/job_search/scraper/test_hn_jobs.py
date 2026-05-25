@@ -20,11 +20,11 @@ def _config(
             "roles": roles or ["SRE", "Engineer"],
             "scraper": {
                 "enabled": True,
-                "hn_max_posts": max_posts,
                 "timeout": 1,
                 "max_retries": 0,
                 "max_age_days": max_age_days,
             },
+            "sources": {"hn_jobs": {"hn_max_posts": max_posts}},
         }
     }
 

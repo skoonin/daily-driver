@@ -23,9 +23,13 @@ def _config(
                 "enabled": True,
                 "timeout": 1,
                 "max_retries": 0,
-                "wwr_categories": (
-                    categories if categories is not None else ["programming"]
-                ),
+            },
+            "sources": {
+                "weworkremotely": {
+                    "wwr_categories": (
+                        categories if categories is not None else ["programming"]
+                    ),
+                },
             },
         }
     }

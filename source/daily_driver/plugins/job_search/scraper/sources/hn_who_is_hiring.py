@@ -24,13 +24,14 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     the single source for both the thread ID lookup and the comment fetch.
     Comment headline format (convention): "Company | Role | Location | ..."
     """
+    from daily_driver.plugins.job_search.config import HackerNewsToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
         roles_list,
-        scraper_cfg,
+        source_toggle,
     )
 
-    max_posts = scraper_cfg(config).hn_max_posts
+    max_posts = source_toggle(config, "hn_who_is_hiring", HackerNewsToggle).hn_max_posts
     roles = roles_list(config)
     session = _http_session(config)
     current_month_str = today().strftime("%B %Y")

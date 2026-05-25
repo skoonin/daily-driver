@@ -38,7 +38,8 @@ def fake_config() -> dict[str, Any]:
     return {
         "plugins": {
             "job_search": {
-                "scraper": {"enabled": True, "max_enrich_companies": 0},
+                "scraper": {"enabled": True},
+                "enrichment": {"max_enrich_companies": 0},
             }
         }
     }

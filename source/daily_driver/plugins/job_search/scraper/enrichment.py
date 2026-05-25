@@ -250,7 +250,7 @@ def enrich_company_descriptions(
     """
     from daily_driver.plugins.job_search.scraper.runner import (
         enrich_timeout,
-        scraper_cfg,
+        enrichment_cfg,
     )
 
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
@@ -261,7 +261,7 @@ def enrich_company_descriptions(
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return stats
 
-    cfg = scraper_cfg(config)
+    cfg = enrichment_cfg(config)
     if budget <= 0:
         budget = cfg.max_enrich_companies
     include_gd = cfg.enrich_gd_rating
@@ -625,9 +625,9 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     """
     from daily_driver.plugins.job_search.scraper.runner import (
         enrich_timeout,
+        enrichment_cfg,
         home_city,
         persona,
-        scraper_cfg,
     )
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
@@ -638,7 +638,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return stats
 
-    cfg = scraper_cfg(config)
+    cfg = enrichment_cfg(config)
     if not cfg.enrich_fit or not cfg.enrich_notes:
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
         return stats
@@ -769,10 +769,10 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     are swallowed — missing data is the expected outcome for boards that don't
     expose JSON-LD, not an error worth aborting the run for.
     """
-    from daily_driver.plugins.job_search.scraper.runner import scraper_cfg
+    from daily_driver.plugins.job_search.scraper.runner import enrichment_cfg
 
     cache: dict[str, dict] = {}
-    cfg = scraper_cfg(config)
+    cfg = enrichment_cfg(config)
     delay = cfg.detail_delay_seconds
 
     # Hosts whose detail pages we deliberately skip:

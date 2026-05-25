@@ -25,8 +25,8 @@ def _cfg_with_sources(enabled_ids: list[str], *, workers: int = 4) -> dict:
             "scraper": {
                 "enabled": True,
                 "parallel_workers": workers,
-                "sources": {sid: {"enabled": True} for sid in enabled_ids},
-            }
+            },
+            "sources": {sid: {"enabled": True} for sid in enabled_ids},
         }
     }
 

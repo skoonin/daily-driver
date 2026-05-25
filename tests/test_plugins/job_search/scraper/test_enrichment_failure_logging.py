@@ -19,7 +19,7 @@ from daily_driver.plugins.job_search.scraper import enrichment
 
 
 def _config() -> dict:
-    return {"job_search": {"scraper": {"enrich_timeout": 5}}}
+    return {"job_search": {"enrichment": {"enrich_timeout": 5}}}
 
 
 def test_company_descriptions_warning_includes_stdout(caplog) -> None:

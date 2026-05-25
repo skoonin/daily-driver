@@ -15,6 +15,7 @@ from daily_driver.core.config_models import (
     UserProfile,
 )
 from daily_driver.plugins.job_search.config import (
+    EnrichmentConfig,
     JobsConfig,
     JobSearchPlugin,
     Locations,
@@ -172,11 +173,13 @@ def test_job_search_plugin_minimal():
     assert m.seniority_keywords == []
     assert m.min_comp_usd == 180000
     assert isinstance(m.scraper, ScraperConfig)
+    assert isinstance(m.enrichment, EnrichmentConfig)
+    assert isinstance(m.sources, dict)
 
 
 def test_job_search_plugin_with_sources():
-    m = JobSearchPlugin(sources={"linkedin": {"max_pages": 3}})
-    assert m.sources["linkedin"]["max_pages"] == 3
+    m = JobSearchPlugin(sources={"remoteok": True})
+    assert m.sources["remoteok"].enabled is True
 
 
 def test_job_search_plugin_full():
@@ -225,21 +228,11 @@ def test_job_search_plugin_primary_currency_rejects_unsupported():
 def test_scraper_config_defaults():
     m = ScraperConfig()
     assert m.enabled is False
+    assert m.max_retries == 3
+    assert m.max_age_days == 30
     assert m.timeout == 30
-    assert m.enrich_timeout == 30
-    assert m.max_enrich_companies == 50
-    assert m.enrich_gd_rating is True
-    assert m.enrich_fit is True
-    assert m.enrich_notes is True
-    assert m.max_enrich_fit == 50
-    assert m.detail_delay_seconds == 0.5
     assert m.search_terms is None
     assert m.headless is False
-    assert m.wwr_categories == []
-    assert m.hn_max_posts == 100
-    assert m.greenhouse_boards == ["anthropic"]
-    assert isinstance(m.jobs, JobsConfig)
-    assert m.sources == {}
     assert m.parallel_workers == 4
     assert m.max_pages == 3
 
@@ -249,28 +242,94 @@ def test_scraper_config_rejects_extra():
         ScraperConfig(unknown_flag=True)
 
 
-def test_scraper_config_sources_legacy_bool_coerced():
-    """Legacy YAML form `sources: {remoteok: true}` migrates to SourceToggle."""
+def test_scraper_config_rejects_moved_enrichment_field():
+    """Enrichment knobs moved to EnrichmentConfig; the old flat field hard-fails."""
+    with pytest.raises(ValidationError):
+        ScraperConfig(enrich_timeout=5)
+
+
+def test_scraper_config_rejects_moved_sources_field():
+    """`sources` is a sibling of `scraper`; a flat `sources:` under scraper hard-fails."""
+    with pytest.raises(ValidationError):
+        ScraperConfig(sources={"remoteok": True})
+
+
+# ---------------------------------------------------------------------------
+# EnrichmentConfig
+# ---------------------------------------------------------------------------
+
+
+def test_enrichment_config_defaults():
+    m = EnrichmentConfig()
+    assert m.enrich_timeout == 30
+    assert m.max_enrich_companies == 50
+    assert m.enrich_gd_rating is True
+    assert m.enrich_fit is True
+    assert m.enrich_notes is True
+    assert m.max_enrich_fit == 50
+    assert m.detail_delay_seconds == 0.5
+
+
+def test_enrichment_config_rejects_extra():
+    with pytest.raises(ValidationError):
+        EnrichmentConfig(unknown_flag=True)
+
+
+# ---------------------------------------------------------------------------
+# JobSearchPlugin.sources
+# ---------------------------------------------------------------------------
+
+
+def test_sources_defaults():
+    m = JobSearchPlugin()
+    assert m.sources == {}
+
+
+def test_sources_legacy_bool_coerced():
+    """YAML form `sources: {remoteok: true}` migrates to SourceToggle."""
     from daily_driver.plugins.job_search.config import SourceToggle
 
-    m = ScraperConfig(sources={"remoteok": True, "jobspy": False})
+    m = JobSearchPlugin(sources={"remoteok": True, "jobspy": False})
     assert isinstance(m.sources["remoteok"], SourceToggle)
     assert m.sources["remoteok"].enabled is True
     assert m.sources["jobspy"].enabled is False
 
 
-def test_scraper_config_sources_typed_form():
+def test_sources_typed_form():
     from daily_driver.plugins.job_search.config import SourceToggle
 
-    m = ScraperConfig(sources={"linkedin": SourceToggle(enabled=True)})
+    m = JobSearchPlugin(sources={"linkedin": SourceToggle(enabled=True)})
     assert m.sources["linkedin"].enabled is True
+
+
+def test_sources_per_source_knobs_on_toggles():
+    """Per-source knobs live on their SourceToggle subclass, not flat on scraper."""
+    from daily_driver.plugins.job_search.config import (
+        GreenhouseToggle,
+        HackerNewsToggle,
+        WeWorkRemotelyToggle,
+    )
+
+    m = JobSearchPlugin(
+        sources={
+            "weworkremotely": {"enabled": True, "wwr_categories": ["devops"]},
+            "greenhouse": {"enabled": True, "greenhouse_boards": ["stripe"]},
+            "hn_jobs": {"enabled": True, "hn_max_posts": 25},
+        }
+    )
+    assert isinstance(m.sources["weworkremotely"], WeWorkRemotelyToggle)
+    assert m.sources["weworkremotely"].wwr_categories == ["devops"]
+    assert isinstance(m.sources["greenhouse"], GreenhouseToggle)
+    assert m.sources["greenhouse"].greenhouse_boards == ["stripe"]
+    assert isinstance(m.sources["hn_jobs"], HackerNewsToggle)
+    assert m.sources["hn_jobs"].hn_max_posts == 25
 
 
 def test_jobspy_toggle_per_site_flags():
     """jobspy entry coerces to JobspyToggle with per-site bool flags."""
     from daily_driver.plugins.job_search.config import JobspyToggle
 
-    m = ScraperConfig(
+    m = JobSearchPlugin(
         sources={
             "jobspy": {
                 "enabled": True,
@@ -288,10 +347,20 @@ def test_jobspy_toggle_per_site_flags():
     assert toggle.google is True
 
 
+def test_jobspy_toggle_carries_jobs_config():
+    """JobsConfig query knobs live on the jobspy toggle, not flat on scraper."""
+    from daily_driver.plugins.job_search.config import JobspyToggle
+
+    m = JobSearchPlugin(sources={"jobspy": {"jobs": {"results_wanted_per_query": 100}}})
+    toggle = m.sources["jobspy"]
+    assert isinstance(toggle, JobspyToggle)
+    assert toggle.jobs.results_wanted_per_query == 100
+
+
 def test_jobspy_toggle_legacy_bool_coerced():
     from daily_driver.plugins.job_search.config import JobspyToggle
 
-    m = ScraperConfig(sources={"jobspy": False})
+    m = JobSearchPlugin(sources={"jobspy": False})
     assert isinstance(m.sources["jobspy"], JobspyToggle)
     assert m.sources["jobspy"].enabled is False
     assert m.sources["jobspy"].linkedin is True
@@ -318,12 +387,6 @@ def test_jobs_config_custom():
 def test_jobs_config_rejects_extra():
     with pytest.raises(ValidationError):
         JobsConfig(bad_key="x")
-
-
-def test_scraper_config_rejects_legacy_jobspy_key():
-    """Stale ``scraper.jobspy:`` from pre-rename configs hard-fails via extra=forbid."""
-    with pytest.raises(ValidationError):
-        ScraperConfig(jobspy={"results_wanted_per_query": 100})
 
 
 # ---------------------------------------------------------------------------

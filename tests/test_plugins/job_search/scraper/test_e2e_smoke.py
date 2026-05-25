@@ -61,7 +61,11 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
             "scraper": {
                 "enabled": True,
                 "search_terms": ["software engineer"],
-                "jobspy": {"results_wanted_per_query": 3, "hours_old": 168},
+            },
+            "sources": {
+                "jobspy": {
+                    "jobs": {"results_wanted_per_query": 3, "hours_old": 168},
+                },
             },
         }
     }

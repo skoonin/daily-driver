@@ -26,9 +26,11 @@ _MINIMAL_CONFIG: dict[str, Any] = {
             "enabled": True,
             "timeout": 5,
             "max_retries": 1,
+        },
+        "enrichment": {
             "max_enrich_companies": 10,
             "detail_delay_seconds": 0,
-        }
+        },
     }
 }
 
