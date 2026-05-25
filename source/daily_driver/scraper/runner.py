@@ -39,14 +39,6 @@ class ScraperError(RuntimeError):
     """
 
 
-def _to_int(x: object) -> int | None:
-    """Best-effort coerce an arbitrary value to int (via float). None on failure."""
-    try:
-        return int(float(x))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
 # Two-tier role matching: domain + optional seniority.
 # Defaults used when config keys are absent.
 _DEFAULT_DOMAIN_KEYWORDS = {
@@ -953,55 +945,3 @@ def run(
     if written > 0:
         _notify_new_jobs(written, csv_path)
     return 0
-
-
-__all__ = [
-    "ScraperError",
-    "_to_int",
-    "_DEFAULT_DOMAIN_KEYWORDS",
-    "_DEFAULT_SENIORITY_KEYWORDS",
-    "_SENIORITY_PREFIXES",
-    "load_config",
-    "_model",
-    "validate_config",
-    "min_comp_usd",
-    "scraper_cfg",
-    "roles_list",
-    "user_agent",
-    "timeout_seconds",
-    "max_retries",
-    "max_age_days",
-    "enrich_timeout",
-    "locations_config",
-    "persona",
-    "home_city",
-    "domain_keywords",
-    "seniority_keywords",
-    "countries_list",
-    "_known_urls_from_config",
-    "location_matches",
-    "_WHITESPACE_RE",
-    "_dedup_norm",
-    "dedup_key",
-    "dedup_key_for",
-    "_REMOTE_LOCATION_ALIASES",
-    "_REMOTE_ROLE_SUFFIXES",
-    "normalize_typed",
-    "normalize_job",
-    "_split_roles",
-    "_role_pattern",
-    "_role_matches",
-    "matches_roles",
-    "_compress_search_terms",
-    "_search_terms",
-    "_PLAYWRIGHT_SOURCES",
-    "_config_with_headless",
-    "_run_one",
-    "_merge_and_dedup",
-    "run_all_scrapers",
-    "_notify_new_jobs",
-    "load_config_file",
-    "run_backfill",
-    "_print_dry_run_table",
-    "run",
-]
