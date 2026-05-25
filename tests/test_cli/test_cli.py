@@ -225,6 +225,19 @@ def test_workspace_after_subcommand(tmp_path):
     assert rc != 2
 
 
+def test_workspace_before_subcommand_dispatches(tmp_path):
+    """`--workspace PATH <cmd>` dispatches under lazy command selection.
+
+    Regression: the argv scan must skip the `--workspace` value token so the
+    real subcommand parser is built (not the help-only stub), otherwise the
+    path value is misread as the command and parsing exits 2.
+    """
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    rc = app(["--workspace", str(ws), "doctor"])
+    assert rc != 2
+
+
 # ---------------------------------------------------------------------------
 # 8. Top-level error handler shows the exception class without -v
 # ---------------------------------------------------------------------------
