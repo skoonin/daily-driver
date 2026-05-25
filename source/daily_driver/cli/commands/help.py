@@ -15,12 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 
 # Topic names accepted by `help <topic>`. Order is the rendering order in
 # the full reference, so keep it grouped: commands first (most-used surface),
@@ -94,12 +93,10 @@ def _resolve_workspace(args: argparse.Namespace) -> Any | None:
     `help` must work without a workspace — it's the discovery surface that
     new users hit first. Failure to find one is informational, not fatal.
     """
-    from daily_driver.core.workspace import Workspace, WorkspaceError
+    from daily_driver.core.workspace import WorkspaceError
 
-    override = getattr(args, "workspace", None)
-    workspace_path = Path(override) if override else None
     try:
-        return Workspace.discover_or_fail(override=workspace_path)
+        return resolve_workspace(args)
     except WorkspaceError:
         return None
 

@@ -6,13 +6,12 @@ import argparse
 import datetime
 import importlib.resources
 import json
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console as RichConsole
 from rich.table import Table
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core import clock
 from daily_driver.core.console import Console
 
@@ -156,12 +155,10 @@ def _detect_setup_gaps(workspace: Any, all_entries: list[Any]) -> list[dict[str,
 
 def run(args: argparse.Namespace) -> int:
     from daily_driver.core.tracker import Tracker
-    from daily_driver.core.workspace import Workspace, WorkspaceError
+    from daily_driver.core.workspace import WorkspaceError
 
-    workspace_override = getattr(args, "workspace", None)
-    workspace_path = Path(workspace_override) if workspace_override else None
     try:
-        workspace = Workspace.discover_or_fail(override=workspace_path)
+        workspace = resolve_workspace(args)
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1

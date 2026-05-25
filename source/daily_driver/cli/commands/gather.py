@@ -11,7 +11,7 @@ import json
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.clock import today
 from daily_driver.core.console import Console
 from daily_driver.core.workspace import Workspace, WorkspaceError
@@ -168,11 +168,8 @@ def run(args: argparse.Namespace) -> int:
         Console.error("what: calendar, git")
         return 2
 
-    override = getattr(args, "workspace", None)
     try:
-        workspace = Workspace.discover_or_fail(
-            override=Path(override) if override else None
-        )
+        workspace = resolve_workspace(args)
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1

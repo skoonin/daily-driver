@@ -14,10 +14,12 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 from typing import NoReturn
 
 import daily_driver.core.logging as dd_logging
 from daily_driver.core.console import Console
+from daily_driver.core.workspace import Workspace
 
 
 class HelpfulArgumentParser(argparse.ArgumentParser):
@@ -66,6 +68,16 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
         default=argparse.SUPPRESS,
         help="Path to your daily-driver workspace directory.",
     )
+
+
+def resolve_workspace(args: argparse.Namespace) -> Workspace:
+    """Discover the workspace from the global `--workspace` flag or CWD.
+
+    Raises `WorkspaceError` when no workspace is found; callers translate it
+    to a console error + exit code.
+    """
+    override = getattr(args, "workspace", None)
+    return Workspace.discover_or_fail(override=Path(override) if override else None)
 
 
 def configure(args: argparse.Namespace) -> None:

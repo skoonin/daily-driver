@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-from typing import Any
 
 from rich.console import Console as RichConsole
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
@@ -58,24 +56,15 @@ def add_parser(
     return parser
 
 
-def _resolve_workspace(args: argparse.Namespace) -> Any:
-    from daily_driver.core.workspace import Workspace, WorkspaceError
-
-    workspace_override = getattr(args, "workspace", None)
-    workspace_path = Path(workspace_override) if workspace_override else None
-    try:
-        return Workspace.discover_or_fail(override=workspace_path)
-    except WorkspaceError as exc:
-        Console.error(str(exc))
-        return None
-
-
 def _run_install(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, install_all
+    from daily_driver.core.workspace import WorkspaceError
 
     console = RichConsole(stderr=False)
-    workspace = _resolve_workspace(args)
-    if workspace is None:
+    try:
+        workspace = resolve_workspace(args)
+    except WorkspaceError as exc:
+        Console.error(str(exc))
         return 1
 
     try:
@@ -99,10 +88,13 @@ def _run_install(args: argparse.Namespace) -> int:
 
 def _run_uninstall(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, uninstall_all
+    from daily_driver.core.workspace import WorkspaceError
 
     console = RichConsole(stderr=False)
-    workspace = _resolve_workspace(args)
-    if workspace is None:
+    try:
+        workspace = resolve_workspace(args)
+    except WorkspaceError as exc:
+        Console.error(str(exc))
         return 1
 
     try:
@@ -127,10 +119,13 @@ def _run_status(args: argparse.Namespace) -> int:
     from rich.table import Table
 
     from daily_driver.core.scheduler import SchedulerError, build_jobs
+    from daily_driver.core.workspace import WorkspaceError
     from daily_driver.integrations import launchd as launchd_int
 
-    workspace = _resolve_workspace(args)
-    if workspace is None:
+    try:
+        workspace = resolve_workspace(args)
+    except WorkspaceError as exc:
+        Console.error(str(exc))
         return 1
 
     try:
@@ -172,7 +167,7 @@ def _run_status(args: argparse.Namespace) -> int:
     table.add_column("Plist path")
     for row in rows:
         marker = "[green]yes[/green]" if row["installed"] else "[dim]no[/dim]"
-        table.add_row(row["label"], marker, row["plist_path"])
+        table.add_row(str(row["label"]), marker, str(row["plist_path"]))
     console.print(table)
     return 0
 

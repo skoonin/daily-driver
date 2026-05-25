@@ -6,13 +6,12 @@ import argparse
 import json
 import logging
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
     launch_headless,
     require_claude_available,
-    resolve_workspace,
 )
 from daily_driver.core.config import load as load_config
 from daily_driver.core.console import Console

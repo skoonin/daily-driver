@@ -9,7 +9,6 @@ import importlib.metadata
 import shutil
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from daily_driver.core import version_stamp
@@ -294,15 +293,7 @@ def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
     mutating jobs.csv. Users won't notice them, so over months of use they
     pile up.
     """
-    try:
-        cfg = workspace.config
-    except Exception:
-        return None
-    output_dir_raw = cfg.daily_driver.output_dir
-    output_dir = Path(output_dir_raw).expanduser()
-    if not output_dir.is_absolute():
-        output_dir = (workspace.root / output_dir).resolve()
-    backups_dir = output_dir / "backups"
+    backups_dir = workspace.output_dir / "backups"
     if not backups_dir.exists():
         return None
     baks = sorted(backups_dir.glob("jobs.csv.bak.*"))
