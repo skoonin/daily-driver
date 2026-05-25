@@ -46,6 +46,7 @@ log`. Versioned release history starts at 1.0.
 - **`scheduler` config is now a typed `SchedulerConfig`** (`checkin.times` list + `jobs.time` string) instead of a freeform `dict[str, Any]`. Unknown scheduler keys — including the legacy `scrape_jobs` — are now rejected at parse time via `extra="forbid"`, replacing the previous runtime "scrape_jobs was renamed" error message.
 - **Subprocess calls funnel through `integrations/`.** Git and icalBuddy invocations moved out of `gathers/` into new `integrations/git.py` and `integrations/icalbuddy.py`; `claude_cli` now raises domain exceptions (`ClaudeInvocationError`, `ClaudeTimeoutError`) instead of leaking `subprocess.CalledProcessError` / `TimeoutExpired` to the CLI. Scraper HTTP funnels through `sources/_http.py` (it re-exports `Session` / `HTTPError` / `HTTPTimeout`); `scraper/runner.py` and `scraper/enrichment.py` no longer import `requests` directly.
 - **Workspace + output_dir resolution consolidated into `cli/_common.resolve_workspace`.** The discover-or-fail boilerplate copy-pasted across the CLI commands now flows through one helper that raises `WorkspaceError`; the two divergent helpers (`scheduler._resolve_workspace` returning `None`, `_claude_session.resolve_workspace` raising `SessionError`) are removed, and both `_resolve_output_dir` re-implementations (jobs, doctor) now defer to `Workspace.output_dir`.
+- **`summary` AI-routing now reads the validated `Config`** instead of a separate `yaml.safe_load` of `.dd-config.yaml`, so config validation is consistent across commands.
 
 ### AI providers
 

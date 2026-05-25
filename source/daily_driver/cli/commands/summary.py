@@ -15,29 +15,16 @@ from daily_driver.cli.commands._claude_session import (
 )
 from daily_driver.core.config import load as load_config
 from daily_driver.core.console import Console
-from daily_driver.core.summary import build_json_bundle, parse_range, render_prompt
+from daily_driver.core.summary import (
+    ai_routing_dict,
+    build_json_bundle,
+    parse_range,
+    render_prompt,
+)
 from daily_driver.integrations import ai_provider, clipboard
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 
 log = logging.getLogger(__name__)
-
-
-def _load_config_dict(workspace_root) -> dict[str, object]:  # type: ignore[no-untyped-def]
-    """Load `.dd-config.yaml` as a raw dict for the provider dispatch layer.
-
-    Missing file → empty dict (defaults apply, no error). Parse errors
-    (malformed YAML, permission denied, etc.) propagate to the caller —
-    silent fallback to claude defaults on a typo'd `ai:` block would
-    misroute the user's request without explanation.
-    """
-    import yaml
-
-    cfg_path = workspace_root / ".dd-config.yaml"
-    if not cfg_path.is_file():
-        return {}
-    with cfg_path.open(encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
-    return data if isinstance(data, dict) else {}
 
 
 def _summary_provider(workspace_root) -> str:  # type: ignore[no-untyped-def]
@@ -169,11 +156,10 @@ def run(args: argparse.Namespace) -> int:
         else:
             # Ollama (and any future non-claude provider) has no workspace /
             # agent / session concept — send the prompt as-is.
-            config_dict = _load_config_dict(workspace.root)
             output = ai_provider.invoke_for(
                 "summary",
                 prompt,
-                config=config_dict,
+                config=ai_routing_dict(workspace.config),
                 timeout=args.timeout,
                 format_json=False,
             )
