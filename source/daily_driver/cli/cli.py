@@ -128,8 +128,37 @@ def app(argv: list[str] | None = None) -> int:
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
         logger = logging.getLogger("daily_driver")
+        _write_error_log(args, exc)
         if (getattr(args, "verbose", 0) or 0) >= 1:
             logger.exception("unhandled error in %r", args.cmd)
         else:
-            Console.error(str(exc))
+            Console.error(f"{type(exc).__name__}: {exc}")
+            cause = exc.__cause__
+            if cause is not None:
+                Console.error(f"  caused by: {type(cause).__name__}: {cause}")
         return 1
+
+
+def _write_error_log(args: argparse.Namespace, exc: BaseException) -> None:
+    """Best-effort full-traceback dump to <state_dir>/logs/cli-error.log.
+
+    Sole-maintainer debugging: capture the traceback even when the user did
+    not pass -v. Resolving the workspace can itself fail (no workspace in
+    CWD, unreadable config); a failed log write must never change the
+    user-facing error or exit code, so everything here is swallowed.
+    """
+    import traceback
+
+    from daily_driver.cli._common import resolve_workspace
+    from daily_driver.core.workspace import WorkspaceError
+
+    try:
+        try:
+            state_dir = resolve_workspace(args).state_dir
+        except WorkspaceError:
+            return
+        log_dir = state_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "cli-error.log").write_text(traceback.format_exc(), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass

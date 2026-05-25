@@ -47,6 +47,7 @@ log`. Versioned release history starts at 1.0.
 - **Subprocess calls funnel through `integrations/`.** Git and icalBuddy invocations moved out of `gathers/` into new `integrations/git.py` and `integrations/icalbuddy.py`; `claude_cli` now raises domain exceptions (`ClaudeInvocationError`, `ClaudeTimeoutError`) instead of leaking `subprocess.CalledProcessError` / `TimeoutExpired` to the CLI. Scraper HTTP funnels through `sources/_http.py` (it re-exports `Session` / `HTTPError` / `HTTPTimeout`); `scraper/runner.py` and `scraper/enrichment.py` no longer import `requests` directly.
 - **Workspace + output_dir resolution consolidated into `cli/_common.resolve_workspace`.** The discover-or-fail boilerplate copy-pasted across the CLI commands now flows through one helper that raises `WorkspaceError`; the two divergent helpers (`scheduler._resolve_workspace` returning `None`, `_claude_session.resolve_workspace` raising `SessionError`) are removed, and both `_resolve_output_dir` re-implementations (jobs, doctor) now defer to `Workspace.output_dir`.
 - **`summary` AI-routing now reads the validated `Config`** instead of a separate `yaml.safe_load` of `.dd-config.yaml`, so config validation is consistent across commands.
+- **Top-level CLI errors now show the exception class + cause** without needing `-v`: the non-verbose error path prints `ClassName: message` (and `caused by: ...` one level deep) instead of a bare `str(exc)`, and always logs a full traceback (best-effort) to `<state_dir>/logs/cli-error.log`.
 
 ### AI providers
 
