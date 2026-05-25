@@ -34,23 +34,18 @@ tracker:
 plugins:
   job_search:
     persona: "Senior SRE"
+    min_comp_usd: 180000
     locations:
       home_city: "Vancouver, BC"
       remote: true
       countries: [CA, US]
-    compensation:
-      currency: USD
-      minimum: 180000
-      target: 240000
-    role_filters:
-      exclude_management: true
 """,
         encoding="utf-8",
     )
     config = load(cfg_file)
     assert config.plugins.job_search is not None
     assert config.plugins.job_search.persona == "Senior SRE"
-    assert config.plugins.job_search.compensation.minimum == 180000
+    assert config.plugins.job_search.min_comp_usd == 180000
     assert config.plugins.job_search.locations.remote is True
 
 

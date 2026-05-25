@@ -72,12 +72,13 @@ def _default_scheduler_config() -> dict[str, Any]:
 
 def _merge_scheduler_config(workspace: Workspace) -> dict[str, Any]:
     defaults = _default_scheduler_config()
-    user_cfg = workspace.config.scheduler or {}
-    if "scrape_jobs" in user_cfg:
-        raise SchedulerError(
-            "scheduler.scrape_jobs was renamed to scheduler.jobs. "
-            "Update .dd-config.yaml and re-run `daily-driver scheduler install`."
-        )
+    # exclude_none preserves shallow-merge-over-defaults: a user setting only
+    # `checkin` keeps the packaged-default `jobs` (and vice versa).
+    user_cfg = (
+        workspace.config.scheduler.model_dump(exclude_none=True)
+        if workspace.config.scheduler is not None
+        else {}
+    )
     merged: dict[str, Any] = {**defaults}
     for key, value in user_cfg.items():
         merged[key] = value

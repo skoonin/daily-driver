@@ -89,7 +89,6 @@ def test_render_preserves_preamble():
 _COMMENTED_BLOCKS = [
     "user_profile",
     "recurring_tasks",
-    "voice_profile",
     "scheduler",
     "schedule",
     "claude",

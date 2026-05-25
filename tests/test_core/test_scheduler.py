@@ -17,6 +17,7 @@ import pytest
 from rich.console import Console
 
 from daily_driver.core import scheduler
+from daily_driver.core.config_models import SchedulerConfig
 
 
 @dataclass
@@ -27,7 +28,7 @@ class _FakeSchedule:
 
 @dataclass
 class _FakeConfig:
-    scheduler: dict | None = None
+    scheduler: SchedulerConfig | None = None
     schedule: _FakeSchedule = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -55,11 +56,16 @@ class _FakeWorkspace:
         scheduler_cfg: dict | None = None,
         schedule: _FakeSchedule | None = None,
     ) -> _FakeWorkspace:
+        scheduler_model = (
+            SchedulerConfig.model_validate(scheduler_cfg)
+            if scheduler_cfg is not None
+            else None
+        )
         return cls(
             root=root,
             state_dir=root / ".daily-driver",
             config=_FakeConfig(
-                scheduler=scheduler_cfg, schedule=schedule or _FakeSchedule()
+                scheduler=scheduler_model, schedule=schedule or _FakeSchedule()
             ),
         )
 
@@ -122,13 +128,36 @@ class TestBuildJobs:
         with pytest.raises(scheduler.SchedulerError):
             scheduler.build_jobs(ws)
 
-    def test_legacy_scrape_jobs_key_raises(self, tmp_path: Path) -> None:
-        """Stale `scheduler.scrape_jobs:` from pre-rename configs hard-fails."""
-        ws = _FakeWorkspace.make(
-            tmp_path, scheduler_cfg={"scrape_jobs": {"time": "07:00"}}
+    def test_user_typed_scheduler_config_flows_through(self, tmp_path: Path) -> None:
+        """A user-supplied typed SchedulerConfig drives the built job contexts.
+
+        Closes a coverage gap: no prior test exercised user-config-driven
+        scheduling end-to-end (config -> merge -> build_jobs contexts).
+        """
+        cfg = SchedulerConfig.model_validate(
+            {"checkin": {"times": ["09:00"]}, "jobs": {"time": "06:30"}}
         )
-        with pytest.raises(scheduler.SchedulerError, match="renamed to scheduler.jobs"):
-            scheduler.build_jobs(ws)
+        ws = _FakeWorkspace(
+            root=tmp_path,
+            state_dir=tmp_path / ".daily-driver",
+            config=_FakeConfig(scheduler=cfg),
+        )
+        jobs = scheduler.build_jobs(ws)
+        checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
+        assert checkin.context["times"] == [{"hour": 9, "minute": 0}]
+        assert scrape.context["time"] == {"hour": 6, "minute": 30}
+
+    def test_legacy_scrape_jobs_key_rejected_at_parse(self) -> None:
+        """Stale `scheduler.scrape_jobs:` now fails at config load, not at build.
+
+        `SchedulerConfig(extra="forbid")` rejects the renamed key during
+        `Config.model_validate`, before any scheduler code runs.
+        """
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="scrape_jobs"):
+            SchedulerConfig.model_validate({"scrape_jobs": {"time": "07:00"}})
 
     def test_schedule_day_start_emits_day_start_job(self, tmp_path: Path) -> None:
         """F4: schedule.day_start present -> com.daily-driver.day-start plist."""

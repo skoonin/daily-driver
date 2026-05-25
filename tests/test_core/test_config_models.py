@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from daily_driver.core.config_models import (
-    Compensation,
     Config,
     DailyDriverConfig,
     JobsConfig,
@@ -14,12 +13,10 @@ from daily_driver.core.config_models import (
     Locations,
     PluginsConfig,
     RecurringTask,
-    RoleFilters,
     ScraperConfig,
     TrackerCategoryConfig,
     TrackerConfig,
     UserProfile,
-    VoiceProfile,
 )
 
 # ---------------------------------------------------------------------------
@@ -106,32 +103,6 @@ def test_recurring_task_invalid_cadence():
 
 
 # ---------------------------------------------------------------------------
-# VoiceProfile
-# ---------------------------------------------------------------------------
-
-
-def test_voice_profile_defaults():
-    m = VoiceProfile()
-    assert m.formality is None
-    assert m.avoid_words == []
-
-
-def test_voice_profile_full():
-    m = VoiceProfile(
-        formality="professional-casual",
-        sentence_length="medium",
-        avoid_words=["leverage"],
-        preferred_signoff="Thanks,\nAlice",
-    )
-    assert m.formality == "professional-casual"
-
-
-def test_voice_profile_invalid_formality():
-    with pytest.raises(ValidationError):
-        VoiceProfile(formality="ultra-formal")
-
-
-# ---------------------------------------------------------------------------
 # TrackerConfig
 # ---------------------------------------------------------------------------
 
@@ -175,22 +146,6 @@ def test_tracker_config_warn_unknown_status_can_be_disabled():
 
 
 # ---------------------------------------------------------------------------
-# Compensation
-# ---------------------------------------------------------------------------
-
-
-def test_compensation_valid():
-    m = Compensation(currency="USD", minimum=150000, target=200000)
-    assert m.currency == "USD"
-    assert m.current is None
-
-
-def test_compensation_invalid_currency():
-    with pytest.raises(ValidationError):
-        Compensation(currency="JPY", minimum=100, target=200)
-
-
-# ---------------------------------------------------------------------------
 # Locations
 # ---------------------------------------------------------------------------
 
@@ -199,16 +154,6 @@ def test_locations_defaults():
     m = Locations()
     assert m.remote is False
     assert m.countries == []
-
-
-# ---------------------------------------------------------------------------
-# RoleFilters
-# ---------------------------------------------------------------------------
-
-
-def test_role_filters_defaults():
-    m = RoleFilters()
-    assert m.exclude_management is False
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +237,6 @@ def test_scraper_config_defaults():
     assert m.hn_max_posts == 100
     assert m.greenhouse_boards == ["anthropic"]
     assert isinstance(m.jobs, JobsConfig)
-    assert m.playwright_delays == {}
     assert m.sources == {}
     assert m.parallel_workers == 4
     assert m.max_pages == 3
@@ -349,20 +293,6 @@ def test_jobspy_toggle_legacy_bool_coerced():
     assert isinstance(m.sources["jobspy"], JobspyToggle)
     assert m.sources["jobspy"].enabled is False
     assert m.sources["jobspy"].linkedin is True
-
-
-def test_scraper_config_playwright_delays_typed():
-    from daily_driver.core.config_models import PlaywrightDelays
-
-    m = ScraperConfig(playwright_delays={"apple": {"page_load_ms": 5000}})
-    assert isinstance(m.sources, dict)
-    assert isinstance(m.playwright_delays["apple"], PlaywrightDelays)
-    assert m.playwright_delays["apple"].page_load_ms == 5000
-
-
-def test_scraper_config_playwright_delays_rejects_unknown_key():
-    with pytest.raises(ValidationError):
-        ScraperConfig(playwright_delays={"apple": {"bogus_key": 1}})
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +419,58 @@ def test_schedule_config_rejects_invalid_hhmm():
     for bad in ("9:99", "25:00", "noon", 99999):
         with pytest.raises(ValidationError):
             ScheduleConfig(day_start=bad)
+
+
+# ---------------------------------------------------------------------------
+# SchedulerConfig
+# ---------------------------------------------------------------------------
+
+
+def test_scheduler_config_default_both_none():
+    from daily_driver.core.config_models import SchedulerConfig
+
+    m = SchedulerConfig()
+    assert m.checkin is None
+    assert m.jobs is None
+
+
+def test_scheduler_config_typed_round_trip():
+    from daily_driver.core.config_models import SchedulerConfig
+
+    m = SchedulerConfig.model_validate(
+        {"checkin": {"times": ["09:00", "13:00"]}, "jobs": {"time": "06:30"}}
+    )
+    assert m.checkin is not None and m.checkin.times == ["09:00", "13:00"]
+    assert m.jobs is not None and m.jobs.time == "06:30"
+
+
+def test_scheduler_config_rejects_extra_top_level_key():
+    from daily_driver.core.config_models import SchedulerConfig
+
+    with pytest.raises(ValidationError):
+        SchedulerConfig.model_validate({"bogus": {"time": "07:00"}})
+
+
+def test_scheduler_config_rejects_legacy_scrape_jobs_key():
+    """Pre-rename `scheduler.scrape_jobs:` now fails at parse time via extra=forbid."""
+    from daily_driver.core.config_models import SchedulerConfig
+
+    with pytest.raises(ValidationError, match="scrape_jobs"):
+        SchedulerConfig.model_validate({"scrape_jobs": {"time": "07:00"}})
+
+
+def test_checkin_schedule_rejects_extra_key():
+    from daily_driver.core.config_models import CheckinSchedule
+
+    with pytest.raises(ValidationError):
+        CheckinSchedule.model_validate({"times": ["09:00"], "bogus": 1})
+
+
+def test_job_schedule_rejects_extra_key():
+    from daily_driver.core.config_models import JobSchedule
+
+    with pytest.raises(ValidationError):
+        JobSchedule.model_validate({"time": "07:00", "bogus": 1})
 
 
 # ---------------------------------------------------------------------------
