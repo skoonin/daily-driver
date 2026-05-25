@@ -107,9 +107,9 @@ def add_parser(
 
 
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from daily_driver.scraper import run as run_scrape
-    from daily_driver.scraper import run_backfill
-    from daily_driver.scraper.sources import SCRAPERS
+    from daily_driver.plugins.job_search.scraper import run as run_scrape
+    from daily_driver.plugins.job_search.scraper import run_backfill
+    from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 
     if getattr(args, "list_sources", False):
         for sid in sorted(SCRAPERS):
@@ -182,7 +182,10 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     from rich.table import Table
 
     from daily_driver.core.dates import parse_since
-    from daily_driver.core.jobs_archive import DEFAULT_PRUNE_STATUSES, prune
+    from daily_driver.plugins.job_search.jobs_archive import (
+        DEFAULT_PRUNE_STATUSES,
+        prune,
+    )
 
     try:
         cutoff = parse_since(args.older_than)

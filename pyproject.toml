@@ -127,13 +127,13 @@ warn_return_any = false
 # not the typed RawScrapedJob / NormalizedJob / EnrichedJob hot path) and
 # BeautifulSoup attribute access.
 module = [
-    "daily_driver.scraper.runner",
-    "daily_driver.scraper.csv_io",
-    "daily_driver.scraper.enrichment",
-    "daily_driver.scraper.parsing",
-    "daily_driver.scraper.comp",
-    "daily_driver.scraper.sources",
-    "daily_driver.scraper.sources.*",
+    "daily_driver.plugins.job_search.scraper.runner",
+    "daily_driver.plugins.job_search.scraper.csv_io",
+    "daily_driver.plugins.job_search.scraper.enrichment",
+    "daily_driver.plugins.job_search.scraper.parsing",
+    "daily_driver.plugins.job_search.scraper.comp",
+    "daily_driver.plugins.job_search.scraper.sources",
+    "daily_driver.plugins.job_search.scraper.sources.*",
 ]
 disallow_any_generics = false
 warn_return_any = false

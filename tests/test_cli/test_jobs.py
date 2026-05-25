@@ -2,7 +2,7 @@
 
 Network and source-specific behavior is NOT covered here — these tests
 exercise argparse wiring, workspace resolution, config loading, and the
-backfill short-circuit against a mocked ``daily_driver.scraper`` module.
+backfill short-circuit against a mocked ``daily_driver.plugins.job_search.scraper`` module.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ def test_jobs_run_backfill_dispatches(tmp_path: Path) -> None:
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
-    with patch("daily_driver.scraper.run_backfill") as mock_backfill:
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
 
     assert rc == 0
@@ -159,7 +159,9 @@ def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
-    with patch("daily_driver.scraper.run", return_value=0) as mock_run:
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
         rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
@@ -215,7 +217,9 @@ def test_jobs_run_sources_override_passes_to_scrape(tmp_path: Path) -> None:
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
-    with patch("daily_driver.scraper.run", return_value=0) as mock_run:
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
         rc = app(
             [
                 "--workspace",
@@ -342,7 +346,7 @@ def test_jobs_status_missing_workspace_exits_1(
 def _seed_jobs_csv(ws: Path, rows: list[dict]) -> Path:
     import csv
 
-    from daily_driver.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 
     p = ws / "jobs.csv"
     with open(p, "w", newline="", encoding="utf-8") as f:
@@ -518,7 +522,7 @@ def test_jobs_run_keyboard_interrupt_exits_130(
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
 
-    with patch("daily_driver.scraper.run", side_effect=boom):
+    with patch("daily_driver.plugins.job_search.scraper.run", side_effect=boom):
         rc = app(["--workspace", str(ws), "jobs", "run"])
 
     captured = capsys.readouterr()
@@ -541,7 +545,7 @@ def test_jobs_run_keyboard_interrupt_no_traceback_with_verbose(
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
 
-    with patch("daily_driver.scraper.run", side_effect=boom):
+    with patch("daily_driver.plugins.job_search.scraper.run", side_effect=boom):
         rc = app(["--workspace", str(ws), "-v", "jobs", "run"])
 
     captured = capsys.readouterr()
@@ -561,7 +565,9 @@ def test_jobs_run_backfill_keyboard_interrupt_exits_130(
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
 
-    with patch("daily_driver.scraper.run_backfill", side_effect=boom):
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run_backfill", side_effect=boom
+    ):
         rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
 
     captured = capsys.readouterr()
@@ -572,7 +578,7 @@ def test_jobs_run_backfill_keyboard_interrupt_exits_130(
 
 def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     """load_archive_dedup unions URLs/keys from jobs.archive.csv."""
-    from daily_driver.core.jobs_archive import load_archive_dedup
+    from daily_driver.plugins.job_search.jobs_archive import load_archive_dedup
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
     csv_path = ws / "jobs.csv"
@@ -580,7 +586,7 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
 
     import csv
 
-    from daily_driver.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 
     with open(archive, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL)
@@ -629,7 +635,7 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
         "      enabled: true\n"
     )
 
-    with patch("daily_driver.scraper.run_backfill") as mock_backfill:
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
 
     assert rc == 0
@@ -667,7 +673,9 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         "      enabled: true\n"
     )
 
-    with patch("daily_driver.scraper.run", return_value=0) as mock_run:
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
         rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
