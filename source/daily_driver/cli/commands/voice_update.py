@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
@@ -15,6 +14,7 @@ from daily_driver.cli.commands._claude_session import (
 )
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
+from daily_driver.core.logging import get_logger
 from daily_driver.core.voice import (
     VoiceUpdateError,
     apply_update,
@@ -23,7 +23,7 @@ from daily_driver.core.voice import (
 )
 from daily_driver.integrations import clipboard
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def add_parser(

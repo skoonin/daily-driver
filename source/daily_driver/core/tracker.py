@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from datetime import date, datetime
 from pathlib import Path
@@ -12,7 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from daily_driver.core.clock import now, today
 from daily_driver.core.locking import file_lock
+from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
+
+_logger = get_logger("tracker")
 
 # Convention, not enforcement — `tracker add/update` accepts any string but
 # emits a one-line stderr nudge when the resolved status is outside the set
@@ -151,11 +153,12 @@ class Tracker:
         if any(e.status == status for e in existing_entries):
             return
         recommended = ", ".join(recommended_set)
-        print(
-            f"warning: '{status}' is not in the recommended set ({recommended})\n"
+        _logger.warning(
+            "'%s' is not in the recommended set (%s)\n"
             "         Set tracker.warn_unknown_status: false in "
             ".dd-config.yaml to silence",
-            file=sys.stderr,
+            status,
+            recommended,
         )
 
     def add(

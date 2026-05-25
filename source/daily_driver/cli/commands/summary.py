@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._claude_session import (
@@ -15,6 +14,7 @@ from daily_driver.cli.commands._claude_session import (
 )
 from daily_driver.core.config import load as load_config
 from daily_driver.core.console import Console
+from daily_driver.core.logging import get_logger
 from daily_driver.core.summary import (
     ai_routing_dict,
     build_json_bundle,
@@ -24,7 +24,7 @@ from daily_driver.core.summary import (
 from daily_driver.integrations import ai_provider, clipboard
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def _summary_provider(workspace_root) -> str:  # type: ignore[no-untyped-def]

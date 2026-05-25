@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
+
+from daily_driver.core.logging import get_logger
 
 from .apple import scrape_apple
 from .greenhouse import scrape_greenhouse
@@ -17,7 +18,7 @@ from .jobspy import (
 from .remoteok import scrape_remoteok
 from .weworkremotely import scrape_weworkremotely
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import importlib
-import logging
 import sys
 from typing import Protocol, cast
 
@@ -23,6 +22,7 @@ from daily_driver.cli._common import (
     configure,
 )
 from daily_driver.core.console import Console
+from daily_driver.core.logging import get_logger
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # All entries must resolve at import time — ImportError is a packaging bug,
@@ -127,7 +127,7 @@ def app(argv: list[str] | None = None) -> int:
     try:
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
-        logger = logging.getLogger("daily_driver")
+        logger = get_logger("cli")
         _write_error_log(args, exc)
         if (getattr(args, "verbose", 0) or 0) >= 1:
             logger.exception("unhandled error in %r", args.cmd)

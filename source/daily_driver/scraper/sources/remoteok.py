@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from daily_driver.core.clock import today
+from daily_driver.core.logging import get_logger
 from daily_driver.scraper.sources._http import _api_get, _http_session
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def scrape_remoteok(config: dict) -> list[dict]:

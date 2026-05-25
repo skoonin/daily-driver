@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
+from daily_driver.core.logging import get_logger
 from daily_driver.scraper.comp import _COMP_CURRENCY_PREFIX, _to_int
 from daily_driver.scraper.sources._http import COUNTRY_NAMES
 
 if TYPE_CHECKING:
     from daily_driver.scraper.models import RawScrapedJob
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 # Country codes JobSpy's indeed engine accepts. Maps from ISO codes used in

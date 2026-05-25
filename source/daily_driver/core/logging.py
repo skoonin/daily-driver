@@ -42,7 +42,13 @@ def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None
 
 
 def get_logger(name: str) -> stdlog.Logger:
-    """Return a child logger under the daily_driver namespace."""
+    """Return a child logger under the daily_driver namespace.
+
+    Accepts either a bare short name (``"tracker"``) or a module ``__name__``
+    that already carries the ``daily_driver`` prefix; the prefix is normalized
+    so the resulting logger name is never doubled.
+    """
+    name = name.removeprefix("daily_driver.")
     return stdlog.getLogger(f"daily_driver.{name}")
 
 
