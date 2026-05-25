@@ -44,21 +44,6 @@ def test_load_config_file_reads_yaml(tmp_path: Path) -> None:
     assert cfg["job_search"]["roles"] == ["SRE"]
 
 
-def test_load_config_file_rejects_legacy_config_yaml(tmp_path: Path) -> None:
-    """Loading a file named config.yaml raises ValueError with migration guidance."""
-    from daily_driver.scraper import load_config_file
-
-    legacy = tmp_path / "config.yaml"
-    legacy.write_text("output_dir: /tmp/x\n")
-
-    with pytest.raises(ValueError) as exc_info:
-        load_config_file(legacy)
-
-    assert "legacy config file" in str(exc_info.value)
-    assert ".dd-config.yaml" in str(exc_info.value)
-    assert "docs/configuration.md" in str(exc_info.value)
-
-
 def test_run_returns_zero_when_scraper_disabled(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

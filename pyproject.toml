@@ -113,9 +113,13 @@ ignore_missing_imports = true
 
 # argparse stubs return Any from add_parser() and Namespace attributes;
 # strict mode's warn_return_any fires on every CLI command. Scope it off
-# for this subpackage rather than annotating around stdlib friction.
+# for CLI subpackages rather than annotating around stdlib friction. Plugin
+# CLI modules (e.g. daily_driver.plugins.job_search.cli) share the friction.
 [[tool.mypy.overrides]]
-module = ["daily_driver.cli.commands.*"]
+module = [
+    "daily_driver.cli.commands.*",
+    "daily_driver.plugins.*.cli",
+]
 warn_return_any = false
 
 [[tool.mypy.overrides]]

@@ -8,15 +8,17 @@ from pydantic import ValidationError
 from daily_driver.core.config_models import (
     Config,
     DailyDriverConfig,
-    JobsConfig,
-    JobSearchPlugin,
-    Locations,
     PluginsConfig,
     RecurringTask,
-    ScraperConfig,
     TrackerCategoryConfig,
     TrackerConfig,
     UserProfile,
+)
+from daily_driver.plugins.job_search.config import (
+    JobsConfig,
+    JobSearchPlugin,
+    Locations,
+    ScraperConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -249,7 +251,7 @@ def test_scraper_config_rejects_extra():
 
 def test_scraper_config_sources_legacy_bool_coerced():
     """Legacy YAML form `sources: {remoteok: true}` migrates to SourceToggle."""
-    from daily_driver.core.config_models import SourceToggle
+    from daily_driver.plugins.job_search.config import SourceToggle
 
     m = ScraperConfig(sources={"remoteok": True, "jobspy": False})
     assert isinstance(m.sources["remoteok"], SourceToggle)
@@ -258,7 +260,7 @@ def test_scraper_config_sources_legacy_bool_coerced():
 
 
 def test_scraper_config_sources_typed_form():
-    from daily_driver.core.config_models import SourceToggle
+    from daily_driver.plugins.job_search.config import SourceToggle
 
     m = ScraperConfig(sources={"linkedin": SourceToggle(enabled=True)})
     assert m.sources["linkedin"].enabled is True
@@ -266,7 +268,7 @@ def test_scraper_config_sources_typed_form():
 
 def test_jobspy_toggle_per_site_flags():
     """jobspy entry coerces to JobspyToggle with per-site bool flags."""
-    from daily_driver.core.config_models import JobspyToggle
+    from daily_driver.plugins.job_search.config import JobspyToggle
 
     m = ScraperConfig(
         sources={
@@ -287,7 +289,7 @@ def test_jobspy_toggle_per_site_flags():
 
 
 def test_jobspy_toggle_legacy_bool_coerced():
-    from daily_driver.core.config_models import JobspyToggle
+    from daily_driver.plugins.job_search.config import JobspyToggle
 
     m = ScraperConfig(sources={"jobspy": False})
     assert isinstance(m.sources["jobspy"], JobspyToggle)
@@ -335,6 +337,8 @@ def test_plugins_config_empty():
 
 
 def test_plugins_config_rejects_unknown_plugin():
+    """PluginsConfig is extra='forbid': every registered plugin gets a typed
+    field built from PLUGINS, so an unregistered namespace is a typo and errors."""
     with pytest.raises(ValidationError):
         PluginsConfig(ticket_system={"url": "https://jira.example.com"})
 
@@ -360,7 +364,9 @@ def test_config_rejects_extra_top_level():
         )
 
 
-def test_config_rejects_extra_in_plugins():
+def test_config_rejects_unknown_plugin_namespace():
+    """plugins is extra='forbid' so an unregistered namespace fails loudly,
+    matching the strict root; a registered plugin (job_search) validates."""
     with pytest.raises(ValidationError):
         Config(
             tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}),

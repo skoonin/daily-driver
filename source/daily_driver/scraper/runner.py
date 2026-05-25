@@ -14,12 +14,16 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
 from daily_driver.core.console import Console
 from daily_driver.core.jobs_lock import jobs_lock_path
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations.notify import desktop_notify
+from daily_driver.plugins.job_search.config import (
+    JobSearchPlugin,
+    Locations,
+    ScraperConfig,
+)
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
 from daily_driver.scraper.sources._http import COUNTRY_NAMES, HTTPError, HTTPTimeout
@@ -646,17 +650,9 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 def load_config_file(config_path: Path) -> dict[str, Any]:
     """Load a YAML config file into the raw-dict shape the scraper expects.
 
-    Raises ValueError when the caller points at a legacy ``config.yaml``.
-    All scraper settings now
-    belong under ``plugins.job_search`` in ``.dd-config.yaml``.
+    Scraper settings live under ``plugins.job_search`` in ``.dd-config.yaml``.
     See docs/configuration.md for the current schema.
     """
-    if config_path.name == "config.yaml":
-        raise ValueError(
-            f"{config_path} is a legacy config file. "
-            "All scraper settings have moved to plugins.job_search in .dd-config.yaml. "
-            "See docs/configuration.md for the current schema."
-        )
     return load_config(config_path)
 
 

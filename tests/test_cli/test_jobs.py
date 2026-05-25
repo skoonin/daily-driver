@@ -235,24 +235,6 @@ def test_jobs_run_sources_override_passes_to_scrape(tmp_path: Path) -> None:
     assert kwargs.get("dry_run") is True
 
 
-def test_jobs_run_legacy_config_yaml_exits_1(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Legacy config.yaml at workspace root is rejected with a migration error."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path)
-    (ws / "config.yaml").write_text(
-        "output_dir: .\n" "job_search:\n  scraper:\n    enabled: false\n"
-    )
-
-    rc = app(["--workspace", str(ws), "jobs", "run"])
-
-    assert rc == 1
-    captured = capsys.readouterr()
-    assert "legacy config file" in captured.err and "configuration.md" in captured.err
-
-
 # ---------------------------------------------------------------------------
 # jobs status
 # ---------------------------------------------------------------------------

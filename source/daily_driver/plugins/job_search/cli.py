@@ -131,15 +131,6 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             )
             return 2
 
-    legacy = workspace.root / "config.yaml"
-    if legacy.exists():
-        Console.error(
-            f"{legacy} is a legacy config file. "
-            "Move settings to plugins.job_search in .dd-config.yaml. "
-            "See docs/configuration.md."
-        )
-        return 1
-
     plugins = workspace.config.plugins
     if plugins is None or plugins.job_search is None:
         Console.error(
