@@ -54,26 +54,19 @@ tracker:
 #     cadence: weekly
 #     day: friday            # only valid when cadence is weekly
 
-# Optional: voice profile hints used by `voice-update` and summary outputs.
-# voice_profile:
-#   formality: professional-casual  # formal | professional-casual | casual
-#   sentence_length: medium  # short | medium | long
-#   avoid_words: []
-#   preferred_signoff: "—"
-
 # Optional: scheduler config (consumed by `scheduler install`).
-# Freeform dict of per-job launchd cadence overrides for `check_in` and
-# `jobs`. Each key sets `hour` and `minute` to override the built-in
-# default. NOTE: `day_start` / `day_end` cadence does NOT live here — it
-# lives in the separate top-level `schedule:` block below as HH:MM
-# strings (that's the single source of truth for those two jobs).
+# `checkin.times` is a list of HH:MM strings; `jobs.time` is a single
+# HH:MM string. Unknown keys are rejected. NOTE: `day_start` /
+# `day_end` cadence does NOT live here — it lives in the separate
+# top-level `schedule:` block below as HH:MM strings (the single
+# source of truth for those two jobs).
 # scheduler:
-#   check_in:
-#     hour: 14
-#     minute: 0
+#   checkin:
+#     times:
+#       - "11:00"
+#       - "15:00"
 #   jobs:
-#     hour: 8
-#     minute: 30
+#     time: "07:00"
 
 # Optional: day-start / day-end scheduled times (HH:MM, 24h).
 # When set, `scheduler install` adds launchd jobs that fire `day-start` /
@@ -142,18 +135,11 @@ tracker:
 #       remote: true
 #       countries: [CA, US]
 #       cities: []
-#     compensation:
-#       currency: USD  # USD | CAD | EUR | GBP
-#       minimum: 180000
-#       target: 240000
-#     role_filters:
-#       exclude_management: true
-#       exclude_keywords: []
 #     # primary_currency lives on `job_search`, NOT on `scraper`. When set,
 #     # drops scraped jobs whose parsed comp currency doesn't match.
 #     # Unparseable comp passes through. Unset = no filter. Decoupled from
-#     # `compensation.currency` (that drives the user's pay-floor input;
-#     # this prunes the input stream by source-currency).
+#     # `min_comp_usd` (that drives the user's pay-floor input; this prunes
+#     # the input stream by source-currency).
 #     primary_currency: USD  # USD | CAD | EUR | GBP
 #     scraper:
 #       enabled: false

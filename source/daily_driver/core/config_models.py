@@ -87,33 +87,6 @@ class RecurringTask(BaseModel):
         return self
 
 
-class VoiceProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    formality: Literal["formal", "professional-casual", "casual"] | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example": "professional-casual",
-            "inline_comment": "formal | professional-casual | casual",
-        },
-    )
-    sentence_length: Literal["short", "medium", "long"] | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example": "medium",
-            "inline_comment": "short | medium | long",
-        },
-    )
-    avoid_words: list[str] = Field(default=[], description="")
-    preferred_signoff: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "—"},
-    )
-
-
 class TrackerCategoryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -159,24 +132,6 @@ class TrackerConfig(BaseModel):
         return self
 
 
-class Compensation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    currency: Literal["USD", "CAD", "EUR", "GBP"] = Field(
-        default="USD",
-        description="",
-        json_schema_extra={"inline_comment": "USD | CAD | EUR | GBP"},
-    )
-    minimum: int = Field(description="", json_schema_extra={"template_example": 180000})
-    target: int = Field(description="", json_schema_extra={"template_example": 240000})
-    current: int | None = Field(
-        default=None, description="", json_schema_extra={"template_skip": True}
-    )
-    maximum: int | None = Field(
-        default=None, description="", json_schema_extra={"template_skip": True}
-    )
-
-
 class Locations(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -198,36 +153,12 @@ class Locations(BaseModel):
     cities: list[str] = Field(default=[], description="")
 
 
-class RoleFilters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    levels: list[str] = Field(
-        default=[], description="", json_schema_extra={"template_skip": True}
-    )
-    exclude_management: bool = Field(
-        default=False,
-        description="",
-        json_schema_extra={"template_example": True},
-    )
-    exclude_keywords: list[str] = Field(default=[], description="")
-
-
 class JobsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     results_wanted_per_query: int = Field(default=50, description="")
     hours_old: int = Field(default=168, description="")
     country_indeed: str = Field(default="USA", description="")
-
-
-class PlaywrightDelays(BaseModel):
-    """Per-source Playwright timing knobs (milliseconds)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    page_load_ms: int = Field(default=3000, description="")
-    interaction_ms: int = Field(default=500, description="")
-    settle_ms: int = Field(default=250, description="")
 
 
 class SourceToggle(BaseModel):
@@ -363,9 +294,6 @@ class ScraperConfig(BaseModel):
     jobs: JobsConfig = Field(
         default=JobsConfig(), description="", json_schema_extra={"template_skip": True}
     )
-    playwright_delays: dict[str, PlaywrightDelays] = Field(
-        default={}, description="", json_schema_extra={"template_skip": True}
-    )
     parallel_workers: int = Field(
         default=4, description="", json_schema_extra={"template_skip": True}
     )
@@ -425,24 +353,14 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={"template_example_model": True},
     )
-    compensation: Compensation | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example_model": True},
-    )
-    role_filters: RoleFilters | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example_model": True},
-    )
     primary_currency: Literal["USD", "CAD", "EUR", "GBP"] | None = Field(
         default=None,
         description=(
             "primary_currency lives on `job_search`, NOT on `scraper`. When set,\n"
             "drops scraped jobs whose parsed comp currency doesn't match.\n"
             "Unparseable comp passes through. Unset = no filter. Decoupled from\n"
-            "`compensation.currency` (that drives the user's pay-floor input;\n"
-            "this prunes the input stream by source-currency)."
+            "`min_comp_usd` (that drives the user's pay-floor input; this prunes\n"
+            "the input stream by source-currency)."
         ),
         json_schema_extra={
             "template_example": "USD",
@@ -506,6 +424,51 @@ class ScheduleConfig(BaseModel):
         if not isinstance(v, str) or not _HHMM_RE.match(v):
             raise ValueError(f"expected HH:MM time string, got {v!r}")
         return v
+
+
+class CheckinSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    times: list[str] = Field(
+        default_factory=list,
+        description="",
+        json_schema_extra={
+            "template_example": ["11:00", "15:00"],
+            "template_block_list": True,
+        },
+    )
+
+
+class JobSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time: str | None = Field(
+        default=None,
+        description="",
+        json_schema_extra={"template_example": "07:00", "template_quote": True},
+    )
+
+
+class SchedulerConfig(BaseModel):
+    """Per-job launchd cadence for `check-in` and `jobs` runs.
+
+    HH:MM strings, 24-hour clock; validated at `scheduler install` time by
+    `scheduler._parse_hhmm`. `day_start` / `day_end` cadence lives separately
+    in `ScheduleConfig` (the single source of truth for those two jobs).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    checkin: CheckinSchedule | None = Field(
+        default=None,
+        description="",
+        json_schema_extra={"template_example_model": True},
+    )
+    jobs: JobSchedule | None = Field(
+        default=None,
+        description="",
+        json_schema_extra={"template_example_model": True},
+    )
 
 
 class ClaudeConfig(BaseModel):
@@ -682,35 +645,20 @@ class Config(BaseModel):
             },
         },
     )
-    voice_profile: VoiceProfile = Field(
-        default=VoiceProfile(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": (
-                "Optional: voice profile hints used by `voice-update` and"
-                " summary outputs."
-            ),
-        },
-    )
-    scheduler: dict[str, Any] | None = Field(
+    scheduler: SchedulerConfig | None = Field(
         default=None,
         description="",
         json_schema_extra={
             "template_commented": True,
             "block_comment": (
                 "Optional: scheduler config (consumed by `scheduler install`).\n"
-                "Freeform dict of per-job launchd cadence overrides for `check_in` and\n"
-                "`jobs`. Each key sets `hour` and `minute` to override the built-in\n"
-                "default. NOTE: `day_start` / `day_end` cadence does NOT live"
-                " here — it\n"
-                "lives in the separate top-level `schedule:` block below as HH:MM\n"
-                "strings (that's the single source of truth for those two jobs)."
+                "`checkin.times` is a list of HH:MM strings; `jobs.time` is a single\n"
+                "HH:MM string. Unknown keys are rejected. NOTE: `day_start` /\n"
+                "`day_end` cadence does NOT live here — it lives in the separate\n"
+                "top-level `schedule:` block below as HH:MM strings (the single\n"
+                "source of truth for those two jobs)."
             ),
-            "template_example": {
-                "check_in": {"hour": 14, "minute": 0},
-                "jobs": {"hour": 8, "minute": 30},
-            },
+            "template_example_model": True,
         },
     )
     schedule: ScheduleConfig = Field(
