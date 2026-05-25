@@ -151,28 +151,28 @@ tracker:
 #       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
 #       # 0 to disable the filter. Other sources are implicitly recent.
 #       max_age_days: 30
-#       sources:
+#     sources:
 #
-#         # All keys are optional; omitted = on (SourceToggle defaults
-#         # enabled=true). List a key with `false` to disable it.
-#         #
-#         # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
-#         remoteok: false            # remoteok.com RSS
-#         weworkremotely: false            # weworkremotely.com listings
-#         hn_who_is_hiring: false            # HN monthly "Who is hiring?" thread
-#         hn_jobs: false            # HN curated jobs (YC-funded company posts)
-#         greenhouse: false            # Greenhouse boards (configurable list)
+#       # All keys are optional; omitted = on (SourceToggle defaults
+#       # enabled=true). List a key with `false` to disable it.
+#       #
+#       # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
+#       remoteok: false            # remoteok.com RSS
+#       weworkremotely: false            # weworkremotely.com listings
+#       hn_who_is_hiring: false            # HN monthly "Who is hiring?" thread
+#       hn_jobs: false            # HN curated jobs (YC-funded company posts)
+#       greenhouse: false            # Greenhouse boards (configurable list)
 #
-#         # Scrapers shipped in this repo (Playwright, needs `playwright install`):
-#         apple: false            # jobs.apple.com (API intercept)
+#       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
+#       apple: false            # jobs.apple.com (API intercept)
 #
-#         # python-jobspy aggregator. Each site runs as a separate parallel
-#         # scraper (requires `python-jobspy>=1.1.82`, fetched with
-#         # linkedin_fetch_description=True). Glassdoor is intentionally
-#         # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
-#         # not parsed") on every request as of 2026-04.
-#         jobspy:
-#           enabled: true
-#           linkedin: true
-#           indeed: true
-#           google: true
+#       # python-jobspy aggregator. Each site runs as a separate parallel
+#       # scraper (requires `python-jobspy>=1.1.82`, fetched with
+#       # linkedin_fetch_description=True). Glassdoor is intentionally
+#       # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
+#       # not parsed") on every request as of 2026-04.
+#       jobspy:
+#         enabled: true
+#         linkedin: true
+#         indeed: true
+#         google: true

@@ -137,12 +137,13 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
     installed — only this scraper fails in that case, not the whole pipeline.
     JobSpy handles its own HTTP session and returns a pandas DataFrame.
     """
+    from daily_driver.plugins.job_search.config import JobspyToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         _search_terms,
         countries_list,
         matches_roles,
         roles_list,
-        scraper_cfg,
+        source_toggle,
     )
 
     # Lazy import: keeps --help and other scrapers functional without the package.
@@ -154,8 +155,7 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
         )
         return []
 
-    cfg = scraper_cfg(config)
-    jobspy_cfg = cfg.jobs
+    jobspy_cfg = source_toggle(config, "jobspy", JobspyToggle).jobs
     results_wanted = jobspy_cfg.results_wanted_per_query
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed

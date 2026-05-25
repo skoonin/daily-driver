@@ -41,6 +41,55 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **BREAKING: `plugins.job_search.scraper` decomposed into three sibling sub-blocks (schema break).** The 25-field `ScraperConfig` god-object is grouped into focused sub-models by concern — `scraper` (transport / retry: `enabled`, `max_retries`, `max_age_days`, `user_agent`, `timeout`, `search_terms`, `headless`, `parallel_workers`, `max_pages`), `enrichment` (`enrich_timeout`, `max_enrich_companies`, `enrich_gd_rating`, `enrich_fit`, `enrich_notes`, `max_enrich_fit`, `detail_delay_seconds`), and `sources` (the source-toggle dict) — with per-source typed toggles (`extra="forbid"` catches knob typos). Per-source knobs that were flat on `scraper` now live on their `SourceToggle` subclass: `wwr_categories` → `weworkremotely`, `greenhouse_boards` → `greenhouse`, `hn_max_posts` → `hn_who_is_hiring` / `hn_jobs`, and the jobspy query knobs (`results_wanted_per_query`/`hours_old`/`country_indeed`, the former `JobsConfig`) → `jobspy.jobs`. All four models are `extra="forbid"`, so a flat `scraper:` block carrying a moved field now fails validation. No compat shim — existing workspace configs must restructure. Before:
+
+  ```yaml
+  plugins:
+    job_search:
+      scraper:
+        enabled: true
+        enrich_timeout: 45
+        max_enrich_companies: 30
+        detail_delay_seconds: 0
+        wwr_categories: [devops, sysadmin]
+        greenhouse_boards: [anthropic, stripe]
+        hn_max_posts: 50
+        sources:
+          weworkremotely: true
+          greenhouse: true
+          hn_jobs: true
+          jobspy:
+            enabled: true
+            results_wanted_per_query: 25
+  ```
+
+  After:
+
+  ```yaml
+  plugins:
+    job_search:
+      scraper:
+        enabled: true
+      enrichment:
+        enrich_timeout: 45
+        max_enrich_companies: 30
+        detail_delay_seconds: 0
+      sources:
+        weworkremotely:
+          enabled: true
+          wwr_categories: [devops, sysadmin]
+        greenhouse:
+          enabled: true
+          greenhouse_boards: [anthropic, stripe]
+        hn_jobs:
+          enabled: true
+          hn_max_posts: 50
+        jobspy:
+          enabled: true
+          jobs:
+            results_wanted_per_query: 25
+  ```
+
 - **Job search extracted into a real plugin (`plugins/job_search/`).** The feature's config, CLI, scraper sources, scheduler jobs, and doctor checks now live under `source/daily_driver/plugins/job_search/` and are wired through a static `Plugin` contract (`plugins/_base.py`) listed in `PLUGINS`. Core no longer hardcodes job-search specifics: `core.scheduler`, `core.doctor`, and `core.generate` iterate `PLUGINS` (importing it lazily so core stays import-light), and `PluginsConfig` is assembled from the registry (`extra="forbid"`, matching the strict root). `Plugin.package_data_dirs` adds an extension point so a future plugin can ship slash-commands; `job_search` ships none, but the generate path is exercised by a synthetic-plugin test. Deliberate non-changes for honesty: scraper **source IDs were not namespaced** (qualifying them would break existing workspace configs and CLI args — deferred to a future migration); the **`plugins.job_search` config namespace is unchanged**, so no user migration is needed; and **`integrations/notify.py` stays the generic desktop-notify primitive** (the W11 integrations boundary), not absorbed into the plugin.
 - **Logging now uses `core.logging.get_logger` consistently** across the CLI and scraper layers, removing bare `logging.getLogger` and a stray `print(..., file=sys.stderr)` in the tracker. All loggers live under the `daily_driver` namespace so verbosity flags and the Rich handler apply uniformly.
 - **CLI startup latency reduced via lazy command/import loading.** The parser no longer imports every subcommand module up front; argv is scanned for the invoked command and only that module's parser is built (other commands get help-only stubs for the top-level listing). `init` defers `core.generate` (Jinja2 + pydantic) and `summary` defers `core.summary` (requests ~47ms), `ai_provider`, and `clipboard` into their consumers. Warm `daily-driver --version` drops from ~240ms to ~180ms wall-clock (~200ms to ~145ms in-process); residual cost is `core.config`/pydantic pulled transitively via workspace resolution.

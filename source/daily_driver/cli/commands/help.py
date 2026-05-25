@@ -144,7 +144,7 @@ def _sources() -> dict[str, Any]:
 
     return {
         "sources": sorted(SCRAPERS),
-        "consumers": ["jobs run --sources", "scraper.sources.<name>.enabled"],
+        "consumers": ["jobs run --sources", "sources.<name>.enabled"],
     }
 
 

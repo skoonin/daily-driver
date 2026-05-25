@@ -220,8 +220,10 @@ plugins:
       exclude_management: true
     scraper:
       enabled: true
-      greenhouse_boards: [anthropic, stripe, figma]
     sources:
+      greenhouse:
+        enabled: true
+        greenhouse_boards: [anthropic, stripe, figma]
       hn_jobs: {}
       hn_who_is_hiring: {}
       remoteok: {}

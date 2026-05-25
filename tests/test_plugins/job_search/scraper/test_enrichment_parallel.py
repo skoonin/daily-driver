@@ -26,7 +26,7 @@ def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> dict:
             "ollama": {"max_parallel": max_parallel},
         },
         "job_search": {
-            "scraper": {
+            "enrichment": {
                 "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
                 "enrich_gd_rating": False,
@@ -40,7 +40,7 @@ def _claude_config(*, budget: int = 10) -> dict:
     return {
         "ai": {"enrichment": {"provider": "claude"}},
         "job_search": {
-            "scraper": {
+            "enrichment": {
                 "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
                 "enrich_gd_rating": False,

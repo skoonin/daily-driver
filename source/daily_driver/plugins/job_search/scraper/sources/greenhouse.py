@@ -17,19 +17,21 @@ log = get_logger(__name__)
 def scrape_greenhouse(config: dict) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
 
-    Reads board slugs from config at job_search.scraper.greenhouse_boards
-    (default: ["anthropic"]). Each slug maps to
+    Reads board slugs from config at
+    job_search.sources.greenhouse.greenhouse_boards (default: ["anthropic"]).
+    Each slug maps to
     https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
     which returns all jobs with full HTML descriptions in a single request.
     """
+    from daily_driver.plugins.job_search.config import GreenhouseToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
         roles_list,
-        scraper_cfg,
+        source_toggle,
     )
 
     roles = roles_list(config)
-    boards = scraper_cfg(config).greenhouse_boards
+    boards = source_toggle(config, "greenhouse", GreenhouseToggle).greenhouse_boards
     session = _http_session(config)
     jobs: list[dict] = []
 

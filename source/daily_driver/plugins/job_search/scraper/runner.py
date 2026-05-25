@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
@@ -19,9 +19,11 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
+    EnrichmentConfig,
     JobSearchPlugin,
     Locations,
     ScraperConfig,
+    SourceToggle,
 )
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 from daily_driver.plugins.job_search.scraper.comp import _parse_comp
@@ -116,8 +118,32 @@ def min_comp_usd(config: dict[str, Any]) -> int:
 
 
 def scraper_cfg(config: dict[str, Any] | None) -> ScraperConfig:
-    """Return the ScraperConfig pydantic model (with all defaults applied)."""
+    """Return the transport ScraperConfig model (with all defaults applied)."""
     return _model(config).scraper
+
+
+def enrichment_cfg(config: dict[str, Any] | None) -> EnrichmentConfig:
+    """Return the EnrichmentConfig model (with all defaults applied)."""
+    return _model(config).enrichment
+
+
+def sources_cfg(config: dict[str, Any] | None) -> dict[str, SourceToggle]:
+    """Return the source-toggle dict (with all defaults applied)."""
+    return _model(config).sources
+
+
+_T = TypeVar("_T", bound=SourceToggle)
+
+
+def source_toggle(config: dict[str, Any] | None, key: str, toggle_type: type[_T]) -> _T:
+    """Return the typed toggle for a source, or a default instance if absent/wrong type.
+
+    Sources whose per-source knobs live on a SourceToggle subclass read them
+    through this helper: an unconfigured (or bare-bool) source yields a fresh
+    ``toggle_type()`` carrying that subclass's defaults.
+    """
+    toggle = sources_cfg(config).get(key)
+    return toggle if isinstance(toggle, toggle_type) else toggle_type()
 
 
 def roles_list(config: dict[str, Any]) -> list[str]:
@@ -144,7 +170,7 @@ def max_age_days(config: dict[str, Any]) -> int:
 
 def enrich_timeout(config: dict[str, Any] | None) -> int:
     """Timeout for Claude CLI enrichment calls (seconds)."""
-    return _model(config).scraper.enrich_timeout
+    return _model(config).enrichment.enrich_timeout
 
 
 def locations_config(config: dict[str, Any]) -> Locations | None:
@@ -567,11 +593,11 @@ def run_all_scrapers(
     is only kept once (first scraper wins).
 
     When ``sources_override`` is provided, only those source IDs run regardless
-    of the ``scraper.sources`` toggles in config. Caller is responsible for
+    of the ``sources`` toggles in config. Caller is responsible for
     validating IDs against ``SCRAPERS``.
     """
     cfg = scraper_cfg(config)
-    source_cfg = cfg.sources
+    source_cfg = sources_cfg(config)
     workers = cfg.parallel_workers
 
     if sources_override is not None:

@@ -19,13 +19,14 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
 
     WWR publishes per-category RSS at
     /categories/remote-{category}-jobs.rss. Categories are configured under
-    plugins.job_search.scraper.wwr_categories in .dd-config.yaml.
+    plugins.job_search.sources.weworkremotely.wwr_categories in .dd-config.yaml.
     No auth or browser required.
     """
+    from daily_driver.plugins.job_search.config import WeWorkRemotelyToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
         roles_list,
-        scraper_cfg,
+        source_toggle,
     )
 
     roles = roles_list(config)
@@ -33,7 +34,9 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
-    categories = scraper_cfg(config).wwr_categories
+    categories = source_toggle(
+        config, "weworkremotely", WeWorkRemotelyToggle
+    ).wwr_categories
     if not categories:
         log.warning("[weworkremotely] no wwr_categories configured; skipping")
         return jobs

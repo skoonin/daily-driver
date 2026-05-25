@@ -195,11 +195,26 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 
 ### `scraper` (`ScraperConfig`)
 
+Transport / retry knobs shared by every source.
+
 | Key | Type | Default |
 |-----|------|---------|
 | `enabled` | bool | false |
 | `user_agent` | string | Firefox/128 UA |
 | `timeout` | int | 30 |
+| `search_terms` | list[string] or null | null |
+| `headless` | bool | false |
+| `parallel_workers` | int | 4 |
+| `max_pages` | int | 3 |
+| `max_retries` | int | 3 |
+| `max_age_days` | int | 30 |
+
+### `enrichment` (`EnrichmentConfig`)
+
+Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, fit, notes).
+
+| Key | Type | Default |
+|-----|------|---------|
 | `enrich_timeout` | int | 30 |
 | `max_enrich_companies` | int | 50 |
 | `enrich_gd_rating` | bool | true |
@@ -207,22 +222,20 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 | `enrich_notes` | bool | true |
 | `max_enrich_fit` | int | 50 |
 | `detail_delay_seconds` | float | 0.5 |
-| `search_terms` | list[string] or null | null |
-| `headless` | bool | false |
-| `wwr_categories` | list[string] | `[]` |
-| `hn_max_posts` | int | 100 |
-| `greenhouse_boards` | list[string] | `[anthropic]` |
-| `jobs` | object | `{results_wanted_per_query: 50, hours_old: 168, country_indeed: USA}` |
-| `playwright_delays` | dict | `{}` |
-| `sources` | dict | `{}` |
-| `parallel_workers` | int | 4 |
-| `max_pages` | int | 3 |
-| `max_retries` | int | 3 |
-| `max_age_days` | int | 30 |
 
-### `scraper.jobs`
+### `sources` (`dict[str, SourceToggle]`)
 
-Sub-fields of the `jobs:` block under `scraper:` (jobspy aggregator settings).
+Sibling block of `scraper` under `job_search`. A dict whose keys are source identifiers and whose values are per-source toggles. Bool values coerce to `{enabled: <bool>}`. Per-source knobs live on the matching `SourceToggle` subclass, so each source owns its own configuration:
+
+| Source key | Toggle | Per-source knob (default) |
+|-----------|--------|---------------------------|
+| `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
+| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
+| `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`100`) |
+| `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`/`google`) + `jobs` (`JobsConfig`) |
+| any other | `SourceToggle` | (enable/disable only) |
+
+`jobspy.jobs` (jobspy aggregator query settings):
 
 | Key | Type | Default |
 |-----|------|---------|
@@ -230,30 +243,21 @@ Sub-fields of the `jobs:` block under `scraper:` (jobspy aggregator settings).
 | `hours_old` | int | 168 (7 days) |
 | `country_indeed` | string | `USA` |
 
-### `scraper.playwright_delays`
-
-Per-source Playwright timing overrides (milliseconds). Keys are source IDs (e.g. `apple`). Omitted sources use the defaults.
-
-| Key | Type | Default |
-|-----|------|---------|
-| `page_load_ms` | int | 3000 |
-| `interaction_ms` | int | 500 |
-| `settle_ms` | int | 250 |
-
-### `sources`
-
-Freeform dict under `job_search` (not `scraper`). Keys are source identifiers; values are passed to the scraper adapter as-is. See [dev/extending.md](dev/extending.md) for adapter details.
-
-The enable/disable toggles for built-in sources live under `scraper.sources`. Bool values coerce to `{enabled: <bool>}`. The reserved `jobspy` key coerces to a `JobspyToggle` with per-site flags:
-
 ```yaml
-scraper:
-  sources:
-    jobspy:
-      enabled: true
-      linkedin: true
-      indeed: true
-      google: true     # glassdoor intentionally excluded (HTTP 400 from JobSpy)
+sources:
+  weworkremotely:
+    enabled: true
+    wwr_categories: [devops, sysadmin]
+  greenhouse:
+    enabled: true
+    greenhouse_boards: [anthropic, stripe]
+  jobspy:
+    enabled: true
+    linkedin: true
+    indeed: true
+    google: true     # glassdoor intentionally excluded (HTTP 400 from JobSpy)
+    jobs:
+      results_wanted_per_query: 25
 ```
 
 Each enabled JobSpy site runs as its own parallel scraper. Omitted sub-flags default to `true`.
@@ -308,12 +312,11 @@ plugins:
       exclude_keywords: [manager, director, VP]
     scraper:
       enabled: true
-      greenhouse_boards: [anthropic, stripe, figma]
     sources:
-      linkedin:
-        type: playwright
-        search_terms: ["site reliability engineer"]
-        pages: 3
+      sources:
+        greenhouse:
+          enabled: true
+          greenhouse_boards: [anthropic, stripe, figma]
 ```
 
 ## Customization

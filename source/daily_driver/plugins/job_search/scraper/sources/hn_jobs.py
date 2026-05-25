@@ -84,14 +84,15 @@ def scrape_hn_jobs(config: dict) -> list[dict]:
     would browse news.ycombinator.com/jobs. ``hn_max_posts`` caps the
     number returned (same knob as `hn_who_is_hiring`).
     """
+    from daily_driver.plugins.job_search.config import HackerNewsToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
         max_age_days,
         roles_list,
-        scraper_cfg,
+        source_toggle,
     )
 
-    max_posts = scraper_cfg(config).hn_max_posts
+    max_posts = source_toggle(config, "hn_jobs", HackerNewsToggle).hn_max_posts
     roles = roles_list(config)
     session = _http_session(config)
 

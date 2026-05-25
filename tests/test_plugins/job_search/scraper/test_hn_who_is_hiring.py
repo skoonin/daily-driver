@@ -33,10 +33,10 @@ def _config(roles: list[str] | None = None) -> dict[str, Any]:
             "roles": roles or ["SRE"],
             "scraper": {
                 "enabled": True,
-                "hn_max_posts": 100,
                 "timeout": 1,
                 "max_retries": 0,
             },
+            "sources": {"hn_who_is_hiring": {"hn_max_posts": 100}},
         }
     }
 
