@@ -30,6 +30,11 @@ class _FakeWorkspace:
     def ephemeral_dir(self) -> Path:
         return self.state_dir / "state"
 
+    @property
+    def output_dir(self) -> Path:
+        # No config block here; treat the root as the durable output dir.
+        return self.root
+
     @classmethod
     def make(cls, root: Path, version: str = "1.0.0") -> _FakeWorkspace:
         state_dir = root / ".daily-driver"

@@ -7,7 +7,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._utils import resolve_date
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import state_path as daily_state_path
@@ -62,11 +62,8 @@ def _daily_dir(workspace: Workspace, when: date) -> Path:
 
 
 def run(args: argparse.Namespace) -> int:
-    override = getattr(args, "workspace", None)
     try:
-        workspace = Workspace.discover_or_fail(
-            override=Path(override) if override else None
-        )
+        workspace = resolve_workspace(args)
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1

@@ -9,7 +9,7 @@ from typing import Any
 from rich.console import Console as RichConsole
 from rich.table import Table
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
@@ -60,20 +60,17 @@ def _render_table(results: list[Any], console: RichConsole) -> None:
 
 def run(args: argparse.Namespace) -> int:
     from daily_driver.core.doctor import reset, run_checks
-    from daily_driver.core.workspace import Workspace, WorkspaceError
+    from daily_driver.core.workspace import WorkspaceError
 
     console = RichConsole(stderr=True)
 
-    workspace = None
-    workspace_override = getattr(args, "workspace", None)
-    workspace_path = Path(workspace_override) if workspace_override else None
     try:
-        workspace = Workspace.discover_or_fail(override=workspace_path)
+        workspace = resolve_workspace(args)
     except WorkspaceError:
-        workspace = None
-
-    if workspace is None:
-        attempted = workspace_path if workspace_path is not None else Path.cwd()
+        # doctor reports the path it tried rather than the discovery message,
+        # so the user gets a copy-pasteable `init` invocation.
+        workspace_override = getattr(args, "workspace", None)
+        attempted = Path(workspace_override) if workspace_override else Path.cwd()
         Console.error(
             f"no workspace at {attempted} "
             f"(run 'daily-driver init {attempted}' to scaffold one)"

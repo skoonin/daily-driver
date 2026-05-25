@@ -15,12 +15,11 @@ from __future__ import annotations
 import argparse
 import logging
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
     require_claude_available,
-    resolve_workspace,
 )
 from daily_driver.core import clock
 from daily_driver.core.console import Console

@@ -186,6 +186,11 @@ def _fake_workspace(root: Path):
         def ephemeral_dir(self) -> Path:
             return self.state_dir / "state"
 
+        @property
+        def output_dir(self) -> Path:
+            # Mirrors the scaffolded `output_dir: .` resolving to the root.
+            return self.root
+
     return _FakeWorkspace(
         root=root,
         state_dir=state_dir,

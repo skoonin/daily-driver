@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
@@ -107,14 +106,6 @@ def add_parser(
     return parser
 
 
-def _resolve_output_dir(workspace) -> Path:  # type: ignore[no-untyped-def]
-    output_dir_raw = workspace.config.daily_driver.output_dir
-    output_dir = Path(output_dir_raw).expanduser()
-    if not output_dir.is_absolute():
-        output_dir = (workspace.root / output_dir).resolve()
-    return output_dir
-
-
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.scraper import run as run_scrape
     from daily_driver.scraper import run_backfill
@@ -165,7 +156,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         "job_search": plugins.job_search.model_dump(exclude_none=True, mode="json"),
         "ai": workspace.config.ai.model_dump(mode="json"),
     }
-    output_dir = _resolve_output_dir(workspace)
+    output_dir = workspace.output_dir
     csv_path = output_dir / "jobs.csv"
 
     try:
@@ -213,7 +204,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     else:
         statuses = DEFAULT_PRUNE_STATUSES
 
-    output_dir = _resolve_output_dir(workspace)
+    output_dir = workspace.output_dir
     csv_path = output_dir / "jobs.csv"
 
     candidates, archived = prune(
@@ -254,7 +245,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
     from daily_driver.core.scraper_status import build_status
 
-    output_dir = _resolve_output_dir(workspace)
+    output_dir = workspace.output_dir
     status = build_status(output_dir)
 
     emit_json = getattr(args, "json", False)
@@ -294,17 +285,15 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.core.workspace import Workspace, WorkspaceError
+    from daily_driver.core.workspace import WorkspaceError
 
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver jobs <action> ...")
         Console.error("actions: run, status, prune")
         return 2
 
-    workspace_override = getattr(args, "workspace", None)
-    workspace_path = Path(workspace_override) if workspace_override else None
     try:
-        workspace = Workspace.discover_or_fail(override=workspace_path)
+        workspace = resolve_workspace(args)
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1

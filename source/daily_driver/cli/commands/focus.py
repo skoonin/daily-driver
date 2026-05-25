@@ -10,7 +10,7 @@ from pathlib import Path
 
 from rich.console import Console as RichConsole
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
@@ -208,10 +208,8 @@ def run(args: argparse.Namespace) -> int:
         Console.error("actions: on, off, status")
         return 2
 
-    workspace_override = getattr(args, "workspace", None)
-    workspace_path = Path(workspace_override) if workspace_override else None
     try:
-        workspace = Workspace.discover_or_fail(override=workspace_path)
+        workspace = resolve_workspace(args)
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1

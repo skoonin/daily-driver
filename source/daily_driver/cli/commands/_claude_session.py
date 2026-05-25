@@ -11,9 +11,8 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from datetime import date
-from pathlib import Path
 
-from daily_driver.cli._common import add_global_flags
+from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.workspace import Workspace, WorkspaceError
@@ -87,14 +86,6 @@ def register_interactive_launcher(
     return parser
 
 
-def resolve_workspace(args: argparse.Namespace) -> Workspace:
-    override = getattr(args, "workspace", None)
-    try:
-        return Workspace.discover_or_fail(override=Path(override) if override else None)
-    except WorkspaceError as exc:
-        raise SessionError(str(exc)) from exc
-
-
 def require_claude_available() -> None:
     if not claude_cli.available():
         raise SessionError(
@@ -153,7 +144,7 @@ def launch_headless(
 
 def handle_launch_exception(exc: BaseException) -> int:
     """Translate subprocess / launcher failures into CLI exit codes with a user-visible message."""
-    if isinstance(exc, SessionError):
+    if isinstance(exc, (SessionError, WorkspaceError)):
         Console.error(str(exc))
         return 1
     if isinstance(exc, claude_cli.ClaudeNotFoundError):
