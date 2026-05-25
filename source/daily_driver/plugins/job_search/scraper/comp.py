@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+
 # Currency code → display prefix. Anything not listed falls through to the
 # raw code prefixed with a space (e.g. "EUR 100,000/yr").
 _COMP_CURRENCY_PREFIX = {
@@ -29,7 +34,7 @@ def _to_int(x: object) -> int | None:
         return None
 
 
-def _format_comp(base_salary: dict) -> str:
+def _format_comp(base_salary: dict[str, Any]) -> str:
     """Render a JSON-LD MonetaryAmount into a short human string.
 
     Returns "" for any shape that doesn't yield at least one numeric value —
@@ -69,77 +74,40 @@ def _format_comp(base_salary: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def _parse_comp(comp_str: str) -> dict:
-    """Legacy dict-shape wrapper around ``Comp.parse``.
+def comp_meets_threshold_typed(
+    job: EnrichedJob, config: dict[str, Any]
+) -> tuple[bool, str]:
+    """Typed comp-floor gate operating on ``EnrichedJob.comp``.
 
-    Kept for the dict-based pipeline and ``comp_meets_threshold``. Returns
-    ``comp_min_native``, ``comp_max_native``, ``comp_currency``, ``comp_period``,
-    ``comp_min_usd``, ``comp_max_usd``. All ``None`` / ``""`` on unparseable input.
-    """
-    from daily_driver.plugins.job_search.scraper.models import Comp
-
-    c = Comp.parse(comp_str)
-    if not c.is_known:
-        return {
-            "comp_min_native": None,
-            "comp_max_native": None,
-            "comp_currency": "",
-            "comp_period": "",
-            "comp_min_usd": None,
-            "comp_max_usd": None,
-        }
-    return {
-        "comp_min_native": c.min_native,
-        "comp_max_native": c.max_native,
-        "comp_currency": c.currency or "",
-        "comp_period": c.period,
-        "comp_min_usd": c.min_usd,
-        "comp_max_usd": c.max_usd,
-    }
-
-
-def comp_meets_threshold(job: dict, config: dict) -> tuple[bool, str]:
-    """Return (True, "") if comp is acceptable or unknown; (False, reason) if below threshold.
-
-    Fails open when comp_max_usd is absent or zero so roles with no listed
-    comp reach CSV for manual review rather than being silently dropped.
+    Delegates to ``Comp.meets_threshold``, which fails open on unknown comp
+    (max_usd is None) so unpriced roles still reach the CSV.
     """
     from daily_driver.plugins.job_search.scraper.runner import min_comp_usd
 
-    threshold = min_comp_usd(config)
-    cmax = job.get("comp_max_usd")
-    if not cmax:
-        return (True, "")
-    if cmax >= threshold:
-        return (True, "")
-    return (False, f"below comp threshold (max ${cmax:,} < ${threshold:,})")
+    return job.comp.meets_threshold(min_comp_usd(config))
 
 
-def currency_matches_primary(job: dict, config: dict) -> bool:
-    """Return True if ``job`` should pass the primary-currency filter (#48).
+def currency_matches_primary_typed(job: EnrichedJob, config: dict[str, Any]) -> bool:
+    """Typed primary-currency filter operating on ``EnrichedJob.comp.currency``.
 
-    When ``plugins.job_search.primary_currency`` is unset, every job passes.
-    When set, jobs with a parsed ``comp_currency`` matching pass; jobs with an
-    empty/missing currency (unparseable comp) also pass — currency=None is the
-    sentinel for "couldn't read", not "doesn't match".
+    A None currency (unparseable comp) passes — the sentinel means "couldn't
+    read", not "doesn't match".
     """
     from daily_driver.plugins.job_search.scraper.runner import _model
 
     primary = _model(config).primary_currency
     if primary is None:
         return True
-    job_currency = job.get("comp_currency") or ""
-    if not job_currency:
+    if job.comp.currency is None:
         return True
-    return job_currency == primary
+    return job.comp.currency == primary
 
 
 __all__ = [
     "_COMP_CURRENCY_PREFIX",
     "_COMP_UNIT_SUFFIX",
     "_format_comp",
-    "_parse_comp",
-    "comp_meets_threshold",
-    "currency_matches_primary",
+    "comp_meets_threshold_typed",
+    "currency_matches_primary_typed",
     "_to_int",
 ]

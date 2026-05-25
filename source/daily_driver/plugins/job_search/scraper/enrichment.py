@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 
-def _ollama_pool_size(config: dict | None) -> int:
+def _ollama_pool_size(config: dict[str, Any] | None) -> int:
     """Worker count for Ollama-backed enrichment; 1 forces serial."""
     ai_cfg = ai_provider.resolve_ai_config(config)
     if ai_cfg.enrichment.provider != "ollama":
@@ -46,7 +46,9 @@ def _enrich_tag(prefix: str) -> str:
     return f"[{prefix}]"
 
 
-def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str) -> Any:
+def _install_interrupt_notifier(
+    futures: dict[Any, Any], timeout_s: int, item: str
+) -> Any:
     """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
 
     Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
@@ -89,7 +91,7 @@ log = get_logger(__name__)
 
 def _fetch_company_info(
     company: str,
-    config: dict | None,
+    config: dict[str, Any] | None,
     include_gd: bool,
     timeout: int,
 ) -> tuple[str, str, bool]:
@@ -161,16 +163,16 @@ def _fetch_company_info(
 
 
 def _enrich_company_descriptions_parallel(
-    jobs: list[dict],
-    config: dict,
+    jobs: list[dict[str, Any]],
+    config: dict[str, Any],
     *,
     budget: int,
     include_gd: bool,
     pool_size: int,
     unique_companies: set[str],
-    stats: dict,
+    stats: dict[str, int],
     timeout: int,
-) -> dict:
+) -> dict[str, int]:
     """Parallel ollama path for enrich_company_descriptions."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -204,7 +206,7 @@ def _enrich_company_descriptions_parallel(
     # mapping that reflects what's actually been submitted. A bulk
     # `futures.update({comprehension})` replaces the dict atomically, leaving
     # a window where the handler would read {} and report "0 in progress".
-    futures: dict = {}
+    futures: dict[Any, str] = {}
     previous_handler = _install_interrupt_notifier(futures, timeout, "companies")
     for c in companies:
         futures[pool.submit(_fetch_company_info, c, config, include_gd, timeout)] = c
@@ -236,8 +238,8 @@ def _enrich_company_descriptions_parallel(
 
 
 def enrich_company_descriptions(
-    jobs: list[dict], config: dict | None = None, *, budget: int = 0
-) -> dict:
+    jobs: list[dict[str, Any]], config: dict[str, Any] | None = None, *, budget: int = 0
+) -> dict[str, int]:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
     One `claude -p` call per unique company name; results cached within the run.
@@ -361,7 +363,7 @@ def _location_summary(config: dict[str, Any]) -> str:
 
 
 def _build_fit_notes_prompt(
-    job: dict, role_persona: str, loc_summary: str, hc: str
+    job: dict[str, Any], role_persona: str, loc_summary: str, hc: str
 ) -> str:
     role = job.get("role", "unknown")
     company = job.get("company", "unknown")
@@ -399,11 +401,11 @@ def _build_fit_notes_prompt(
 
 
 def _fetch_fit_notes_for_job(
-    job: dict,
+    job: dict[str, Any],
     role_persona: str,
     loc_summary: str,
     hc: str,
-    config: dict | None,
+    config: dict[str, Any] | None,
     timeout: int,
 ) -> tuple[str, str, bool]:
     """Worker: fetch fit/notes for one job. Returns (fit_str, notes_str, failed)."""
@@ -493,17 +495,17 @@ def _fetch_fit_notes_for_job(
 
 
 def _enrich_fit_and_notes_parallel(
-    jobs: list[dict],
-    config: dict,
+    jobs: list[dict[str, Any]],
+    config: dict[str, Any],
     *,
     budget: int,
     pool_size: int,
     role_persona: str,
     loc_summary: str,
     hc: str,
-    stats: dict,
+    stats: dict[str, int],
     timeout: int,
-) -> dict:
+) -> dict[str, int]:
     """Parallel ollama path for enrich_fit_and_notes."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -521,7 +523,7 @@ def _enrich_fit_and_notes_parallel(
         )
         stats["skipped_budget"] += len(eligible) - budget
 
-    def _apply(job: dict, fit_str: str, notes_str: str, failed: bool) -> None:
+    def _apply(job: dict[str, Any], fit_str: str, notes_str: str, failed: bool) -> None:
         company = job.get("company", "unknown")
         pre_fit = job.get("fit", "")
         pre_notes = job.get("notes", "")
@@ -555,7 +557,7 @@ def _enrich_fit_and_notes_parallel(
 
     pool = ThreadPoolExecutor(max_workers=pool_size)
     # See companies path for why this is incremental rather than a bulk update.
-    futures: dict = {}
+    futures: dict[Any, dict[str, Any]] = {}
     previous_handler = _install_interrupt_notifier(futures, timeout, "jobs")
     for j in targets:
         futures[
@@ -572,7 +574,7 @@ def _enrich_fit_and_notes_parallel(
     # `applied` tracks futures whose result has been written to `jobs`/`stats`,
     # so the interrupt drain doesn't double-count. The companies path gets the
     # same guarantee for free via its `cache` keyed on unique company names.
-    applied: set = set()
+    applied: set[int] = set()
     try:
         for fut in as_completed(futures):
             job = futures[fut]
@@ -596,7 +598,9 @@ def _enrich_fit_and_notes_parallel(
     return stats
 
 
-def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> dict:
+def enrich_fit_and_notes(
+    jobs: list[dict[str, Any]], config: dict[str, Any], *, budget: int = 0
+) -> dict[str, int]:
     """Populate Fit score and Notes in-place for new jobs via a single Claude CLI call per job.
 
     One `claude -p` call per job returns strict JSON: {"fit": <int 1-10>, "notes": "<string>"}.
@@ -760,7 +764,7 @@ def enrich_fit_and_notes(jobs: list[dict], config: dict, *, budget: int = 0) -> 
     return stats
 
 
-def enrich_job_details(jobs: list[dict], config: dict) -> None:
+def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> None:
     """Fetch each job's detail page and populate comp/posted_date in place.
 
     Caches by URL within the run so jobs that share a detail URL only generate
@@ -771,7 +775,7 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     """
     from daily_driver.plugins.job_search.scraper.runner import enrichment_cfg
 
-    cache: dict[str, dict] = {}
+    cache: dict[str, dict[str, Any]] = {}
     cfg = enrichment_cfg(config)
     delay = cfg.detail_delay_seconds
 

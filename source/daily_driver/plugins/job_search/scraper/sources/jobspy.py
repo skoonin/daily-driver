@@ -77,8 +77,8 @@ def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F82
     Returns None when the role is empty (jobspy yields these for ads / non-job
     cards); pydantic would otherwise reject NonEmptyStr role.
     """
-    # Local import: models.py uses deferred imports from this module
-    # (`_parse_comp`, `_REMOTE_*`); top-level import would cycle.
+    # Local import: models.py defers imports from this package
+    # (e.g. `_REMOTE_*`); a top-level import would cycle.
     from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
 
     role = _jobspy_str(row.get("title"))

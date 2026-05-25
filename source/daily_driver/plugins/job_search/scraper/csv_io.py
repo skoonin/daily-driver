@@ -154,7 +154,7 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     return known_urls, known_keys, header
 
 
-def append_jobs(csv_path: Path, jobs: list[dict], header: list[str]) -> int:
+def append_jobs(csv_path: Path, jobs: list[dict[str, Any]], header: list[str]) -> int:
     """Append new jobs to CSV. Returns count of rows written.
 
     Legacy dict-based entry point. Typed callers should use
@@ -222,7 +222,13 @@ def append_jobs_typed(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
             for job in jobs:
-                writer.writerow(job.to_csv_row())
+                row = job.to_csv_row()
+                # EnrichedJob does not model Date Last Seen; seed it from Date
+                # Found on insert so `jobs prune` ages from first-discovery
+                # (matching the legacy writer's behavior).
+                if "Date Last Seen" in header:
+                    row.setdefault("Date Last Seen", row.get("Date Found", ""))
+                writer.writerow(row)
                 written += 1
     except OSError as exc:
         raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
@@ -351,7 +357,7 @@ def _rewrite_jobs_csv(
     tmp_path.rename(csv_path)
 
 
-def backfill(config: dict, csv_path: Path) -> None:
+def backfill(config: dict[str, Any], csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
     from daily_driver.plugins.job_search.scraper.enrichment import (
         enrich_company_descriptions,
