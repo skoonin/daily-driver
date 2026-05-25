@@ -72,14 +72,14 @@ include = ["daily_driver*"]
 [tool.setuptools.package-data]
 daily_driver = [
     "py.typed",
-    "agents/daily-driver/*.md",
-    "commands/daily-driver/*.md",
-    "launchd/*.j2",
-    "templates/*.j2",
-    "templates/.*.j2",
-    "templates/*.md",
-    "templates/*.yaml",
-    "templates/hooks/*.sh",
+    "resources/agents/daily-driver/*.md",
+    "resources/slash_commands/daily-driver/*.md",
+    "resources/launchd/*.j2",
+    "resources/templates/*.j2",
+    "resources/templates/.*.j2",
+    "resources/templates/*.md",
+    "resources/templates/*.yaml",
+    "resources/templates/hooks/*.sh",
     "plugins/job_search/templates/*.j2",
 ]
 

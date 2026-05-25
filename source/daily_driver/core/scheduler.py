@@ -54,8 +54,8 @@ class ScheduledJob:
     program_arguments: list[str]
     context: dict[str, Any]
     # Package holding the jinja template. Plugin jobs ship their own template
-    # alongside the plugin; core jobs use daily_driver.launchd.
-    template_package: str = "daily_driver.launchd"
+    # alongside the plugin; core jobs use daily_driver.resources.launchd.
+    template_package: str = "daily_driver.resources.launchd"
 
     @property
     def stdout_path(self) -> str:
@@ -86,7 +86,7 @@ class SchedulerContext:
 
 def _default_scheduler_config() -> dict[str, Any]:
     raw = (
-        importlib.resources.files("daily_driver.templates")
+        importlib.resources.files("daily_driver.resources.templates")
         .joinpath("scheduler.default.yaml")
         .read_text(encoding="utf-8")
     )

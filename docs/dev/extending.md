@@ -35,7 +35,7 @@ CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`.
 
 ### Claude launcher
 
-Create the shipped slash-command file at `source/daily_driver/commands/daily-driver/review.md` (package data, generated into the workspace).
+Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace).
 
 Create `source/daily_driver/cli/commands/review.py`:
 
@@ -65,7 +65,7 @@ For headless flows, call `launch_headless()` from `_claude_session` with capture
 - [ ] Test in `tests/test_cli/`; core logic test in `tests/test_core/`
 - [ ] Entry in `docs/commands.md`
 - [ ] `[Unreleased]` note in `CHANGELOG.md`
-- [ ] (Launcher) shipped slash command in `source/daily_driver/commands/daily-driver/`
+- [ ] (Launcher) shipped slash command in `source/daily_driver/resources/slash_commands/daily-driver/`
 
 ## Adding a plugin
 

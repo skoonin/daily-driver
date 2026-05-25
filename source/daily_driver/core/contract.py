@@ -29,7 +29,7 @@ MIN_AGENTS = 1
 class ContractEntry:
     """A single package-managed template that generate() must render into the workspace root.
 
-    src: filename of the Jinja2 template in daily_driver/templates/.
+    src: filename of the Jinja2 template in daily_driver/resources/templates/.
     dst: workspace-relative destination path.
     """
 

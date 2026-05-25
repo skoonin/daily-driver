@@ -16,11 +16,13 @@ _PROMPT_ROOTS = (
     Path(__file__).resolve().parents[2]
     / "source"
     / "daily_driver"
-    / "commands"
+    / "resources"
+    / "slash_commands"
     / "daily-driver",
     Path(__file__).resolve().parents[2]
     / "source"
     / "daily_driver"
+    / "resources"
     / "agents"
     / "daily-driver",
 )

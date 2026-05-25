@@ -161,7 +161,7 @@ def app(argv: list[str] | None = None) -> int:
     # Subcommands invoked by the shipped slash commands but not useful as
     # day-to-day user-facing CLI verbs. Hidden from `daily-driver --help`
     # listing while remaining fully callable. Keep this set in sync with
-    # source/daily_driver/commands/daily-driver/*.md.
+    # source/daily_driver/resources/slash_commands/daily-driver/*.md.
     _HIDDEN_FROM_TOP_HELP = {"paths"}
 
     # Importing every command module at parser-build time drags Jinja2,

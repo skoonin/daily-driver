@@ -35,9 +35,9 @@ tracker:
 def _render_initial_config() -> str:
     """Render the initial .dd-config.yaml from the bundled Jinja2 template."""
     try:
-        tmpl_traversable = importlib.resources.files("daily_driver.templates").joinpath(
-            ".dd-config.yaml.j2"
-        )
+        tmpl_traversable = importlib.resources.files(
+            "daily_driver.resources.templates"
+        ).joinpath(".dd-config.yaml.j2")
         template_text = tmpl_traversable.read_text(encoding="utf-8")
         env = jinja2.Environment(autoescape=False, keep_trailing_newline=True)
         return env.from_string(template_text).render()

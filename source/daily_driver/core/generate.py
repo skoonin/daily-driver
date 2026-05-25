@@ -34,8 +34,8 @@ _logger = get_logger("generate")
 # plugin appends its own dirs (see _package_data_dirs); the daily-driver subdir
 # has a hyphen so it's reached via joinpath rather than a module identifier.
 _CORE_PACKAGE_DATA: tuple[PackageDataDir, ...] = (
-    PackageDataDir("daily_driver.commands", "commands/daily-driver"),
-    PackageDataDir("daily_driver.agents", "agents/daily-driver"),
+    PackageDataDir("daily_driver.resources.slash_commands", "commands/daily-driver"),
+    PackageDataDir("daily_driver.resources.agents", "agents/daily-driver"),
 )
 
 
@@ -366,12 +366,12 @@ def _render_contract_entries(
 
         try:
             tmpl_traversable = importlib.resources.files(
-                "daily_driver.templates"
+                "daily_driver.resources.templates"
             ).joinpath(entry.src)
             template_text = tmpl_traversable.read_text(encoding="utf-8")
         except (FileNotFoundError, TypeError):
             _logger.warning(
-                "%s not found in daily_driver.templates — skipping %s",
+                "%s not found in daily_driver.resources.templates — skipping %s",
                 entry.src,
                 rel,
             )
@@ -395,7 +395,9 @@ def _copy_hooks(workspace: Workspace) -> None:
     """Copy package-managed hook scripts into <workspace>/.claude/hooks/."""
     hooks_dest = workspace.root / ".claude" / "hooks"
     hooks_dest.mkdir(parents=True, exist_ok=True)
-    hooks_pkg = importlib.resources.files("daily_driver.templates").joinpath("hooks")
+    hooks_pkg = importlib.resources.files("daily_driver.resources.templates").joinpath(
+        "hooks"
+    )
     for entry in hooks_pkg.iterdir():
         if not entry.name.endswith(".sh"):
             continue
@@ -407,13 +409,13 @@ def _copy_hooks(workspace: Workspace) -> None:
 def _render_settings(workspace: Workspace) -> None:
     """Render settings.local.json from template; merge with existing user keys if present."""
     try:
-        tmpl_traversable = importlib.resources.files("daily_driver.templates").joinpath(
-            "settings.local.json.j2"
-        )
+        tmpl_traversable = importlib.resources.files(
+            "daily_driver.resources.templates"
+        ).joinpath("settings.local.json.j2")
         template_text = tmpl_traversable.read_text(encoding="utf-8")
     except (FileNotFoundError, TypeError):
         _logger.warning(
-            "settings.local.json.j2 not found in daily_driver.templates — skipping settings.local.json render"
+            "settings.local.json.j2 not found in daily_driver.resources.templates — skipping settings.local.json render"
         )
         return
 

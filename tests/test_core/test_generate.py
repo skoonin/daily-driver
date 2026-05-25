@@ -164,15 +164,21 @@ def test_package_data_resources_are_importable() -> None:
     package-data / __init__.py gaps that would break a built wheel."""
     import importlib.resources as ir
 
-    commands_pkg = ir.files("daily_driver.commands").joinpath("daily-driver")
-    agents_pkg = ir.files("daily_driver.agents").joinpath("daily-driver")
-    templates_pkg = ir.files("daily_driver.templates")
+    commands_pkg = ir.files("daily_driver.resources.slash_commands").joinpath(
+        "daily-driver"
+    )
+    agents_pkg = ir.files("daily_driver.resources.agents").joinpath("daily-driver")
+    templates_pkg = ir.files("daily_driver.resources.templates")
 
     assert (
         commands_pkg.is_dir()
-    ), "daily_driver.commands.daily-driver missing from package"
-    assert agents_pkg.is_dir(), "daily_driver.agents.daily-driver missing from package"
-    assert templates_pkg.is_dir(), "daily_driver.templates missing from package"
+    ), "daily_driver.resources.slash_commands.daily-driver missing from package"
+    assert (
+        agents_pkg.is_dir()
+    ), "daily_driver.resources.agents.daily-driver missing from package"
+    assert (
+        templates_pkg.is_dir()
+    ), "daily_driver.resources.templates missing from package"
 
     # settings.local.json.j2 must be shipped for generate() to render it.
     settings_tmpl = templates_pkg.joinpath("settings.local.json.j2")
@@ -222,7 +228,7 @@ def test_generate_drops_commands_removed_from_package(
     real_files = generate.importlib.resources.files
 
     def fake_files(anchor: str):
-        if anchor == "daily_driver.commands":
+        if anchor == "daily_driver.resources.slash_commands":
 
             class _Stub:
                 def joinpath(self, name: str):
@@ -398,7 +404,7 @@ def test_generate_records_manifest_for_copied_files(
     real_files = generate.importlib.resources.files
 
     def fake_files(anchor: str):  # type: ignore[return]
-        if anchor == "daily_driver.commands":
+        if anchor == "daily_driver.resources.slash_commands":
 
             class _Stub:
                 def joinpath(self, name: str) -> object:
@@ -434,7 +440,7 @@ def _setup_fake_pkg_with_file(
     real_files = generate.importlib.resources.files
 
     def fake_files(anchor: str):  # type: ignore[return]
-        if anchor == "daily_driver.commands":
+        if anchor == "daily_driver.resources.slash_commands":
 
             class _Stub:
                 def joinpath(self, name: str) -> object:
@@ -570,7 +576,7 @@ def test_render_settings_jinja_error_logged_and_skipped(
     real_files = generate.importlib.resources.files
 
     def fake_files(anchor: str):  # type: ignore[return]
-        if anchor == "daily_driver.templates":
+        if anchor == "daily_driver.resources.templates":
 
             class _Stub:
                 def joinpath(self, name: str) -> object:
@@ -615,7 +621,7 @@ def test_render_settings_unexpected_error_not_swallowed(
     real_files = generate.importlib.resources.files
 
     def fake_files(anchor: str):  # type: ignore[return]
-        if anchor == "daily_driver.templates":
+        if anchor == "daily_driver.resources.templates":
 
             class _Stub:
                 def joinpath(self, name: str) -> object:
@@ -684,7 +690,7 @@ def test_render_initial_config_missing_template_warns_and_falls_back(
     real_files = ws_mod.importlib.resources.files
 
     def fake_files(anchor: str):  # type: ignore[return]
-        if anchor == "daily_driver.templates":
+        if anchor == "daily_driver.resources.templates":
 
             class _Stub:
                 def joinpath(self, name: str) -> object:

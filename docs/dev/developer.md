@@ -163,7 +163,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 | Access workspace | `Workspace.discover_or_fail(override=args.workspace)` at command entry |
 | Lock a file | `with file_lock(path): ...` — always read-modify-write inside the lock |
 | Shell out | Add a wrapper in `integrations/`. Never `subprocess.run` from `cli/` or `core/` |
-| Bundle a template | Drop into `source/daily_driver/templates/`, access via `importlib.resources` |
+| Bundle a template | Drop into `source/daily_driver/resources/templates/`, access via `importlib.resources` |
 | Add a subcommand | See [extending.md](extending.md) |
 | Add a scraper source | See [extending.md](extending.md) |
 

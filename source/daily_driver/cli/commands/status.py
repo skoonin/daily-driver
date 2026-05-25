@@ -53,7 +53,7 @@ def _read_package_template(name: str) -> str | None:
     """Return the bundled template content, or None if not found."""
     try:
         return (
-            importlib.resources.files("daily_driver.templates")
+            importlib.resources.files("daily_driver.resources.templates")
             .joinpath(name)
             .read_text(encoding="utf-8")
         )

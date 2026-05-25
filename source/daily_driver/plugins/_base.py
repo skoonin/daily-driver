@@ -15,7 +15,7 @@ class PackageDataDir:
     plugin shipping slash-commands needs no change to core copy logic.
     """
 
-    # dotted package holding the .md files (e.g. "daily_driver.commands")
+    # dotted package holding the .md files (e.g. "daily_driver.resources.slash_commands")
     source_package: str
     # subdir under the workspace .claude/ (e.g. "commands/daily-driver")
     dest: str

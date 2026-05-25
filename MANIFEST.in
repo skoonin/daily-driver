@@ -4,10 +4,10 @@ include LICENSE
 include pyproject.toml
 include MANIFEST.in
 
-recursive-include source/daily_driver/agents *.md
-recursive-include source/daily_driver/commands *.md
-recursive-include source/daily_driver/launchd *.j2
-recursive-include source/daily_driver/templates *.j2 *.md *.yaml
+recursive-include source/daily_driver/resources/agents *.md
+recursive-include source/daily_driver/resources/slash_commands *.md
+recursive-include source/daily_driver/resources/launchd *.j2
+recursive-include source/daily_driver/resources/templates *.j2 *.md *.yaml
 recursive-include source/daily_driver/plugins/job_search/templates *.j2
 
 include source/daily_driver/py.typed

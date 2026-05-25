@@ -51,7 +51,7 @@ def _copy_template(name: str, dest: Path) -> bool:
     if dest.exists():
         return False
     content = (
-        importlib.resources.files("daily_driver.templates")
+        importlib.resources.files("daily_driver.resources.templates")
         .joinpath(name)
         .read_text(encoding="utf-8")
     )
@@ -69,7 +69,7 @@ def _render_template(
     if dest.exists() and not force:
         return False
     template_text = (
-        importlib.resources.files("daily_driver.templates")
+        importlib.resources.files("daily_driver.resources.templates")
         .joinpath(name)
         .read_text(encoding="utf-8")
     )

@@ -15,7 +15,7 @@ from jinja2 import Environment, FileSystemLoader
 from daily_driver.core import dates as _dates
 from daily_driver.core.config_models import Config
 
-_TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+_TEMPLATE_DIR = Path(__file__).parent.parent / "resources" / "templates"
 _SUMMARY_TEMPLATE = "summary.md.j2"
 
 
