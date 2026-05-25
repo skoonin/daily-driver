@@ -94,12 +94,13 @@ def test_load_bad_tracker_raises(tmp_path):
         load(cfg_file)
 
 
-def test_load_extra_top_level_key_allowed(tmp_path):
-    """Root config is extra='allow' so workspace-local keys round-trip."""
+def test_load_rejects_unknown_top_level_key(tmp_path):
+    """Root config is extra='forbid' so a typo'd top-level key fails loudly."""
     cfg_file = tmp_path / ".dd-config.yaml"
     cfg_file.write_text(
-        "tracker:\n  categories:\n    task: {}\nwhat_is_this: 42\n",
+        "tracker:\n  categories:\n    task: {required: [title]}\ntracer: {}\n",
         encoding="utf-8",
     )
-    cfg = load(cfg_file)
-    assert cfg.model_dump()["what_is_this"] == 42
+    with pytest.raises(ValidationError) as excinfo:
+        load(cfg_file)
+    assert "tracer" in str(excinfo.value)
