@@ -709,3 +709,109 @@ def test_render_initial_config_missing_template_warns_and_falls_back(
     assert any(
         ".dd-config.yaml.j2" in r.getMessage() for r in caplog.records
     ), "missing template must be named in a WARNING log"
+
+
+# Plugin package-data extension point (W15). job_search ships no slash-commands,
+# so a synthetic plugin exercises the plugin branch of the package-data walk.
+
+
+def test_synthetic_plugin_package_data_copied_and_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plugin's package_data_dirs entry copies its .md and records it in the manifest."""
+    from daily_driver.core import manifest as _manifest
+    from daily_driver.plugins._base import PackageDataDir
+
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+
+    plugin_src = tmp_path / "plugin-commands"
+    plugin_src.mkdir()
+    (plugin_src / "plugin-cmd.md").write_text("plugin command", encoding="utf-8")
+
+    plugin_dir = PackageDataDir("fake.plugin.commands", "commands/fake-plugin")
+    monkeypatch.setattr(
+        generate,
+        "_package_data_dirs",
+        lambda: [*generate._CORE_PACKAGE_DATA, plugin_dir],
+    )
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        if anchor == "fake.plugin.commands":
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    assert name == "fake-plugin"
+                    return plugin_src
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+    generate.generate(ws)
+
+    dest = tmp_path / ".claude" / "commands" / "fake-plugin" / "plugin-cmd.md"
+    assert dest.is_file(), "plugin .md must land under its declared dest"
+    assert dest.read_text(encoding="utf-8") == "plugin command"
+
+    stored = _manifest.load(ws.state_dir)
+    rel = ".claude/commands/fake-plugin/plugin-cmd.md"
+    assert rel in stored, "plugin .md must be recorded in the SHA-256 manifest"
+
+
+def test_two_sources_sharing_a_dest_keep_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plugin co-located with core in one dest must not drop the other's files.
+
+    Guards the union stale-removal: the second source's files are not treated as
+    stale relative to the first source's package snapshot.
+    """
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+
+    core_src = tmp_path / "core-commands"
+    core_src.mkdir()
+    (core_src / "core-cmd.md").write_text("core", encoding="utf-8")
+
+    plugin_src = tmp_path / "plugin-commands"
+    plugin_src.mkdir()
+    (plugin_src / "plugin-cmd.md").write_text("plugin", encoding="utf-8")
+
+    from daily_driver.plugins._base import PackageDataDir
+
+    shared = "commands/daily-driver"
+    monkeypatch.setattr(
+        generate,
+        "_package_data_dirs",
+        lambda: [
+            PackageDataDir("fake.core.commands", shared),
+            PackageDataDir("fake.plugin.commands", shared),
+        ],
+    )
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        mapping = {
+            "fake.core.commands": core_src,
+            "fake.plugin.commands": plugin_src,
+        }
+        if anchor in mapping:
+            target = mapping[anchor]
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    return target
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+    generate.generate(ws)
+
+    dest_dir = tmp_path / ".claude" / "commands" / "daily-driver"
+    assert (dest_dir / "core-cmd.md").is_file()
+    assert (
+        dest_dir / "plugin-cmd.md"
+    ).is_file(), "co-located source must not be treated as stale"

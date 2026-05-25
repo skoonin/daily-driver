@@ -6,6 +6,22 @@ from pydantic import BaseModel
 
 
 @dataclass(frozen=True)
+class PackageDataDir:
+    """One package-bundled directory of ``.md`` files copied into the workspace.
+
+    A plugin (or core) declares where its slash-command / agent markdown lives
+    and where it should land under the workspace ``.claude/`` tree. ``generate``
+    walks core's baseline dirs plus every plugin's ``package_data_dirs`` so a
+    plugin shipping slash-commands needs no change to core copy logic.
+    """
+
+    # dotted package holding the .md files (e.g. "daily_driver.commands")
+    source_package: str
+    # subdir under the workspace .claude/ (e.g. "commands/daily-driver")
+    dest: str
+
+
+@dataclass(frozen=True)
 class Plugin:
     """Static description of a daily-driver plugin.
 
@@ -37,3 +53,7 @@ class Plugin:
     # imported by core.doctor. None means the plugin contributes no health
     # checks.
     doctor_checks: str | None = None
+    # Package-bundled .md directories this plugin copies into the workspace
+    # .claude/ tree on generate (slash-commands / agents). Empty means the
+    # plugin ships none; core copies only its own baseline dirs.
+    package_data_dirs: tuple[PackageDataDir, ...] = ()

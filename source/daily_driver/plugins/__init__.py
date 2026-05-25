@@ -39,6 +39,7 @@ def _validate_registry(plugins: tuple[Plugin, ...]) -> None:
             hook_paths.append(p.scheduled_jobs_builder.rpartition(".")[0])
         if p.doctor_checks:
             hook_paths.append(p.doctor_checks.rpartition(".")[0])
+        hook_paths.extend(d.source_package for d in p.package_data_dirs)
         for module_path in hook_paths:
             if importlib.util.find_spec(module_path) is None:
                 raise ValueError(

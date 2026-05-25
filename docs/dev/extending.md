@@ -1,6 +1,6 @@
 # Extending
 
-Two patterns: adding a subcommand, and adding a scraper source.
+Three patterns: adding a subcommand, adding a plugin, and adding a scraper source.
 
 ## Adding a subcommand
 
@@ -67,9 +67,45 @@ For headless flows, call `launch_headless()` from `_claude_session` with capture
 - [ ] `[Unreleased]` note in `CHANGELOG.md`
 - [ ] (Launcher) shipped slash command in `source/daily_driver/commands/daily-driver/`
 
+## Adding a plugin
+
+A plugin is a feature slice (config + CLI + optional scheduler/doctor/package-data) that core wires through a static registry. `job_search` is the reference implementation. No runtime discovery — every plugin is listed explicitly.
+
+1. Create `source/daily_driver/plugins/<name>/` with an `__init__.py` exposing a module-level `PLUGIN`:
+
+```python
+from daily_driver.plugins._base import Plugin
+from daily_driver.plugins.<name>.config import MyPluginConfig
+
+PLUGIN = Plugin(
+    name="<name>",                       # plugins.<name> config namespace + identifier
+    command_name="<verb>",               # CLI subcommand
+    command_module="daily_driver.plugins.<name>.cli",
+    command_help="One-line --help text",
+    config_model=MyPluginConfig,         # BaseModel for plugins.<name>
+    # Optional contributions:
+    # scheduled_jobs_builder="daily_driver.plugins.<name>.scheduler.build_scheduled_jobs",
+    # doctor_checks="daily_driver.plugins.<name>.doctor.run_checks",
+    # package_data_dirs=(PackageDataDir("daily_driver.plugins.<name>.commands", "commands/<name>"),),
+)
+```
+
+2. Add it to the `PLUGINS` tuple in `plugins/__init__.py`. `_validate_registry` runs at import and `find_spec`-checks every declared module, so a typo'd hook path fails at startup.
+
+3. Implement only what `PLUGIN` declares. `command_module` exposes `add_parser` / `run` (see "Adding a subcommand"); `config_model` is a Pydantic `BaseModel` (it becomes `plugins.<name>` and is `extra="forbid"` via the assembled `PluginsConfig`); `scheduled_jobs_builder` returns `list[ScheduledJob]`; `doctor_checks` returns `list[CheckResult]`; `package_data_dirs` declares `.md` dirs copied into the workspace `.claude/` tree by `core.generate`.
+
+Core stays import-light: it imports `PLUGINS` lazily inside the functions that iterate it (scheduler, doctor, generate) and imports each plugin's implementation only on dispatch.
+
+### Checklist
+
+- [ ] `plugins/<name>/__init__.py` exposes `PLUGIN`
+- [ ] Added to `PLUGINS` in `plugins/__init__.py`
+- [ ] `config_model` is a `BaseModel`; tests in `tests/test_plugins/<name>/`
+- [ ] `[Unreleased]` entry in `CHANGELOG.md`
+
 ## Adding a scraper source
 
-Each scraper lives in its own module under `source/daily_driver/scraper/sources/`. The `SCRAPERS` dict and typed `SOURCE_REGISTRY` are assembled in `source/daily_driver/scraper/sources/__init__.py`. Shared HTTP / Playwright helpers live in `sources/_http.py`; orchestration (`run_all_scrapers`, dedup, filters) lives in `scraper/runner.py`.
+This recipe applies to the `job_search` plugin. Each scraper lives in its own module under `source/daily_driver/plugins/job_search/scraper/sources/`. The `SCRAPERS` dict and typed `SOURCE_REGISTRY` are assembled in that package's `sources/__init__.py`. Shared HTTP / Playwright helpers live in `sources/_http.py`; orchestration (`run_all_scrapers`, dedup, filters) lives in `scraper/runner.py`.
 
 ### Pipeline
 
