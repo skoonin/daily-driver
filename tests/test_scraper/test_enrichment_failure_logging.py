@@ -4,17 +4,16 @@ When the underlying provider (claude CLI or ollama) exits non-zero, its
 error message is frequently on stdout (not stderr). The warning must
 capture both so the cause is visible. Tests patch `claude_cli.invoke`
 directly — `ai_provider.invoke_for` translates the resulting
-`CalledProcessError` into an `AIInvocationError` whose stdout/stderr
+`ClaudeInvocationError` into an `AIInvocationError` whose stdout/stderr
 fields preserve the original message.
 """
 
 from __future__ import annotations
 
 import logging
-import subprocess
 from unittest.mock import patch
 
-from daily_driver.integrations import ai_provider
+from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError
 from daily_driver.scraper import enrichment
 
@@ -25,10 +24,10 @@ def _config() -> dict:
 
 def test_company_descriptions_warning_includes_stdout(caplog) -> None:
     """When claude exits rc=1 with message on stdout, the warning must include it."""
-    err = subprocess.CalledProcessError(
-        returncode=1,
-        cmd=["claude", "-p", "..."],
-        output="Not logged in - Please run /login",
+    err = claude_cli.ClaudeInvocationError(
+        1,
+        ["claude", "-p", "..."],
+        stdout="Not logged in - Please run /login",
         stderr="",
     )
     jobs = [{"company": "Acme", "role": "SRE"}]
@@ -48,10 +47,10 @@ def test_company_descriptions_warning_includes_stdout(caplog) -> None:
 
 def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
     """Same diagnostic for the fit-and-notes enrichment path."""
-    err = subprocess.CalledProcessError(
-        returncode=1,
-        cmd=["claude", "-p", "..."],
-        output="Credit balance is too low",
+    err = claude_cli.ClaudeInvocationError(
+        1,
+        ["claude", "-p", "..."],
+        stdout="Credit balance is too low",
         stderr="",
     )
     jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/jobs/1"}]

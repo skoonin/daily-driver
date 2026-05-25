@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
 from daily_driver.core.logging import get_logger, log_query_window
+from daily_driver.integrations import icalbuddy
 
 log = get_logger(__name__)
 
@@ -100,51 +99,15 @@ def _parse_event_block(block: str, event_date: str) -> CalendarEvent | None:
 def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     """Read macOS Calendar via icalBuddy. Returns [] if icalBuddy is missing."""
     log_query_window(log, "calendar", since, until)
-    if shutil.which("icalBuddy") is None:
-        log.warning(
-            "calendar: icalBuddy not found on PATH; skipping calendar gather. "
-            "Install via `brew install ical-buddy` and grant the terminal "
-            "Calendar access (System Settings -> Privacy & Security -> "
-            "Calendars). See docs/developer.md 'Calendar (icalBuddy) setup'."
-        )
+    stdout = icalbuddy.events_between(since, until)
+    if stdout is None:
         return []
 
-    cmd = [
-        "icalBuddy",
-        "-iep",
-        "title,datetime,location",
-        "-nc",
-        "-b",
-        "",
-        "-df",
-        "%Y-%m-%d",
-        "-tf",
-        "%H:%M",
-        f"eventsFrom:{since.strftime('%Y-%m-%d')}",
-        f"to:{until.strftime('%Y-%m-%d')}",
-    ]
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=False, timeout=30
-        )
-    except subprocess.TimeoutExpired:
-        log.warning("calendar: icalbuddy timed out after 30s; returning no events")
-        return []
-
-    if result.returncode != 0:
-        log.warning(
-            "calendar: icalBuddy exited %d; stderr=%r. See docs/developer.md "
-            "'Calendar (icalBuddy) setup' for plist + permission steps.",
-            result.returncode,
-            (result.stderr or "").strip()[:200],
-        )
-        return []
-
-    if _looks_like_usage_text(result.stdout):
+    if _looks_like_usage_text(stdout):
         log.warning(
             "calendar: icalBuddy returned usage/help text — invocation is wrong; "
             "got: %r",
-            result.stdout.strip().splitlines()[0][:120] if result.stdout else "",
+            stdout.strip().splitlines()[0][:120] if stdout else "",
         )
         return []
 
@@ -152,7 +115,7 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     current_date = since.strftime("%Y-%m-%d")
 
     # icalBuddy separates events with blank lines
-    blocks = re.split(r"\n{2,}", result.stdout)
+    blocks = re.split(r"\n{2,}", stdout)
     for block in blocks:
         block = block.strip()
         if not block:

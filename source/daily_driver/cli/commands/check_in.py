@@ -3,8 +3,8 @@
 When `claude.resume_check_in` is enabled in `.dd-config.yaml` AND today's daily
 state has a `last_day_start_session_id`, /check-in attempts
 `claude --resume <uuid>` so the morning's planning context is already loaded.
-On any resume failure (CalledProcessError), we fall back to a fresh session
-and log a warning — never silently fail.
+On any resume failure (ClaudeInvocationError from the integrations seam), we
+fall back to a fresh session and log a warning — never silently fail.
 
 After the session exits 0, `last_check_in_at` is recorded so the next /check-in
 can bound `gather sessions` / `gather git` since the prior check-in (#35).
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import subprocess
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.cli.commands._claude_session import (
@@ -115,7 +114,7 @@ def run(args: argparse.Namespace) -> int:
                 model=args.model,
                 resume_session_id=resume_id,
             )
-        except subprocess.CalledProcessError as exc:
+        except claude_cli.ClaudeInvocationError as exc:
             if resume_id is None:
                 raise
             _log.warning(

@@ -9,6 +9,45 @@ class ClaudeNotFoundError(RuntimeError):
     """Raised when the `claude` CLI binary is not on PATH."""
 
 
+class ClaudeInvocationError(RuntimeError):
+    """The `claude` subprocess exited non-zero.
+
+    Domain wrapper so callers outside `integrations/` never import
+    `subprocess` to inspect a `CalledProcessError`. The `returncode`,
+    `stdout`, and `stderr` attributes mirror `subprocess.CalledProcessError`
+    so existing diagnostic code reads them unchanged. `cmd` is the argv list
+    for logging.
+    """
+
+    def __init__(
+        self,
+        returncode: int,
+        cmd: list[str],
+        *,
+        stdout: str = "",
+        stderr: str = "",
+    ) -> None:
+        super().__init__(f"claude exited {returncode}")
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class ClaudeTimeoutError(RuntimeError):
+    """The `claude` subprocess exceeded its timeout.
+
+    Domain wrapper around `subprocess.TimeoutExpired`. The `timeout`
+    attribute mirrors that exception's field so callers can report the
+    bound without importing `subprocess`.
+    """
+
+    def __init__(self, timeout: float | None, cmd: list[str]) -> None:
+        super().__init__(f"claude timed out after {timeout}s")
+        self.timeout = timeout
+        self.cmd = cmd
+
+
 def available() -> bool:
     """True if `claude` is on PATH."""
     return shutil.which("claude") is not None
@@ -108,14 +147,14 @@ def invoke(
 
     try:
         stdout, _stderr = proc.communicate(input=input_text, timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         proc.kill()
         proc.wait()
-        raise
+        raise ClaudeTimeoutError(exc.timeout, args) from exc
 
     if proc.returncode != 0:
-        raise subprocess.CalledProcessError(
-            proc.returncode, args, output=stdout, stderr=_stderr
+        raise ClaudeInvocationError(
+            proc.returncode, args, stdout=stdout, stderr=_stderr
         )
 
     return stdout
@@ -165,10 +204,10 @@ def invoke_capture(
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         proc.kill()
         proc.wait()
-        raise
+        raise ClaudeTimeoutError(exc.timeout, args) from exc
 
     return stdout, stderr, proc.returncode
 

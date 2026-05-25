@@ -7,7 +7,6 @@ claude headless invocation, and error paths.
 from __future__ import annotations
 
 import json
-import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -313,12 +312,13 @@ def test_summary_timeout_exits_1(
 ) -> None:
     from daily_driver.cli.cli import app
     from daily_driver.integrations import claude_cli
+    from daily_driver.integrations.claude_cli import ClaudeTimeoutError
 
     ws = _init_workspace(tmp_path)
     monkeypatch.setattr(claude_cli, "available", lambda: True)
 
     def raise_timeout(**kw):
-        raise subprocess.TimeoutExpired(cmd="claude", timeout=60)
+        raise ClaudeTimeoutError(60, ["claude"])
 
     monkeypatch.setattr(claude_cli, "invoke", raise_timeout)
 

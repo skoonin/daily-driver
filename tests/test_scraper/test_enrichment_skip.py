@@ -4,7 +4,8 @@ Covers the rate-limit / bot-wall fixes:
 - news.ycombinator.com URLs are skipped without an HTTP fetch (HN aggressively 429s).
 - Indeed URLs (any regional host) are skipped (JobSpy already populates description;
   bare requests get bot-walled with 403).
-- All other URLs flow through `_api_get`, inheriting retry / Retry-After / backoff.
+- All other URLs flow through `_api_get` (the single HTTP seam), inheriting
+  retry / Retry-After / backoff.
 """
 
 from __future__ import annotations
@@ -52,13 +53,11 @@ def test_hn_item_url_is_skipped_without_fetch(
         _job("https://news.ycombinator.com/item?id=48054321"),
         _job("https://news.ycombinator.com/item?id=48049988"),
     ]
-    with (
-        patch("daily_driver.scraper.enrichment.requests.get") as bare_get,
-        patch("daily_driver.scraper.enrichment._api_get") as api_get,
-    ):
+    with patch("daily_driver.scraper.enrichment._api_get") as api_get:
         with caplog.at_level("INFO", logger="daily_driver.scraper.enrichment"):
             enrich_job_details(jobs, fake_config)
-    assert bare_get.call_count == 0
+    # All HTTP now funnels through `_api_get`; a skipped host must not even
+    # reach that single seam.
     assert api_get.call_count == 0
     # Per-run notice, not per-URL — must fire fewer times than URLs processed.
     skip_msgs = [r for r in caplog.records if "HN detail enrichment" in r.getMessage()]
@@ -74,13 +73,9 @@ def test_indeed_url_is_skipped_without_fetch(
         _job("https://www.indeed.com/viewjob?jk=deadbeef"),
         _job("https://uk.indeed.com/viewjob?jk=cafebabe"),
     ]
-    with (
-        patch("daily_driver.scraper.enrichment.requests.get") as bare_get,
-        patch("daily_driver.scraper.enrichment._api_get") as api_get,
-    ):
+    with patch("daily_driver.scraper.enrichment._api_get") as api_get:
         with caplog.at_level("INFO", logger="daily_driver.scraper.enrichment"):
             enrich_job_details(jobs, fake_config)
-    assert bare_get.call_count == 0
     assert api_get.call_count == 0
     skip_msgs = [
         r for r in caplog.records if "Indeed detail enrichment" in r.getMessage()
@@ -96,7 +91,6 @@ def test_other_urls_route_through_api_get(fake_config: dict[str, Any]) -> None:
     fake_resp.text = "<html></html>"
 
     with (
-        patch("daily_driver.scraper.enrichment.requests.get") as bare_get,
         patch(
             "daily_driver.scraper.enrichment._api_get", return_value=fake_resp
         ) as api_get,
@@ -106,7 +100,6 @@ def test_other_urls_route_through_api_get(fake_config: dict[str, Any]) -> None:
     ):
         enrich_job_details(jobs, fake_config)
 
-    assert bare_get.call_count == 0
     assert api_get.call_count == 1
     # First positional arg is a Session built once for the run.
     session_arg, url_arg = api_get.call_args.args[0], api_get.call_args.args[1]

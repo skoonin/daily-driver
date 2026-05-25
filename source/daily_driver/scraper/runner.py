@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import requests
 import yaml
 
 from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperConfig
@@ -23,7 +22,7 @@ from daily_driver.core.locking import file_lock
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
-from daily_driver.scraper.sources._http import COUNTRY_NAMES
+from daily_driver.scraper.sources._http import COUNTRY_NAMES, HTTPError, HTTPTimeout
 
 if TYPE_CHECKING:
     from daily_driver.scraper.models import NormalizedJob, RawScrapedJob
@@ -490,11 +489,11 @@ def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
     start = time.perf_counter()
     try:
         jobs = scraper_fn(cfg)
-    except requests.exceptions.Timeout as exc:
+    except HTTPTimeout as exc:
         log.warning("[%s] timed out after %ds", source_id, timeout)
         user_console.print(f"  {source_id}: failed (timed out after {timeout}s)")
         return exc
-    except requests.exceptions.RequestException as exc:
+    except HTTPError as exc:
         log.warning("[%s] request failed: %s", source_id, exc)
         user_console.print(f"  {source_id}: failed ({exc})")
         return exc

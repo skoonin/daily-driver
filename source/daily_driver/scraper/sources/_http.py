@@ -5,11 +5,19 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TypeAlias
 
 import requests
 
 log = logging.getLogger(__name__)
+
+# Re-exported so the rest of the scraper layer never imports `requests`
+# directly: this module is the single HTTP seam. Callers annotate sessions
+# with `Session` and classify per-source failures with `HTTPError` /
+# `HTTPTimeout` instead of reaching into `requests`.
+Session: TypeAlias = requests.Session
+HTTPError = requests.exceptions.RequestException
+HTTPTimeout = requests.exceptions.Timeout
 
 _RETRY_STATUS_CODES: frozenset[int] = frozenset({429, 503})
 _DEFAULT_BACKOFF_SECONDS: float = 1.5
@@ -221,6 +229,9 @@ def _playwright_browser(config: dict) -> Any:
 __all__ = [
     "COUNTRY_MAP",
     "COUNTRY_NAMES",
+    "Session",
+    "HTTPError",
+    "HTTPTimeout",
     "country_params",
     "_http_session",
     "_api_get",

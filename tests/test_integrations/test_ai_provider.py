@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -55,8 +54,8 @@ def test_ollama_uses_config_timeout_when_none_passed() -> None:
 
 
 def test_claude_called_process_error_maps_to_ai_invocation_error() -> None:
-    err = subprocess.CalledProcessError(
-        returncode=1, cmd=["claude"], output="auth failed", stderr=""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude"], stdout="auth failed", stderr=""
     )
     with patch.object(claude_cli, "invoke", side_effect=err):
         with pytest.raises(AIInvocationError) as exc_info:
@@ -67,24 +66,23 @@ def test_claude_called_process_error_maps_to_ai_invocation_error() -> None:
 
 
 def test_claude_timeout_no_longer_propagates_raw() -> None:
-    """Per I5: claude TimeoutExpired now wraps to AITimeoutError so callers
-    have one unified type to match across providers. The old contract
-    ('timeouts re-raise as subprocess.TimeoutExpired') is intentionally
-    broken — see PR #31 final review."""
+    """Per I5: a claude timeout now wraps to AITimeoutError so callers
+    have one unified type to match across providers. The integrations seam
+    raises ClaudeTimeoutError; the dispatch layer normalizes it."""
     from daily_driver.integrations.ai_provider import AITimeoutError
 
     with patch.object(
         claude_cli,
         "invoke",
-        side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=5),
+        side_effect=claude_cli.ClaudeTimeoutError(5, ["claude"]),
     ):
         with pytest.raises(AITimeoutError):
             ai_provider.invoke_for("enrichment", "p", config={}, timeout=5)
-    # subprocess.TimeoutExpired should no longer be raised here:
+    # The raw integrations exception should no longer escape here:
     with patch.object(
         claude_cli,
         "invoke",
-        side_effect=subprocess.TimeoutExpired(cmd="claude", timeout=5),
+        side_effect=claude_cli.ClaudeTimeoutError(5, ["claude"]),
     ):
         with pytest.raises(AIInvocationError):  # AITimeoutError IS AIInvocationError
             ai_provider.invoke_for("enrichment", "p", config={}, timeout=5)
@@ -150,11 +148,11 @@ def test_ollama_timeout_wraps_to_ai_timeout_error() -> None:
 
 
 def test_claude_timeout_wraps_to_ai_timeout_error() -> None:
-    """Per I5: subprocess.TimeoutExpired from claude becomes AITimeoutError."""
+    """Per I5: ClaudeTimeoutError from the claude seam becomes AITimeoutError."""
     from daily_driver.integrations.ai_provider import AITimeoutError
 
     cfg = {"ai": {"enrichment": {"provider": "claude"}}}
-    err = subprocess.TimeoutExpired(cmd=["claude"], timeout=5)
+    err = claude_cli.ClaudeTimeoutError(5, ["claude"])
     with patch.object(claude_cli, "invoke", side_effect=err):
         with pytest.raises(AITimeoutError) as exc_info:
             ai_provider.invoke_for("enrichment", "p", config=cfg, timeout=5)
