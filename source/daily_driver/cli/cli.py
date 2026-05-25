@@ -25,8 +25,9 @@ from daily_driver.core.console import Console
 from daily_driver.core.logging import get_logger
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
-# All entries must resolve at import time — ImportError is a packaging bug,
-# not a graceful-degradation case.
+# Module-path entries must resolve when dispatched — ImportError is a
+# packaging bug, not a graceful-degradation case. Consumed by help.py to
+# walk the command set; keep the 2-tuple shape it unpacks.
 _COMMANDS = [
     ("init", "daily_driver.cli.commands.init"),
     ("doctor", "daily_driver.cli.commands.doctor"),
@@ -45,6 +46,34 @@ _COMMANDS = [
     ("help", "daily_driver.cli.commands.help"),
 ]
 
+# Top-level `daily-driver --help` summaries, mirroring each module's own
+# add_parser `help=`. Stored alongside (not in) _COMMANDS so the listing
+# renders without importing any command module — importing all of them costs
+# ~150ms+ via Jinja2/pydantic/requests transitive deps. Drift from a module's
+# real `help=` only affects the top-level listing, never dispatch.
+_TOP_HELP = {
+    "init": "Create a new daily-driver workspace",
+    "doctor": "Check installation and workspace health",
+    "tracker": (
+        "Manage tracker entries (add, update, delete, prune, show, list, "
+        "follow-ups, stats)"
+    ),
+    "status": "Show workspace status and tracker summary",
+    "focus": "Manage focus mode (on / off / status)",
+    "jobs": "Job search: scrape boards, inspect status, prune stale rows",
+    "paths": "Print resolved workspace paths (output, state, daily plan/notes)",
+    "gather": "Pull data from calendar or git",
+    "day-start": "Interactive morning planning session (runs /day-start via claude)",
+    "day-end": "Interactive end-of-day review session (runs /day-end via claude)",
+    "check-in": "Interactive mid-day check-in session (runs /check-in via claude)",
+    "summary": "Generate a period summary using Claude (or --json for raw data)",
+    "scheduler": "Install, uninstall, or check the macOS background scheduler",
+    "voice-update": "Update voice-profile.md from writing samples (uses Claude)",
+    "help": "Show reference: subcommands and discoverable values",
+}
+
+_COMMAND_MODULES = {name: module_path for name, module_path in _COMMANDS}
+
 
 class _CommandModule(Protocol):
     def add_parser(
@@ -56,6 +85,32 @@ class _CommandModule(Protocol):
     def run(self, args: argparse.Namespace) -> int: ...
 
 
+# Global flags that consume the following token as a value; skip both when
+# scanning argv for the subcommand name so e.g. `-w jobs` (a workspace path
+# literally named "jobs") doesn't get mistaken for the jobs subcommand.
+_VALUE_FLAGS = {"-w", "--workspace"}
+
+
+def _select_command(argv: list[str]) -> str | None:
+    """Return the first token in argv that names a known subcommand.
+
+    Stops at the first positional so flags meant for the subcommand aren't
+    scanned. Returns None when no subcommand token is present (bare invocation,
+    `--version`, `--help`, or a parse error to be surfaced by argparse).
+    """
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token in _VALUE_FLAGS:
+            i += 2
+            continue
+        if token.startswith("-"):
+            i += 1
+            continue
+        return token if token in _COMMAND_MODULES else None
+    return None
+
+
 def app(argv: list[str] | None = None) -> int:
     """Build parser, parse argv, dispatch. Returns exit code.
 
@@ -63,8 +118,14 @@ def app(argv: list[str] | None = None) -> int:
     Bare `daily-driver` (no subcommand) prints help and returns 2.
     `daily-driver --version` prints version string and returns 0.
     """
+    # allow_abbrev=False: lazy dispatch scans argv for the subcommand before
+    # argparse runs, so an abbreviated global flag (e.g. `--work` for
+    # `--workspace`) would not be recognized as value-consuming and its value
+    # would be misread as the subcommand. Disabling abbreviation keeps the scan
+    # and argparse in agreement.
     parser = HelpfulArgumentParser(
         prog="daily-driver",
+        allow_abbrev=False,
         description=(
             "Daily Driver — Personal daily planning, focus, and "
             "task tracking. Drives professional work, job search, and errands."
@@ -89,15 +150,20 @@ def app(argv: list[str] | None = None) -> int:
     # source/daily_driver/commands/daily-driver/*.md.
     _HIDDEN_FROM_TOP_HELP = {"paths"}
 
-    # Deferred imports keep --version / --help fast and avoid circular imports
-    # at module load time.  All command modules are shipped in-package; an
-    # ImportError here means a packaging defect, not a graceful-degradation
-    # scenario — let it propagate so the user sees a clear traceback.
-    _cmd_map: dict[str, _CommandModule] = {}
+    # Importing every command module at parser-build time drags Jinja2,
+    # pydantic, and requests into the process for `--version` / `--help`.
+    # Instead, scan argv for the invoked subcommand and build only its real
+    # parser; every other command gets a help-only stub so the top-level
+    # listing and choice validation stay complete without the imports.
+    # ImportError on dispatch is a packaging defect, not a graceful-
+    # degradation scenario — let it propagate so the user sees a traceback.
+    selected = _select_command(list(argv) if argv is not None else sys.argv[1:])
     for cmd_name, module_path in _COMMANDS:
-        module = cast(_CommandModule, importlib.import_module(module_path))
-        module.add_parser(subparsers, [])  # type: ignore[arg-type]
-        _cmd_map[cmd_name] = module
+        if cmd_name == selected:
+            module = cast(_CommandModule, importlib.import_module(module_path))
+            module.add_parser(subparsers, [])  # type: ignore[arg-type]
+        else:
+            subparsers.add_parser(cmd_name, help=_TOP_HELP[cmd_name], add_help=False)
 
     # Strip hidden subcommands from the help listing. Standard argparse
     # workaround — `help=argparse.SUPPRESS` on the subparser itself renders
@@ -120,10 +186,12 @@ def app(argv: list[str] | None = None) -> int:
         parser.print_help(sys.stderr)
         return 2
 
-    if args.cmd not in _cmd_map:
+    if args.cmd not in _COMMAND_MODULES:
         parser.error(f"unknown subcommand: {args.cmd!r}")
 
-    cmd_module = _cmd_map[args.cmd]
+    cmd_module = cast(
+        _CommandModule, importlib.import_module(_COMMAND_MODULES[args.cmd])
+    )
     try:
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001

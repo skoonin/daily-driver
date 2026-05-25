@@ -225,18 +225,19 @@ def test_init_skips_inner_generate_on_second_run(
     # First init — full work expected.
     run(_args(str(tmp_path)))
 
-    # Second init — count calls to the inner generate wrapper.
-    from daily_driver.cli.commands import init as init_module
+    # Second init — count calls to the inner generate wrapper. init imports
+    # generate lazily, so patch the source module it resolves at call time.
+    from daily_driver.core import generate as generate_module
 
     call_count = {"n": 0, "args_seen": []}
-    real_generate = init_module.generate
+    real_generate = generate_module.generate
 
     def counting_generate(workspace, **kwargs):
         call_count["n"] += 1
         call_count["args_seen"].append(kwargs)
         return real_generate(workspace, **kwargs)
 
-    monkeypatch.setattr(init_module, "generate", counting_generate)
+    monkeypatch.setattr(generate_module, "generate", counting_generate)
     run(_args(str(tmp_path)))
 
     assert call_count["n"] == 1, "generate should be called exactly once"
@@ -255,16 +256,16 @@ def test_init_force_still_regenerates(
     """--force must keep the legacy ignore_drift=True / force_overwrite=True path."""
     run(_args(str(tmp_path)))
 
-    from daily_driver.cli.commands import init as init_module
+    from daily_driver.core import generate as generate_module
 
     args_seen = []
-    real_generate = init_module.generate
+    real_generate = generate_module.generate
 
     def capturing_generate(workspace, **kwargs):
         args_seen.append(kwargs)
         return real_generate(workspace, **kwargs)
 
-    monkeypatch.setattr(init_module, "generate", capturing_generate)
+    monkeypatch.setattr(generate_module, "generate", capturing_generate)
     run(_args(str(tmp_path), force=True))
 
     assert args_seen[0].get("ignore_drift") is True

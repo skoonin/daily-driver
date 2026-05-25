@@ -16,7 +16,6 @@ from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags
 from daily_driver.core.console import Console
-from daily_driver.core.generate import generate
 from daily_driver.core.workspace import Workspace, WorkspaceError
 
 
@@ -199,6 +198,9 @@ def run(args: argparse.Namespace) -> int:
     # current version, skip the inner generate work entirely. The version-
     # stamp fast-path in generate() returns None and no logs fire. With
     # --force, wipe and rewrite (legacy behavior — user explicitly asked).
+    # deferred: core.generate pulls in Jinja2 + pydantic, only needed here.
+    from daily_driver.core.generate import generate
+
     try:
         if args.force:
             result = generate(workspace, ignore_drift=True, force_overwrite=True)

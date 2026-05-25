@@ -15,14 +15,6 @@ from daily_driver.cli.commands._claude_session import (
 from daily_driver.core.config import load as load_config
 from daily_driver.core.console import Console
 from daily_driver.core.logging import get_logger
-from daily_driver.core.summary import (
-    ai_routing_dict,
-    build_json_bundle,
-    parse_range,
-    render_prompt,
-)
-from daily_driver.integrations import ai_provider, clipboard
-from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 
 log = get_logger(__name__)
 
@@ -113,6 +105,20 @@ def add_parser(
 
 
 def run(args: argparse.Namespace) -> int:
+    # deferred: core.summary pulls in requests (~47ms) and ai_provider /
+    # clipboard are only needed on the dispatch path, not at parser build.
+    from daily_driver.core.summary import (
+        ai_routing_dict,
+        build_json_bundle,
+        parse_range,
+        render_prompt,
+    )
+    from daily_driver.integrations import ai_provider, clipboard
+    from daily_driver.integrations.ai_provider import (
+        AIInvocationError,
+        AITimeoutError,
+    )
+
     try:
         range_start, range_end = parse_range(args.range_spec)
     except ValueError as exc:
