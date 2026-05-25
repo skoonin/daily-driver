@@ -335,18 +335,6 @@ def _run_update(args: argparse.Namespace, tracker: Any) -> int:
     changes: dict[str, Any] = {}
     if args.status is not None:
         changes["status"] = args.status
-    if args.note is not None:
-        # Append semantics: join with newline when existing notes are non-empty.
-        existing = tracker.load()
-        existing_notes = ""
-        for e in existing.entries:
-            if e.id == args.id:
-                existing_notes = e.notes
-                break
-        if existing_notes:
-            changes["notes"] = existing_notes + "\n" + args.note
-        else:
-            changes["notes"] = args.note
     if args.next_action is not None:
         changes["next_action"] = args.next_action
     if args.tags is not None:
@@ -355,7 +343,9 @@ def _run_update(args: argparse.Namespace, tracker: Any) -> int:
     if extras:
         changes["extras"] = extras
 
-    entry = tracker.update(args.id, **changes)
+    # Pass the raw note; the append happens inside Tracker.update's lock so a
+    # concurrent update cannot clobber it via a stale read-built string.
+    entry = tracker.update(args.id, append_note=args.note, **changes)
     Console.success(f"Updated {entry.id}: {entry.title}")
     return 0
 

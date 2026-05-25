@@ -9,6 +9,16 @@ log`. Versioned release history starts at 1.0.
 ### Fixed
 
 - **generate fallbacks no longer silently corrupt installs or discard user `settings.local.json`**: three bare `except Exception` catches in the generate path were masking real failures. `_render_settings` and `_render_initial_config` now narrow to the expected error types and log the offending path/template at WARNING before falling back. A malformed existing `settings.local.json` is now copied to `settings.local.json.invalid` (and logged) before the rendered defaults replace it, instead of being discarded silently on the next `doctor --fix`.
+- **Three concurrency races (P0 correctness)**: (1) `tracker update --note` lost
+  one of two concurrent appends — the note was read and concatenated outside the
+  lock, then clobbered the freshly-loaded entry inside it; the append now happens
+  inside `Tracker.update` under the lock via a new `append_note` argument. (2)
+  `voice-update` locked the data file itself, so `apply_update`'s `os.replace`
+  severed the locked fd from the live inode and broke mutual exclusion between
+  concurrent runs; it now locks a sentinel `voice-profile.md.lock`. (3) `jobs
+  prune` read and classified rows before acquiring `.jobs.lock`, so a concurrent
+  `jobs run` append between the read and the rewrite was silently deleted; the
+  read and classification now run inside the lock.
 
 ### Removed
 

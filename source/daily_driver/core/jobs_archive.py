@@ -6,9 +6,10 @@ listing is never re-discovered.
 
 `prune` selects rows where ``Date Last Seen`` is older than the cutoff AND
 ``Status`` is in the allowed status set, archives them, then atomically
-rewrites ``jobs.csv`` without them via temp-file + ``os.replace``. The
-write is held under ``core.locking.file_lock`` so concurrent invocations
-don't race. With ``dry_run=True`` no files change.
+rewrites ``jobs.csv`` without them via temp-file + ``os.replace``. The read,
+classification, archive, and rewrite all run under ``core.locking.file_lock``
+so a concurrent scrape cannot append rows between the read and the rewrite
+(which would silently delete them). With ``dry_run=True`` no files change.
 """
 
 from __future__ import annotations
@@ -108,25 +109,26 @@ def prune(
     """Move stale rows from ``jobs_csv`` to ``jobs.archive.csv``.
 
     Returns (candidates, archived_count). ``archived_count`` is 0 in dry-run.
-    Holds an exclusive flock on ``jobs_csv`` for the entire archive+rewrite
-    sequence so a concurrent scrape can't observe a torn state.
+    Holds an exclusive flock on ``jobs_csv`` for the read, classification,
+    archive, and rewrite so a concurrent scrape can't append rows between the
+    read and the rewrite (which would silently delete them).
     """
-    header, rows = _read_rows(jobs_csv)
-    if not header:
-        return [], 0
-
-    keep: list[dict[str, str]] = []
-    candidates: list[dict[str, str]] = []
-    for row in rows:
-        if _is_stale(row, cutoff=cutoff, statuses=statuses):
-            candidates.append(row)
-        else:
-            keep.append(row)
-
-    if dry_run or not candidates:
-        return candidates, 0
-
     with file_lock(jobs_lock_path(jobs_csv)):
+        header, rows = _read_rows(jobs_csv)
+        if not header:
+            return [], 0
+
+        keep: list[dict[str, str]] = []
+        candidates: list[dict[str, str]] = []
+        for row in rows:
+            if _is_stale(row, cutoff=cutoff, statuses=statuses):
+                candidates.append(row)
+            else:
+                keep.append(row)
+
+        if dry_run or not candidates:
+            return candidates, 0
+
         _append_rows(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
 
