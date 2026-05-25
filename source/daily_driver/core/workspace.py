@@ -13,6 +13,8 @@ from daily_driver.core.config import load
 from daily_driver.core.config_models import Config
 from daily_driver.core.logging import get_logger
 
+_logger = get_logger("workspace")
+
 _MARKER = ".dd-config.yaml"
 _STATE_DIR = ".daily-driver"
 
@@ -39,7 +41,13 @@ def _render_initial_config() -> str:
         template_text = tmpl_traversable.read_text(encoding="utf-8")
         env = jinja2.Environment(autoescape=False, keep_trailing_newline=True)
         return env.from_string(template_text).render()
-    except Exception:  # noqa: BLE001
+    except (FileNotFoundError, jinja2.TemplateError) as exc:
+        # The fallback omits the plugins.job_search block, so the workspace will be
+        # missing job-search config — surface it rather than failing later in `jobs run`.
+        _logger.warning(
+            "Could not render .dd-config.yaml.j2 (%s); writing minimal fallback config",
+            exc,
+        )
         return _MINIMAL_CONFIG_FALLBACK
 
 
