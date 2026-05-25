@@ -183,3 +183,159 @@ def test_prune_holds_lock_across_read(tmp_path: Path, monkeypatch: Any) -> None:
     assert events[0] == "lock-enter"
     assert events.index("read") > events.index("lock-enter")
     assert events.index("read") < events.index("lock-exit")
+
+
+# ---------------------------------------------------------------------------
+# _parse_iso — date parsing tolerance
+# ---------------------------------------------------------------------------
+
+
+def test_parse_iso_plain_date() -> None:
+    assert jobs_archive._parse_iso("2026-05-20") == date(2026, 5, 20)
+
+
+def test_parse_iso_truncates_timestamp_to_date() -> None:
+    assert jobs_archive._parse_iso("2026-05-20T14:33:00Z") == date(2026, 5, 20)
+
+
+def test_parse_iso_strips_whitespace() -> None:
+    assert jobs_archive._parse_iso("  2026-05-20  ") == date(2026, 5, 20)
+
+
+def test_parse_iso_empty_is_none() -> None:
+    assert jobs_archive._parse_iso("") is None
+    assert jobs_archive._parse_iso("   ") is None
+
+
+def test_parse_iso_malformed_is_none() -> None:
+    assert jobs_archive._parse_iso("not-a-date") is None
+
+
+# ---------------------------------------------------------------------------
+# _is_stale — cutoff + status classification
+# ---------------------------------------------------------------------------
+
+_CUTOFF = date(2026, 5, 1)
+
+
+def test_is_stale_old_and_pruneable_status() -> None:
+    row = _row(company="X", link="x", status="rejected", last_seen="2026-04-01")
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_status_not_in_set_keeps_row() -> None:
+    row = _row(company="X", link="x", status="found", last_seen="2026-04-01")
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_status_is_case_insensitive() -> None:
+    row = _row(company="X", link="x", status="REJECTED", last_seen="2026-04-01")
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_cutoff_is_exclusive_on_boundary() -> None:
+    # last_seen == cutoff is NOT stale (criterion is strictly < cutoff).
+    row = _row(company="X", link="x", status="rejected", last_seen="2026-05-01")
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_recent_date_keeps_row() -> None:
+    row = _row(company="X", link="x", status="rejected", last_seen="2026-05-20")
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_falls_back_to_date_found_when_last_seen_empty() -> None:
+    row = {
+        "Status": "rejected",
+        "Company": "X",
+        "Role": "SRE",
+        "Date Found": "2026-04-01",
+        "Date Last Seen": "",
+        "Link": "x",
+    }
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_no_usable_date_keeps_row() -> None:
+    row = {
+        "Status": "rejected",
+        "Company": "X",
+        "Role": "SRE",
+        "Date Found": "",
+        "Date Last Seen": "",
+        "Link": "x",
+    }
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_honors_custom_status_set() -> None:
+    row = _row(company="X", link="x", status="archived", last_seen="2026-04-01")
+    assert jobs_archive._is_stale(row, cutoff=_CUTOFF, statuses=("archived",))
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+# ---------------------------------------------------------------------------
+# prune — end-to-end classification (no concurrency)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_partitions_stale_and_kept_rows(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            _row(company="Old", link="old", status="rejected", last_seen="2026-04-01"),
+            _row(
+                company="Recent", link="rec", status="rejected", last_seen="2026-05-20"
+            ),
+            _row(company="Active", link="act", status="found", last_seen="2026-04-01"),
+        ],
+    )
+
+    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+
+    assert archived == 1
+    assert {r["Link"] for r in candidates} == {"old"}
+    assert {r["Link"] for r in _read_csv(csv_path)} == {"rec", "act"}
+    assert {r["Link"] for r in _read_csv(jobs_archive.archive_path_for(csv_path))} == {
+        "old"
+    }
+
+
+def test_prune_missing_csv_returns_empty(tmp_path: Path) -> None:
+    csv_path = tmp_path / "absent.csv"
+
+    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+
+    assert candidates == []
+    assert archived == 0
+
+
+def test_prune_no_candidates_leaves_files_untouched(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [_row(company="Active", link="act", status="found", last_seen="2026-04-01")],
+    )
+
+    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+
+    assert candidates == []
+    assert archived == 0
+    assert not jobs_archive.archive_path_for(csv_path).exists()

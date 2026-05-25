@@ -154,7 +154,6 @@ exclude = [".git", "__pycache__", ".venv", "build", "dist", ".tox"]
 [tool.coverage.run]
 source = ["source"]
 branch = true
-omit = ["source/daily_driver/cli/*"]
 
 [tool.coverage.report]
 show_missing = true
