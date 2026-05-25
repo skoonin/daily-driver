@@ -176,7 +176,7 @@ def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
 
     Read from the transient ``_known_urls`` key set by ``scraper.run()``.
     Empty set when absent (e.g., direct ``scrape_*`` calls in tests) —
-    scrapers treat that as "skip nothing", preserving pre-W6 behavior.
+    scrapers treat that as "skip nothing".
     """
     return config.get("_known_urls", set())
 
@@ -236,7 +236,7 @@ def dedup_key(company: str, role: str) -> str:
 
 
 def dedup_key_for(job: NormalizedJob) -> str:  # noqa: F821
-    """Typed dedup key (K5): operates directly on NormalizedJob.
+    """Typed dedup key: operates directly on NormalizedJob.
 
     Equivalent to ``dedup_key(job.company, job.role)`` but skips the dict-key
     plumbing in the orchestrator. Both forms must produce identical keys —
@@ -268,8 +268,7 @@ def normalize_typed(raw: RawScrapedJob) -> NormalizedJob:  # noqa: F821
     Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
     ``daily_driver.scraper`` without crossing into the model layer directly.
     The legacy dict-based ``normalize_job`` below remains for callers that
-    pass partial dicts through ``__init__.py``'s orchestrator; it will be
-    collapsed into this typed entry point at K9.
+    pass partial dicts through ``__init__.py``'s orchestrator.
     """
     from daily_driver.scraper.models import NormalizedJob
 
@@ -292,7 +291,7 @@ def normalize_job(raw: dict, source: str) -> dict:
         DictWriter extrasaction="ignore" drops them automatically.
 
     Returns a new dict with canonical keys added; does not modify raw in place.
-    Does not touch GD rating (W2-E) or Wellfound-specific fields (W2-A).
+    Does not touch GD rating or Wellfound-specific fields.
 
     Example::
         >>> normalize_job(
@@ -715,9 +714,8 @@ def run(
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
     Returns the process-style exit code (0 success, 1 on failed sources /
-    I/O error). Mirrors the behavior of the legacy ``scripts/scrape-jobs.py``
-    ``main()`` without performing argparse or ``sys.exit()`` — the CLI layer
-    is responsible for exit handling.
+    I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
+    responsible for exit handling.
     """
     from daily_driver.scraper.comp import comp_meets_threshold, currency_matches_primary
     from daily_driver.scraper.csv_io import (

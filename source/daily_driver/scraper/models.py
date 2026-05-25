@@ -257,7 +257,7 @@ class Comp(BaseModel):
 class RawScrapedJob(BaseModel):
     """Wire-format record from a scraper adapter.
 
-    Q15: ``extra="ignore"`` — third-party libraries (jobspy especially) evolve
+    ``extra="ignore"`` — third-party libraries (jobspy especially) evolve
     their output schema; tolerating unknown keys is the right boundary policy.
     """
 
@@ -333,7 +333,7 @@ class JobDetails(BaseModel):
 
 
 class EnrichedJob(BaseModel):
-    """Q14: ``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
+    """``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -469,12 +469,11 @@ class EnrichedJob(BaseModel):
 class Source(Protocol):
     """Protocol for a scraper source callable.
 
-    Q16: ``SOURCE_REGISTRY: dict[str, Source]`` is the explicit dispatch dict.
+    ``SOURCE_REGISTRY: dict[str, Source]`` is the explicit dispatch dict.
 
     Note: signature takes the raw config dict rather than ``ScraperConfig`` —
     the live scraper layer threads the unmodelled top-level dict (it carries
-    plugin-namespaced settings beyond ``ScraperConfig``). Migration to
-    ``ScraperConfig`` is post-WS-K work.
+    plugin-namespaced settings beyond ``ScraperConfig``).
     """
 
     def __call__(self, config: dict[str, Any]) -> list[RawScrapedJob]: ...
