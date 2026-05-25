@@ -223,3 +223,41 @@ def test_workspace_after_subcommand(tmp_path):
     ws.mkdir()
     rc = app(["doctor", "--workspace", str(ws)])
     assert rc != 2
+
+
+# ---------------------------------------------------------------------------
+# 8. Top-level error handler shows the exception class without -v
+# ---------------------------------------------------------------------------
+
+
+def test_unhandled_error_reports_class_name(monkeypatch, capsys):
+    """Non-verbose error path prints `ClassName: msg`, not bare str(exc)."""
+
+    class _Stub:
+        @staticmethod
+        def add_parser(subparsers, parents):
+            return subparsers.add_parser("doctor")
+
+        @staticmethod
+        def run(args) -> int:
+            raise ValueError("boom")
+
+    import sys
+    import types
+
+    doctor_mod = types.ModuleType("daily_driver.cli.commands.doctor")
+    doctor_mod.add_parser = _Stub.add_parser
+    doctor_mod.run = _Stub.run
+
+    # Restrict the command set to the stub so app() builds only this subparser;
+    # otherwise it imports all _COMMANDS and the first real module's import
+    # ordering leaks between tests.
+    monkeypatch.setitem(sys.modules, "daily_driver.cli.commands.doctor", doctor_mod)
+    monkeypatch.setattr(
+        "daily_driver.cli.cli._COMMANDS",
+        [("doctor", "daily_driver.cli.commands.doctor")],
+    )
+
+    rc = app(["doctor"])
+    assert rc == 1
+    assert "ValueError: boom" in capsys.readouterr().err
