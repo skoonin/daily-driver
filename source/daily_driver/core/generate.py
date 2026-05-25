@@ -252,18 +252,32 @@ def generate(
         )
 
 
-def _merge_settings(existing_text: str, rendered_text: str) -> str:
+def _merge_settings(
+    existing_text: str, rendered_text: str, *, settings_path: Path
+) -> str:
     """Merge package-default settings with user settings, preserving user-added keys.
 
     Package-managed keys (those present in the fresh defaults) are always refreshed
     from the template. User-added top-level keys (those absent from the defaults)
     are preserved. This ensures version bumps and permission changes propagate while
     not clobbering user customizations outside the package namespace.
+
+    If the existing file is not valid JSON, it cannot be merged, so it is copied to
+    settings.local.json.invalid before the rendered defaults replace it — discarding
+    it silently would erase any recoverable user customization.
     """
     try:
         existing = json.loads(existing_text)
-    except json.JSONDecodeError:
-        existing = {}
+    except json.JSONDecodeError as exc:
+        backup_path = settings_path.with_suffix(settings_path.suffix + ".invalid")
+        shutil.copyfile(settings_path, backup_path)
+        _logger.warning(
+            "Existing %s is not valid JSON (%s); backed up to %s before applying defaults",
+            settings_path,
+            exc,
+            backup_path,
+        )
+        return rendered_text
 
     try:
         defaults = json.loads(rendered_text)
@@ -370,21 +384,27 @@ def _render_settings(workspace: Workspace) -> None:
         )
         return
 
+    settings_path = workspace.root / ".claude" / "settings.local.json"
+
     try:
+        import jinja2
         from jinja2 import Environment, StrictUndefined
 
         env = Environment(undefined=StrictUndefined)
         rendered = env.from_string(template_text).render(workspace=workspace)
-    except Exception as exc:
-        _logger.warning("Failed to render settings.local.json.j2: %s — skipping", exc)
+    except (jinja2.TemplateError, OSError) as exc:
+        _logger.warning(
+            "Failed to render settings.local.json.j2 for %s: %s — skipping",
+            settings_path,
+            exc,
+        )
         return
 
-    settings_path = workspace.root / ".claude" / "settings.local.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
     if settings_path.exists():
         existing_text = settings_path.read_text(encoding="utf-8")
-        rendered = _merge_settings(existing_text, rendered)
+        rendered = _merge_settings(existing_text, rendered, settings_path=settings_path)
 
     _atomic_write_text(settings_path, rendered)
     _logger.info("settings.local.json rendered at %s", settings_path)

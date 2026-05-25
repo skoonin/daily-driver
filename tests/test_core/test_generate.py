@@ -545,3 +545,167 @@ def test_workspace_readme_manifest_recorded(tmp_path: Path) -> None:
 
     stored = _manifest.load(ws.state_dir)
     assert "README.md" in stored, "manifest must record SHA for README.md"
+
+
+# ---------------------------------------------------------------------------
+# Narrowed fallback catches (W8): silent install corruption / user-data loss
+# ---------------------------------------------------------------------------
+
+
+def test_render_settings_jinja_error_logged_and_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A syntax error in settings.local.json.j2 must surface, not be swallowed.
+
+    Previously a bare ``except Exception`` skipped writing settings.local.json while
+    init/doctor still reported success. The narrowed catch only handles
+    (jinja2.TemplateError, OSError); a template *syntax* error raises
+    jinja2.TemplateSyntaxError, which is a TemplateError, so it is caught and logged
+    rather than silently producing nothing — and the warning names the target path.
+    """
+    import jinja2
+
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        if anchor == "daily_driver.templates":
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    if name == "settings.local.json.j2":
+
+                        class _Tmpl:
+                            def read_text(self, encoding: str = "utf-8") -> str:
+                                # Unterminated block tag — invalid Jinja2 syntax.
+                                return "{% if %}"
+
+                        return _Tmpl()
+                    return real_files(anchor).joinpath(name)
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+
+    # The syntax error is a TemplateSyntaxError — confirm the parser would raise it,
+    # proving the narrowed catch is responsible for the (logged) skip, not a no-op.
+    with pytest.raises(jinja2.TemplateError):
+        jinja2.Environment(undefined=jinja2.StrictUndefined).from_string("{% if %}")
+
+    settings_path = tmp_path / ".claude" / "settings.local.json"
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        generate._render_settings(ws)
+
+    assert (
+        not settings_path.exists()
+    ), "broken template must not silently produce a settings file"
+    assert any(
+        "settings.local.json" in r.getMessage() for r in caplog.records
+    ), "template error must be logged at WARNING, not silently swallowed"
+
+
+def test_render_settings_unexpected_error_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An error outside (TemplateError, OSError) must propagate, not be masked."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        if anchor == "daily_driver.templates":
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    if name == "settings.local.json.j2":
+
+                        class _Tmpl:
+                            def read_text(self, encoding: str = "utf-8") -> str:
+                                return "{{ workspace.version }}"
+
+                        return _Tmpl()
+                    return real_files(anchor).joinpath(name)
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+
+    def _boom(*args: object, **kwargs: object) -> str:
+        raise ValueError("unexpected render failure")
+
+    # Patch the StrictUndefined render path to raise a non-narrowed error.
+    import jinja2
+
+    monkeypatch.setattr(jinja2.Template, "render", _boom)
+
+    with pytest.raises(ValueError, match="unexpected render failure"):
+        generate._render_settings(ws)
+
+
+def test_merge_settings_backs_up_malformed_file(tmp_path: Path, caplog) -> None:
+    """A malformed existing settings.local.json must be copied to .invalid before discard."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+
+    # First generate writes a valid settings file.
+    generate.generate(ws)
+
+    settings_path = tmp_path / ".claude" / "settings.local.json"
+    corrupt = "{ this is not valid json"
+    settings_path.write_text(corrupt, encoding="utf-8")
+
+    version_stamp.write(ws.state_dir, "0.8.0")
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        generate.generate(ws)
+
+    backup_path = tmp_path / ".claude" / "settings.local.json.invalid"
+    assert backup_path.exists(), "malformed settings file must be backed up to .invalid"
+    assert (
+        backup_path.read_text(encoding="utf-8") == corrupt
+    ), "backup must preserve the original malformed bytes verbatim"
+
+    # The replacement file must now be valid defaults.
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert "metadata" in data
+
+    assert any(
+        "settings.local.json.invalid" in r.getMessage() for r in caplog.records
+    ), "backup must be logged at WARNING with the backup path"
+
+
+def test_render_initial_config_missing_template_warns_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A missing .dd-config.yaml.j2 must log a clear warning and return the fallback."""
+    from daily_driver.core import workspace as ws_mod
+
+    real_files = ws_mod.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        if anchor == "daily_driver.templates":
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    if name == ".dd-config.yaml.j2":
+
+                        class _Missing:
+                            def read_text(self, encoding: str = "utf-8") -> str:
+                                raise FileNotFoundError(name)
+
+                        return _Missing()
+                    return real_files(anchor).joinpath(name)
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(ws_mod.importlib.resources, "files", fake_files)
+
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        result = ws_mod._render_initial_config()
+
+    assert result == ws_mod._MINIMAL_CONFIG_FALLBACK
+    assert any(
+        ".dd-config.yaml.j2" in r.getMessage() for r in caplog.records
+    ), "missing template must be named in a WARNING log"
