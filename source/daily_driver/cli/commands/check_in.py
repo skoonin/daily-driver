@@ -13,7 +13,6 @@ can bound `gather sessions` / `gather git` since the prior check-in (#35).
 from __future__ import annotations
 
 import argparse
-import logging
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._claude_session import (
@@ -29,13 +28,14 @@ from daily_driver.core.daily_state import (
     read_state,
     write_state,
 )
+from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
 from daily_driver.integrations import claude_cli
 
 _SLASH_COMMAND = "/check-in"
 _SESSION_PREFIX = "check-in"
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 
 def add_parser(

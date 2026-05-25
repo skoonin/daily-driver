@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import csv
 import json
-import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,6 +18,7 @@ from daily_driver.core.config_models import JobSearchPlugin, Locations, ScraperC
 from daily_driver.core.console import Console
 from daily_driver.core.jobs_lock import jobs_lock_path
 from daily_driver.core.locking import file_lock
+from daily_driver.core.logging import get_logger
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.scraper.comp import _parse_comp
 from daily_driver.scraper.sources import SCRAPERS
@@ -27,7 +27,7 @@ from daily_driver.scraper.sources._http import COUNTRY_NAMES, HTTPError, HTTPTim
 if TYPE_CHECKING:
     from daily_driver.scraper.models import NormalizedJob, RawScrapedJob
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 class ScraperError(RuntimeError):

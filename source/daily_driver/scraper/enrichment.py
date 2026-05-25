@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import shutil
@@ -12,6 +11,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 from daily_driver.scraper.parsing import _parse_detail_page
@@ -80,7 +80,7 @@ def _install_interrupt_notifier(futures: dict, timeout_s: int, item: str) -> Any
     return previous
 
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def _fetch_company_info(

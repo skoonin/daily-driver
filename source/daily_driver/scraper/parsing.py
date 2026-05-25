@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import urllib.parse
 from typing import Any
 
 from bs4 import BeautifulSoup
 
+from daily_driver.core.logging import get_logger
 from daily_driver.scraper.comp import _format_comp
 from daily_driver.scraper.models import _parse_k_salary
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def _fix_mojibake(text: str) -> str:

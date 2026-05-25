@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from daily_driver.core.clock import today
+from daily_driver.core.logging import get_logger
 from daily_driver.scraper.sources._http import _playwright_browser, country_params
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 def scrape_apple(config: dict) -> list[dict]:

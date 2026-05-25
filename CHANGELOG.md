@@ -41,6 +41,7 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Logging now uses `core.logging.get_logger` consistently** across the CLI and scraper layers, removing bare `logging.getLogger` and a stray `print(..., file=sys.stderr)` in the tracker. All loggers live under the `daily_driver` namespace so verbosity flags and the Rich handler apply uniformly.
 - **BREAKING: `.dd-config.yaml` root is now strict (`extra="forbid"`).** Unknown top-level keys raise `pydantic.ValidationError` at parse time instead of being silently accepted, so typos like `tracer:` for `tracker:` fail loudly. Pre-existing top-level user keys must move to a documented seam: per-entry data goes under `tracker.extras` (via `daily-driver tracker add --extra key=value`), per-category fields under `tracker.categories.<name>`, and narrative context into `voice-profile.md` (or a sibling `.notes.md` in the workspace).
 - **Console stream tests**: rewrote four placeholder tests in `test_console.py` to actually capture stdout/stderr with `capsys` and assert routing; added `test_user_output_is_stdout_not_stderr` regression guard.
 - **`scheduler` config is now a typed `SchedulerConfig`** (`checkin.times` list + `jobs.time` string) instead of a freeform `dict[str, Any]`. Unknown scheduler keys — including the legacy `scrape_jobs` — are now rejected at parse time via `extra="forbid"`, replacing the previous runtime "scrape_jobs was renamed" error message.

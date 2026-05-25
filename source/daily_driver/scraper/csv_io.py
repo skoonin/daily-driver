@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import logging
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.clock import today
 from daily_driver.core.jobs_lock import jobs_lock_path
 from daily_driver.core.locking import file_lock
+from daily_driver.core.logging import get_logger
 
 if sys.platform != "win32":
     import fcntl
@@ -20,7 +20,7 @@ if sys.platform != "win32":
 if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 
 CANONICAL_HEADER = [

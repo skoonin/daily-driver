@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from contextlib import contextmanager
 from typing import Any, TypeAlias
 
 import requests
 
-log = logging.getLogger(__name__)
+from daily_driver.core.logging import get_logger
+
+log = get_logger(__name__)
 
 # Re-exported so the rest of the scraper layer never imports `requests`
 # directly: this module is the single HTTP seam. Callers annotate sessions
