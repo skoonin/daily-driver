@@ -46,10 +46,6 @@ End-user reference: `docs/commands.md`. Short list:
   boards, show last-run metadata, or archive stale rows from `jobs.csv`.
 - `daily-driver paths [<kind>] [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
-- `daily-driver read {context,voice-profile,plan}` — print workspace text
-  files to stdout.
-- `daily-driver ensure-daily-dir` — create today's daily directory + print
-  plan path.
 - `daily-driver gather {calendar,git,sessions,notes} [--json]` — read
   external state for downstream commands.
 - `daily-driver scheduler {install,uninstall,status}` — macOS launchd
