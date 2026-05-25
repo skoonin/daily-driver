@@ -106,17 +106,32 @@ def test_apple_is_classified_as_playwright_source() -> None:
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
     monkeypatch,
 ) -> None:
-    """Ctrl-C in phase 1: pending futures cancelled, KeyboardInterrupt re-raised,
-    and the call returns within seconds (not waiting for slow workers).
+    """Ctrl-C in phase 1: pending futures cancelled, KeyboardInterrupt re-raised.
+
+    The behavioral contract is the ``shutdown`` call shape — patching
+    ``ThreadPoolExecutor.shutdown`` lets us assert ``wait=False,
+    cancel_futures=True`` deterministically instead of inferring it from a
+    wall-clock window, which is flaky under CI load. A loose 10s backstop
+    still guards against a regression that blocks on ``wait=True``.
 
     We intentionally use a worker that loops on a stop flag so it cannot
-    outlive the test even if the orchestrator forgets to shut the pool down;
-    the assertion is on wall-clock elapsed time before re-raise.
+    outlive the test even if the orchestrator forgets to shut the pool down.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     from daily_driver.scraper import runner
 
     stop = threading.Event()
     started = threading.Event()
+    shutdown_calls: list[dict] = []
+
+    real_shutdown = ThreadPoolExecutor.shutdown
+
+    def recording_shutdown(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        shutdown_calls.append(kwargs)
+        # Always tear the pool down non-blocking here so a recorded
+        # ``wait=True`` call (the regression) cannot hang the test.
+        return real_shutdown(self, wait=False, cancel_futures=True)
 
     def slow(_cfg: dict) -> list[dict]:
         started.set()
@@ -133,6 +148,7 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
 
     monkeypatch.setattr(runner, "SCRAPERS", {"slow_src": slow, "quick_src": slow})
     monkeypatch.setattr(runner, "as_completed", kb_as_completed)
+    monkeypatch.setattr(ThreadPoolExecutor, "shutdown", recording_shutdown)
 
     cfg = _cfg_with_sources(["slow_src", "quick_src"], workers=2)
 
@@ -141,10 +157,13 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
         with pytest.raises(KeyboardInterrupt):
             runner.run_all_scrapers(cfg)
         elapsed = time.perf_counter() - t0
-        # If pool.shutdown(wait=True) is used (the default for `with`), this
-        # blocks ~10s. With wait=False + cancel_futures=True it returns at
-        # once. Headroom of a few seconds for thread bookkeeping.
-        assert elapsed < 4.0, f"run_all_scrapers blocked {elapsed:.1f}s on Ctrl-C"
+        assert shutdown_calls, "expected pool.shutdown() to be called on Ctrl-C"
+        assert shutdown_calls[0] == {"wait": False, "cancel_futures": True}, (
+            "Ctrl-C must shut the pool down non-blocking with cancelled futures, "
+            f"got {shutdown_calls[0]}"
+        )
+        # Loose backstop: a regression to wait=True would block ~10s.
+        assert elapsed < 10.0, f"run_all_scrapers blocked {elapsed:.1f}s on Ctrl-C"
     finally:
         # Release any worker still cooperatively waiting so it doesn't bleed
         # into other tests.
