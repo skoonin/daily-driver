@@ -9,7 +9,6 @@ the opening prompt.
 from __future__ import annotations
 
 import argparse
-import subprocess
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -165,10 +164,10 @@ def handle_launch_exception(exc: BaseException) -> int:
         # the user can hand-edit / delete the offending YAML.
         Console.error(str(exc))
         return 1
-    if isinstance(exc, subprocess.TimeoutExpired):
+    if isinstance(exc, claude_cli.ClaudeTimeoutError):
         Console.error(f"claude session timed out after {exc.timeout}s")
         return 1
-    if isinstance(exc, subprocess.CalledProcessError):
+    if isinstance(exc, claude_cli.ClaudeInvocationError):
         stderr = (exc.stderr or "").strip()
         msg = f"claude exited {exc.returncode}"
         if stderr:

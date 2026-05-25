@@ -53,10 +53,12 @@ def _make_run_stub(stdout="", rc=0):
 
 
 def test_gather_events_returns_empty_if_icalbuddy_missing(monkeypatch):
-    monkeypatch.setattr("daily_driver.gathers.calendar.shutil.which", lambda _: None)
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which", lambda _: None
+    )
     called = []
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         lambda *a, **kw: called.append(a) or None,
     )
 
@@ -68,11 +70,11 @@ def test_gather_events_returns_empty_if_icalbuddy_missing(monkeypatch):
 
 def test_gather_events_parses_valid_output(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         _make_run_stub(stdout=_TWO_EVENT_OUTPUT),
     )
 
@@ -89,11 +91,11 @@ def test_gather_events_parses_valid_output(monkeypatch):
 
 def test_gather_events_skips_malformed_block(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         _make_run_stub(stdout=_VALID_THEN_MALFORMED),
     )
 
@@ -120,10 +122,10 @@ def test_gather_events_invocation_uses_joined_to_arg(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
-    monkeypatch.setattr("daily_driver.gathers.calendar.subprocess.run", _capture)
+    monkeypatch.setattr("daily_driver.integrations.icalbuddy.subprocess.run", _capture)
 
     gather_events(_SINCE, _UNTIL)
 
@@ -141,11 +143,11 @@ def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
     """When icalBuddy emits its own usage/help text, fail loud rather than
     feeding the help text through the event-block parser."""
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         _make_run_stub(stdout=_USAGE_TEXT),
     )
 
@@ -165,11 +167,11 @@ def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):
 def test_gather_events_nonzero_exit_returns_empty(monkeypatch, caplog):
     """Non-zero icalBuddy exit should be surfaced, not silently ignored."""
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         _make_run_stub(stdout="", rc=1),
     )
 
@@ -181,11 +183,11 @@ def test_gather_events_nonzero_exit_returns_empty(monkeypatch, caplog):
 
 def test_gather_events_zero_results(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.shutil.which",
+        "daily_driver.integrations.icalbuddy.shutil.which",
         lambda _: "/usr/local/bin/icalBuddy",
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.calendar.subprocess.run",
+        "daily_driver.integrations.icalbuddy.subprocess.run",
         _make_run_stub(stdout=""),
     )
 

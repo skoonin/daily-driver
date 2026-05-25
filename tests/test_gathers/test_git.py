@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from daily_driver.gathers.git import GitCommit, gather_commits
+from daily_driver.integrations.git import GitCommandError
 
 
 def _make_run_stub(stdout="", stderr="", rc=0):
@@ -47,7 +48,7 @@ def test_gather_commits_parses_nul_separated_output(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        "daily_driver.gathers.git.subprocess.run", _make_run_stub(stdout=lines)
+        "daily_driver.integrations.git.subprocess.run", _make_run_stub(stdout=lines)
     )
 
     commits = gather_commits(_REPO, _SINCE)
@@ -63,7 +64,7 @@ def test_gather_commits_parses_nul_separated_output(monkeypatch):
 
 def test_gather_commits_returns_empty_for_non_git_dir(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.git.subprocess.run",
+        "daily_driver.integrations.git.subprocess.run",
         _make_run_stub(
             rc=128,
             stderr="fatal: not a git repository (or any of the parent directories)",
@@ -77,17 +78,17 @@ def test_gather_commits_returns_empty_for_non_git_dir(monkeypatch):
 
 def test_gather_commits_raises_on_other_git_error(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.git.subprocess.run",
+        "daily_driver.integrations.git.subprocess.run",
         _make_run_stub(rc=1, stderr="fatal: bad revision 'X'"),
     )
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(GitCommandError):
         gather_commits(_REPO, _SINCE)
 
 
 def test_gather_commits_empty_output(monkeypatch):
     monkeypatch.setattr(
-        "daily_driver.gathers.git.subprocess.run", _make_run_stub(stdout="")
+        "daily_driver.integrations.git.subprocess.run", _make_run_stub(stdout="")
     )
 
     result = gather_commits(_REPO, _SINCE)
@@ -104,7 +105,7 @@ def test_gather_commits_passes_until_when_provided(monkeypatch):
             args=args, returncode=0, stdout="", stderr=""
         )
 
-    monkeypatch.setattr("daily_driver.gathers.git.subprocess.run", _recording_run)
+    monkeypatch.setattr("daily_driver.integrations.git.subprocess.run", _recording_run)
 
     gather_commits(_REPO, _SINCE, until=_UNTIL)
     assert "--until" in captured["args"]
@@ -118,7 +119,7 @@ def test_gather_commits_handles_subject_with_special_chars(monkeypatch):
     subject = "fix: handle edge case | commas, slashes / and more"
     line = _commit_line("aaa0001", "2026-04-15T08:00:00+00:00", "Dev", subject)
     monkeypatch.setattr(
-        "daily_driver.gathers.git.subprocess.run", _make_run_stub(stdout=line)
+        "daily_driver.integrations.git.subprocess.run", _make_run_stub(stdout=line)
     )
 
     commits = gather_commits(_REPO, _SINCE)

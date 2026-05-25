@@ -423,13 +423,12 @@ def test_check_in_falls_back_when_resume_fails(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """F3: resume failure → warn + retry without --resume; never silent."""
-    import subprocess as _sp
-
     from daily_driver.cli.cli import app
     from daily_driver.core import clock
     from daily_driver.core.daily_state import DailyState, write_state
     from daily_driver.core.workspace import Workspace
     from daily_driver.integrations import claude_cli
+    from daily_driver.integrations.claude_cli import ClaudeInvocationError
 
     ws_root = _init_workspace(tmp_path)
     cfg_path = ws_root / ".dd-config.yaml"
@@ -445,10 +444,10 @@ def test_check_in_falls_back_when_resume_fails(
     def fake_spawn(prompt=None, **kwargs):
         calls.append(dict(kwargs))
         if kwargs.get("resume_session_id"):
-            raise _sp.CalledProcessError(
-                returncode=2,
-                cmd=["claude", "--resume", str(kwargs["resume_session_id"])],
-                output="",
+            raise ClaudeInvocationError(
+                2,
+                ["claude", "--resume", str(kwargs["resume_session_id"])],
+                stdout="",
                 stderr="session not found",
             )
         return 0

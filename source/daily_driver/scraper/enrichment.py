@@ -12,12 +12,10 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-import requests
-
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 from daily_driver.scraper.parsing import _parse_detail_page
-from daily_driver.scraper.sources._http import _api_get, _http_session
+from daily_driver.scraper.sources._http import Session, _api_get, _http_session
 
 if TYPE_CHECKING:
     from daily_driver.scraper.models import EnrichedJob
@@ -778,7 +776,7 @@ def enrich_job_details(jobs: list[dict], config: dict) -> None:
     hn_skipped_logged = False
     indeed_skipped_logged = False
 
-    session: requests.Session | None = None
+    session: Session | None = None
     fetched_count = 0
     enriched_count = 0
     for job in jobs:

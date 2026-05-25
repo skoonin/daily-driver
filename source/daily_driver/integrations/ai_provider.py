@@ -10,7 +10,6 @@ PR #29 (`stdout=...; stderr=...`).
 
 from __future__ import annotations
 
-import subprocess
 from typing import Any
 
 import requests
@@ -115,7 +114,7 @@ def invoke_for(
                 model=task_cfg.model,
                 timeout=timeout,
             )
-        except subprocess.CalledProcessError as exc:
+        except claude_cli.ClaudeInvocationError as exc:
             raise AIInvocationError(
                 f"claude exited {exc.returncode}",
                 provider="claude",
@@ -123,7 +122,7 @@ def invoke_for(
                 stderr=exc.stderr or "",
                 returncode=exc.returncode,
             ) from exc
-        except subprocess.TimeoutExpired as exc:
+        except claude_cli.ClaudeTimeoutError as exc:
             raise AITimeoutError(
                 f"claude timed out after {timeout}s",
                 provider="claude",

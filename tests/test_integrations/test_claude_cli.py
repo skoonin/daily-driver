@@ -6,7 +6,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from daily_driver.integrations.claude_cli import (
+    ClaudeInvocationError,
     ClaudeNotFoundError,
+    ClaudeTimeoutError,
     available,
     invoke,
     invoke_capture,
@@ -231,8 +233,10 @@ def test_invoke_propagates_called_process_error(monkeypatch):
 
     monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(ClaudeInvocationError) as excinfo:
         invoke("prompt")
+    assert excinfo.value.returncode == 1
+    assert excinfo.value.stderr == "error"
 
 
 def test_invoke_propagates_timeout(monkeypatch):
@@ -248,12 +252,13 @@ def test_invoke_propagates_timeout(monkeypatch):
 
     monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
 
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(ClaudeTimeoutError) as excinfo:
         invoke("prompt", timeout=5)
+    assert excinfo.value.timeout == 5
 
 
 def test_invoke_kills_process_on_timeout(monkeypatch):
-    """Regression: TimeoutExpired must call proc.kill() before re-raising."""
+    """Regression: timeout must call proc.kill() before re-raising as domain error."""
     monkeypatch.setattr(
         "daily_driver.integrations.claude_cli.shutil.which",
         lambda _: "/usr/local/bin/claude",
@@ -278,10 +283,10 @@ def test_invoke_kills_process_on_timeout(monkeypatch):
 
     monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
 
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(ClaudeTimeoutError):
         invoke("prompt", timeout=5)
 
-    assert kill_called, "proc.kill() must be called before re-raising TimeoutExpired"
+    assert kill_called, "proc.kill() must be called before re-raising the timeout"
     assert wait_called, "proc.wait() must be called to reap the process"
 
 
@@ -342,7 +347,7 @@ def test_invoke_capture_kills_process_on_timeout(monkeypatch):
 
     monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
 
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(ClaudeTimeoutError):
         invoke_capture("p", timeout=2)
     assert kill_called
 
