@@ -8,6 +8,10 @@ test: ## Run the full tox envlist (lint + type + py311 + py312 + coverage), matc
 test-quick: ## Run pytest under py311 only — fast inner loop
 	@$(TOX) -e py311
 
+.PHONY: test-quick-parallel
+test-quick-parallel: ## Run pytest in parallel via pytest-xdist (-n auto)
+	@$(TOX) -e test-parallel
+
 .PHONY: test-cov
 test-cov: ## Run tests with coverage report
 	@$(TOX) -e coverage
