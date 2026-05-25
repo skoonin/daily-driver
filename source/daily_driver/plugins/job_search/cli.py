@@ -237,7 +237,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     from rich.console import Console as RichConsole
     from rich.table import Table
 
-    from daily_driver.core.scraper_status import build_status
+    from daily_driver.plugins.job_search.scraper_status import build_status
 
     output_dir = workspace.output_dir
     status = build_status(output_dir)

@@ -7,11 +7,13 @@ platform-neutral and unit-testable without launchctl.
 
 from __future__ import annotations
 
+import importlib
 import importlib.resources
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,18 +29,18 @@ class SchedulerError(Exception):
 
 
 _LABEL_CHECKIN = "com.daily-driver.checkin"
-_LABEL_SCRAPE_JOBS = "com.daily-driver.jobs"
 _LABEL_DAY_START = "com.daily-driver.day-start"
 _LABEL_DAY_END = "com.daily-driver.day-end"
 
-# Labels installed by previous releases; swept by install_all / uninstall_all
-# so a renamed job doesn't leave an orphaned plist firing the old argv.
-_LEGACY_LABELS = ("com.daily-driver.scrape-jobs",)
+# Core (non-plugin) labels swept on uninstall. Plugin-contributed labels are
+# discovered from the jobs build_jobs returns; plugin legacy labels are swept
+# via PLUGINS in install_all / uninstall_all.
+_CORE_LABELS = (_LABEL_CHECKIN, _LABEL_DAY_START, _LABEL_DAY_END)
 
 _TIME_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 
 
-def _parse_hhmm(raw: str) -> dict[str, int]:
+def parse_hhmm(raw: str) -> dict[str, int]:
     m = _TIME_RE.match(raw.strip())
     if m is None:
         raise SchedulerError(f"invalid HH:MM time string: {raw!r}")
@@ -51,6 +53,9 @@ class ScheduledJob:
     template: str
     program_arguments: list[str]
     context: dict[str, Any]
+    # Package holding the jinja template. Plugin jobs ship their own template
+    # alongside the plugin; core jobs use daily_driver.launchd.
+    template_package: str = "daily_driver.launchd"
 
     @property
     def stdout_path(self) -> str:
@@ -59,6 +64,24 @@ class ScheduledJob:
     @property
     def stderr_path(self) -> str:
         return str(self.context["stderr_path"])
+
+
+@dataclass(frozen=True)
+class SchedulerContext:
+    """Shared primitives passed to plugin scheduled-job builders.
+
+    Bundles the resolved executable, environment, and merged scheduler config
+    so a plugin builder constructs ScheduledJobs without re-deriving them or
+    importing core scheduler internals.
+    """
+
+    merged_config: dict[str, Any]
+    dd_bin: str
+    home: str
+    env_path: str
+    workspace_root: str
+    log_paths: Callable[[str], tuple[Path, Path]]
+    parse_hhmm: Callable[[str], dict[str, int]] = field(default=parse_hhmm)
 
 
 def _default_scheduler_config() -> dict[str, Any]:
@@ -112,7 +135,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
     workspace_root = str(workspace.root)
 
     checkin_cfg = cfg.get("checkin", {})
-    checkin_times = [_parse_hhmm(t) for t in checkin_cfg.get("times", [])]
+    checkin_times = [parse_hhmm(t) for t in checkin_cfg.get("times", [])]
     if checkin_times:
         stdout, stderr = _log_paths(workspace, "checkin")
         checkin_args = [dd_bin, "check-in", "--workspace", workspace_root]
@@ -133,28 +156,6 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             )
         )
 
-    scrape_cfg = cfg.get("jobs", {})
-    scrape_time_raw = scrape_cfg.get("time")
-    if scrape_time_raw:
-        stdout, stderr = _log_paths(workspace, "jobs")
-        scrape_args = [dd_bin, "jobs", "run", "--workspace", workspace_root]
-        jobs.append(
-            ScheduledJob(
-                label=_LABEL_SCRAPE_JOBS,
-                template="jobs.plist.j2",
-                program_arguments=scrape_args,
-                context={
-                    "label": _LABEL_SCRAPE_JOBS,
-                    "program_arguments": scrape_args,
-                    "time": _parse_hhmm(scrape_time_raw),
-                    "stdout_path": str(stdout),
-                    "stderr_path": str(stderr),
-                    "env_path": env_path,
-                    "home": home,
-                },
-            )
-        )
-
     schedule_cfg = workspace.config.schedule
     if schedule_cfg.day_start:
         stdout, stderr = _log_paths(workspace, "day-start")
@@ -167,7 +168,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
                 context={
                     "label": _LABEL_DAY_START,
                     "program_arguments": ds_args,
-                    "times": [_parse_hhmm(schedule_cfg.day_start)],
+                    "times": [parse_hhmm(schedule_cfg.day_start)],
                     "stdout_path": str(stdout),
                     "stderr_path": str(stderr),
                     "env_path": env_path,
@@ -187,7 +188,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
                 context={
                     "label": _LABEL_DAY_END,
                     "program_arguments": de_args,
-                    "times": [_parse_hhmm(schedule_cfg.day_end)],
+                    "times": [parse_hhmm(schedule_cfg.day_end)],
                     "stdout_path": str(stdout),
                     "stderr_path": str(stderr),
                     "env_path": env_path,
@@ -196,12 +197,54 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             )
         )
 
+    ctx = SchedulerContext(
+        merged_config=cfg,
+        dd_bin=dd_bin,
+        home=home,
+        env_path=env_path,
+        workspace_root=workspace_root,
+        log_paths=lambda name: _log_paths(workspace, name),
+    )
+    jobs.extend(_plugin_jobs(ctx))
+
     return jobs
+
+
+def _plugin_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
+    """Collect scheduled jobs each plugin contributes.
+
+    Plugin builders are resolved by dotted path and imported lazily so core
+    never eagerly loads plugin implementation modules at import time.
+    """
+    from daily_driver.plugins import PLUGINS
+
+    collected: list[ScheduledJob] = []
+    for plugin in PLUGINS:
+        if plugin.scheduled_jobs_builder is None:
+            continue
+        module_path, _, attr = plugin.scheduled_jobs_builder.rpartition(".")
+        builder = getattr(importlib.import_module(module_path), attr)
+        collected.extend(builder(ctx))
+    return collected
+
+
+def _plugin_managed_labels() -> tuple[str, ...]:
+    """All launchd labels owned by plugins, swept unconditionally on uninstall."""
+    from daily_driver.plugins import PLUGINS
+
+    return tuple(label for plugin in PLUGINS for label in plugin.launchd_labels)
+
+
+def _plugin_legacy_labels() -> tuple[str, ...]:
+    """Pre-rename launchd labels each plugin asks core to sweep."""
+    from daily_driver.plugins import PLUGINS
+
+    return tuple(label for plugin in PLUGINS for label in plugin.legacy_launchd_labels)
 
 
 def render_plist(job: ScheduledJob) -> str:
     with importlib.resources.as_file(
-        importlib.resources.files("daily_driver.launchd")
+        importlib.resources.files(job.template_package)
     ) as templates_dir:
         env = Environment(
             loader=FileSystemLoader(str(templates_dir)),
@@ -233,9 +276,9 @@ def install_all(workspace: Workspace) -> list[str]:
     jobs = build_jobs(workspace)
     installed: list[str] = []
 
-    # Sweep legacy plists before installing — a previously-loaded
-    # com.daily-driver.scrape-jobs would otherwise keep firing the old argv.
-    for legacy in _LEGACY_LABELS:
+    # Sweep legacy plists before installing — a previously-loaded plist under
+    # a renamed/relocated label would otherwise keep firing the old argv.
+    for legacy in _plugin_legacy_labels():
         launchd_int.unload(legacy)
         launchd_int.remove(legacy)
 
@@ -274,11 +317,9 @@ def uninstall_all(workspace: Workspace) -> list[str]:
 
     removed: list[str] = []
     for label in (
-        _LABEL_CHECKIN,
-        _LABEL_SCRAPE_JOBS,
-        _LABEL_DAY_START,
-        _LABEL_DAY_END,
-        *_LEGACY_LABELS,
+        *_CORE_LABELS,
+        *_plugin_managed_labels(),
+        *_plugin_legacy_labels(),
     ):
         launchd_int.unload(label)
         if launchd_int.remove(label):

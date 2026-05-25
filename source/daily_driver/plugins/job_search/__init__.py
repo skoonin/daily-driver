@@ -7,4 +7,10 @@ PLUGIN = Plugin(
     command_module="daily_driver.plugins.job_search.cli",
     command_help="Job search: scrape boards, inspect status, prune stale rows",
     config_model=JobSearchPlugin,
+    scheduled_jobs_builder=(
+        "daily_driver.plugins.job_search.scheduler.build_scheduled_jobs"
+    ),
+    launchd_labels=("com.daily-driver.jobs",),
+    legacy_launchd_labels=("com.daily-driver.scrape-jobs",),
+    doctor_checks="daily_driver.plugins.job_search.doctor.run_checks",
 )
