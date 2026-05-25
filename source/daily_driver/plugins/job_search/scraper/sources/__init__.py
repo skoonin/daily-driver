@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from daily_driver.core.logging import get_logger
 
@@ -21,7 +22,7 @@ from .weworkremotely import scrape_weworkremotely
 log = get_logger(__name__)
 
 
-SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
+SCRAPERS: dict[str, Callable[[dict[str, Any]], list[dict[str, Any]]]] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,
     "hn_who_is_hiring": scrape_hn_who_is_hiring,

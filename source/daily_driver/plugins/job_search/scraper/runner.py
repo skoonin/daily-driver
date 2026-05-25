@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import yaml
 
@@ -26,7 +26,6 @@ from daily_driver.plugins.job_search.config import (
     SourceToggle,
 )
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
-from daily_driver.plugins.job_search.scraper.comp import _parse_comp
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
     COUNTRY_NAMES,
@@ -36,6 +35,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import (
+        EnrichedJob,
         NormalizedJob,
         RawScrapedJob,
     )
@@ -214,10 +214,11 @@ def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
     Empty set when absent (e.g., direct ``scrape_*`` calls in tests) —
     scrapers treat that as "skip nothing".
     """
-    return config.get("_known_urls", set())
+    urls: set[str] = config.get("_known_urls", set())
+    return urls
 
 
-def location_matches(job: dict, config: dict) -> bool:
+def location_matches(job: dict[str, Any], config: dict[str, Any]) -> bool:
     """Check whether a job's location matches the configured allow-list.
 
     Accepts if any of:
@@ -303,70 +304,58 @@ def normalize_typed(raw: RawScrapedJob) -> NormalizedJob:  # noqa: F821
 
     Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
     ``daily_driver.plugins.job_search.scraper`` without crossing into the model layer directly.
-    The legacy dict-based ``normalize_job`` below remains for callers that
-    pass partial dicts through ``__init__.py``'s orchestrator.
     """
     from daily_driver.plugins.job_search.scraper.models import NormalizedJob
 
     return NormalizedJob.from_raw(raw)
 
 
-def normalize_job(raw: dict, source: str) -> dict:
-    """Canonicalize a scraped job dict before it is written to CSV.
+def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
+    """Lift one merged source dict into a fully-typed ``EnrichedJob``.
 
-    Responsibilities:
-      - Location: collapses known remote-only aliases to "Remote".
-      - Role title: strips trailing remote-eligibility suffixes.
-      - Greenhouse source: splits "Greenhouse (board)" into in-memory keys
-        source_canonical and source_board for downstream filtering. The
-        original source value is preserved so append_jobs writes the same
-        CSV column as before.
-      - Comp: parses the display string into in-memory structured fields
-        (comp_min_native, comp_max_native, comp_currency, comp_period,
-        comp_min_usd, comp_max_usd). These fields are NOT written to CSV;
-        DictWriter extrasaction="ignore" drops them automatically.
-
-    Returns a new dict with canonical keys added; does not modify raw in place.
-    Does not touch GD rating or Wellfound-specific fields.
-
-    Example::
-        >>> normalize_job(
-        ...     {"location": "Anywhere", "role": "Foo (Remote)", "source": "Greenhouse (acme)"},
-        ...     "Greenhouse (acme)",
-        ... )
-        # location -> "Remote", role -> "Foo", source_canonical -> "greenhouse",
-        # source_board -> "acme"
+    The source-adapter boundary stays dict-based: scrapers emit raw dicts
+    (``comp`` display string, ISO ``date_found``, optional ``description_text``).
+    This validates that dict through ``RawScrapedJob`` — the one place the
+    pipeline crosses from untyped wire data into the typed models — then runs
+    the standard ``from_raw`` -> ``from_normalized`` transitions. ``description_text``
+    is threaded separately because ``RawScrapedJob`` does not model enrichment
+    fields.
     """
-    job = dict(raw)
+    import datetime as dt
 
-    loc = job.get("location", "").strip()
-    if loc.lower() in _REMOTE_LOCATION_ALIASES:
-        job["location"] = "Remote"
+    from daily_driver.plugins.job_search.scraper.models import (
+        EnrichedJob,
+        NormalizedJob,
+        RawScrapedJob,
+    )
+
+    date_found = job.get("date_found")
+    if isinstance(date_found, str) and date_found:
+        try:
+            date_found_val: dt.date = dt.date.fromisoformat(date_found)
+        except ValueError:
+            date_found_val = dt.date.today()  # noqa: DTZ011
+    elif isinstance(date_found, dt.date):
+        date_found_val = date_found
     else:
-        job["location"] = loc
+        date_found_val = dt.date.today()  # noqa: DTZ011
 
-    role = job.get("role", "")
-    role_lower = role.lower()
-    for suffix in _REMOTE_ROLE_SUFFIXES:
-        if role_lower.endswith(suffix):
-            role = role[: len(role) - len(suffix)].rstrip()
-            role_lower = role.lower()
-            break
-    job["role"] = role
-
-    # "Greenhouse (board-slug)" -> in-memory canonical fields only.
-    # Kept separate from source so CSV output is unchanged.
-    src = source or job.get("source", "")
-    if src.startswith("Greenhouse (") and src.endswith(")"):
-        job["source_canonical"] = "greenhouse"
-        job["source_board"] = src[len("Greenhouse (") : -1]
-    else:
-        job["source_canonical"] = src.split("/")[0].lower() if src else ""
-        job["source_board"] = ""
-
-    job.update(_parse_comp(job.get("comp", "") or ""))
-
-    return job
+    raw = RawScrapedJob.model_validate(
+        {
+            "company": job.get("company", ""),
+            "role": job.get("role", "") or "(unknown)",
+            "url": job.get("url", ""),
+            "source": job.get("source", "") or "unknown",
+            "location": job.get("location", ""),
+            "comp_display": job.get("comp", "") or "",
+            "date_found": date_found_val,
+        }
+    )
+    enriched = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
+    desc = job.get("description_text", "")
+    if desc:
+        enriched = enriched.model_copy(update={"description_text": desc})
+    return enriched
 
 
 # ── Role matching ─────────────────────────────────────────────────────────────
@@ -385,7 +374,7 @@ def _split_roles(roles: list[str]) -> tuple[list[str], list[str]]:
     return include, exclude
 
 
-def _role_pattern(role: str) -> re.Pattern | None:
+def _role_pattern(role: str) -> re.Pattern[str] | None:
     """Compile a wildcarded role to a case-insensitive substring regex.
 
     Returns None for plain literals so the caller can stay on the fast path.
@@ -406,7 +395,9 @@ def _role_matches(role: str, title: str, title_lower: str) -> bool:
     return pat.search(title) is not None
 
 
-def matches_roles(title: str, roles: list[str], config: dict | None = None) -> bool:
+def matches_roles(
+    title: str, roles: list[str], config: dict[str, Any] | None = None
+) -> bool:
     """True if the job title is relevant based on configured roles.
 
     Exclusions (entries starting with '!') short-circuit and dominate over
@@ -478,7 +469,7 @@ def _compress_search_terms(roles: list[str]) -> list[str]:
     return result
 
 
-def _search_terms(config: dict) -> list[str]:
+def _search_terms(config: dict[str, Any]) -> list[str]:
     """Return URL search query strings, compressed to base role types.
 
     Override by setting job_search.scraper.search_terms in config.
@@ -495,7 +486,7 @@ def _search_terms(config: dict) -> list[str]:
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
 
-def _config_with_headless(config: dict, headless: bool) -> dict:
+def _config_with_headless(config: dict[str, Any], headless: bool) -> dict[str, Any]:
     """Return a deep copy of config with job_search.scraper.headless overridden.
 
     Scrapers read headless via scraper_cfg(config); passing a phase-specific
@@ -507,7 +498,7 @@ def _config_with_headless(config: dict, headless: bool) -> dict:
     return cfg
 
 
-def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
+def _run_one(source_id: str, cfg: dict[str, Any]) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
     Returns the job list on success, or the caught exception on failure. The
@@ -527,13 +518,15 @@ def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
     try:
         jobs = scraper_fn(cfg)
     except HTTPTimeout as exc:
+        # HTTPTimeout/HTTPError alias requests exceptions; the stub-less
+        # `requests` import types them as Any, so narrow on the way out.
         log.warning("[%s] timed out after %ds", source_id, timeout)
         user_console.print(f"  {source_id}: failed (timed out after {timeout}s)")
-        return exc
+        return cast(Exception, exc)
     except HTTPError as exc:
         log.warning("[%s] request failed: %s", source_id, exc)
         user_console.print(f"  {source_id}: failed ({exc})")
-        return exc
+        return cast(Exception, exc)
     except Exception as exc:  # noqa: BLE001
         log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
         user_console.print(f"  {source_id}: failed ({exc})")
@@ -545,15 +538,15 @@ def _run_one(source_id: str, cfg: dict) -> list[dict] | Exception:
 
 
 def _merge_and_dedup(
-    results: list[tuple[str, list[dict] | Exception]],
-    config: dict,
-) -> tuple[list[dict], list[str]]:
+    results: list[tuple[str, list[dict[str, Any]] | Exception]],
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Merge per-source results, deduplicating by URL and company+role key.
 
     First-scraper-wins: iteration order of `results` determines which job wins
     a dedup collision. Exceptions are collected into failed_sources.
     """
-    all_jobs: list[dict] = []
+    all_jobs: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     seen_keys: set[str] = set()
     failed_sources: list[str] = []
@@ -577,10 +570,10 @@ def _merge_and_dedup(
 
 
 def run_all_scrapers(
-    config: dict,
+    config: dict[str, Any],
     *,
     sources_override: list[str] | None = None,
-) -> tuple[list[dict], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Run all enabled scrapers and deduplicate results within this run.
 
     Two phases:
@@ -626,7 +619,7 @@ def run_all_scrapers(
     headless_sources = [sid for sid in enabled if sid not in non_headless]
     visible_sources = [sid for sid in enabled if sid in non_headless]
 
-    results: list[tuple[str, list[dict] | Exception]] = []
+    results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
     # Phase 1: headless, parallel
     if headless_sources:
@@ -737,6 +730,22 @@ def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
     )
 
 
+def _print_dry_run_table_typed(jobs: list[EnrichedJob]) -> None:  # noqa: F821
+    """Typed dry-run preview: projects each EnrichedJob to the renderer dict."""
+    _print_dry_run_table(
+        [
+            {
+                "source": j.source,
+                "company": j.company,
+                "role": j.role,
+                "location": j.location,
+                "url": j.url,
+            }
+            for j in jobs
+        ]
+    )
+
+
 def run(
     config: dict[str, Any],
     output_dir: Path,
@@ -751,20 +760,21 @@ def run(
     responsible for exit handling.
     """
     from daily_driver.plugins.job_search.scraper.comp import (
-        comp_meets_threshold,
-        currency_matches_primary,
+        comp_meets_threshold_typed,
+        currency_matches_primary_typed,
     )
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         _migrate_legacy_header,
-        append_jobs,
+        append_jobs_typed,
         load_existing_jobs,
     )
     from daily_driver.plugins.job_search.scraper.enrichment import (
-        enrich_company_descriptions,
-        enrich_fit_and_notes,
-        enrich_job_details,
+        enrich_company_descriptions_typed,
+        enrich_fit_and_notes_typed,
+        enrich_job_details_typed,
     )
+    from daily_driver.plugins.job_search.scraper.models import JobStatus
 
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
@@ -854,40 +864,50 @@ def run(
     if failed_sources:
         log.warning("Failed sources: %s", ", ".join(failed_sources))
 
+    # Cross from the dict-based source boundary into the typed pipeline:
+    # every surviving merged dict is validated through RawScrapedJob and lifted
+    # to a frozen EnrichedJob. The rest of the pipeline operates on these.
+    typed_jobs: list[EnrichedJob] = [_enriched_from_scraped(j) for j in new_jobs]
+
     if not dry_run:
         Console.info("Enriching job details...")
-        enrich_job_details(new_jobs, config)
+        typed_jobs = enrich_job_details_typed(typed_jobs, config)
     else:
         Console.info("Dry-run mode: skipping job-detail enrichment.")
         log.info("[dry-run] skipping enrich_job_details (claude calls)")
-    new_jobs = [normalize_job(j, j.get("source", "")) for j in new_jobs]
 
     skipped_below_comp = 0
-    for job in new_jobs:
-        if job.get("status") == "skipped":
+    comp_filtered: list[EnrichedJob] = []
+    for job in typed_jobs:
+        if job.status is JobStatus.SKIPPED:
+            comp_filtered.append(job)
             continue
-        ok, reason = comp_meets_threshold(job, config)
+        ok, reason = comp_meets_threshold_typed(job, config)
         if ok:
+            comp_filtered.append(job)
             continue
-        job["status"] = "skipped"
-        existing_notes = (job.get("notes") or "").strip()
-        job["notes"] = f"{existing_notes}; {reason}" if existing_notes else reason
+        existing_notes = job.notes.strip()
+        new_notes = f"{existing_notes}; {reason}" if existing_notes else reason
+        comp_filtered.append(
+            job.model_copy(update={"status": JobStatus.SKIPPED, "notes": new_notes})
+        )
         skipped_below_comp += 1
         log.info(
             "[comp-filter] skipped: %s | %s | comp=%r",
-            job.get("company", "?"),
-            job.get("role", "?"),
-            job.get("comp", ""),
+            job.company or "?",
+            job.role or "?",
+            str(job.comp),
         )
+    typed_jobs = comp_filtered
     log.info(
         "Comp-threshold filter: %d skipped below $%d USD",
         skipped_below_comp,
         min_comp_usd(config),
     )
 
-    pre_currency = len(new_jobs)
-    new_jobs = [j for j in new_jobs if currency_matches_primary(j, config)]
-    skipped_currency = pre_currency - len(new_jobs)
+    pre_currency = len(typed_jobs)
+    typed_jobs = [j for j in typed_jobs if currency_matches_primary_typed(j, config)]
+    skipped_currency = pre_currency - len(typed_jobs)
     if skipped_currency:
         log.info(
             "Primary-currency filter: %d dropped (not matching %s)",
@@ -908,10 +928,12 @@ def run(
             "failed": 0,
         }
     else:
-        product_stats = enrich_company_descriptions(new_jobs, config)
-        fn_stats = enrich_fit_and_notes(new_jobs, config)
+        typed_jobs, product_stats = enrich_company_descriptions_typed(
+            typed_jobs, config
+        )
+        typed_jobs, fn_stats = enrich_fit_and_notes_typed(typed_jobs, config)
 
-    n = len(new_jobs)
+    n = len(typed_jobs)
     log.info(
         "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
         fn_stats["enriched"],
@@ -933,15 +955,15 @@ def run(
 
     if dry_run:
         Console.success(
-            f"Dry-run complete: {len(new_jobs)} new jobs ready (nothing written)."
+            f"Dry-run complete: {len(typed_jobs)} new jobs ready (nothing written)."
         )
-        _print_dry_run_table(new_jobs)
+        _print_dry_run_table_typed(typed_jobs)
         return 1 if failed_sources else 0
 
     # Re-acquire the sentinel only for the append. The lock was dropped during
     # enrichment above so slow LLM calls don't block concurrent prune/backfill.
     with file_lock(lock_path):
-        written = append_jobs(csv_path, new_jobs, header)
+        written = append_jobs_typed(csv_path, typed_jobs, header)
     Console.success(
         f"Scraper complete: {written} new jobs appended to {csv_path} "
         f"({skipped_below_comp} skipped below comp threshold)."

@@ -124,15 +124,13 @@ module = [
 warn_return_any = false
 
 [[tool.mypy.overrides]]
-# Remaining laxness is limited to bare-dict annotations (helper utilities,
-# not the typed RawScrapedJob / NormalizedJob / EnrichedJob hot path) and
-# BeautifulSoup attribute access.
+# Remaining laxness is limited to the source-adapter boundary: parsing leans on
+# BeautifulSoup attribute access, and the sources return raw wire dicts that are
+# validated into RawScrapedJob downstream. The runner/csv_io/enrichment/comp
+# hot path now threads the typed RawScrapedJob / NormalizedJob / EnrichedJob
+# models and is held to strict mode.
 module = [
-    "daily_driver.plugins.job_search.scraper.runner",
-    "daily_driver.plugins.job_search.scraper.csv_io",
-    "daily_driver.plugins.job_search.scraper.enrichment",
     "daily_driver.plugins.job_search.scraper.parsing",
-    "daily_driver.plugins.job_search.scraper.comp",
     "daily_driver.plugins.job_search.scraper.sources",
     "daily_driver.plugins.job_search.scraper.sources.*",
 ]
