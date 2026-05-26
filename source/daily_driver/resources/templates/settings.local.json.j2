@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(//{{ workspace.root }}/**)",
+      "Write(//{{ workspace.root }}/**)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"{{ workspace.root }}/.claude/hooks/hook-current-time.sh\""
+          }
+        ]
+      }
+    ]
+  },
+  "metadata": {
+    "daily_driver_version": "{{ workspace.version }}"
+  }
+}

@@ -1,0 +1,178 @@
+# daily-driver workspace configuration
+#
+# Structured settings live here; narrative prose stays in Markdown files
+# (context.md, voice-profile.md). The schema is strict everywhere:
+# the root model is `extra="forbid"`, as is every nested block (including
+# plugins). Unknown keys raise a validation error so typos like `tracer:`
+# for `tracker:` fail loudly. Per-entry user data belongs under
+# `tracker.extras`; per-category fields under `tracker.categories.<name>`;
+# narrative context in `voice-profile.md` or a sibling `.notes.md`.
+#
+# To enable a commented block: uncomment the header (at column 0) AND
+# every nested line together. Don't uncomment a single inner field on
+# its own — YAML will silently nest it inside whichever open block is
+# above, and Pydantic will reject it as `extra_forbidden`.
+
+# Required: workspace settings.
+daily_driver:
+  # Where command output (jobs.csv, daily/, etc.) lives. Relative paths
+  # resolve against the workspace root.
+  output_dir: .
+
+# Optional: personal context surfaced into Claude prompts.
+# user_profile:
+#   name: ""
+#   citizenship: []  # ["US", "CA"]
+#   work_auth: {}  # {"US": "citizen", "CA": "PR"}
+#   timezone: ""  # "America/Vancouver"
+#   seeking_since: 2026-04-06  # YYYY-MM-DD when active job search began
+
+# Required: tracker configuration.
+tracker:
+  default_category: task
+  # Print a stderr nudge when `tracker add/update --status` is given a
+  # value outside the recommended set (open, in-progress, blocked, done,
+  # ruled-out). Entries still save with the custom status; the warning
+  # is a one-time hint. Set to false to silence.
+  # warn_unknown_status: true
+  categories:
+    task:
+      required: [title]
+    # Add more categories as you need them. `required` lists fields that
+    # must be set on `tracker add`.
+    # errand:
+    #   required: [title]
+    # ticket:
+    #   required: [title, link]
+
+# Optional: recurring tasks surfaced into day-start planning.
+# recurring_tasks:
+#   - name: "Review tracker follow-ups"
+#     cadence: daily            # daily | weekly | monthly
+#     estimated_minutes: 10
+#   - name: "Weekly retro"
+#     cadence: weekly
+#     day: friday            # only valid when cadence is weekly
+
+# Optional: scheduler config (consumed by `scheduler install`).
+# `checkin.times` is a list of HH:MM strings; `jobs.time` is a single
+# HH:MM string. Unknown keys are rejected. NOTE: `day_start` /
+# `day_end` cadence does NOT live here — it lives in the separate
+# top-level `schedule:` block below as HH:MM strings (the single
+# source of truth for those two jobs).
+# scheduler:
+#   checkin:
+#     times:
+#       - "11:00"
+#       - "15:00"
+#   jobs:
+#     time: "07:00"
+
+# Optional: day-start / day-end scheduled times (HH:MM, 24h).
+# When set, `scheduler install` adds launchd jobs that fire `day-start` /
+# `day-end` at these times. Leave unset to skip the scheduled run. This
+# is also read by `is_late_day` evaluation — single source of truth.
+# schedule:
+#   day_start: "08:00"
+#   day_end: "17:30"
+
+# Optional: claude session behavior.
+# claude:
+#   # When true, `check-in` resumes the prior `claude` session instead of
+#   # opening a fresh one. Useful if you keep one long-running session per
+#   # day and want check-in to land in it.
+#   resume_check_in: false
+
+# Optional: AI provider routing for headless tasks (enrichment, summary).
+# Interactive launchers (day-start, check-in, day-end) always use claude —
+# they need session resume / agents / workspace context that Ollama lacks.
+# Omitting the entire block keeps claude defaults for every task.
+# ai:
+#   enrichment:
+#     # provider: claude | ollama
+#     provider: claude
+#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#     # model: sonnet
+#   summary:
+#     # provider: claude | ollama
+#     provider: claude
+#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#     # model: sonnet
+#   # Only consulted when a task is routed to the ollama provider.
+#   ollama:
+#     endpoint: "http://localhost:11434"
+#     # Ollama is materially slower than the claude API; give it room.
+#     timeout: 60
+
+# Optional: focus mode defaults.
+# focus:
+#   # Fallback duration when `focus on` runs without `--for`.
+#   # Accepts the same suffixes as `--for` (e.g. "25m", "1h", "90m").
+#   default_duration: "25m"
+
+# Optional: gather config (controls what `daily-driver gather <kind>` reads).
+# gather:
+#   git:
+#     # Repos to scan for `gather git` activity. Each entry is a directory
+#     # containing one or more git checkouts. Paths can be absolute or
+#     # tilde-prefixed.
+#     search_paths:
+#       - "~/git"
+
+# Optional: plugins. Each plugin schema is strict — typos error out.
+# plugins:
+#   job_search:
+#     persona: "Senior SRE / Platform Engineer"
+#     home_city: "Vancouver, BC"
+#     roles: []  # ["SRE", "Platform Engineer"]
+#     domain_keywords: []  # ["kubernetes", "observability"]
+#     seniority_keywords: []  # ["senior", "staff", "principal"]
+#     min_comp_usd: 180000
+#     locations:
+#       home_city: "Vancouver, BC"
+#       remote: true
+#       countries: [CA, US]
+#       cities: []
+#     # primary_currency lives on `job_search`, NOT on `scraper`. When set,
+#     # drops scraped jobs whose parsed comp currency doesn't match.
+#     # Unparseable comp passes through. Unset = no filter. Decoupled from
+#     # `min_comp_usd` (that drives the user's pay-floor input; this prunes
+#     # the input stream by source-currency).
+#     primary_currency: USD  # USD | CAD | EUR | GBP
+#     scraper:
+#       enabled: false
+#       # Retries for HTTP 429/503 responses (rate limits). Honors the
+#       # Retry-After header when present; otherwise applies exponential
+#       # backoff (1.5s, 3s, 6s, ... capped at 30s). Set to 0 to disable.
+#       max_retries: 3
+#       # Maximum age (in days) for scraped postings. Currently applied to
+#       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
+#       # 0 to disable the filter. Other sources are implicitly recent.
+#       max_age_days: 30
+#     sources:
+#
+#       # All keys are optional; omitted = on (SourceToggle defaults
+#       # enabled=true). List a key with `false` to disable it.
+#       #
+#       # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
+#       remoteok: false            # remoteok.com RSS
+#       weworkremotely: false            # weworkremotely.com listings
+#       hn_who_is_hiring: false            # HN monthly "Who is hiring?" thread
+#       hn_jobs: false            # HN curated jobs (YC-funded company posts)
+#       greenhouse: false            # Greenhouse boards (configurable list)
+#
+#       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
+#       apple: false            # jobs.apple.com (API intercept)
+#
+#       # python-jobspy aggregator. Each site runs as a separate parallel
+#       # scraper (requires `python-jobspy>=1.1.82`, fetched with
+#       # linkedin_fetch_description=True). Glassdoor is intentionally
+#       # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
+#       # not parsed") on every request as of 2026-04.
+#       jobspy:
+#         enabled: true
+#         linkedin: true
+#         indeed: true
+#         google: true

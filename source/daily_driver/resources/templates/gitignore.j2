@@ -1,0 +1,21 @@
+# daily-driver managed — do not edit (regenerated on init/upgrade)
+# Only package-managed subdirectories are ignored; .claude/ itself is tracked.
+
+# Package-managed — do not commit (overwritten on version drift)
+.claude/commands/daily-driver/
+.claude/agents/daily-driver/
+.claude/settings.local.json
+.daily-driver/
+
+# User customizations — explicitly tracked (parent is not ignored, but be explicit)
+!.claude/commands/user/
+!.claude/agents/user/
+
+# Ephemeral runtime state
+focus.lock
+**/tracker.yaml.lock
+
+# Backups (jobs.csv snapshots, etc.) and other workspace artifacts
+backups/
+*.bak
+*.lock

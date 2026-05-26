@@ -1,0 +1,14 @@
+Generate a {{ detail }}-detail summary for the period {{ range_start }} to {{ range_end }}.
+{% if match %}
+Focus on items matching: {{ match | join(", ") }}.
+{% endif %}
+
+{% if detail == "low" %}
+Provide a brief bullet-point overview: key accomplishments, blockers, and top next action only.
+{% elif detail == "high" %}
+Provide a comprehensive narrative: accomplishments with context, blockers with root causes, all next actions, and any patterns worth noting across the period.
+{% else %}
+Provide a balanced summary: accomplishments, blockers, and next actions in short paragraphs.
+{% endif %}
+
+Use the workspace context (tracker.yaml, daily notes, plans) to populate the content.
