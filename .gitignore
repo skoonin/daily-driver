@@ -1,0 +1,48 @@
+*.log
+*.tmp
+!**/claude_cli.py
+!**/test_claude_cli.py
+!**/_claude_session.py
+!**/test_claude_launchers.py
+.playwright-mcp/
+.mcp.json
+.session.lock
+backups/
+# settings.json
+# context.md
+coverage.json
+.coverage
+.tox/
+__pycache__/
+*.pyc
+logs/
+
+# Test / coverage artifacts
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+test_reports/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Packaging artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+
+# Editor noise
+*.swp
+*.swo
+*~
+.idea/
+.ipynb_checkpoints/

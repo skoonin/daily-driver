@@ -1,0 +1,17 @@
+include README.md
+include CHANGELOG.md
+include LICENSE
+include pyproject.toml
+include MANIFEST.in
+
+recursive-include source/daily_driver/resources/agents *.md
+recursive-include source/daily_driver/resources/slash_commands *.md
+recursive-include source/daily_driver/resources/launchd *.j2
+recursive-include source/daily_driver/resources/templates *.j2 *.md *.yaml
+recursive-include source/daily_driver/plugins/job_search/templates *.j2
+
+include source/daily_driver/py.typed
+
+global-exclude __pycache__
+global-exclude *.py[co]
+global-exclude .DS_Store
