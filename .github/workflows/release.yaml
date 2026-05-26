@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and attach to GitHub Release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Run test suite before release build
+        run: |
+          pip install -e '.[dev]'
+          tox -e py311,py312
+      - name: Install build tooling
+        run: pip install build
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Verify artifacts
+        run: ls -la dist/
+      - name: Install smoke (post-build)
+        run: |
+          pip install dist/daily_driver-*.whl
+          daily-driver --version
+          daily-driver init /tmp/dd-release-ws
+          daily-driver --workspace /tmp/dd-release-ws doctor
+          test -d /tmp/dd-release-ws/.claude/commands/daily-driver
+      - name: Create GitHub Release and attach artifacts
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'dev') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+
+# No PyPI publish in v0.1.0 — git+https install is the distribution channel.
+# Linux wheel parity deferred to a future release.

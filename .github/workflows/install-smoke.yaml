@@ -1,0 +1,50 @@
+name: Install smoke test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    name: pip install from source (py${{ matrix.python-version }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Create clean venv and install from checkout
+        run: |
+          python -m venv /tmp/smoke-venv
+          source /tmp/smoke-venv/bin/activate
+          pip install --upgrade pip
+          pip install .
+      - name: Assert entry point resolves
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          which daily-driver
+          daily-driver --version
+      - name: Assert import works
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          python -c "import daily_driver; print(daily_driver.__version__)"
+      - name: Workspace smoke (init + doctor + tracker)
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          daily-driver init /tmp/dd-ws
+          daily-driver --workspace /tmp/dd-ws doctor
+          daily-driver --workspace /tmp/dd-ws tracker add --category task --title "smoke task"
+          daily-driver --workspace /tmp/dd-ws tracker list --json \
+            | python -c "import json,sys; d=json.load(sys.stdin); assert d['data']['entries'][0]['title']=='smoke task', d"
+          test -d /tmp/dd-ws/.claude/commands/daily-driver
+          test -s /tmp/dd-ws/.claude/settings.local.json
+
+# Linux parity deferred to a future release.
