@@ -106,45 +106,38 @@ class TestNormalizeJobspyRow:
         assert out["description"] == "long form"
 
     def test_comp_recovered_from_description_when_structured_absent(self) -> None:
-        # No structured comp from JobSpy -> fall back to the description, and
-        # stamp the currency from the search country (CA -> CAD).
+        # No structured comp from JobSpy -> fall back to the description. Currency
+        # is not classified; the recovered figure shows its source symbol.
         out = normalize_jobspy_row(
             _row(
                 min_amount=None,
                 max_amount=None,
                 description="Compensation: $120,000 - $140,000 per year.",
-            ),
-            country_code="CA",
+            )
         )
-        assert out["comp"] == "CA$120,000–140,000/yr"
+        assert out["comp"] == "$120,000–140,000/yr"
 
     def test_structured_comp_wins_over_description(self) -> None:
         # When JobSpy supplies structured comp, the description is not consulted
         # even if it also contains a salary.
-        out = normalize_jobspy_row(
-            _row(description="Pay: $10 - $20 per hour"), country_code="CA"
-        )
+        out = normalize_jobspy_row(_row(description="Pay: $10 - $20 per hour"))
         assert out["comp"].startswith("$150,000")
 
 
 class TestCompFromDescription:
     def test_yearly_range(self) -> None:
-        comp = _comp_from_description("Range: $150,000 - $200,000 / year", "US")
+        comp = _comp_from_description("Range: $150,000 - $200,000 / year")
         assert comp == "$150,000–200,000/yr"
 
     def test_hourly_is_annualized_not_raw(self) -> None:
         # Regression guard: hourly figures must be annualized, else Comp's
         # period-agnostic threshold check rejects them as below an annual floor.
-        comp = _comp_from_description("Pay range $50 - $70 per hour", "US")
+        comp = _comp_from_description("Pay range $50 - $70 per hour")
         assert comp == "$104,000–145,600/yr"
         assert "/hr" not in comp
 
     def test_no_salary_returns_empty(self) -> None:
-        assert _comp_from_description("Competitive compensation offered.", "CA") == ""
-
-    def test_unmapped_country_falls_back_to_usd(self) -> None:
-        comp = _comp_from_description("$120,000 - $140,000 a year", "XX")
-        assert comp == "$120,000–140,000/yr"
+        assert _comp_from_description("Competitive compensation offered.") == ""
 
 
 @pytest.mark.parametrize("bad_url", ["  https://x  ", "https://x"])

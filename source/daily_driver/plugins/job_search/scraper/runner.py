@@ -28,9 +28,9 @@ from daily_driver.plugins.job_search.config import (
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
-    COUNTRY_NAMES,
     HTTPError,
     HTTPTimeout,
+    country_names,
 )
 
 if TYPE_CHECKING:
@@ -244,7 +244,7 @@ def location_matches(job: dict[str, Any], config: dict[str, Any]) -> bool:
             return True
 
     for code in loc_cfg.countries:
-        for name in COUNTRY_NAMES.get(code.upper(), []):
+        for name in country_names(code):
             if name.lower() in loc:
                 return True
 

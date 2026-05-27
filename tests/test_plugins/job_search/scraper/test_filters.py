@@ -21,6 +21,10 @@ from daily_driver.plugins.job_search.scraper.runner import (
     location_matches,
     matches_roles,
 )
+from daily_driver.plugins.job_search.scraper.sources._http import (
+    country_names,
+    jobspy_country,
+)
 
 
 def _enriched_with_comp(comp_display: str) -> EnrichedJob:
@@ -123,6 +127,27 @@ class TestLocationMatches:
         assert location_matches({"location": "Toronto, Canada"}, cfg) is True
         assert location_matches({"location": "New York, NY"}, cfg) is False
 
+    def test_country_beyond_original_six_matches(self) -> None:
+        # Countries are derived from JobSpy's enum, so NL (and ~70 others) work
+        # without a hand-maintained entry.
+        cfg = {
+            "job_search": {
+                "locations": {"remote": False, "cities": [], "countries": ["NL"]}
+            }
+        }
+        assert location_matches({"location": "Amsterdam, Netherlands"}, cfg) is True
+
+    def test_bare_iso_code_not_false_matched(self) -> None:
+        # "US" matches via "usa"/"united states", never the 2-char "us" — which
+        # would spuriously hit "Austin".
+        cfg = {
+            "job_search": {
+                "locations": {"remote": False, "cities": [], "countries": ["US"]}
+            }
+        }
+        assert location_matches({"location": "Austin, TX"}, cfg) is False
+        assert location_matches({"location": "Denver, USA"}, cfg) is True
+
     def test_no_locations_block_accepts_everything(self) -> None:
         assert location_matches({"location": "Mars"}, {}) is True
 
@@ -205,3 +230,30 @@ class TestKnownUrlsFromConfig:
             "https://remoteok.com/remote-jobs/2",
         }
         assert _known_urls_from_config({"_known_urls": urls}) == urls
+
+
+class TestCountryDerivation:
+    """country_names / jobspy_country are derived from JobSpy's Country enum."""
+
+    def test_bare_iso_code_excluded_from_match_aliases(self) -> None:
+        # "us" (2 chars) is dropped so it can't substring-match "Austin".
+        names = country_names("US")
+        assert "us" not in names
+        assert "united states" in names
+
+    def test_gb_keeps_constituent_nations(self) -> None:
+        assert {"england", "scotland", "wales", "uk"} <= set(country_names("GB"))
+
+    def test_country_beyond_original_six_supported(self) -> None:
+        assert "netherlands" in country_names("NL")
+
+    def test_jobspy_country_name_round_trips(self) -> None:
+        # Names must be accepted by JobSpy's Country.from_string.
+        from jobspy.model import Country
+
+        for code in ("US", "GB", "DE", "NL", "ZA"):
+            assert Country.from_string(jobspy_country(code, "usa"))
+
+    def test_unsupported_code_falls_back(self) -> None:
+        assert country_names("XX") == []
+        assert jobspy_country("XX", "usa") == "usa"

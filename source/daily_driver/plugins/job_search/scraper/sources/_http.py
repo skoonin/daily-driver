@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import time
 from contextlib import contextmanager
 from typing import Any, TypeAlias
@@ -65,18 +66,52 @@ COUNTRY_MAP: dict[str, dict[str, str]] = {
     },
 }
 
-# Country display names and common aliases for location matching.
-# Used by location_matches() to check if a job's location text belongs to
-# an allowed country. ISO codes are excluded to avoid false positives
-# (e.g., "CA" matching California instead of Canada).
-COUNTRY_NAMES: dict[str, list[str]] = {
-    "US": ["United States", "USA"],
-    "CA": ["Canada"],
-    "GB": ["United Kingdom", "UK", "England", "Scotland", "Wales"],
-    "IE": ["Ireland"],
-    "AU": ["Australia"],
-    "ZA": ["South Africa"],
+# Curated location-text aliases JobSpy's country names omit: the constituent
+# UK nations plus "UK". The >2-char filter below applies only to enum-derived
+# names (so bare ISO codes like "us" can't false-match "Austin"); aliases here
+# are added verbatim, deliberately keeping the safe 2-char "uk".
+_COUNTRY_NAME_ALIASES: dict[str, list[str]] = {
+    "GB": ["uk", "england", "scotland", "wales"],
 }
+
+
+@functools.lru_cache(maxsize=1)
+def _country_table() -> dict[str, tuple[list[str], str]]:
+    """ISO alpha-2 -> (location-match aliases, JobSpy country name).
+
+    Derived from JobSpy's ``Country`` enum so every country JobSpy can scrape is
+    supported, and the location filter never silently desyncs from a hand-kept
+    list. Lazy + cached: the heavy jobspy import is deferred until country
+    matching is actually needed, keeping cheap CLI commands fast.
+    """
+    from jobspy.model import Country
+
+    table: dict[str, tuple[list[str], str]] = {}
+    for c in Country:
+        raw = c.value[1] if len(c.value) > 1 else ""
+        # value[1] is the ISO code, sometimes "subdomain:iso" (e.g. "www:us",
+        # "uk:gb"); take the part after the colon when present.
+        code = (raw.partition(":")[2] or raw).upper()
+        if len(code) != 2:  # skip meta-entries like WORLDWIDE ("www")
+            continue
+        raw_names = [n.strip() for n in c.value[0].split(",") if n.strip()]
+        aliases = [n for n in raw_names if len(n) > 2] + _COUNTRY_NAME_ALIASES.get(
+            code, []
+        )
+        table[code] = (aliases, raw_names[0])
+    return table
+
+
+def country_names(code: str) -> list[str]:
+    """Location-text aliases for an ISO alpha-2 code ([] if JobSpy lacks it)."""
+    entry = _country_table().get(code.upper())
+    return entry[0] if entry else []
+
+
+def jobspy_country(code: str, default: str) -> str:
+    """JobSpy country name for an ISO code, or ``default`` if JobSpy lacks it."""
+    entry = _country_table().get(code.upper())
+    return entry[1] if entry else default
 
 
 def country_params(country: str) -> dict[str, str]:
@@ -231,7 +266,8 @@ def _playwright_browser(config: dict) -> Any:
 
 __all__ = [
     "COUNTRY_MAP",
-    "COUNTRY_NAMES",
+    "country_names",
+    "jobspy_country",
     "Session",
     "HTTPError",
     "HTTPTimeout",
