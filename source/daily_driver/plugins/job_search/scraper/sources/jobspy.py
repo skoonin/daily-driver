@@ -71,6 +71,44 @@ def _format_jobspy_comp(row: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
+# JobSpy's extract_salary() hardcodes "USD"; re-stamp the currency from the
+# search country as a best-effort heuristic. Imperfect — a bare "$" figure in a
+# CA posting is sometimes USD (US-HQ firms paying Canadian hires in USD) — but
+# search country is the only currency signal a "$NNN-$NNN" regex gives us.
+_COUNTRY_CURRENCY: dict[str, str] = {
+    "US": "USD",
+    "CA": "CAD",
+    "GB": "GBP",
+    "IE": "EUR",
+    "AU": "AUD",
+    "ZA": "ZAR",
+}
+
+
+def _comp_from_description(description: str, country_code: str) -> str:
+    """Recover comp from description text when JobSpy returned no structured comp.
+
+    JobSpy only regexes salary out of descriptions for the USA
+    (jobspy/__init__.py); this runs the same extraction for every country and
+    corrects the currency from the search country. Returns "" when no salary
+    range is present in the text.
+    """
+    # Lazy import: keeps this module importable without python-jobspy installed.
+    from jobspy.util import extract_salary
+
+    # enforce_annual_salary=True annualizes hourly/monthly figures. Comp.meets_threshold
+    # compares against an annual USD floor without normalizing by period, so a raw
+    # "/hr" or "/mo" amount would be wrongly rejected as below threshold. Annualized
+    # values always carry a "yearly" interval, hence the hardcoded suffix below.
+    _interval, lo, hi, _usd = extract_salary(description, enforce_annual_salary=True)
+    if lo is None and hi is None:
+        return ""
+    currency = _COUNTRY_CURRENCY.get(country_code.upper(), "USD")
+    return _format_jobspy_comp(
+        {"min_amount": lo, "max_amount": hi, "currency": currency, "interval": "yearly"}
+    )
+
+
 def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F821
     """Validate a JobSpy DataFrame row through RawScrapedJob (extra='ignore').
 
@@ -98,12 +136,16 @@ def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F82
     )
 
 
-def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
+def normalize_jobspy_row(
+    row: dict[str, Any], country_code: str = "US"
+) -> dict[str, Any]:
     """Adapt a single JobSpy DataFrame record to the scraper dict shape.
 
     Validates through RawScrapedJob at the boundary and dumps back to
     the legacy dict shape for the dict-based pipeline. Carries `description`
     separately because RawScrapedJob does not model enrichment fields.
+    `country_code` is the search country, used to recover comp from the
+    description when JobSpy returns no structured salary.
     """
     raw = jobspy_row_to_raw(row)
     description = _jobspy_str(row.get("description"))
@@ -118,6 +160,7 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
             "comp": _format_jobspy_comp(row),
             "date_found": today().isoformat(),
         }
+    comp = raw.comp_display or _comp_from_description(description, country_code)
     return {
         "company": raw.company,
         "role": raw.role,
@@ -125,7 +168,7 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
         "url": raw.url,
         "source": raw.source,
         "description": description,
-        "comp": raw.comp_display,
+        "comp": comp,
         "date_found": raw.date_found.isoformat(),
     }
 
@@ -208,7 +251,7 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
 
             records = df.to_dict("records")
             for row in records:
-                normalized = normalize_jobspy_row(row)
+                normalized = normalize_jobspy_row(row, country_code)
                 if not normalized["role"] or not matches_roles(
                     normalized["role"], roles, config
                 ):
