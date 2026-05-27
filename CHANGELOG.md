@@ -37,6 +37,15 @@ log`. Versioned release history starts at 1.0.
   enrichment failure/skip counts, a real-run enrichment heads-up, and a one-line
   `Funnel: N scraped → … → K written` summary are now shown at default
   verbosity, so jobs no longer vanish between pipeline stages unexplained.
+- **Country support is derived from JobSpy's `Country` enum** (~70 countries,
+  was a hand-maintained 6). Any country JobSpy can scrape now works for both the
+  location filter and Indeed search, with no per-country code to add. Bare
+  2-letter ISO codes are still excluded from location matching to avoid false
+  positives (e.g. "us" matching "Austin").
+- **Comp is no longer labeled with a currency**: description-recovered comp keeps
+  the source's own symbol instead of being re-stamped per search country. Currency
+  classification was vestigial once the threshold went currency-agnostic and the
+  currency filter was removed; the number alongside the location is enough.
 
 ### Removed
 

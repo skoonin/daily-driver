@@ -7,24 +7,16 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.scraper.comp import _COMP_CURRENCY_PREFIX, _to_int
-from daily_driver.plugins.job_search.scraper.sources._http import COUNTRY_NAMES
+from daily_driver.plugins.job_search.scraper.sources._http import (
+    country_names,
+    jobspy_country,
+)
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
 
 log = get_logger(__name__)
 
-
-# Country codes JobSpy's indeed engine accepts. Maps from ISO codes used in
-# config to the string values JobSpy's country_indeed parameter expects.
-_JOBSPY_COUNTRY_MAP: dict[str, str] = {
-    "US": "USA",
-    "CA": "Canada",
-    "GB": "UK",
-    "IE": "Ireland",
-    "AU": "Australia",
-    "ZA": "South Africa",
-}
 
 # JobSpy interval values → display suffixes
 _JOBSPY_INTERVAL_SUFFIX: dict[str, str] = {
@@ -71,27 +63,13 @@ def _format_jobspy_comp(row: dict) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-# JobSpy's extract_salary() hardcodes "USD"; re-stamp the currency from the
-# search country as a best-effort heuristic. Imperfect — a bare "$" figure in a
-# CA posting is sometimes USD (US-HQ firms paying Canadian hires in USD) — but
-# search country is the only currency signal a "$NNN-$NNN" regex gives us.
-_COUNTRY_CURRENCY: dict[str, str] = {
-    "US": "USD",
-    "CA": "CAD",
-    "GB": "GBP",
-    "IE": "EUR",
-    "AU": "AUD",
-    "ZA": "ZAR",
-}
-
-
-def _comp_from_description(description: str, country_code: str) -> str:
+def _comp_from_description(description: str) -> str:
     """Recover comp from description text when JobSpy returned no structured comp.
 
     JobSpy only regexes salary out of descriptions for the USA
-    (jobspy/__init__.py); this runs the same extraction for every country and
-    corrects the currency from the search country. Returns "" when no salary
-    range is present in the text.
+    (jobspy/__init__.py); this runs the same extraction for every country. We
+    don't classify currency — the raw number with its source symbol is enough to
+    read alongside the location. Returns "" when no salary range is in the text.
     """
     # Lazy import: keeps this module importable without python-jobspy installed.
     from jobspy.util import extract_salary
@@ -100,10 +78,11 @@ def _comp_from_description(description: str, country_code: str) -> str:
     # compares against an annual floor without normalizing by period, so a raw "/hr"
     # or "/mo" amount would be wrongly flagged below threshold. Annualized values
     # always carry a "yearly" interval, hence the hardcoded suffix below.
-    _interval, lo, hi, _usd = extract_salary(description, enforce_annual_salary=True)
+    _interval, lo, hi, currency = extract_salary(
+        description, enforce_annual_salary=True
+    )
     if lo is None and hi is None:
         return ""
-    currency = _COUNTRY_CURRENCY.get(country_code.upper(), "USD")
     return _format_jobspy_comp(
         {"min_amount": lo, "max_amount": hi, "currency": currency, "interval": "yearly"}
     )
@@ -136,16 +115,12 @@ def jobspy_row_to_raw(row: dict[str, Any]) -> RawScrapedJob | None:  # noqa: F82
     )
 
 
-def normalize_jobspy_row(
-    row: dict[str, Any], country_code: str = "US"
-) -> dict[str, Any]:
+def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
     """Adapt a single JobSpy DataFrame record to the scraper dict shape.
 
     Validates through RawScrapedJob at the boundary and dumps back to
     the legacy dict shape for the dict-based pipeline. Carries `description`
     separately because RawScrapedJob does not model enrichment fields.
-    `country_code` is the search country, used to recover comp from the
-    description when JobSpy returns no structured salary.
     """
     raw = jobspy_row_to_raw(row)
     description = _jobspy_str(row.get("description"))
@@ -160,7 +135,7 @@ def normalize_jobspy_row(
             "comp": _format_jobspy_comp(row),
             "date_found": today().isoformat(),
         }
-    comp = raw.comp_display or _comp_from_description(description, country_code)
+    comp = raw.comp_display or _comp_from_description(description)
     return {
         "company": raw.company,
         "role": raw.role,
@@ -212,10 +187,9 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
     for term in terms:
         for country in countries:
             country_code = country.upper()
-            country_indeed = _JOBSPY_COUNTRY_MAP.get(
-                country_code, default_country_indeed
-            )
-            location_name = COUNTRY_NAMES.get(country_code, [country])[0]
+            country_indeed = jobspy_country(country_code, default_country_indeed)
+            names = country_names(country_code)
+            location_name = names[0] if names else country
             # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
             # ("location not parsed") on every request and retries for minutes.
             run_sites = sites if sites is not None else ["linkedin", "indeed", "google"]
@@ -251,7 +225,7 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
 
             records = df.to_dict("records")
             for row in records:
-                normalized = normalize_jobspy_row(row, country_code)
+                normalized = normalize_jobspy_row(row)
                 if not normalized["role"] or not matches_roles(
                     normalized["role"], roles, config
                 ):

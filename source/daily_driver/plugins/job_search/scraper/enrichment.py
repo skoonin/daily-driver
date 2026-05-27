@@ -346,7 +346,7 @@ def _location_summary(config: dict[str, Any]) -> str:
         home_city,
         locations_config,
     )
-    from daily_driver.plugins.job_search.scraper.sources._http import COUNTRY_NAMES
+    from daily_driver.plugins.job_search.scraper.sources._http import country_names
 
     loc_cfg = locations_config(config)
     parts = [f"Based in: {home_city(config)}"]
@@ -356,7 +356,11 @@ def _location_summary(config: dict[str, Any]) -> str:
     if loc_cfg.cities:
         parts.append("Preferred cities: " + ", ".join(loc_cfg.cities))
     if loc_cfg.countries:
-        names = [COUNTRY_NAMES.get(c.upper(), [c])[0] for c in loc_cfg.countries]
+        # Aliases are stored lowercase for matching; the longest is the full
+        # country name (not the "usa"/"uk" abbrev). Title-case it for the prompt.
+        names = [
+            max(country_names(c), key=len, default=c).title() for c in loc_cfg.countries
+        ]
         parts.append("Countries: " + ", ".join(names))
     if loc_cfg.remote:
         parts.append("Remote: yes")
