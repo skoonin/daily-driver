@@ -80,27 +80,11 @@ def comp_meets_threshold_typed(
     """Typed comp-floor gate operating on ``EnrichedJob.comp``.
 
     Delegates to ``Comp.meets_threshold``, which fails open on unknown comp
-    (max_usd is None) so unpriced roles still reach the CSV.
+    (max_native is None) so unpriced roles still reach the CSV.
     """
     from daily_driver.plugins.job_search.scraper.runner import min_comp_usd
 
     return job.comp.meets_threshold(min_comp_usd(config))
-
-
-def currency_matches_primary_typed(job: EnrichedJob, config: dict[str, Any]) -> bool:
-    """Typed primary-currency filter operating on ``EnrichedJob.comp.currency``.
-
-    A None currency (unparseable comp) passes — the sentinel means "couldn't
-    read", not "doesn't match".
-    """
-    from daily_driver.plugins.job_search.scraper.runner import _model
-
-    primary = _model(config).primary_currency
-    if primary is None:
-        return True
-    if job.comp.currency is None:
-        return True
-    return job.comp.currency == primary
 
 
 __all__ = [
@@ -108,6 +92,5 @@ __all__ = [
     "_COMP_UNIT_SUFFIX",
     "_format_comp",
     "comp_meets_threshold_typed",
-    "currency_matches_primary_typed",
     "_to_int",
 ]

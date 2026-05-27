@@ -26,8 +26,25 @@ log`. Versioned release history starts at 1.0.
   `jobs run` append between the read and the rewrite was silently deleted; the
   read and classification now run inside the lock.
 
+### Changed
+
+- **Location is the only filter that removes jobs**: `jobs run` now surfaces
+  every job matching your configured countries/cities. Jobs whose found comp is
+  below `min_comp_usd` are kept and marked a new `skipped-comp` status rather
+  than dropped; jobs with no listed comp are surfaced. `min_comp_usd` is compared
+  against each listing's own figure with no currency conversion.
+- **`jobs run` output reconciles the filter funnel**: the comp-flag count,
+  enrichment failure/skip counts, a real-run enrichment heads-up, and a one-line
+  `Funnel: N scraped → … → K written` summary are now shown at default
+  verbosity, so jobs no longer vanish between pipeline stages unexplained.
+
 ### Removed
 
+- **Currency filter and FX conversion**: the `plugins.job_search.primary_currency`
+  config field, the currency-mismatch drop, and the `_fx` USD-conversion table
+  are gone. Comp is compared in the listing's own currency and non-matching
+  currencies are no longer dropped (existing configs with `primary_currency` set
+  must remove it — the config model is `extra="forbid"`).
 - **Dead code in scraper module**: deleted `scraper/runner.py` `__all__` block (mis-described public surface), removed `scraper/runner.py:_to_int` duplicate (the surviving copy lives in `scraper/comp.py`), and dropped the parallel `SOURCE_REGISTRY` + `_typed_source` wrapper from `scraper/sources/__init__.py` (its lone consumer in `cli/commands/help.py` now enumerates `SCRAPERS` directly). Tautological `tests/test_scraper/test_source_registry.py` removed.
 
 ### Added

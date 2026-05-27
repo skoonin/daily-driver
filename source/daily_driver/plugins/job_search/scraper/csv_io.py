@@ -380,9 +380,13 @@ def backfill(config: dict[str, Any], csv_path: Path) -> None:
             header = list(reader.fieldnames or CANONICAL_HEADER)
             rows = list(reader)
 
+        from daily_driver.plugins.job_search.scraper.models import (
+            ENRICH_SKIP_STATUSES,
+        )
+
         jobs = [_row_to_dict(r) for r in rows]
 
-        active = [j for j in jobs if j.get("status") != "skipped"]
+        active = [j for j in jobs if j.get("status") not in ENRICH_SKIP_STATUSES]
         needs_product = sum(1 for j in active if not j.get("product"))
         needs_fit = sum(1 for j in active if not j.get("fit"))
         needs_gd = sum(1 for j in active if not j.get("gd_rating"))

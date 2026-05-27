@@ -129,18 +129,15 @@ tracker:
 #     roles: []  # ["SRE", "Platform Engineer"]
 #     domain_keywords: []  # ["kubernetes", "observability"]
 #     seniority_keywords: []  # ["senior", "staff", "principal"]
+#     # Pay floor, compared directly against each listing's own comp figure
+#     # with no currency conversion. Jobs whose found comp is below it are
+#     # kept but marked `skipped-comp`; jobs with no listed comp are surfaced.
 #     min_comp_usd: 180000
 #     locations:
 #       home_city: "Vancouver, BC"
 #       remote: true
 #       countries: [CA, US]
 #       cities: []
-#     # primary_currency lives on `job_search`, NOT on `scraper`. When set,
-#     # drops scraped jobs whose parsed comp currency doesn't match.
-#     # Unparseable comp passes through. Unset = no filter. Decoupled from
-#     # `min_comp_usd` (that drives the user's pay-floor input; this prunes
-#     # the input stream by source-currency).
-#     primary_currency: USD  # USD | CAD | EUR | GBP
 #     scraper:
 #       enabled: false
 #       # Retries for HTTP 429/503 responses (rate limits). Honors the

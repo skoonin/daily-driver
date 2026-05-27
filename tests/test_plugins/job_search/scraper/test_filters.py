@@ -9,10 +9,7 @@ Covers the filter path that decides which scraped jobs survive to the CSV:
 
 from __future__ import annotations
 
-from daily_driver.plugins.job_search.scraper.comp import (
-    comp_meets_threshold_typed,
-    currency_matches_primary_typed,
-)
+from daily_driver.plugins.job_search.scraper.comp import comp_meets_threshold_typed
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
     NormalizedJob,
@@ -67,7 +64,7 @@ class TestCompThreshold:
         )
         assert ok is False
         assert "below comp threshold" in reason
-        assert "$120,000" in reason
+        assert "120,000" in reason
 
     def test_fails_open_when_comp_unknown(self) -> None:
         """Jobs without listed comp must reach CSV for manual review."""
@@ -208,36 +205,3 @@ class TestKnownUrlsFromConfig:
             "https://remoteok.com/remote-jobs/2",
         }
         assert _known_urls_from_config({"_known_urls": urls}) == urls
-
-
-class TestCurrencyMatchesPrimary:
-    """Currency primary-mode filter (#48).
-
-    When ``plugins.job_search.primary_currency`` is set, drop scraped rows
-    whose Comp parses to a different currency. Rows with empty/unknown
-    currency (unparseable comp) pass through — currency=None is the sentinel
-    for "couldn't read", not "doesn't match".
-    """
-
-    def _config(self, primary: str | None) -> dict:
-        return {"job_search": {"primary_currency": primary}}
-
-    def test_no_primary_keeps_all(self) -> None:
-        assert currency_matches_primary_typed(
-            _enriched_with_comp("€80,000"), self._config(None)
-        )
-
-    def test_matching_currency_kept(self) -> None:
-        assert currency_matches_primary_typed(
-            _enriched_with_comp("$180,000"), self._config("USD")
-        )
-
-    def test_mismatched_currency_dropped(self) -> None:
-        assert not currency_matches_primary_typed(
-            _enriched_with_comp("€80,000"), self._config("USD")
-        )
-
-    def test_unparseable_currency_kept(self) -> None:
-        assert currency_matches_primary_typed(
-            _enriched_with_comp("competitive"), self._config("USD")
-        )

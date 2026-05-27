@@ -26,7 +26,7 @@ class TestComp:
     def test_unknown_comp_is_empty(self) -> None:
         c = Comp()
         assert not c.is_known
-        assert c.min_usd is None and c.max_usd is None
+        assert c.min_native is None and c.max_native is None
         assert str(c) == ""
 
     def test_unknown_preserves_raw_display(self) -> None:
@@ -41,10 +41,13 @@ class TestComp:
         with pytest.raises(ValidationError):
             Comp(min_native=200_000, max_native=100_000, currency="USD")
 
-    def test_min_usd_conversion(self) -> None:
-        c = Comp(min_native=100_000, max_native=120_000, currency="CAD")
-        assert c.min_usd == int(100_000 * 0.73)
-        assert c.max_usd == int(120_000 * 0.73)
+    def test_meets_threshold_ignores_currency(self) -> None:
+        # No FX conversion: a CAD figure is compared at face value against the
+        # floor, exactly as a USD one would be.
+        below = Comp(min_native=100_000, max_native=120_000, currency="CAD")
+        assert not below.meets_threshold(150_000)[0]
+        above = Comp(min_native=160_000, max_native=200_000, currency="CAD")
+        assert above.meets_threshold(150_000)[0]
 
     def test_meets_threshold_unknown_passes(self) -> None:
         ok, reason = Comp().meets_threshold(150_000)
@@ -132,10 +135,9 @@ class TestComp:
         c = Comp(max_native=100_000, currency="USD")
         assert c.is_known
         assert c.min_native is None and c.max_native == 100_000
-        assert c.min_usd is None and c.max_usd == 100_000
 
     def test_meets_threshold_only_min_set_fails_open(self) -> None:
-        # min_native set, max_native None: max_usd is None → fails open.
+        # min_native set, max_native None: max_native is None → fails open.
         c = Comp(min_native=80_000, currency="USD")
         ok, reason = c.meets_threshold(150_000)
         assert ok and reason == ""
@@ -386,6 +388,12 @@ class TestEnrichedJob:
         j = _enriched(status=JobStatus.SKIPPED, skip_reason="below comp")
         row = j.to_csv_row()
         assert "below comp" in row["Notes"]
+
+    def test_csv_skip_reason_appended_when_skipped_comp(self) -> None:
+        j = _enriched(status=JobStatus.SKIPPED_COMP, skip_reason="below comp threshold")
+        row = j.to_csv_row()
+        assert row["Status"] == "skipped-comp"
+        assert "below comp threshold" in row["Notes"]
 
     def test_canonical_header_is_csv_columns(self) -> None:
         assert EnrichedJob.CANONICAL_HEADER == list(

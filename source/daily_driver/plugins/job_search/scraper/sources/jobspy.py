@@ -97,9 +97,9 @@ def _comp_from_description(description: str, country_code: str) -> str:
     from jobspy.util import extract_salary
 
     # enforce_annual_salary=True annualizes hourly/monthly figures. Comp.meets_threshold
-    # compares against an annual USD floor without normalizing by period, so a raw
-    # "/hr" or "/mo" amount would be wrongly rejected as below threshold. Annualized
-    # values always carry a "yearly" interval, hence the hardcoded suffix below.
+    # compares against an annual floor without normalizing by period, so a raw "/hr"
+    # or "/mo" amount would be wrongly flagged below threshold. Annualized values
+    # always carry a "yearly" interval, hence the hardcoded suffix below.
     _interval, lo, hi, _usd = extract_salary(description, enforce_annual_salary=True)
     if lo is None and hi is None:
         return ""

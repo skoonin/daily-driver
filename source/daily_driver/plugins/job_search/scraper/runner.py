@@ -759,10 +759,7 @@ def run(
     I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
     responsible for exit handling.
     """
-    from daily_driver.plugins.job_search.scraper.comp import (
-        comp_meets_threshold_typed,
-        currency_matches_primary_typed,
-    )
+    from daily_driver.plugins.job_search.scraper.comp import comp_meets_threshold_typed
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         _migrate_legacy_header,
@@ -879,7 +876,7 @@ def run(
     skipped_below_comp = 0
     comp_filtered: list[EnrichedJob] = []
     for job in typed_jobs:
-        if job.status is JobStatus.SKIPPED:
+        if job.status in (JobStatus.SKIPPED, JobStatus.SKIPPED_COMP):
             comp_filtered.append(job)
             continue
         ok, reason = comp_meets_threshold_typed(job, config)
@@ -889,31 +886,28 @@ def run(
         existing_notes = job.notes.strip()
         new_notes = f"{existing_notes}; {reason}" if existing_notes else reason
         comp_filtered.append(
-            job.model_copy(update={"status": JobStatus.SKIPPED, "notes": new_notes})
+            job.model_copy(
+                update={"status": JobStatus.SKIPPED_COMP, "notes": new_notes}
+            )
         )
         skipped_below_comp += 1
         log.info(
-            "[comp-filter] skipped: %s | %s | comp=%r",
+            "[comp-filter] skipped-comp: %s | %s | comp=%r",
             job.company or "?",
             job.role or "?",
             str(job.comp),
         )
     typed_jobs = comp_filtered
+    if skipped_below_comp:
+        Console.info(
+            f"Flagged {skipped_below_comp} jobs below the "
+            f"{min_comp_usd(config):,} comp threshold (kept, marked skipped-comp)."
+        )
     log.info(
-        "Comp-threshold filter: %d skipped below $%d USD",
+        "Comp-threshold filter: %d marked skipped-comp below %d",
         skipped_below_comp,
         min_comp_usd(config),
     )
-
-    pre_currency = len(typed_jobs)
-    typed_jobs = [j for j in typed_jobs if currency_matches_primary_typed(j, config)]
-    skipped_currency = pre_currency - len(typed_jobs)
-    if skipped_currency:
-        log.info(
-            "Primary-currency filter: %d dropped (not matching %s)",
-            skipped_currency,
-            _model(config).primary_currency,
-        )
 
     if dry_run:
         Console.info("Dry-run mode: skipping product + fit/notes enrichment.")
@@ -928,6 +922,10 @@ def run(
             "failed": 0,
         }
     else:
+        Console.info(
+            f"Enriching {len(typed_jobs)} jobs via claude "
+            "(company product + fit/notes; this may take a few minutes)..."
+        )
         typed_jobs, product_stats = enrich_company_descriptions_typed(
             typed_jobs, config
         )
@@ -950,7 +948,19 @@ def run(
     )
     Console.info(
         "Enrichment complete: "
-        f"fit+notes {fn_stats['enriched']}/{n}, product {product_stats['enriched']}/{n}."
+        f"fit+notes {fn_stats['enriched']}/{n} "
+        f"({fn_stats['failed']} failed, {fn_stats['skipped_budget']} skipped for budget), "
+        f"product {product_stats['enriched']}/{n} ({product_stats['failed']} failed)."
+    )
+
+    # Reconciling funnel so the user can account for every job. Location is the
+    # only filter that REMOVES jobs; the comp filter merely flags below-floor
+    # jobs (still written, marked skipped-comp), hence "flagged" not a drop.
+    Console.info(
+        f"Funnel: {len(all_jobs)} scraped → {pre_filter} new "
+        f"→ {pre_filter - filtered} after location "
+        f"→ {len(typed_jobs)} {'ready' if dry_run else 'to write'} "
+        f"({skipped_below_comp} flagged below comp)."
     )
 
     if dry_run:
@@ -964,10 +974,7 @@ def run(
     # enrichment above so slow LLM calls don't block concurrent prune/backfill.
     with file_lock(lock_path):
         written = append_jobs_typed(csv_path, typed_jobs, header)
-    Console.success(
-        f"Scraper complete: {written} new jobs appended to {csv_path} "
-        f"({skipped_below_comp} skipped below comp threshold)."
-    )
+    Console.success(f"Scraper complete: {written} new jobs appended to {csv_path}.")
 
     run_manifest = {
         "started_at": started_at.isoformat(),
