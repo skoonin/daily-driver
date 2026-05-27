@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -197,25 +197,18 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={"inline_comment": '["senior", "staff", "principal"]'},
     )
-    min_comp_usd: int = Field(default=180000, description="")
+    min_comp_usd: int = Field(
+        default=180000,
+        description=(
+            "Pay floor, compared directly against each listing's own comp figure\n"
+            "with no currency conversion. Jobs whose found comp is below it are\n"
+            "kept but marked `skipped-comp`; jobs with no listed comp are surfaced."
+        ),
+    )
     locations: Locations | None = Field(
         default=None,
         description="",
         json_schema_extra={"template_example_model": True},
-    )
-    primary_currency: Literal["USD", "CAD", "EUR", "GBP"] | None = Field(
-        default=None,
-        description=(
-            "primary_currency lives on `job_search`, NOT on `scraper`. When set,\n"
-            "drops scraped jobs whose parsed comp currency doesn't match.\n"
-            "Unparseable comp passes through. Unset = no filter. Decoupled from\n"
-            "`min_comp_usd` (that drives the user's pay-floor input; this prunes\n"
-            "the input stream by source-currency)."
-        ),
-        json_schema_extra={
-            "template_example": "USD",
-            "inline_comment": "USD | CAD | EUR | GBP",
-        },
     )
     scraper: ScraperConfig = Field(
         default=ScraperConfig(),

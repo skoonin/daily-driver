@@ -36,28 +36,23 @@ from pydantic import (
 class JobStatus(str, Enum):
     FOUND = "found"
     SKIPPED = "skipped"
+    SKIPPED_COMP = "skipped-comp"
     APPLIED = "applied"
     REJECTED = "rejected"
     DROPPED = "dropped"
 
 
+# Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
+# passes (fit/notes/product). skipped-comp belongs here: below-floor jobs are
+# kept for visibility, not worth spending enrichment calls on.
+ENRICH_SKIP_STATUSES: frozenset[str] = frozenset(
+    {JobStatus.SKIPPED.value, JobStatus.SKIPPED_COMP.value}
+)
+
+
 CompPeriod = Literal["hour", "month", "year"]
 CurrencyCode = Literal["USD", "CAD", "GBP", "EUR"]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
-
-_FX_TABLE: dict[CurrencyCode, float] = {
-    "USD": 1.0,
-    "CAD": 0.73,
-    "GBP": 1.26,
-    "EUR": 1.09,
-}
-
-
-def _fx(currency: CurrencyCode | None) -> float:
-    if currency is None:
-        return 1.0
-    return _FX_TABLE.get(currency, 1.0)
 
 
 _COMP_SYMBOL_TO_CURRENCY: dict[str, CurrencyCode] = {
@@ -134,26 +129,21 @@ class Comp(BaseModel):
     def is_known(self) -> bool:
         return self.min_native is not None or self.max_native is not None
 
-    @property
-    def min_usd(self) -> int | None:
-        if self.min_native is None:
-            return None
-        return int(self.min_native * _fx(self.currency))
+    def meets_threshold(self, threshold: int) -> tuple[bool, str]:
+        """Compare the listing's own comp figure to the floor — no FX conversion.
 
-    @property
-    def max_usd(self) -> int | None:
+        Fails open on unknown comp (``max_native is None``) so unpriced jobs are
+        surfaced rather than dropped. Currency is intentionally ignored: the goal
+        is detecting whether the posting names a too-low number, not normalizing
+        currencies into a common unit.
+        """
         if self.max_native is None:
-            return None
-        return int(self.max_native * _fx(self.currency))
-
-    def meets_threshold(self, threshold_usd: int) -> tuple[bool, str]:
-        if self.max_usd is None:
             return True, ""
-        if self.max_usd >= threshold_usd:
+        if self.max_native >= threshold:
             return True, ""
         return (
             False,
-            f"below comp threshold (max ${self.max_usd:,} < ${threshold_usd:,})",
+            f"below comp threshold (max {self.max_native:,} < {threshold:,})",
         )
 
     def __str__(self) -> str:
@@ -404,7 +394,10 @@ class EnrichedJob(BaseModel):
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
-        if self.status is JobStatus.SKIPPED and self.skip_reason:
+        if (
+            self.status in (JobStatus.SKIPPED, JobStatus.SKIPPED_COMP)
+            and self.skip_reason
+        ):
             notes = (
                 f"{self.notes} | {self.skip_reason}".strip(" |")
                 if self.notes

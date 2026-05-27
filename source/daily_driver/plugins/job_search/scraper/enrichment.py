@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
+from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
 from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
 from daily_driver.plugins.job_search.scraper.sources._http import (
     Session,
@@ -512,7 +513,8 @@ def _enrich_fit_and_notes_parallel(
     eligible = [
         j
         for j in jobs
-        if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+        if j.get("status") not in ENRICH_SKIP_STATUSES
+        and not (j.get("fit") and j.get("notes"))
     ]
     targets = eligible[:budget]
     if len(eligible) > budget:
@@ -657,12 +659,13 @@ def enrich_fit_and_notes(
     eligible_count = sum(
         1
         for j in jobs
-        if j.get("status") != "skipped" and not (j.get("fit") and j.get("notes"))
+        if j.get("status") not in ENRICH_SKIP_STATUSES
+        and not (j.get("fit") and j.get("notes"))
     )
     no_desc = sum(
         1
         for j in jobs
-        if j.get("status") != "skipped"
+        if j.get("status") not in ENRICH_SKIP_STATUSES
         and not (j.get("fit") and j.get("notes"))
         and not (j.get("description_text") or "").strip()
     )
@@ -701,7 +704,7 @@ def enrich_fit_and_notes(
 
     calls_made = 0
     for idx, job in enumerate(jobs):
-        if job.get("status") == "skipped":
+        if job.get("status") in ENRICH_SKIP_STATUSES:
             continue
         if job.get("fit") and job.get("notes"):
             continue
@@ -709,7 +712,7 @@ def enrich_fit_and_notes(
             remaining = sum(
                 1
                 for j in jobs[idx:]
-                if j.get("status") != "skipped"
+                if j.get("status") not in ENRICH_SKIP_STATUSES
                 and not (j.get("fit") and j.get("notes"))
             )
             log.warning(
@@ -796,7 +799,7 @@ def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> No
     for job in jobs:
         if job.get("comp"):
             continue
-        if job.get("status") == "skipped":
+        if job.get("status") in ENRICH_SKIP_STATUSES:
             continue
         url = (job.get("url") or "").strip()
         if not url:
