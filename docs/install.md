@@ -35,7 +35,10 @@ make test
 playwright install firefox
 ```
 
-The scraper logs a warning and skips Playwright-only sources when unavailable. All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, JobSpy) keep working.
+When a Playwright source (Apple) is enabled in config, `daily-driver doctor`
+flags the missing browser as a WARNING on macOS, and `daily-driver doctor --fix`
+installs it for you. All other sources (Greenhouse, RemoteOK, WWR, HN Who's
+Hiring, HN YC-funded jobs, JobSpy) keep working without Playwright.
 
 ## Next
 

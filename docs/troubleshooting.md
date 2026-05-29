@@ -43,7 +43,9 @@ and agents.
 ## `jobs` fails on Apple (or another Playwright source)
 
 The Apple careers scraper (and any user-added source with `type: playwright`)
-needs Playwright browsers. Install them:
+needs Playwright browsers. On macOS, `daily-driver doctor` flags the missing
+browser when a Playwright source is enabled, and `doctor --fix` installs it.
+Or install directly:
 
 ```bash
 playwright install firefox

@@ -84,6 +84,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.fix:
         from daily_driver.core import generate as generate_mod
+        from daily_driver.core.doctor import _run_fix_actions
 
         results = run_checks(workspace)
         _render_table(results, console)
@@ -101,6 +102,7 @@ def run(args: argparse.Namespace) -> int:
             action = generate_mod.generate(
                 workspace, ignore_drift=True, force_overwrite=False
             )
+        repaired = _run_fix_actions(results)
         results = run_checks(workspace)
 
         if action is not None:
@@ -109,6 +111,8 @@ def run(args: argparse.Namespace) -> int:
                 f"{'s' if action.n_written != 1 else ''} "
                 f"(preserved {action.n_preserved} user-edited)"
             )
+        if repaired:
+            console.print(f"\n[bold]Action:[/bold] ran fixer for {', '.join(repaired)}")
         console.print("\n[bold]After fix:[/bold]")
         _render_table(results, console)
         return 0 if all(r.status in ("OK", "WARNING") for r in results) else 1

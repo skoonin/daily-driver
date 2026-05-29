@@ -327,3 +327,59 @@ def test_reset_overwrites_user_edited_readme(tmp_path: Path) -> None:
     assert (
         restored == original_content
     ), "reset must restore README.md to package content"
+
+
+# ---------------------------------------------------------------------------
+# _run_fix_actions: self-contained plugin fixers
+# ---------------------------------------------------------------------------
+
+
+def test_run_fix_actions_runs_only_failing_fixable_rows() -> None:
+    from daily_driver.core.doctor import _run_fix_actions
+
+    calls: list[str] = []
+    rows = [
+        # OK row with a fixer attached must be skipped on status alone.
+        CheckResult("ok", "OK", "", fix_action=lambda: calls.append("ok")),
+        # Failing row with no fixer must be skipped (nothing to call).
+        CheckResult("nofix", "WARNING", "", fix_action=None),
+        CheckResult(
+            "pw", "WARNING", "", fixable=True, fix_action=lambda: calls.append("pw")
+        ),
+    ]
+
+    repaired = _run_fix_actions(rows)
+
+    assert calls == ["pw"]
+    assert repaired == ["pw"]
+
+
+def test_run_fix_actions_swallows_raising_fixer(caplog) -> None:
+    from daily_driver.core.doctor import _run_fix_actions
+
+    def boom() -> None:
+        raise RuntimeError("install failed")
+
+    rows = [
+        CheckResult("a", "WARNING", "", fixable=True, fix_action=boom),
+        CheckResult("b", "WARNING", "", fixable=True, fix_action=lambda: None),
+    ]
+
+    repaired = _run_fix_actions(rows)
+
+    # A raising fixer must not abort the batch nor land in repaired.
+    assert repaired == ["b"]
+    assert "fix for a failed" in caplog.text
+
+
+def test_run_fix_actions_prefers_stderr_detail(caplog) -> None:
+    from daily_driver.core.doctor import _run_fix_actions
+    from daily_driver.integrations.playwright import PlaywrightError
+
+    def boom() -> None:
+        raise PlaywrightError(1, ["playwright"], stderr="disk full")
+
+    rows = [CheckResult("pw", "WARNING", "", fixable=True, fix_action=boom)]
+
+    assert _run_fix_actions(rows) == []
+    assert "disk full" in caplog.text

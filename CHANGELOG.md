@@ -58,6 +58,7 @@ log`. Versioned release history starts at 1.0.
 
 ### Added
 
+- **`doctor` check for the Playwright Firefox browser**: when a Playwright source (Apple) is enabled, `doctor` warns on macOS if the browser binary is missing (the pip package installs without it, so the source dies at launch), and `doctor --fix` installs it via a new `integrations/playwright.py` wrapper. Plugin doctor checks can now carry a self-contained `fix_action`, run by a generic `_run_fix_actions` dispatch — so `--fix` repairs plugin findings without core importing plugin code.
 - **`.dd-config.yaml.j2` is codegen'd from `core/config_models.py`**: every Pydantic `Field` now carries `description=` + `json_schema_extra` template metadata; `core/config_template.py` walks `Config` and emits the template. `make config-template` regenerates, `make check-config-template` (wired into `lint`) fails on drift, and a pre-commit hook catches stale templates locally.
 - **install-smoke CI**: workspace scaffold step (`init + doctor + tracker add/list`) catches missing package-data regressions; smoke now also runs on direct pushes to `main`.
 - **Scraper tests**: dedicated test modules for `weworkremotely` (RSS) and `apple` (Playwright/JSON API) with committed fixtures under `tests/fixtures/scraper/`.

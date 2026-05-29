@@ -8,7 +8,8 @@ from __future__ import annotations
 import importlib.metadata
 import shutil
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Literal
 
 from daily_driver.core import version_stamp
@@ -29,6 +30,10 @@ class CheckResult:
     detail: str
     fix_hint: str | None = None
     fixable: bool = False  # can --fix attempt a fix?
+    # Optional self-contained repair. Plugin checks attach their own fixer so
+    # --fix can repair them without core importing plugin code. Excluded from
+    # equality so result-list assertions in tests stay value-based.
+    fix_action: Callable[[], None] | None = field(default=None, compare=False)
 
 
 def _check_python_version() -> CheckResult:
@@ -323,6 +328,35 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     return results
 
 
+def _run_fix_actions(results: list[CheckResult]) -> list[str]:
+    """Invoke each failing fixable check's self-contained fixer.
+
+    Plugin checks attach a `fix_action` (e.g. install the Playwright browser);
+    this runs them for rows that are not already OK. Returns the names of
+    checks whose fixer completed without raising, so callers can report what
+    was repaired.
+    """
+    from daily_driver.core.logging import get_logger
+
+    log = get_logger(__name__)
+    repaired: list[str] = []
+    for r in results:
+        if r.fix_action is None or r.status == "OK":
+            continue
+        try:
+            r.fix_action()
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - any fixer error must not abort the batch
+            # str(exc) is terse (e.g. "playwright exited 1"); stderr carries the
+            # subprocess detail when the error type defines it.
+            detail = getattr(exc, "stderr", "") or str(exc)
+            log.warning("fix for %s failed: %s", r.name, detail)
+            continue
+        repaired.append(r.name)
+    return repaired
+
+
 def fix(
     results: list[CheckResult], workspace: Workspace | None = None
 ) -> list[CheckResult]:
@@ -344,6 +378,8 @@ def fix(
         for r in results
     ):
         generate(workspace, ignore_drift=True, force_overwrite=False)
+
+    _run_fix_actions(results)
 
     return run_checks(workspace)
 
