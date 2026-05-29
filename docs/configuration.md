@@ -87,6 +87,7 @@ workspaces need no migration.
 | `enrichment.model` | string or null | null | Provider-specific identifier |
 | `summary.provider` | `claude` \| `ollama` | `claude` | Used by `summary --range` |
 | `summary.model` | string or null | null | Provider-specific identifier |
+| `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
 | `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
 | `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
 | `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
@@ -94,6 +95,10 @@ workspaces need no migration.
 Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
 `haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,
 `llama3.2:3b`). `null` lets each provider pick its own default.
+
+`max_parallel` raises enrichment throughput only — it does not change the
+`plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many
+jobs get enriched) or the per-call timeout.
 
 See [`docs/ollama-setup.md`](ollama-setup.md) for installation and the
 `doctor` reachability check.

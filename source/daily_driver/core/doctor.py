@@ -8,7 +8,8 @@ from __future__ import annotations
 import importlib.metadata
 import shutil
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Literal
 
 from daily_driver.core import version_stamp
@@ -28,7 +29,11 @@ class CheckResult:
     status: Status
     detail: str
     fix_hint: str | None = None
-    fixable: bool = False  # can --fix attempt a fix?
+    # A plugin's self-contained repair, run by --fix without core importing
+    # plugin code. Core's own fixes (regenerating drift/contract files) are
+    # dispatched directly in fix(); they need no callable. Excluded from
+    # equality so result-list assertions in tests stay value-based.
+    plugin_fixer: Callable[[], None] | None = field(default=None, compare=False)
 
 
 def _check_python_version() -> CheckResult:
@@ -91,7 +96,6 @@ def _check_optional_clis() -> list[CheckResult]:
                     status="WARNING",
                     detail=f"{cmd} not found on PATH",
                     fix_hint=hint,
-                    fixable=False,
                 )
             )
     return results
@@ -111,7 +115,6 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
             status="WARNING",
             detail=f"{n} managed file(s) missing from disk: {preview}",
             fix_hint="Run: daily-driver doctor --fix",
-            fixable=True,
         )
     if version_drifted:
         return CheckResult(
@@ -119,7 +122,6 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
             status="WARNING",
             detail=f"workspace at {workspace.root} needs regeneration",
             fix_hint="Run: daily-driver doctor --fix",
-            fixable=True,
         )
     return CheckResult(
         name="Workspace drift",
@@ -151,7 +153,6 @@ def _check_daily_state_writable(workspace: Workspace) -> CheckResult:
             status="ERROR",
             detail=f"{daily_dir} is not writable: {exc}",
             fix_hint=f"Check filesystem permissions on {daily_dir}",
-            fixable=False,
         )
     return CheckResult(
         name="Daily-state writable",
@@ -181,7 +182,6 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
                 status="ERROR",
                 detail=v.detail,
                 fix_hint="Run: daily-driver doctor --fix",
-                fixable=True,
             )
         )
     return results
@@ -227,7 +227,6 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             status="WARNING",
             detail=f".dd-config.yaml failed to parse: {cfg}",
             fix_hint="Fix the YAML / schema in .dd-config.yaml.",
-            fixable=False,
         )
 
     ai_cfg = cfg.ai
@@ -254,7 +253,6 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             status="WARNING",
             detail=f"ollama at {endpoint} not reachable ({summary})",
             fix_hint="Start the server: ollama serve",
-            fixable=False,
         )
     except Exception as exc:  # noqa: BLE001
         return CheckResult(
@@ -262,7 +260,6 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             status="WARNING",
             detail=f"ollama at {endpoint} returned an error: {exc}",
             fix_hint="Verify `ollama serve` is healthy on the configured endpoint.",
-            fixable=False,
         )
 
     missing = [(t, m) for t, m in ollama_tasks if m not in pulled]
@@ -274,7 +271,6 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             status="WARNING",
             detail=f"ollama reachable at {endpoint}; model(s) not pulled: {miss_str}",
             fix_hint=f"Pull the model: ollama pull {first_missing_model}",
-            fixable=False,
         )
     return CheckResult(
         name="AI providers",
@@ -323,10 +319,39 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     return results
 
 
+def _run_plugin_fixers(results: list[CheckResult]) -> list[str]:
+    """Invoke each failing check's plugin-supplied fixer.
+
+    Plugin checks attach a `plugin_fixer` (e.g. install the Playwright browser);
+    this runs them for rows that are not already OK. Returns the names of
+    checks whose fixer completed without raising, so callers can report what
+    was repaired.
+    """
+    from daily_driver.core.logging import get_logger
+
+    log = get_logger(__name__)
+    repaired: list[str] = []
+    for r in results:
+        if r.plugin_fixer is None or r.status == "OK":
+            continue
+        try:
+            r.plugin_fixer()
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - any fixer error must not abort the batch
+            # str(exc) is terse (e.g. "playwright exited 1"); stderr carries the
+            # subprocess detail when the error type defines it.
+            detail = getattr(exc, "stderr", "") or str(exc)
+            log.warning("fix for %s failed: %s", r.name, detail)
+            continue
+        repaired.append(r.name)
+    return repaired
+
+
 def fix(
     results: list[CheckResult], workspace: Workspace | None = None
 ) -> list[CheckResult]:
-    """Attempt to fix all fixable failing checks. Return post-fix re-run results.
+    """Attempt to repair failing checks. Return post-fix re-run results.
 
     User-edited package-managed files are preserved; only missing or drifted
     (unedited) files are overwritten. Use reset() to unconditionally overwrite.
@@ -338,12 +363,13 @@ def fix(
     from daily_driver.core.generate import generate
 
     if workspace is not None and any(
-        r.fixable
-        and r.status != "OK"
+        r.status != "OK"
         and (r.name == "Workspace drift" or r.name.startswith("contract:"))
         for r in results
     ):
         generate(workspace, ignore_drift=True, force_overwrite=False)
+
+    _run_plugin_fixers(results)
 
     return run_checks(workspace)
 
