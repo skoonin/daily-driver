@@ -26,12 +26,18 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 
-def _ollama_pool_size(config: dict[str, Any] | None) -> int:
-    """Worker count for Ollama-backed enrichment; 1 forces serial."""
+def _enrich_pool_size(config: dict[str, Any] | None) -> int:
+    """Worker count for enrichment, keyed off the active provider; 1 = serial.
+
+    Each provider carries its own max_parallel: ollama is bounded by local RAM,
+    claude by API rate limits. Parallelism only raises throughput — it does not
+    change the max_enrich_* budget (which still caps how many jobs are enriched)
+    or the per-call timeout.
+    """
     ai_cfg = ai_provider.resolve_ai_config(config)
-    if ai_cfg.enrichment.provider != "ollama":
-        return 1
-    return max(1, ai_cfg.ollama.max_parallel)
+    if ai_cfg.enrichment.provider == "ollama":
+        return max(1, ai_cfg.ollama.max_parallel)
+    return max(1, ai_cfg.claude.max_parallel)
 
 
 def _enrich_tag(prefix: str) -> str:
@@ -174,7 +180,7 @@ def _enrich_company_descriptions_parallel(
     stats: dict[str, int],
     timeout: int,
 ) -> dict[str, int]:
-    """Parallel ollama path for enrich_company_descriptions."""
+    """Parallel path for enrich_company_descriptions (claude or ollama)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     companies = list(unique_companies)[:budget]
@@ -274,7 +280,7 @@ def enrich_company_descriptions(
         for job in jobs
         if not job.get("product") and job.get("company", "").strip()
     }
-    pool_size = _ollama_pool_size(config)
+    pool_size = _enrich_pool_size(config)
     log.info(
         "[enrich] enriching up to %d companies (%d unique%s)...",
         budget,
@@ -511,7 +517,7 @@ def _enrich_fit_and_notes_parallel(
     stats: dict[str, int],
     timeout: int,
 ) -> dict[str, int]:
-    """Parallel ollama path for enrich_fit_and_notes."""
+    """Parallel path for enrich_fit_and_notes (claude or ollama)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     eligible = [
@@ -659,7 +665,7 @@ def enrich_fit_and_notes(
     role_persona = persona(config)
     hc = home_city(config)
 
-    pool_size = _ollama_pool_size(config)
+    pool_size = _enrich_pool_size(config)
     eligible_count = sum(
         1
         for j in jobs

@@ -19,7 +19,13 @@ from daily_driver.plugins.job_search.scraper import enrichment
 
 
 def _config() -> dict:
-    return {"job_search": {"enrichment": {"enrich_timeout": 5}}}
+    # max_parallel=1 keeps enrichment on the main thread so the warning carries
+    # the "[enrich]" tag (not "[enrich wN]"); these tests assert log content,
+    # not concurrency — the worker-tag path is covered in test_enrichment_parallel.
+    return {
+        "ai": {"claude": {"max_parallel": 1}},
+        "job_search": {"enrichment": {"enrich_timeout": 5}},
+    }
 
 
 def test_company_descriptions_warning_includes_stdout(caplog) -> None:

@@ -1,8 +1,8 @@
-"""Parallelism tests for Ollama-backed enrichment.
+"""Parallelism tests for enrichment thread-pool fan-out.
 
-These tests cover the thread-pool fan-out introduced for the ollama
-provider. The claude path stays serial — see test_claude_path_stays_serial
-for the regression guard.
+Both providers fan out under their own max_parallel knob: ollama via
+ai.ollama.max_parallel, claude via ai.claude.max_parallel. A provider stays
+serial only when its max_parallel is 1.
 """
 
 from __future__ import annotations
@@ -36,9 +36,12 @@ def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> dict:
     }
 
 
-def _claude_config(*, budget: int = 10) -> dict:
+def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> dict:
     return {
-        "ai": {"enrichment": {"provider": "claude"}},
+        "ai": {
+            "enrichment": {"provider": "claude"},
+            "claude": {"max_parallel": max_parallel},
+        },
         "job_search": {
             "enrichment": {
                 "max_enrich_companies": budget,
@@ -69,8 +72,25 @@ def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     assert all(j["product"] == "Some product" for j in jobs)
 
 
-def test_claude_path_stays_serial(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Claude provider must never route through the thread pool."""
+def test_claude_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claude must fan out through the pool when claude.max_parallel > 1."""
+    barrier = threading.Barrier(parties=2, timeout=2.0)
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        barrier.wait()
+        return "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [_job(f"Co{i}") for i in range(4)]
+    enrichment.enrich_company_descriptions(jobs, _claude_config(max_parallel=4))
+
+    assert all(j["product"] == "Some product" for j in jobs)
+
+
+def test_claude_path_serial_when_max_parallel_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """max_parallel=1 keeps claude on the main thread (no pool)."""
     thread_names: list[str] = []
 
     def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
@@ -78,9 +98,8 @@ def test_claude_path_stays_serial(monkeypatch: pytest.MonkeyPatch) -> None:
         return "Some product"
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
-    monkeypatch.setattr(enrichment.shutil, "which", lambda _name: "/usr/bin/claude")
     jobs = [_job(f"Co{i}") for i in range(4)]
-    enrichment.enrich_company_descriptions(jobs, _claude_config())
+    enrichment.enrich_company_descriptions(jobs, _claude_config(max_parallel=1))
 
     assert thread_names, "expected at least one invoke_for call"
     assert all(

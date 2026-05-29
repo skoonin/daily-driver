@@ -272,6 +272,25 @@ class OllamaConfig(BaseModel):
     )
 
 
+class ClaudeProviderConfig(BaseModel):
+    """Settings consulted when a task is routed to the claude provider.
+
+    Distinct from ClaudeConfig (top-level `claude:` session behavior) — this is
+    the `ai.claude:` block parallel to `ai.ollama:`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_parallel: int = Field(
+        default=4,
+        ge=1,
+        # Kept modest: claude is a rate-limited API reached through a CLI
+        # subprocess per call, so wide fan-out trades throughput for throttling
+        # and process overhead rather than the RAM ceiling ollama hits.
+        description="Worker threads for parallel enrichment. 1 forces serial.",
+    )
+
+
 class AIConfig(BaseModel):
     """Per-task provider routing for headless AI calls.
 
@@ -286,6 +305,10 @@ class AIConfig(BaseModel):
 
     enrichment: AITaskConfig = Field(default=AITaskConfig(), description="")
     summary: AITaskConfig = Field(default=AITaskConfig(), description="")
+    claude: ClaudeProviderConfig = Field(
+        default=ClaudeProviderConfig(),
+        description="Only consulted when a task is routed to the claude provider.",
+    )
     ollama: OllamaConfig = Field(
         default=OllamaConfig(),
         description="Only consulted when a task is routed to the ollama provider.",
