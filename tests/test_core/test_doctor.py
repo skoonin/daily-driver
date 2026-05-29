@@ -108,7 +108,8 @@ def test_claude_cli_warning_when_absent(monkeypatch: pytest.MonkeyPatch) -> None
     claude_result = next((r for r in results if r.name == "cli:claude"), None)
     assert claude_result is not None
     assert claude_result.status == "WARNING"
-    assert claude_result.fixable is False
+    # Not auto-fixable: carries a manual hint, no plugin fixer.
+    assert claude_result.plugin_fixer is None
 
 
 def test_claude_cli_ok_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -139,7 +140,6 @@ def test_workspace_drift_warning_when_no_stamp(tmp_path: Path) -> None:
     drift = next((r for r in results if r.name == "Workspace drift"), None)
     assert drift is not None
     assert drift.status == "WARNING"
-    assert drift.fixable is True
     assert "doctor --fix" in (drift.fix_hint or "")
 
 
@@ -330,56 +330,54 @@ def test_reset_overwrites_user_edited_readme(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# _run_fix_actions: self-contained plugin fixers
+# _run_plugin_fixers: plugin-supplied fixers
 # ---------------------------------------------------------------------------
 
 
-def test_run_fix_actions_runs_only_failing_fixable_rows() -> None:
-    from daily_driver.core.doctor import _run_fix_actions
+def test_run_plugin_fixers_runs_only_failing_rows_with_a_fixer() -> None:
+    from daily_driver.core.doctor import _run_plugin_fixers
 
     calls: list[str] = []
     rows = [
         # OK row with a fixer attached must be skipped on status alone.
-        CheckResult("ok", "OK", "", fix_action=lambda: calls.append("ok")),
+        CheckResult("ok", "OK", "", plugin_fixer=lambda: calls.append("ok")),
         # Failing row with no fixer must be skipped (nothing to call).
-        CheckResult("nofix", "WARNING", "", fix_action=None),
-        CheckResult(
-            "pw", "WARNING", "", fixable=True, fix_action=lambda: calls.append("pw")
-        ),
+        CheckResult("nofix", "WARNING", "", plugin_fixer=None),
+        CheckResult("pw", "WARNING", "", plugin_fixer=lambda: calls.append("pw")),
     ]
 
-    repaired = _run_fix_actions(rows)
+    repaired = _run_plugin_fixers(rows)
 
     assert calls == ["pw"]
     assert repaired == ["pw"]
 
 
-def test_run_fix_actions_swallows_raising_fixer(caplog) -> None:
-    from daily_driver.core.doctor import _run_fix_actions
+def test_run_plugin_fixers_swallows_raising_fixer(caplog) -> None:
+    from daily_driver.core.doctor import _run_plugin_fixers
 
     def boom() -> None:
         raise RuntimeError("install failed")
 
     rows = [
-        CheckResult("a", "WARNING", "", fixable=True, fix_action=boom),
-        CheckResult("b", "WARNING", "", fixable=True, fix_action=lambda: None),
+        CheckResult("a", "WARNING", "", plugin_fixer=boom),
+        CheckResult("b", "WARNING", "", plugin_fixer=lambda: None),
     ]
 
-    repaired = _run_fix_actions(rows)
+    repaired = _run_plugin_fixers(rows)
 
     # A raising fixer must not abort the batch nor land in repaired.
     assert repaired == ["b"]
     assert "fix for a failed" in caplog.text
 
 
-def test_run_fix_actions_prefers_stderr_detail(caplog) -> None:
-    from daily_driver.core.doctor import _run_fix_actions
+def test_run_plugin_fixers_prefers_stderr_detail(caplog) -> None:
+    from daily_driver.core.doctor import _run_plugin_fixers
     from daily_driver.integrations.playwright import PlaywrightError
 
     def boom() -> None:
         raise PlaywrightError(1, ["playwright"], stderr="disk full")
 
-    rows = [CheckResult("pw", "WARNING", "", fixable=True, fix_action=boom)]
+    rows = [CheckResult("pw", "WARNING", "", plugin_fixer=boom)]
 
-    assert _run_fix_actions(rows) == []
+    assert _run_plugin_fixers(rows) == []
     assert "disk full" in caplog.text

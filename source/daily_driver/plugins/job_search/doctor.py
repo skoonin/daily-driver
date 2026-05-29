@@ -46,7 +46,6 @@ def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
             f"Delete old snapshots: rm {backups_dir}/jobs.csv.bak.* "
             f"(then re-create the most recent if you want a rollback point)"
         ),
-        fixable=False,
     )
 
 
@@ -97,8 +96,7 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
             f"will fail at launch"
         ),
         fix_hint="Run: daily-driver doctor --fix (or: playwright install firefox)",
-        fixable=True,
-        fix_action=pw.install_firefox,
+        plugin_fixer=pw.install_firefox,
     )
 
 

@@ -54,7 +54,7 @@ def test_accumulated_backups_warns(tmp_path: Path) -> None:
     row = results[0]
     assert row.name == "Jobs backups"
     assert row.status == "WARNING"
-    assert not row.fixable
+    assert row.plugin_fixer is None
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +103,5 @@ def test_playwright_check_warns_with_fixer_when_missing(monkeypatch):
     assert row is not None
     assert row.name == "Playwright browser"
     assert row.status == "WARNING"
-    assert row.fixable is True
-    assert row.fix_action is pw.install_firefox
+    assert row.plugin_fixer is pw.install_firefox
     assert "apple" in row.detail

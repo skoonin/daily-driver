@@ -84,16 +84,15 @@ def run(args: argparse.Namespace) -> int:
 
     if args.fix:
         from daily_driver.core import generate as generate_mod
-        from daily_driver.core.doctor import _run_fix_actions
+        from daily_driver.core.doctor import _run_plugin_fixers
 
         results = run_checks(workspace)
         _render_table(results, console)
 
-        # Mirror core.doctor.fix(): only run generate when a fixable drift /
+        # Mirror core.doctor.fix(): only run generate when a drift /
         # contract violation is present.
         needs_gen = any(
-            r.fixable
-            and r.status != "OK"
+            r.status != "OK"
             and (r.name == "Workspace drift" or r.name.startswith("contract:"))
             for r in results
         )
@@ -102,7 +101,7 @@ def run(args: argparse.Namespace) -> int:
             action = generate_mod.generate(
                 workspace, ignore_drift=True, force_overwrite=False
             )
-        repaired = _run_fix_actions(results)
+        repaired = _run_plugin_fixers(results)
         results = run_checks(workspace)
 
         if action is not None:
