@@ -361,12 +361,24 @@ def test_update_note_appends_not_replaces(workspace: Workspace) -> None:
     ],
 )
 def test_list_since_filters_by_updated_at(
-    workspace: Workspace, spec: str, expected_titles: set[str]
+    workspace: Workspace,
+    spec: str,
+    expected_titles: set[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """--since uses parse_since grammar; filters on updated_at >= parsed date."""
     from datetime import datetime, timedelta, timezone
 
+    from daily_driver.core import clock
     from daily_driver.core.tracker import Tracker
+
+    # Freeze mid-month so the calendar-period "month" spec (start-of-month to
+    # today) is deterministic: near month start a 5-day-old entry would fall in
+    # the previous month and the assertion would flake.
+    monkeypatch.setattr(
+        clock, "FROZEN_TIME", datetime(2026, 6, 15, 12, tzinfo=timezone.utc)
+    )
+    now = clock.now()
 
     tracker = Tracker(workspace)
     tracker.add(category="task", title="recent")
@@ -375,7 +387,6 @@ def test_list_since_filters_by_updated_at(
 
     # Backdate two entries by mutating the YAML directly via tracker.save.
     state = tracker.load()
-    now = datetime.now(timezone.utc)
     for entry in state.entries:
         if entry.title == "five-days-ago":
             entry.updated_at = now - timedelta(days=5)

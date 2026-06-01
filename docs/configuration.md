@@ -204,6 +204,8 @@ Transport / retry knobs shared by every source.
 
 Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, fit, notes).
 
+The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
+
 | Key | Type | Default |
 |-----|------|---------|
 | `enrich_timeout` | int | 30 |
@@ -213,6 +215,34 @@ Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichm
 | `enrich_notes` | bool | true |
 | `max_enrich_fit` | int | 50 |
 | `detail_delay_seconds` | float | 0.5 |
+| `criteria` | list of `{label, assess}` | `[]` |
+
+#### `criteria` — the criteria scanner
+
+A list of extra things to assess in each job description. The scanner rides
+the existing fit/notes enrichment call (no additional LLM requests): each
+criterion adds one instruction to that prompt, and a meaningful answer is
+appended to the job's **Notes** column as a `Label: value` segment.
+
+| Key | Type | Notes |
+|-----|------|-------|
+| `label` | string | Column-style prefix shown in Notes (e.g. `Sponsorship`) |
+| `assess` | string | Natural-language instruction the LLM reasons about, not a keyword match — so negation and polarity survive ("Does the role offer visa sponsorship?") |
+
+The scanner is quiet by default: when the description is silent on a
+criterion, the LLM answers `unknown` and nothing is appended. So a job with
+`notes: "Kubernetes shop"` and a meaningful sponsorship answer becomes
+`Kubernetes shop | Sponsorship: Yes, H-1B`; a job that says nothing about
+sponsorship keeps `Kubernetes shop` unchanged.
+
+```yaml
+enrichment:
+  criteria:
+    - label: Sponsorship
+      assess: Does the role offer visa sponsorship?
+    - label: Clearance
+      assess: Is a US security clearance required?
+```
 
 ### `sources` (`dict[str, SourceToggle]`)
 
@@ -300,6 +330,9 @@ plugins:
     enrichment:
       enrich_fit: true
       enrich_notes: true
+      criteria:
+        - label: Sponsorship
+          assess: Does the role offer visa sponsorship?
     sources:
       greenhouse:
         enabled: true

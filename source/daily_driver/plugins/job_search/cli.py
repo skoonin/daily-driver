@@ -147,6 +147,13 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         "job_search": plugins.job_search.model_dump(exclude_none=True, mode="json"),
         "ai": workspace.config.ai.model_dump(mode="json"),
     }
+    # context.md, when present, rides every fit/notes enrichment prompt so the
+    # fit score reflects the candidate's real background (see enrich_fit_and_notes).
+    context_path = workspace.root / "context.md"
+    if context_path.is_file():
+        context_text = context_path.read_text(encoding="utf-8").strip()
+        if context_text:
+            config["context"] = context_text
     output_dir = workspace.output_dir
     csv_path = output_dir / "jobs.csv"
 
