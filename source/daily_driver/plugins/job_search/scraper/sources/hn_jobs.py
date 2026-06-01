@@ -88,10 +88,8 @@ def scrape_hn_jobs(ctx: ScrapeContext) -> list[dict]:
     number returned (same knob as `hn_who_is_hiring`).
     """
     from daily_driver.plugins.job_search.config import HackerNewsToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
-        matches_roles,
-        source_toggle,
-    )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
     max_posts = source_toggle(ctx.plugin, "hn_jobs", HackerNewsToggle).hn_max_posts
     roles = list(ctx.plugin.roles)

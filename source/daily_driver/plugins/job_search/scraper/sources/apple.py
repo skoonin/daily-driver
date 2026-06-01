@@ -31,11 +31,11 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
 
     Iterates each configured country's locale x search term.
     """
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.roles import (
         _search_terms,
-        countries_list,
         matches_roles,
     )
+    from daily_driver.plugins.job_search.scraper.runner import countries_list
 
     cfg = ctx.plugin.scraper
     roles = list(ctx.plugin.roles)

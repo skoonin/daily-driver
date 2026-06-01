@@ -9,10 +9,10 @@ Covers the filter path that decides which scraped jobs survive to the CSV:
 from __future__ import annotations
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.roles import matches_roles
 from daily_driver.plugins.job_search.scraper.runner import (
     dedup_key,
     location_matches,
-    matches_roles,
 )
 from daily_driver.plugins.job_search.scraper.sources._http import (
     country_names,

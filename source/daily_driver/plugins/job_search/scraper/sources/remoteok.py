@@ -23,7 +23,7 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     GET https://remoteok.com/api returns all current listings as JSON.
     No auth or browser required. We filter client-side with matches_roles().
     """
-    from daily_driver.plugins.job_search.scraper.runner import matches_roles
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
     roles = list(ctx.plugin.roles)
     session = _http_session(ctx)

@@ -156,10 +156,12 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     JobSpy handles its own HTTP session and returns a pandas DataFrame.
     """
     from daily_driver.plugins.job_search.config import JobspyToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.roles import (
         _search_terms,
-        countries_list,
         matches_roles,
+    )
+    from daily_driver.plugins.job_search.scraper.runner import (
+        countries_list,
         source_toggle,
     )
 

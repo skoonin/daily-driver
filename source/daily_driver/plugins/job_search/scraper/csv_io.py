@@ -268,7 +268,7 @@ def _rewrite_jobs_csv(
 
 def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
-    from daily_driver.plugins.job_search.scraper.enrichment import (
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
         enrich_company_descriptions,
         enrich_fit_and_notes,
     )

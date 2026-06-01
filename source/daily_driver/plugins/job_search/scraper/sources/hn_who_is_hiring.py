@@ -28,10 +28,8 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
     Comment headline format (convention): "Company | Role | Location | ..."
     """
     from daily_driver.plugins.job_search.config import HackerNewsToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
-        matches_roles,
-        source_toggle,
-    )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
     max_posts = source_toggle(
         ctx.plugin, "hn_who_is_hiring", HackerNewsToggle

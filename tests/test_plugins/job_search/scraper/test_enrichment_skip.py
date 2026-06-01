@@ -60,7 +60,7 @@ def test_hn_item_url_is_skipped_without_fetch(
         _job("https://news.ycombinator.com/item?id=48049988"),
     ]
     with patch(
-        "daily_driver.plugins.job_search.scraper.enrichment._api_get"
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
     ) as api_get:
         with caplog.at_level(
             "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
@@ -84,7 +84,7 @@ def test_indeed_url_is_skipped_without_fetch(
         _job("https://uk.indeed.com/viewjob?jk=cafebabe"),
     ]
     with patch(
-        "daily_driver.plugins.job_search.scraper.enrichment._api_get"
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
     ) as api_get:
         with caplog.at_level(
             "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
@@ -106,11 +106,11 @@ def test_other_urls_route_through_api_get(fake_config: ScrapeContext) -> None:
 
     with (
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._api_get",
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get",
             return_value=fake_resp,
         ) as api_get,
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._parse_detail_page",
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._parse_detail_page",
             return_value={},
         ) as parse,
     ):
@@ -130,11 +130,11 @@ def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
 
     with (
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._api_get",
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get",
             return_value=None,
         ),
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._parse_detail_page"
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._parse_detail_page"
         ) as parse,
     ):
         enrich_job_details(jobs, fake_config)
@@ -157,14 +157,14 @@ def test_session_is_reused_across_jobs(fake_config: ScrapeContext) -> None:
 
     with (
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._http_session"
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._http_session"
         ) as build_session,
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._api_get",
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get",
             return_value=fake_resp,
         ) as api_get,
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment._parse_detail_page",
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._parse_detail_page",
             return_value={},
         ),
     ):

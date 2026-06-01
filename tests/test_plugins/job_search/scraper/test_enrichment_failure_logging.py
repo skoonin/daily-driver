@@ -17,7 +17,7 @@ from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper import enrichment
+from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 

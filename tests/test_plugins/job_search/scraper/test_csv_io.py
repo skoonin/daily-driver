@@ -76,11 +76,11 @@ def test_backfill_uses_config_budget_not_maxsize(tmp_path: Path) -> None:
 
     with (
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.enrich_company_descriptions",
+            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_company_descriptions",
             side_effect=_capture_company,
         ),
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.enrich_fit_and_notes",
+            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_fit_and_notes",
             side_effect=_capture_fit,
         ),
     ):
@@ -101,10 +101,10 @@ def test_backfill_skips_enrichment_when_all_rows_filled(tmp_path: Path) -> None:
 
     with (
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.enrich_company_descriptions"
+            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_company_descriptions"
         ) as mock_company,
         patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.enrich_fit_and_notes"
+            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_fit_and_notes"
         ) as mock_fit,
     ):
         backfill(_MINIMAL_CTX, csv_path)

@@ -1,14 +1,11 @@
-"""Claude / detail-page enrichers (company, fit+notes, job details)."""
+"""Claude/LLM enrichers: company descriptions and fit/notes (+criteria fold)."""
 
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import signal
-import sys
-import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -16,85 +13,15 @@ from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 from daily_driver.plugins.job_search.config import Criterion
-from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
-from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
-from daily_driver.plugins.job_search.scraper.sources._http import (
-    Session,
-    _api_get,
-    _http_session,
+from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+    _enrich_pool_size,
+    _enrich_tag,
+    _install_interrupt_notifier,
 )
+from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-
-
-def _enrich_pool_size(ctx: ScrapeContext) -> int:
-    """Worker count for enrichment, keyed off the active provider; 1 = serial.
-
-    Each provider carries its own max_parallel: ollama is bounded by local RAM,
-    claude by API rate limits. Parallelism only raises throughput — it does not
-    change the max_enrich_* budget (which still caps how many jobs are enriched)
-    or the per-call timeout.
-    """
-    ai_cfg = ctx.ai
-    if ai_cfg.enrichment.provider == "ollama":
-        return max(1, ai_cfg.ollama.max_parallel)
-    return max(1, ai_cfg.claude.max_parallel)
-
-
-def _enrich_tag(prefix: str) -> str:
-    """Return [prefix] in main thread, [prefix wN] in a pool worker."""
-    import threading
-
-    name = threading.current_thread().name
-    if name == "MainThread":
-        return f"[{prefix}]"
-    suffix = name.rsplit("_", 1)
-    if len(suffix) == 2 and suffix[1].isdigit():
-        return f"[{prefix} w{suffix[1]}]"
-    return f"[{prefix}]"
-
-
-def _install_interrupt_notifier(
-    futures: dict[Any, Any], timeout_s: int, item: str
-) -> Any:
-    """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
-
-    Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
-    process exits the way it would have without us. Returns the previous
-    handler so the caller can restore it in a finally clause.
-
-    `item` is the user-vocabulary noun ("companies" or "jobs"); `futures`
-    is the live mapping so the message can name how many are in progress.
-    """
-    interrupt_count = [0]
-    previous = signal.getsignal(signal.SIGINT)
-
-    def handler(_signum: int, _frame: Any) -> None:
-        interrupt_count[0] += 1
-        if interrupt_count[0] == 1:
-            in_flight = sum(1 for f in futures if not f.done())
-            print(
-                f"\nStopping — waiting for {in_flight} {item} still being "
-                f"enriched (up to {timeout_s}s each). Press Ctrl-C again "
-                "to quit now and lose what's in progress.",
-                file=sys.stderr,
-                flush=True,
-            )
-            raise KeyboardInterrupt
-        # Second press: hand control back to whatever handler the parent had
-        # before we installed ours, then re-raise the signal. Falls back to
-        # SIG_DFL if `previous` isn't installable (e.g. a non-callable token).
-        try:
-            signal.signal(signal.SIGINT, previous)
-        except (TypeError, ValueError):
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
-        os.kill(os.getpid(), signal.SIGINT)
-
-    signal.signal(signal.SIGINT, handler)
-    return previous
-
 
 log = get_logger(__name__)
 
@@ -884,188 +811,3 @@ def enrich_fit_and_notes(
         stats["skipped_budget"],
     )
     return stats
-
-
-def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
-    """Fetch each job's detail page and populate comp/posted_date in place.
-
-    Caches by URL within the run so jobs that share a detail URL only generate
-    one HTTP request. Skips jobs that already have `comp` set so listing-card
-    sources that already provide salary aren't clobbered. Network/parse errors
-    are swallowed — missing data is the expected outcome for boards that don't
-    expose JSON-LD, not an error worth aborting the run for.
-    """
-    cache: dict[str, dict[str, Any]] = {}
-    cfg = ctx.plugin.enrichment
-    delay = cfg.detail_delay_seconds
-
-    # Hosts whose detail pages we deliberately skip:
-    # - linkedin.com: anonymous detail pages don't emit JSON-LD; JobSpy's
-    #   linkedin_fetch_description already populates description.
-    # - news.ycombinator.com: aggressive 429 rate-limiting on /item?id=*.
-    #   Title-derived data from hn_who_is_hiring / hn_jobs is sufficient.
-    #   A future Algolia /api/v1/items/{id} integration could replace this.
-    # - *.indeed.com: bot-walls bare requests with 403; JobSpy already
-    #   populates description for Indeed listings.
-    hn_skipped_logged = False
-    indeed_skipped_logged = False
-
-    session: Session | None = None
-    fetched_count = 0
-    enriched_count = 0
-    for job in jobs:
-        if job.get("comp"):
-            continue
-        if job.get("status") in ENRICH_SKIP_STATUSES:
-            continue
-        url = (job.get("url") or "").strip()
-        if not url:
-            continue
-        if "linkedin.com" in url:
-            continue
-        if "news.ycombinator.com" in url:
-            if not hn_skipped_logged:
-                log.info(
-                    "[detail] skipping HN detail enrichment "
-                    "(rate-limited; title-derived data only)"
-                )
-                hn_skipped_logged = True
-            continue
-        if "indeed.com" in url:
-            if not indeed_skipped_logged:
-                log.info(
-                    "[detail] skipping Indeed detail enrichment "
-                    "(JobSpy already populates description)"
-                )
-                indeed_skipped_logged = True
-            continue
-
-        if url in cache:
-            details = cache[url]
-        else:
-            if fetched_count > 0 and delay > 0:
-                time.sleep(delay)
-            fetched_count += 1
-            if session is None:
-                session = _http_session(ctx)
-            resp = _api_get(session, url, ctx, label="detail")
-            if resp is None:
-                details = {}
-            else:
-                try:
-                    details = _parse_detail_page(resp.text, url)
-                except ValueError as exc:
-                    # Malformed page data (bad JSON-LD, unexpected shape) is
-                    # non-fatal: missing comp just means the CSV stays blank.
-                    # Programmer errors (AttributeError, TypeError) are
-                    # deliberately NOT caught — those signal real regressions
-                    # in `_parse_detail_page` and must remain visible.
-                    log.warning("[detail] %s: parse failed: %s", url, exc)
-                    details = {}
-            cache[url] = details
-
-        if details.get("comp"):
-            job["comp"] = details["comp"]
-            enriched_count += 1
-        if details.get("posted_date") and not job.get("posted_date"):
-            job["posted_date"] = details["posted_date"]
-        if details.get("description_text") and not job.get("description_text"):
-            job["description_text"] = details["description_text"]
-
-    log.info(
-        "[detail] fetched %d pages, enriched %d of %d jobs",
-        fetched_count,
-        enriched_count,
-        len(jobs),
-    )
-
-
-def enrich_company_descriptions_typed(
-    jobs: list[EnrichedJob],  # noqa: F821
-    ctx: ScrapeContext,
-    *,
-    budget: int = 0,
-) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
-    """Typed wrapper around ``enrich_company_descriptions``.
-
-    Round-trips through a working-dict list because the legacy body mutates
-    in place; returns a fresh list of frozen EnrichedJob instances built via
-    ``model_copy(update=...)``.
-    """
-    from daily_driver.plugins.job_search.scraper.csv_io import (
-        _dict_to_enriched_updates,
-        _enriched_to_dict,
-    )
-
-    working = [_enriched_to_dict(j) for j in jobs]
-    stats = enrich_company_descriptions(working, ctx, budget=budget)
-    out = [
-        j.model_copy(update=_dict_to_enriched_updates(d))
-        for j, d in zip(jobs, working, strict=True)
-    ]
-    return out, stats
-
-
-def enrich_fit_and_notes_typed(
-    jobs: list[EnrichedJob],  # noqa: F821
-    ctx: ScrapeContext,
-    *,
-    budget: int = 0,
-) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
-    """Typed wrapper around ``enrich_fit_and_notes``."""
-    from daily_driver.plugins.job_search.scraper.csv_io import (
-        _dict_to_enriched_updates,
-        _enriched_to_dict,
-    )
-
-    working = [_enriched_to_dict(j) for j in jobs]
-    stats = enrich_fit_and_notes(working, ctx, budget=budget)
-    out = [
-        j.model_copy(update=_dict_to_enriched_updates(d))
-        for j, d in zip(jobs, working, strict=True)
-    ]
-    return out, stats
-
-
-def enrich_job_details_typed(
-    jobs: list[EnrichedJob],  # noqa: F821
-    ctx: ScrapeContext,
-) -> list[EnrichedJob]:  # noqa: F821
-    """Typed wrapper around ``enrich_job_details``.
-
-    The legacy ``enrich_job_details`` returns ``None`` and mutates in place;
-    this wrapper produces a fresh list with each job's description_text /
-    posted_date / comp populated where the detail fetch supplied them.
-    """
-    import datetime as dt
-
-    from daily_driver.plugins.job_search.scraper.csv_io import (
-        _dict_to_enriched_updates,
-        _enriched_to_dict,
-    )
-
-    working = [_enriched_to_dict(j) for j in jobs]
-    enrich_job_details(working, ctx)
-    out: list[Any] = []
-    for j, d in zip(jobs, working, strict=True):
-        updates = _dict_to_enriched_updates(d)
-        # Detail enricher may also write posted_date as ISO string.
-        if d.get("posted_date") and isinstance(d["posted_date"], str):
-            try:
-                updates["posted_date"] = dt.date.fromisoformat(d["posted_date"])
-            except ValueError:
-                pass
-        # Comp from JSON-LD comes back via "comp" string; already handled.
-        out.append(j.model_copy(update=updates))
-    return out
-
-
-__all__ = [
-    "_location_summary",
-    "enrich_company_descriptions",
-    "enrich_company_descriptions_typed",
-    "enrich_fit_and_notes",
-    "enrich_fit_and_notes_typed",
-    "enrich_job_details",
-    "enrich_job_details_typed",
-]

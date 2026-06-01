@@ -29,10 +29,8 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     which returns all jobs with full HTML descriptions in a single request.
     """
     from daily_driver.plugins.job_search.config import GreenhouseToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
-        matches_roles,
-        source_toggle,
-    )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
     roles = list(ctx.plugin.roles)
     boards = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle).greenhouse_boards

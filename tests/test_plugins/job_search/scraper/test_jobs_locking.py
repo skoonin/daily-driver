@@ -66,7 +66,7 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
         ],
     )
 
-    from daily_driver.plugins.job_search.scraper import enrichment
+    from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 
     def interrupting_enrich_company(
         jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
@@ -118,7 +118,7 @@ def test_backfill_uses_shared_jobs_lock_path(
         lock_calls.append(path)
         yield
 
-    from daily_driver.plugins.job_search.scraper import enrichment
+    from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 
     def enrich_company(
         jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
