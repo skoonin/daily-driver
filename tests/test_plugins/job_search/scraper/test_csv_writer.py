@@ -6,10 +6,7 @@ import csv
 import datetime as dt
 from pathlib import Path
 
-from daily_driver.plugins.job_search.scraper.csv_io import (
-    append_jobs,
-    append_jobs_typed,
-)
+from daily_driver.plugins.job_search.scraper.csv_io import append_jobs_typed
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
     JobStatus,
@@ -95,32 +92,3 @@ def test_append_jobs_typed_empty_returns_zero(tmp_path: Path) -> None:
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
     assert append_jobs_typed(csv_path, [], CANONICAL_HEADER) == 0
-
-
-def test_typed_and_legacy_writers_produce_same_columns(tmp_path: Path) -> None:
-    """Sanity: both writers fill the same canonical columns."""
-    csv_path1 = tmp_path / "typed.csv"
-    csv_path2 = tmp_path / "dict.csv"
-    for p in (csv_path1, csv_path2):
-        p.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
-
-    j = _enriched(fit=6, notes="x")
-    append_jobs_typed(csv_path1, [j], CANONICAL_HEADER)
-    legacy_dict = {
-        "company": "Acme",
-        "role": "SRE",
-        "url": "https://example.com/j",
-        "source": "remoteok",
-        "location": "Remote",
-        "comp": "$150,000-$200,000",
-        "fit": 6,
-        "notes": "x",
-        "status": "found",
-        "date_found": j.date_found.isoformat(),
-    }
-    append_jobs(csv_path2, [legacy_dict], CANONICAL_HEADER)
-
-    typed_row = _read_rows(csv_path1)[0]
-    legacy_row = _read_rows(csv_path2)[0]
-    for col in ("Company", "Role", "Link", "Source", "Location", "Fit", "Notes"):
-        assert typed_row[col] == legacy_row[col], col

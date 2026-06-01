@@ -117,7 +117,7 @@ run_all_scrapers:
     phase 2 — Playwright sources serial (memory + bot-detection)
     ↓
 merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/JSON-LD)
-    → enrich_fit_and_notes (headless claude, optional) → append_jobs (flock-guarded)
+    → enrich_fit_and_notes (headless claude, optional) → append_jobs_typed (flock-guarded)
 ```
 
 Phase assignment is config-driven: `type: playwright` on a source routes it to phase 2.
@@ -125,20 +125,21 @@ Phase assignment is config-driven: `type: playwright` on a source routes it to p
 ### Scraper interface
 
 ```python
-def scrape_<name>(config: dict) -> list[dict]:
-    """On transient failures (5xx, timeout) log a warning and return
-    an empty or partial list. Do not raise — the orchestrator
-    catches exceptions and marks the source as failed."""
+def scrape_<name>(ctx: ScrapeContext) -> list[dict]:
+    """Read transport/role knobs off ctx.plugin. On transient failures
+    (5xx, timeout) log a warning and return an empty or partial list.
+    Do not raise — the orchestrator catches exceptions and marks the
+    source as failed."""
 ```
 
 Required keys per returned dict: `company`, `role`, `location`, `url`, `source`, `date_found` (ISO). Optional (empty string if absent): `comp`, `notes`, `gd_rating`, `product_purpose`.
 
-Do not normalize in the scraper. `NormalizedJob.from_raw` (via `runner.normalize_typed`) downstream handles lowercasing country codes, stripping trailing slashes, ISO-coercing dates.
+Do not normalize in the scraper. `NormalizedJob.from_raw` downstream handles lowercasing country codes, stripping trailing slashes, ISO-coercing dates.
 
 ### Register
 
 ```python
-SCRAPERS: dict[str, Callable[[dict], list[dict]]] = {
+SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict]]] = {
     ...
     "<name>": scrape_<name>,
 }

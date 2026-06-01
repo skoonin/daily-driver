@@ -11,7 +11,6 @@ from __future__ import annotations
 import datetime as dt
 
 from daily_driver.plugins.job_search.scraper.models import NormalizedJob, RawScrapedJob
-from daily_driver.plugins.job_search.scraper.runner import normalize_typed
 from daily_driver.plugins.job_search.scraper.sources.jobspy import jobspy_row_to_raw
 
 
@@ -35,7 +34,7 @@ def _row(**overrides: object) -> dict[str, object]:
 def test_jobspy_to_normalized_end_to_end() -> None:
     raw = jobspy_row_to_raw(_row())
     assert raw is not None
-    norm = normalize_typed(raw)
+    norm = NormalizedJob.from_raw(raw)
     assert isinstance(norm, NormalizedJob)
     assert norm.company == "Acme"
     assert norm.role == "SRE Engineer"  # remote suffix stripped
@@ -54,17 +53,17 @@ def test_greenhouse_source_split() -> None:
         url="https://example.com/j",
         source="Greenhouse (acme-corp)",
     )
-    norm = normalize_typed(raw)
+    norm = NormalizedJob.from_raw(raw)
     assert norm.source_canonical == "greenhouse"
     assert norm.source_board == "acme-corp"
     # source preserved verbatim for CSV.
     assert norm.source == "Greenhouse (acme-corp)"
 
 
-def test_normalize_typed_is_pure() -> None:
+def test_from_raw_is_pure() -> None:
     raw = RawScrapedJob(company="A", role="R", url="u", source="s", location="LOC")
-    norm1 = normalize_typed(raw)
-    norm2 = normalize_typed(raw)
+    norm1 = NormalizedJob.from_raw(raw)
+    norm2 = NormalizedJob.from_raw(raw)
     assert norm1 == norm2
 
 
@@ -78,7 +77,7 @@ def test_dedup_typed_matches_legacy() -> None:
         url="u",
         source="remoteok",
     )
-    norm = normalize_typed(raw)
+    norm = NormalizedJob.from_raw(raw)
     assert dedup_key_for(norm) == dedup_key("  Acme  Corp ", "Senior  SRE")
     assert dedup_key_for(norm) == "acme corp::senior sre"
 
@@ -86,8 +85,10 @@ def test_dedup_typed_matches_legacy() -> None:
 def test_dedup_typed_collapses_whitespace_and_case() -> None:
     from daily_driver.plugins.job_search.scraper.runner import dedup_key_for
 
-    a = normalize_typed(RawScrapedJob(company="ACME", role="SRE", url="u1", source="s"))
-    b = normalize_typed(
+    a = NormalizedJob.from_raw(
+        RawScrapedJob(company="ACME", role="SRE", url="u1", source="s")
+    )
+    b = NormalizedJob.from_raw(
         RawScrapedJob(company="acme", role="  sre  ", url="u2", source="s")
     )
     assert dedup_key_for(a) == dedup_key_for(b)

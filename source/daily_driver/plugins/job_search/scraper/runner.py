@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import (
         EnrichedJob,
         NormalizedJob,
-        RawScrapedJob,
     )
 
 log = get_logger(__name__)
@@ -208,17 +207,6 @@ _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
 # Role-title suffixes appended by some scrapers to signal remote eligibility.
 # Stripped here so dedup and display see clean titles.
 _REMOTE_ROLE_SUFFIXES: tuple[str, ...] = (" (remote)", "(remote)", " - remote")
-
-
-def normalize_typed(raw: RawScrapedJob) -> NormalizedJob:  # noqa: F821
-    """Typed normalizer: ``RawScrapedJob -> NormalizedJob``.
-
-    Thin re-export of ``NormalizedJob.from_raw`` so callers can stay on
-    ``daily_driver.plugins.job_search.scraper`` without crossing into the model layer directly.
-    """
-    from daily_driver.plugins.job_search.scraper.models import NormalizedJob
-
-    return NormalizedJob.from_raw(raw)
 
 
 def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
@@ -624,7 +612,7 @@ def run_backfill(
     backfill(ctx, csv_path)
 
 
-def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
+def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
     """Render a Rich table summary of dry-run matches."""
     from rich.console import Console
     from rich.table import Table
@@ -648,31 +636,15 @@ def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
     table.add_column("URL", overflow="fold")
     for j in jobs:
         table.add_row(
-            _fix_mojibake(str(j.get("source", ""))),
-            _fix_mojibake(str(j.get("company", ""))),
-            _fix_mojibake(str(j.get("role", ""))),
-            _fix_mojibake(str(j.get("location", ""))),
-            str(j.get("url", "")),
+            _fix_mojibake(j.source),
+            _fix_mojibake(j.company),
+            _fix_mojibake(j.role),
+            _fix_mojibake(j.location),
+            j.url,
         )
     console.print(table)
     console.print(
         f"[dim]{len(jobs)} new jobs (dry-run, nothing written).[/dim]",
-    )
-
-
-def _print_dry_run_table_typed(jobs: list[EnrichedJob]) -> None:  # noqa: F821
-    """Typed dry-run preview: projects each EnrichedJob to the renderer dict."""
-    _print_dry_run_table(
-        [
-            {
-                "source": j.source,
-                "company": j.company,
-                "role": j.role,
-                "location": j.location,
-                "url": j.url,
-            }
-            for j in jobs
-        ]
     )
 
 
@@ -693,7 +665,6 @@ def run(
     """
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
-        _migrate_legacy_header,
         append_jobs_typed,
         load_existing_jobs,
     )
@@ -737,8 +708,6 @@ def run(
             except OSError as exc:
                 log.error("Cannot initialize %s: %s", csv_path, exc)
                 return 1
-        else:
-            header = _migrate_legacy_header(csv_path, header)
 
     log.info(
         "Loaded %d existing URLs, %d existing keys from %s",
@@ -860,7 +829,7 @@ def run(
         Console.success(
             f"Dry-run complete: {len(typed_jobs)} new jobs ready (nothing written)."
         )
-        _print_dry_run_table_typed(typed_jobs)
+        _print_dry_run_table(typed_jobs)
         return 1 if failed_sources else 0
 
     # Re-acquire the sentinel only for the append. The lock was dropped during

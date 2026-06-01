@@ -27,7 +27,6 @@ def test_runner_and_csv_io_load_without_side_effects() -> None:
 
     assert callable(runner.run_all_scrapers)
     assert callable(csv_io.load_existing_jobs)
-    assert callable(runner.normalize_typed)
     assert hasattr(csv_io, "CANONICAL_HEADER")
     assert isinstance(csv_io.CANONICAL_HEADER, list)
 

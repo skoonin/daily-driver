@@ -62,6 +62,7 @@ log`. Versioned release history starts at 1.0.
   currencies are no longer dropped (existing configs with `primary_currency` set
   must remove it — the config model is `extra="forbid"`).
 - **Dead code in scraper module**: deleted `scraper/runner.py` `__all__` block (mis-described public surface), removed `scraper/runner.py:_to_int` duplicate (the surviving copy lives in `scraper/comp.py`), and dropped the parallel `SOURCE_REGISTRY` + `_typed_source` wrapper from `scraper/sources/__init__.py` (its lone consumer in `cli/commands/help.py` now enumerates `SCRAPERS` directly). Tautological `tests/test_scraper/test_source_registry.py` removed.
+- **Legacy CSV scaffolding**: the on-disk `jobs.csv` legacy-header / `archived`-status migration is gone — the current canonical header is now assumed (a non-canonical `jobs.csv` is used as-is rather than rewritten). Also removed the unused dict-based `append_jobs` writer (the typed `append_jobs_typed` is the only writer) and collapsed the two dry-run table renderers into a single typed one.
 
 ### Added
 

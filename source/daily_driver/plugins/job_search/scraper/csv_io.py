@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from daily_driver.core.clock import today
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
@@ -51,8 +50,7 @@ def _make_backup(csv_path: Path) -> Path:
     Filename pattern: jobs.csv.bak.YYYY-MM-DDTHH-MM-SS-ffffffZ. Colons in the
     time portion are replaced with hyphens so the filename is portable across
     filesystems (Windows forbids ':'). Microseconds prevent same-second
-    collisions when two callers (migration + backfill) run back-to-back under
-    the same jobs lock.
+    collisions when backfill writes back-to-back snapshots under the jobs lock.
     """
     backups_dir = csv_path.parent / "backups"
     backups_dir.mkdir(parents=True, exist_ok=True)
@@ -60,51 +58,6 @@ def _make_backup(csv_path: Path) -> Path:
     backup = backups_dir / f"{csv_path.name}.bak.{stamp}"
     shutil.copy2(csv_path, backup)
     return backup
-
-
-def _migrate_legacy_header(csv_path: Path, current_header: list[str]) -> list[str]:
-    """Rewrite jobs.csv to the canonical header + status taxonomy.
-
-    Two on-disk migrations live here:
-      1. legacy '#'-first header  → CANONICAL_HEADER
-      2. legacy Status = 'archived' → 'dropped' (JobStatus rename)
-
-    Creates a backup under <output_dir>/backups/ so the migration is reversible.
-    Idempotent: if the header is already canonical AND no rows still carry the
-    legacy status value, this is a no-op and no backup is written.
-    """
-    needs_header_rewrite = current_header != CANONICAL_HEADER
-
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    rewritten = 0
-    for row in rows:
-        if row.get("Status") == "archived":
-            row["Status"] = "dropped"
-            rewritten += 1
-
-    if not (needs_header_rewrite or rewritten):
-        return CANONICAL_HEADER
-
-    backup = _make_backup(csv_path)
-    log.info("[migrate] jobs.csv backed up to %s", backup.name)
-
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=CANONICAL_HEADER,
-            quoting=csv.QUOTE_MINIMAL,
-            extrasaction="ignore",
-        )
-        writer.writeheader()
-        for row in rows:
-            row.pop("#", None)
-            writer.writerow(row)
-    if needs_header_rewrite:
-        log.info("[migrate] jobs.csv rewritten to new column layout")
-    if rewritten:
-        log.info("[migrate] %d row(s) rewritten: status archived → dropped", rewritten)
-    return CANONICAL_HEADER
 
 
 def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
@@ -153,49 +106,6 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     except OSError as exc:
         raise ScraperError(f"Cannot read {csv_path}: {exc}") from exc
     return known_urls, known_keys, header
-
-
-def append_jobs(csv_path: Path, jobs: list[dict[str, Any]], header: list[str]) -> int:
-    """Append new jobs to CSV. Returns count of rows written.
-
-    Legacy dict-based entry point. Typed callers should use
-    ``append_jobs_typed`` which routes through ``EnrichedJob.to_csv_row()``.
-    """
-    from daily_driver.plugins.job_search.scraper.runner import ScraperError
-
-    if not jobs:
-        return 0
-
-    written = 0
-    try:
-        with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            if sys.platform != "win32":
-                fcntl.flock(f, fcntl.LOCK_EX)
-            writer = csv.DictWriter(
-                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-            )
-            for job in jobs:
-                row = {col: "" for col in header}
-                row["Company"] = job.get("company", "")
-                row["Product/Purpose"] = job.get(
-                    "product", "(auto-scraped -- needs fill)"
-                )
-                row["Role"] = job.get("role", "")
-                row["Comp"] = job.get("comp", "")
-                row["Location"] = job.get("location", "")
-                row["Source"] = job.get("source", "")
-                row["Date Found"] = job.get("date_found", today().isoformat())
-                row["Date Last Seen"] = job.get("date_last_seen", row["Date Found"])
-                row["Status"] = job.get("status") or "found"
-                row["Link"] = job.get("url", "")
-                row["Fit"] = job.get("fit", "")
-                row["GD Rating"] = job.get("gd_rating", "")
-                row["Notes"] = job.get("notes", "")
-                writer.writerow(row)
-                written += 1
-    except OSError as exc:
-        raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
-    return written
 
 
 def append_jobs_typed(
@@ -444,9 +354,7 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
 
 __all__ = [
     "CANONICAL_HEADER",
-    "_migrate_legacy_header",
     "load_existing_jobs",
-    "append_jobs",
     "append_jobs_typed",
     "_CSV_TO_DICT",
     "_DICT_TO_CSV",
