@@ -212,91 +212,83 @@ def _emit_json(payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _render_full(console: Console, payload: dict[str, Any]) -> None:
-    console.print("[bold]daily-driver — reference[/bold]\n")
-
-    console.print("[bold]Commands[/bold] (run `daily-driver <cmd> --help` for flags):")
-    for entry in payload["commands"]:
-        console.print(f"  {entry['name']:<14} {entry['summary']}")
-    console.print("")
-
-    statuses = payload["statuses"]
-    console.print("[bold]Statuses[/bold] (consumers: tracker add/update --status):")
-    console.print(f"  recommended: {', '.join(statuses['recommended'])}")
-    if statuses["in_use"]:
-        console.print(f"  in-use:      {', '.join(statuses['in_use'])}")
-    console.print("")
-
-    cats = payload["categories"]
-    console.print("[bold]Categories[/bold] (consumer: tracker add --category):")
-    if cats.get("note"):
-        console.print(f"  {cats['note']}")
-    else:
-        listed = ", ".join(cats["categories"]) or "(none configured)"
-        console.print(f"  {listed}")
-        if cats.get("default"):
-            console.print(f"  default: {cats['default']}")
-    console.print("")
-
-    srcs = payload["sources"]
-    console.print("[bold]Sources[/bold] (consumer: jobs run --sources):")
-    console.print(f"  {', '.join(srcs['sources'])}")
-    console.print("")
-
-    dates = payload["dates"]
-    console.print("[bold]Dates[/bold] (date-spec grammar):")
-    console.print(f"  tokens:    {', '.join(dates['tokens'])}")
-    console.print(f"  consumers: {', '.join(dates['consumers'])}")
-    console.print("")
-
-    console.print("[bold]Cadences[/bold] (consumer: recurring_tasks[].cadence):")
-    console.print(f"  {', '.join(payload['cadences'])}")
+# Section headers shown only in the full reference (one per topic). The topic
+# view drops these — the topic name is already the user's query.
+_TOPIC_HEADERS = {
+    "commands": "[bold]Commands[/bold] (run `daily-driver <cmd> --help` for flags):",
+    "statuses": "[bold]Statuses[/bold] (consumers: tracker add/update --status):",
+    "categories": "[bold]Categories[/bold] (consumer: tracker add --category):",
+    "sources": "[bold]Sources[/bold] (consumer: jobs run --sources):",
+    "dates": "[bold]Dates[/bold] (date-spec grammar):",
+    "cadences": "[bold]Cadences[/bold] (consumer: recurring_tasks[].cadence):",
+}
 
 
-def _render_topic(console: Console, topic: str, payload: dict[str, Any]) -> None:
+def _render_topic(
+    console: Console, topic: str, payload: dict[str, Any], *, full: bool
+) -> None:
+    """Render one topic. The full reference loops this per topic with a
+    section header and indented body; the standalone topic view drops the
+    header/indent and appends the per-topic `consumers:` line.
+
+    `full` toggles the two presentations so both surfaces share one renderer
+    while preserving their distinct output.
+    """
+    indent = "  " if full else ""
+    if full:
+        console.print(_TOPIC_HEADERS[topic])
+
     if topic == "commands":
         for entry in payload["commands"]:
-            console.print(f"  {entry['name']:<14} {entry['summary']}")
-        return
+            console.print(f"{indent}{entry['name']:<14} {entry['summary']}")
 
-    if topic == "statuses":
+    elif topic == "statuses":
         s = payload["statuses"]
-        console.print(f"recommended: {', '.join(s['recommended'])}")
+        console.print(f"{indent}recommended: {', '.join(s['recommended'])}")
         if s["in_use"]:
-            console.print(f"in-use:      {', '.join(s['in_use'])}")
-        else:
+            console.print(f"{indent}in-use:      {', '.join(s['in_use'])}")
+        elif not full:
             console.print(
                 "in-use:      (no workspace; only recommended statuses shown)"
             )
-        console.print(f"consumers:   {', '.join(s['consumers'])}")
-        return
+        if not full:
+            console.print(f"consumers:   {', '.join(s['consumers'])}")
 
-    if topic == "categories":
+    elif topic == "categories":
         c = payload["categories"]
         if c.get("note"):
-            console.print(c["note"])
+            console.print(f"{indent}{c['note']}")
         else:
-            console.print(", ".join(c["categories"]) or "(none configured)")
+            console.print(
+                f"{indent}{', '.join(c['categories']) or '(none configured)'}"
+            )
             if c.get("default"):
-                console.print(f"default: {c['default']}")
-        console.print(f"consumers: {', '.join(c['consumers'])}")
-        return
+                console.print(f"{indent}default: {c['default']}")
+        if not full:
+            console.print(f"consumers: {', '.join(c['consumers'])}")
 
-    if topic == "sources":
+    elif topic == "sources":
         s = payload["sources"]
-        console.print(", ".join(s["sources"]))
-        console.print(f"consumers: {', '.join(s['consumers'])}")
-        return
+        console.print(f"{indent}{', '.join(s['sources'])}")
+        if not full:
+            console.print(f"consumers: {', '.join(s['consumers'])}")
 
-    if topic == "dates":
+    elif topic == "dates":
         d = payload["dates"]
-        console.print(f"tokens:    {', '.join(d['tokens'])}")
-        console.print(f"consumers: {', '.join(d['consumers'])}")
-        return
+        console.print(f"{indent}tokens:    {', '.join(d['tokens'])}")
+        console.print(f"{indent}consumers: {', '.join(d['consumers'])}")
 
-    if topic == "cadences":
-        console.print(", ".join(payload["cadences"]))
-        return
+    elif topic == "cadences":
+        console.print(f"{indent}{', '.join(payload['cadences'])}")
+
+
+def _render_full(console: Console, payload: dict[str, Any]) -> None:
+    console.print("[bold]daily-driver — reference[/bold]\n")
+    for i, topic in enumerate(_TOPICS):
+        _render_topic(console, topic, payload, full=True)
+        # Blank line between sections, but not after the last.
+        if i != len(_TOPICS) - 1:
+            console.print("")
 
 
 # ---------------------------------------------------------------------------
@@ -328,5 +320,5 @@ def run(args: argparse.Namespace) -> int:
     if topic is None:
         _render_full(console, payload)
     else:
-        _render_topic(console, topic, payload)
+        _render_topic(console, topic, payload, full=False)
     return 0

@@ -275,7 +275,7 @@ def test_day_start_preserves_prior_check_in_in_state(
     earlier = datetime(2026, 5, 8, 7, 30, tzinfo=timezone.utc)
     write_state(
         ws,
-        DailyState(date=today, last_check_in_at=earlier, plan_summary="prior"),
+        DailyState(date=today, last_check_in_at=earlier),
     )
 
     rc = app(["--workspace", str(ws_root), "day-start"])
@@ -284,7 +284,6 @@ def test_day_start_preserves_prior_check_in_in_state(
     after = read_state(ws, today)
     assert after is not None
     assert after.last_check_in_at == earlier
-    assert after.plan_summary == "prior"
     assert after.last_day_start_session_id is not None
 
 
@@ -497,7 +496,6 @@ def test_check_in_records_last_check_in_at_on_success(
         DailyState(
             date=clock.today(),
             last_day_start_session_id=sid,
-            plan_summary="prior",
         ),
     )
 
@@ -508,7 +506,6 @@ def test_check_in_records_last_check_in_at_on_success(
     assert after is not None
     assert after.last_check_in_at is not None
     assert after.last_day_start_session_id == sid
-    assert after.plan_summary == "prior"
 
 
 def test_check_in_skips_state_update_on_nonzero_exit(

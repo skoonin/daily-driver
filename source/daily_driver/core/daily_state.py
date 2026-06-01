@@ -41,7 +41,6 @@ class DailyState(BaseModel):
     last_day_start_session_id: str | None = None
     last_day_start_at: datetime | None = None
     last_check_in_at: datetime | None = None
-    plan_summary: str = ""
     # F4 informational metadata: True when day-start ran more than
     # LATE_DAY_GRACE past the configured schedule.day_start (or after
     # LATE_DAY_FALLBACK_TIME absolute when no schedule is configured).

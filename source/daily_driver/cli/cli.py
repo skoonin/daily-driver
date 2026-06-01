@@ -30,11 +30,8 @@ from daily_driver.plugins import PLUGINS
 # packaging bug, not a graceful-degradation case. Consumed by help.py to
 # walk the command set; keep the 2-tuple shape it unpacks.
 #
-# Plugin commands (PLUGINS) are spliced in at _PLUGIN_INSERT_INDEX so their
-# listing position matches the pre-extraction order rather than landing at the
-# tail.
-_PLUGIN_INSERT_INDEX = 5
-
+# Plugin commands (PLUGINS) are appended after the core commands, so they
+# list last in `--help`.
 _CORE_COMMANDS = [
     ("init", "daily_driver.cli.commands.init"),
     ("doctor", "daily_driver.cli.commands.doctor"),
@@ -54,11 +51,7 @@ _CORE_COMMANDS = [
 
 _PLUGIN_COMMANDS = [(p.command_name, p.command_module) for p in PLUGINS]
 
-_COMMANDS = (
-    _CORE_COMMANDS[:_PLUGIN_INSERT_INDEX]
-    + _PLUGIN_COMMANDS
-    + _CORE_COMMANDS[_PLUGIN_INSERT_INDEX:]
-)
+_COMMANDS = _CORE_COMMANDS + _PLUGIN_COMMANDS
 
 # Top-level `daily-driver --help` summaries, mirroring each module's own
 # add_parser `help=`. Stored alongside (not in) _COMMANDS so the listing

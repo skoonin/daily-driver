@@ -33,8 +33,7 @@ _LABEL_DAY_START = "com.daily-driver.day-start"
 _LABEL_DAY_END = "com.daily-driver.day-end"
 
 # Core (non-plugin) labels swept on uninstall. Plugin-contributed labels are
-# discovered from the jobs build_jobs returns; plugin legacy labels are swept
-# via PLUGINS in install_all / uninstall_all.
+# swept via PLUGINS (Plugin.launchd_labels) in uninstall_all.
 _CORE_LABELS = (_LABEL_CHECKIN, _LABEL_DAY_START, _LABEL_DAY_END)
 
 _TIME_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
@@ -235,13 +234,6 @@ def _plugin_managed_labels() -> tuple[str, ...]:
     return tuple(label for plugin in PLUGINS for label in plugin.launchd_labels)
 
 
-def _plugin_legacy_labels() -> tuple[str, ...]:
-    """Pre-rename launchd labels each plugin asks core to sweep."""
-    from daily_driver.plugins import PLUGINS
-
-    return tuple(label for plugin in PLUGINS for label in plugin.legacy_launchd_labels)
-
-
 def render_plist(job: ScheduledJob) -> str:
     with importlib.resources.as_file(
         importlib.resources.files(job.template_package)
@@ -275,12 +267,6 @@ def install_all(workspace: Workspace) -> list[str]:
 
     jobs = build_jobs(workspace)
     installed: list[str] = []
-
-    # Sweep legacy plists before installing — a previously-loaded plist under
-    # a renamed/relocated label would otherwise keep firing the old argv.
-    for legacy in _plugin_legacy_labels():
-        launchd_int.unload(legacy)
-        launchd_int.remove(legacy)
 
     for job in jobs:
         content = render_plist(job)
@@ -319,7 +305,6 @@ def uninstall_all(workspace: Workspace) -> list[str]:
     for label in (
         *_CORE_LABELS,
         *_plugin_managed_labels(),
-        *_plugin_legacy_labels(),
     ):
         launchd_int.unload(label)
         if launchd_int.remove(label):

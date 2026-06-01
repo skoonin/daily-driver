@@ -33,18 +33,6 @@ def test_duplicate_command_name_rejected() -> None:
         _validate_registry((_plugin(name="a"), _plugin(name="b")))
 
 
-def test_label_in_both_current_and_legacy_rejected() -> None:
-    with pytest.raises(ValueError, match="both"):
-        _validate_registry(
-            (
-                _plugin(
-                    launchd_labels=("com.x.job",),
-                    legacy_launchd_labels=("com.x.job",),
-                ),
-            )
-        )
-
-
 def test_unknown_hook_module_rejected() -> None:
     with pytest.raises(ValueError, match="unknown module"):
         _validate_registry(

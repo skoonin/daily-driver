@@ -184,6 +184,24 @@ def test_help_commands_includes_jobs_search_summary(
     assert "search" in summary or "workflow" in summary
 
 
+def test_help_commands_text_topic_is_unindented(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The text topic view (no --json) lists each command flush-left.
+
+    Guards the single-renderer behavior: the standalone topic view drops the
+    section header/indent the full reference uses, uniformly across all topics.
+    """
+    Workspace.init(tmp_path)
+    rc = app(["--workspace", str(tmp_path), "help", "commands"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    assert lines, "help commands rendered no text"
+    assert any(ln.startswith("init") for ln in lines)
+    assert not any(ln.startswith("  ") for ln in lines)
+
+
 # ---------------------------------------------------------------------------
 # Without a workspace
 # ---------------------------------------------------------------------------

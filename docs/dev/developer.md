@@ -84,22 +84,23 @@ Key invariants:
 
 `core/contract.py` codifies every artifact `daily-driver init` promises to produce. `doctor` runs `contract.check()` and surfaces violations as ERROR. A regression test counts files on disk after `generate(force=True)`, closing the broken-wheel gap that shipped in v0.1.0 (prior to this, an `is_dir()` check passed even when the wheel contained zero `.md` files — users got a workspace with an empty `commands/daily-driver/` directory).
 
-| Path | Kind |
+`check(workspace_root)` returns a list of `ContractViolation`, empty iff the contract holds. The checks are written inline (one caller — `doctor.py` — so a per-kind dispatch table was more indirection than it was worth):
+
+| Path | Check |
 | --- | --- |
-| `.dd-config.yaml` | `parses_config` |
-| `.daily-driver/` | `exists_dir` |
-| `.daily-driver/version` | `exists_file` |
-| `.daily-driver/manifest.json` | `json_valid` |
-| `.claude/settings.local.json` | `json_valid` |
-| `context.md`, `voice-profile.md`, `.gitignore` | `exists_file` |
-| `.claude/commands/daily-driver/` | `count_gte >= 5` |
-| `.claude/agents/daily-driver/` | `count_gte >= 1` |
+| `.dd-config.yaml` | parses as the pydantic `Config` model |
+| `.daily-driver/` | directory exists |
+| `.daily-driver/version` | file exists |
+| `.daily-driver/manifest.json` | exists + valid JSON |
+| `.claude/settings.local.json` | exists + valid JSON |
+| `context.md`, `voice-profile.md`, `.gitignore` | file exists |
+| `README.md` (and any other `ENTRIES`) | file exists |
+| `.claude/commands/daily-driver/` | `>= MIN_COMMANDS` (5) `*.md` |
+| `.claude/agents/daily-driver/` | `>= MIN_AGENTS` (1) `*.md` |
 
 `.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `generate` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
 
-Validation kinds: `exists_file`, `exists_dir`, `parses_yaml`, `parses_config`, `json_valid`, `count_gte`.
-
-To add an entry: append to `ENTRIES` in `contract.py`, ensure `init`/`generate` produces the path, run `make test-unit`.
+`ENTRIES` is the authoritative list of package-managed templates rendered into the workspace root (each a `ContractEntry(src, dst)`); `generate()` iterates it, so adding a managed root file means appending one entry and nothing else. To add a contract check beyond those, edit `check()` directly, then run `make test-unit`.
 
 ## Console and logging
 

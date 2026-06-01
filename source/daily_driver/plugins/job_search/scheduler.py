@@ -16,12 +16,6 @@ if TYPE_CHECKING:
 # on uninstall via Plugin.launchd_labels.
 LABEL_SCRAPE_JOBS = "com.daily-driver.jobs"
 
-# Pre-rename label from earlier releases. Kept so an orphaned plist on an
-# existing machine stops firing the old argv; core sweeps it via
-# Plugin.legacy_launchd_labels. Do not remove until no machine could still
-# carry the old plist.
-LEGACY_LABELS = ("com.daily-driver.scrape-jobs",)
-
 
 def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
     """Return the jobs-scrape launchd job when scheduler.jobs.time is set."""

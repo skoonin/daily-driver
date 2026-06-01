@@ -11,6 +11,5 @@ PLUGIN = Plugin(
         "daily_driver.plugins.job_search.scheduler.build_scheduled_jobs"
     ),
     launchd_labels=("com.daily-driver.jobs",),
-    legacy_launchd_labels=("com.daily-driver.scrape-jobs",),
     doctor_checks="daily_driver.plugins.job_search.doctor.run_checks",
 )

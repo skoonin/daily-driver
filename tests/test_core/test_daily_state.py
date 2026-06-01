@@ -76,7 +76,6 @@ def test_write_then_read_roundtrips_all_fields(tmp_path: Path) -> None:
         last_day_start_session_id=sid,
         last_day_start_at=started,
         last_check_in_at=checked,
-        plan_summary="Ship F1 RED tests.",
     )
     write_state(ws, state)
 
@@ -99,7 +98,6 @@ def test_write_then_read_roundtrips_default_none_fields(tmp_path: Path) -> None:
     assert loaded.last_day_start_session_id is None
     assert loaded.last_day_start_at is None
     assert loaded.last_check_in_at is None
-    assert loaded.plan_summary == ""
 
 
 def test_write_state_creates_parent_directory(tmp_path: Path) -> None:
@@ -136,7 +134,7 @@ def test_write_state_atomic_no_tmp_left_on_replace_failure(
     monkeypatch.setattr(ds_mod.os, "replace", boom)
 
     with pytest.raises(OSError, match="simulated crash"):
-        write_state(ws, DailyState(date=date(2026, 5, 8), plan_summary="new"))
+        write_state(ws, DailyState(date=date(2026, 5, 8)))
 
     # Original survives; no .tmp lingers.
     assert target.read_text(encoding="utf-8") == original
@@ -167,7 +165,7 @@ def test_write_state_flock_blocks_concurrent_writer(tmp_path: Path) -> None:
         finished = threading.Event()
 
         def writer() -> None:
-            write_state(ws, DailyState(date=day, plan_summary="after lock"))
+            write_state(ws, DailyState(date=day))
             finished.set()
 
         t = threading.Thread(target=writer, daemon=True)
@@ -257,7 +255,7 @@ def test_read_state_raises_dailystate_error_on_schema_violation(
     target = state_path(ws, date(2026, 5, 8))
     target.parent.mkdir(parents=True, exist_ok=True)
     # Missing required `date` field.
-    target.write_text("plan_summary: orphan\n", encoding="utf-8")
+    target.write_text("late_day: true\n", encoding="utf-8")
 
     with pytest.raises(DailyStateError) as exc:
         read_state(ws, date(2026, 5, 8))
@@ -319,7 +317,6 @@ def test_state_yaml_is_human_readable(tmp_path: Path) -> None:
             date=date(2026, 5, 8),
             last_day_start_session_id=sid,
             last_day_start_at=started,
-            plan_summary="line one",
         ),
     )
 
@@ -332,6 +329,4 @@ def test_state_yaml_is_human_readable(tmp_path: Path) -> None:
     assert "last_day_start_session_id" in parsed
     assert "last_day_start_at" in parsed
     assert "last_check_in_at" in parsed
-    assert "plan_summary" in parsed
     assert parsed["last_day_start_session_id"] == sid
-    assert parsed["plan_summary"] == "line one"
