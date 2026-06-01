@@ -204,6 +204,8 @@ Transport / retry knobs shared by every source.
 
 Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, fit, notes).
 
+The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
+
 | Key | Type | Default |
 |-----|------|---------|
 | `enrich_timeout` | int | 30 |

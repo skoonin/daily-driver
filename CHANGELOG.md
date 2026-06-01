@@ -28,6 +28,7 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Fit scoring now reads `context.md`**: the fit/notes enrichment prompt injects the workspace's `context.md` (when present) into every job evaluation, so fit weighs how well the candidate's real experience matches the role — not just the one-line `persona`. Notes now justify the score and the location fit instead of listing the tech stack; the criteria block is reworded to state the ask explicitly. Without a `context.md`, fit falls back to role/company/location scoring as before. `jobs run` logs a token-cost estimate when `context.md` is large, since it rides every per-job call. The scaffolded `context.md` template gained Experience/Skills and Location-preferences sections to match.
 - **Location is the only filter that removes jobs**: `jobs run` now surfaces
   every job matching your configured countries/cities. Jobs whose found comp is
   below `min_comp_usd` are kept and marked a new `skipped-comp` status rather

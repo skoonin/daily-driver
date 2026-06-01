@@ -104,11 +104,14 @@ def test_enrichment_criteria_parse_list() -> None:
 # --- Prompt contract --------------------------------------------------------
 
 
-def test_prompt_without_criteria_keeps_today_contract() -> None:
-    """Regression guard: empty criteria => unchanged fit/notes-only JSON shape."""
+def test_prompt_base_contract_no_criteria_no_context() -> None:
+    """Base prompt: fit/notes-only JSON, no criteria key, no tech-stack ask."""
     prompt = _build_fit_notes_prompt(_job(), "SRE", "Based in: Vancouver", "Vancouver")
     assert '"criteria"' not in prompt
-    assert '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}' in prompt
+    assert '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"}' in prompt
+    assert "Do not list the tech stack" in prompt
+    # No context => fit falls back to role/company/location signal.
+    assert "based on role/company/location" in prompt
 
 
 def test_prompt_empty_list_equals_default() -> None:
@@ -116,6 +119,21 @@ def test_prompt_empty_list_equals_default() -> None:
     assert _build_fit_notes_prompt(job, "SRE", "loc", "Van") == _build_fit_notes_prompt(
         job, "SRE", "loc", "Van", []
     )
+
+
+def test_prompt_injects_context_and_weights_experience() -> None:
+    ctx = "CANDIDATE BACKGROUND: ten years SRE, deep Kubernetes and Terraform."
+    prompt = _build_fit_notes_prompt(_job(), "SRE", "loc", "Van", (), ctx)
+    assert "CANDIDATE CONTEXT" in prompt
+    assert ctx in prompt
+    # With context, fit emphasizes experience match over bare role/location.
+    assert "experience match" in prompt
+
+
+def test_prompt_omits_context_block_when_absent() -> None:
+    prompt = _build_fit_notes_prompt(_job(), "SRE", "loc", "Van")
+    assert "CANDIDATE CONTEXT" not in prompt
+    assert "experience match" not in prompt
 
 
 def test_prompt_with_criteria_names_each_and_extends_json() -> None:
