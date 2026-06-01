@@ -15,23 +15,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
 @pytest.fixture
-def fake_config() -> dict[str, Any]:
-    return {
-        "job_search": {
-            "scraper": {
-                "enabled": True,
-                "timeout": 5,
-                "max_retries": 1,
-            },
-            "enrichment": {
-                "detail_delay_seconds": 0,
-            },
-        }
-    }
+def fake_config() -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "scraper": {
+                    "enabled": True,
+                    "timeout": 5,
+                    "max_retries": 1,
+                },
+                "enrichment": {
+                    "detail_delay_seconds": 0,
+                },
+            }
+        )
+    )
 
 
 def _job(url: str, **overrides: Any) -> dict[str, Any]:
@@ -46,7 +50,7 @@ def _job(url: str, **overrides: Any) -> dict[str, Any]:
 
 
 def test_hn_item_url_is_skipped_without_fetch(
-    fake_config: dict[str, Any], caplog: pytest.LogCaptureFixture
+    fake_config: ScrapeContext, caplog: pytest.LogCaptureFixture
 ) -> None:
     """news.ycombinator.com/item URLs must not trigger any HTTP request."""
     jobs = [
@@ -71,7 +75,7 @@ def test_hn_item_url_is_skipped_without_fetch(
 
 
 def test_indeed_url_is_skipped_without_fetch(
-    fake_config: dict[str, Any], caplog: pytest.LogCaptureFixture
+    fake_config: ScrapeContext, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Indeed URLs (any regional host) must not trigger any HTTP request."""
     jobs = [
@@ -93,7 +97,7 @@ def test_indeed_url_is_skipped_without_fetch(
     assert 1 <= len(skip_msgs) < len(jobs)
 
 
-def test_other_urls_route_through_api_get(fake_config: dict[str, Any]) -> None:
+def test_other_urls_route_through_api_get(fake_config: ScrapeContext) -> None:
     """Non-skipped hosts must fetch via `_api_get`, not bare `requests.get`."""
     jobs = [_job("https://boards.greenhouse.io/acme/jobs/123")]
 
@@ -120,7 +124,7 @@ def test_other_urls_route_through_api_get(fake_config: dict[str, Any]) -> None:
     assert parse.call_count == 1
 
 
-def test_api_get_returning_none_is_handled(fake_config: dict[str, Any]) -> None:
+def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
     """When `_api_get` gives up (None), enrichment continues without mutating the job."""
     jobs = [_job("https://boards.greenhouse.io/acme/jobs/123")]
 
@@ -140,7 +144,7 @@ def test_api_get_returning_none_is_handled(fake_config: dict[str, Any]) -> None:
     assert "comp" not in jobs[0] or not jobs[0].get("comp")
 
 
-def test_session_is_reused_across_jobs(fake_config: dict[str, Any]) -> None:
+def test_session_is_reused_across_jobs(fake_config: ScrapeContext) -> None:
     """A single requests.Session is built once and reused across all fetches."""
     jobs = [
         _job("https://boards.greenhouse.io/acme/jobs/1"),

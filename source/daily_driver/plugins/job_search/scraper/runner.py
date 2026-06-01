@@ -1,30 +1,25 @@
-"""Scraper orchestration: config helpers, role/dedup logic, run() / run_backfill()."""
+"""Scraper orchestration: ScrapeContext, role/dedup logic, run() / run_backfill()."""
 
 from __future__ import annotations
 
-import copy
 import csv
 import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import yaml
 
+from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations.notify import desktop_notify
-from daily_driver.plugins.job_search.config import (
-    EnrichmentConfig,
-    JobSearchPlugin,
-    Locations,
-    ScraperConfig,
-    SourceToggle,
-)
+from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -41,6 +36,22 @@ if TYPE_CHECKING:
     )
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ScrapeContext:
+    """Typed inputs threaded through the scraper layer.
+
+    Replaces the raw ``{"job_search": {...}, "ai": {...}, "context": ...,
+    "_known_urls": ...}`` dict that every accessor used to re-validate.
+    """
+
+    plugin: JobSearchPlugin
+    ai: AIConfig = field(default_factory=AIConfig)
+    context_text: str = ""  # was the transient config["context"]
+    known_urls: frozenset[str] = field(
+        default_factory=frozenset
+    )  # was config["_known_urls"]
 
 
 class ScraperError(RuntimeError):
@@ -89,131 +100,36 @@ def load_config(config_path: Path) -> dict[str, Any]:
         return loaded
 
 
-# ── Config model helpers ─────────────────────────────────────────────────────
-#
-# The scraper receives a raw dict (shape: {"job_search": {...}}) from the CLI
-# so the tests can exercise it with literal dicts without constructing pydantic
-# models. We lift that dict into JobSearchPlugin once at each call site —
-# pydantic applies defaults, rejects unknown keys, and gives us typed attribute
-# access instead of the old .get("key", default) chain.
-
-
-def _model(config: dict[str, Any] | None) -> JobSearchPlugin:
-    return JobSearchPlugin.model_validate((config or {}).get("job_search") or {})
-
-
-def validate_config(config: dict[str, Any] | None) -> None:
-    """Fail fast on an invalid config before any scraping begins.
-
-    JobSearchPlugin has extra='forbid', so a typo'd field under job_search
-    would otherwise crash inside an enrichment loop after minutes of work.
-    Call once at run/backfill entry.
-    """
-    _model(config)
-
-
-def scraper_cfg(config: dict[str, Any] | None) -> ScraperConfig:
-    """Return the transport ScraperConfig model (with all defaults applied)."""
-    return _model(config).scraper
-
-
-def enrichment_cfg(config: dict[str, Any] | None) -> EnrichmentConfig:
-    """Return the EnrichmentConfig model (with all defaults applied)."""
-    return _model(config).enrichment
-
-
-def sources_cfg(config: dict[str, Any] | None) -> dict[str, SourceToggle]:
-    """Return the source-toggle dict (with all defaults applied)."""
-    return _model(config).sources
+# ── Source-toggle helper ─────────────────────────────────────────────────────
 
 
 _T = TypeVar("_T", bound=SourceToggle)
 
 
-def source_toggle(config: dict[str, Any] | None, key: str, toggle_type: type[_T]) -> _T:
+def source_toggle(plugin: JobSearchPlugin, key: str, toggle_type: type[_T]) -> _T:
     """Return the typed toggle for a source, or a default instance if absent/wrong type.
 
     Sources whose per-source knobs live on a SourceToggle subclass read them
     through this helper: an unconfigured (or bare-bool) source yields a fresh
     ``toggle_type()`` carrying that subclass's defaults.
     """
-    toggle = sources_cfg(config).get(key)
+    toggle = plugin.sources.get(key)
     return toggle if isinstance(toggle, toggle_type) else toggle_type()
 
 
-def roles_list(config: dict[str, Any]) -> list[str]:
-    return list(_model(config).roles)
-
-
-def user_agent(config: dict[str, Any]) -> str:
-    return _model(config).scraper.user_agent
-
-
-def timeout_seconds(config: dict[str, Any]) -> int:
-    return _model(config).scraper.timeout
-
-
-def max_retries(config: dict[str, Any]) -> int:
-    """Number of additional attempts on rate-limited (429/503) HTTP responses."""
-    return _model(config).scraper.max_retries
-
-
-def max_age_days(config: dict[str, Any]) -> int:
-    """Maximum age (in days) for scraped postings. 0 disables the filter."""
-    return _model(config).scraper.max_age_days
-
-
-def enrich_timeout(config: dict[str, Any] | None) -> int:
-    """Timeout for Claude CLI enrichment calls (seconds)."""
-    return _model(config).enrichment.enrich_timeout
-
-
-def locations_config(config: dict[str, Any]) -> Locations | None:
-    """Return the job_search.locations block as a Locations model, or None."""
-    return _model(config).locations
-
-
-def persona(config: dict[str, Any]) -> str:
-    """Return the job_search.persona string for enrichment prompts."""
-    return _model(config).persona or "SRE/Platform/Infra engineer"
-
-
-def home_city(config: dict[str, Any]) -> str:
-    """Return the configured home city from locations block."""
-    loc = locations_config(config)
+def home_city(plugin: JobSearchPlugin) -> str:
+    """Return the configured home city from the locations block."""
+    loc = plugin.locations
     return (loc.home_city if loc and loc.home_city else None) or "Vancouver, BC"
 
 
-def domain_keywords(config: dict[str, Any]) -> set[str]:
-    """Return domain keywords for Tier 2 role matching."""
-    kws = _model(config).domain_keywords
-    return set(kws) if kws else _DEFAULT_DOMAIN_KEYWORDS
-
-
-def seniority_keywords(config: dict[str, Any]) -> set[str]:
-    """Return seniority keywords for Tier 2 role matching."""
-    kws = _model(config).seniority_keywords
-    return set(kws) if kws else _DEFAULT_SENIORITY_KEYWORDS
-
-
-def countries_list(config: dict[str, Any]) -> list[str]:
+def countries_list(plugin: JobSearchPlugin) -> list[str]:
     """Return the configured ISO country codes, defaulting to US + CA."""
-    loc = locations_config(config)
+    loc = plugin.locations
     return list(loc.countries) if loc and loc.countries else ["US", "CA"]
 
 
-def _known_urls_from_config(config: dict[str, Any]) -> set[str]:
-    """Return URLs the orchestrator already knows about (jobs.csv + archive).
-
-    Read from the transient ``_known_urls`` key set by ``scraper.run()``.
-    Empty set when absent (e.g., direct ``scrape_*`` calls in tests) —
-    scrapers treat that as "skip nothing".
-    """
-    urls: set[str] = config.get("_known_urls", set())
-    return urls
-
-
-def location_matches(job: dict[str, Any], config: dict[str, Any]) -> bool:
+def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
     """Check whether a job's location matches the configured allow-list.
 
     Accepts if any of:
@@ -222,7 +138,7 @@ def location_matches(job: dict[str, Any], config: dict[str, Any]) -> bool:
       - job location contains a country name from locations.countries
     Returns True (accept) when no locations block is configured.
     """
-    loc_cfg = locations_config(config)
+    loc_cfg = plugin.locations
     if loc_cfg is None:
         return True
 
@@ -391,7 +307,7 @@ def _role_matches(role: str, title: str, title_lower: str) -> bool:
 
 
 def matches_roles(
-    title: str, roles: list[str], config: dict[str, Any] | None = None
+    title: str, roles: list[str], plugin: JobSearchPlugin | None = None
 ) -> bool:
     """True if the job title is relevant based on configured roles.
 
@@ -412,8 +328,16 @@ def matches_roles(
         if _role_matches(role, title, title_lower):
             return True
 
-    d_kws = domain_keywords(config) if config else _DEFAULT_DOMAIN_KEYWORDS
-    s_kws = seniority_keywords(config) if config else _DEFAULT_SENIORITY_KEYWORDS
+    d_kws = (
+        set(plugin.domain_keywords)
+        if plugin and plugin.domain_keywords
+        else _DEFAULT_DOMAIN_KEYWORDS
+    )
+    s_kws = (
+        set(plugin.seniority_keywords)
+        if plugin and plugin.seniority_keywords
+        else _DEFAULT_SENIORITY_KEYWORDS
+    )
     has_domain = any(kw in title_lower for kw in d_kws)
     has_seniority = any(kw in title_lower for kw in s_kws)
     if has_domain and has_seniority:
@@ -464,15 +388,15 @@ def _compress_search_terms(roles: list[str]) -> list[str]:
     return result
 
 
-def _search_terms(config: dict[str, Any]) -> list[str]:
+def _search_terms(plugin: JobSearchPlugin) -> list[str]:
     """Return URL search query strings, compressed to base role types.
 
     Override by setting job_search.scraper.search_terms in config.
     """
-    explicit = scraper_cfg(config).search_terms
+    explicit = plugin.scraper.search_terms
     if explicit:
         return list(explicit)
-    return _compress_search_terms(roles_list(config))
+    return _compress_search_terms(list(plugin.roles))
 
 
 # Sources that require a full (non-headless) browser. SourceToggle has
@@ -481,19 +405,24 @@ def _search_terms(config: dict[str, Any]) -> list[str]:
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
 
-def _config_with_headless(config: dict[str, Any], headless: bool) -> dict[str, Any]:
-    """Return a deep copy of config with job_search.scraper.headless overridden.
+def _ctx_with_headless(ctx: ScrapeContext, headless: bool) -> ScrapeContext:
+    """Return a new ScrapeContext with job_search.scraper.headless overridden.
 
-    Scrapers read headless via scraper_cfg(config); passing a phase-specific
-    copy lets the orchestrator force headless mode per phase without threading
-    a kwarg through every scraper function.
+    Scrapers read headless via ``ctx.plugin.scraper.headless``; handing each
+    phase its own context lets the orchestrator force headless mode per phase
+    without threading a kwarg through every scraper function.
     """
-    cfg = copy.deepcopy(config)
-    cfg.setdefault("job_search", {}).setdefault("scraper", {})["headless"] = headless
-    return cfg
+    return replace(
+        ctx,
+        plugin=ctx.plugin.model_copy(
+            update={
+                "scraper": ctx.plugin.scraper.model_copy(update={"headless": headless})
+            }
+        ),
+    )
 
 
-def _run_one(source_id: str, cfg: dict[str, Any]) -> list[dict[str, Any]] | Exception:
+def _run_one(source_id: str, ctx: ScrapeContext) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
     Returns the job list on success, or the caught exception on failure. The
@@ -505,13 +434,13 @@ def _run_one(source_id: str, cfg: dict[str, Any]) -> list[dict[str, Any]] | Exce
     the debug stream.
     """
     scraper_fn = SCRAPERS[source_id]
-    timeout = timeout_seconds(cfg)
+    timeout = ctx.plugin.scraper.timeout
     user_console = Console.get_user_console()
     user_console.print(f"Now checking {source_id}...")
     log.info("[%s] starting", source_id)
     start = time.perf_counter()
     try:
-        jobs = scraper_fn(cfg)
+        jobs = scraper_fn(ctx)
     except HTTPTimeout as exc:
         # HTTPTimeout/HTTPError alias requests exceptions; the stub-less
         # `requests` import types them as Any, so narrow on the way out.
@@ -534,7 +463,6 @@ def _run_one(source_id: str, cfg: dict[str, Any]) -> list[dict[str, Any]] | Exce
 
 def _merge_and_dedup(
     results: list[tuple[str, list[dict[str, Any]] | Exception]],
-    config: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Merge per-source results, deduplicating by URL and company+role key.
 
@@ -565,7 +493,7 @@ def _merge_and_dedup(
 
 
 def run_all_scrapers(
-    config: dict[str, Any],
+    ctx: ScrapeContext,
     *,
     sources_override: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -584,8 +512,8 @@ def run_all_scrapers(
     of the ``sources`` toggles in config. Caller is responsible for
     validating IDs against ``SCRAPERS``.
     """
-    cfg = scraper_cfg(config)
-    source_cfg = sources_cfg(config)
+    cfg = ctx.plugin.scraper
+    source_cfg = ctx.plugin.sources
     workers = cfg.parallel_workers
 
     if sources_override is not None:
@@ -618,7 +546,7 @@ def run_all_scrapers(
 
     # Phase 1: headless, parallel
     if headless_sources:
-        headless_cfg = _config_with_headless(config, True)
+        headless_ctx = _ctx_with_headless(ctx, True)
         log.info(
             "[phase1] running %d headless scrapers (%s), %d workers",
             len(headless_sources),
@@ -628,7 +556,7 @@ def run_all_scrapers(
         pool = ThreadPoolExecutor(max_workers=max(1, workers))
         try:
             futures = {
-                pool.submit(_run_one, sid, headless_cfg): sid
+                pool.submit(_run_one, sid, headless_ctx): sid
                 for sid in headless_sources
             }
             for fut in as_completed(futures):
@@ -646,16 +574,16 @@ def run_all_scrapers(
 
     # Phase 2: non-headless, serial (preserves pre-parallel behavior)
     if visible_sources:
-        visible_cfg = _config_with_headless(config, False)
+        visible_ctx = _ctx_with_headless(ctx, False)
         log.info(
             "[phase2] running %d non-headless scrapers serially (%s)",
             len(visible_sources),
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
-            results.append((sid, _run_one(sid, visible_cfg)))
+            results.append((sid, _run_one(sid, visible_ctx)))
 
-    return _merge_and_dedup(results, config)
+    return _merge_and_dedup(results)
 
 
 # ── Notification ─────────────────────────────────────────────────────────────
@@ -682,11 +610,18 @@ def load_config_file(config_path: Path) -> dict[str, Any]:
     return load_config(config_path)
 
 
-def run_backfill(config: dict[str, Any], csv_path: Path) -> None:
+def run_backfill(
+    plugin: JobSearchPlugin,
+    csv_path: Path,
+    *,
+    ai: AIConfig | None = None,
+    context_text: str = "",
+) -> None:
     """Re-enrich empty fields in an existing jobs.csv."""
     from daily_driver.plugins.job_search.scraper.csv_io import backfill
 
-    backfill(config, csv_path)
+    ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
+    backfill(ctx, csv_path)
 
 
 def _print_dry_run_table(jobs: list[dict[str, Any]]) -> None:
@@ -742,9 +677,11 @@ def _print_dry_run_table_typed(jobs: list[EnrichedJob]) -> None:  # noqa: F821
 
 
 def run(
-    config: dict[str, Any],
+    plugin: JobSearchPlugin,
     output_dir: Path,
     *,
+    ai: AIConfig | None = None,
+    context_text: str = "",
     dry_run: bool = False,
     sources_override: list[str] | None = None,
 ) -> int:
@@ -769,11 +706,11 @@ def run(
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
     lock_path = jobs_lock_path(csv_path)
+    ai_cfg = ai or AIConfig()
 
-    validate_config(config)
     Console.info("Starting jobs run...")
 
-    if not scraper_cfg(config).enabled:
+    if not plugin.scraper.enabled:
         Console.warning(
             "Scraper disabled. Set plugins.job_search.scraper.enabled: true "
             "in .dd-config.yaml"
@@ -813,18 +750,21 @@ def run(
         f"Loaded existing job index ({len(known_urls)} URLs, {len(known_keys)} keys)."
     )
 
-    # Stuff the merged dedup set into the config dict so adapters that build
-    # their URL deterministically (Apple, Wellfound) can short-circuit during
+    # Carry the merged dedup set on the context so adapters that build their
+    # URL deterministically (Apple, Wellfound) can short-circuit during
     # pagination instead of waiting for the post-scrape filter below.
-    config["_known_urls"] = known_urls
+    ctx = ScrapeContext(
+        plugin=plugin,
+        ai=ai_cfg,
+        context_text=context_text,
+        known_urls=frozenset(known_urls),
+    )
 
     if sources_override:
         Console.info(f"Scraping selected sources: {', '.join(sources_override)}")
     else:
         Console.info("Scraping enabled sources from config...")
-    all_jobs, failed_sources = run_all_scrapers(
-        config, sources_override=sources_override
-    )
+    all_jobs, failed_sources = run_all_scrapers(ctx, sources_override=sources_override)
 
     new_jobs = [
         j
@@ -845,7 +785,7 @@ def run(
     log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
 
     pre_filter = len(new_jobs)
-    new_jobs = [j for j in new_jobs if location_matches(j, config)]
+    new_jobs = [j for j in new_jobs if location_matches(j, plugin)]
     filtered = pre_filter - len(new_jobs)
     if filtered:
         Console.info(f"Filtered {filtered} jobs by location preferences.")
@@ -861,7 +801,7 @@ def run(
 
     if not dry_run:
         Console.info("Enriching job details...")
-        typed_jobs = enrich_job_details_typed(typed_jobs, config)
+        typed_jobs = enrich_job_details_typed(typed_jobs, ctx)
     else:
         Console.info("Dry-run mode: skipping job-detail enrichment.")
         log.info("[dry-run] skipping enrich_job_details (claude calls)")
@@ -883,10 +823,8 @@ def run(
             f"Enriching {len(typed_jobs)} jobs via claude "
             "(company product + fit/notes; this may take a few minutes)..."
         )
-        typed_jobs, product_stats = enrich_company_descriptions_typed(
-            typed_jobs, config
-        )
-        typed_jobs, fn_stats = enrich_fit_and_notes_typed(typed_jobs, config)
+        typed_jobs, product_stats = enrich_company_descriptions_typed(typed_jobs, ctx)
+        typed_jobs, fn_stats = enrich_fit_and_notes_typed(typed_jobs, ctx)
 
     n = len(typed_jobs)
     log.info(

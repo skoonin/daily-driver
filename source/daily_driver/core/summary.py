@@ -13,21 +13,9 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader
 
 from daily_driver.core import dates as _dates
-from daily_driver.core.config_models import Config
 
 _TEMPLATE_DIR = Path(__file__).parent.parent / "resources" / "templates"
 _SUMMARY_TEMPLATE = "summary.md.j2"
-
-
-def ai_routing_dict(config: Config) -> dict[str, Any]:
-    """Project a validated `Config` into the dict `ai_provider.invoke_for` reads.
-
-    `invoke_for(config=...)` extracts the `ai:` block via `resolve_ai_config`,
-    so summary must hand it the same validated config every other command uses
-    rather than a second `yaml.safe_load` of `.dd-config.yaml` with its own
-    notion of "valid".
-    """
-    return config.model_dump()
 
 
 def parse_range(spec: str) -> tuple[date, date]:

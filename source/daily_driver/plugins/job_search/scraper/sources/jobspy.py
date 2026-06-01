@@ -14,6 +14,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -147,7 +148,7 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]:
+def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
     """Headless multi-source scraper via JobSpy (LinkedIn, Indeed, Glassdoor, Google).
 
     Imported lazily so the module still loads when python-jobspy is not yet
@@ -159,7 +160,6 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
         _search_terms,
         countries_list,
         matches_roles,
-        roles_list,
         source_toggle,
     )
 
@@ -172,14 +172,14 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
         )
         return []
 
-    jobspy_cfg = source_toggle(config, "jobspy", JobspyToggle).jobs
+    jobspy_cfg = source_toggle(ctx.plugin, "jobspy", JobspyToggle).jobs
     results_wanted = jobspy_cfg.results_wanted_per_query
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed
 
-    roles = roles_list(config)
-    terms = _search_terms(config)
-    countries = countries_list(config)
+    roles = list(ctx.plugin.roles)
+    terms = _search_terms(ctx.plugin)
+    countries = countries_list(ctx.plugin)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
@@ -226,7 +226,7 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
             for row in records:
                 normalized = normalize_jobspy_row(row)
                 if not normalized["role"] or not matches_roles(
-                    normalized["role"], roles, config
+                    normalized["role"], roles, ctx.plugin
                 ):
                     continue
                 url = normalized["url"]
@@ -252,16 +252,16 @@ def scrape_jobspy(config: dict, *, sites: list[str] | None = None) -> list[dict]
     return jobs
 
 
-def scrape_jobspy_linkedin(config: dict) -> list[dict]:
-    return scrape_jobspy(config, sites=["linkedin"])
+def scrape_jobspy_linkedin(ctx: ScrapeContext) -> list[dict]:
+    return scrape_jobspy(ctx, sites=["linkedin"])
 
 
-def scrape_jobspy_indeed(config: dict) -> list[dict]:
-    return scrape_jobspy(config, sites=["indeed"])
+def scrape_jobspy_indeed(ctx: ScrapeContext) -> list[dict]:
+    return scrape_jobspy(ctx, sites=["indeed"])
 
 
-def scrape_jobspy_google(config: dict) -> list[dict]:
-    return scrape_jobspy(config, sites=["google"])
+def scrape_jobspy_google(ctx: ScrapeContext) -> list[dict]:
+    return scrape_jobspy(ctx, sites=["google"])
 
 
 __all__ = [

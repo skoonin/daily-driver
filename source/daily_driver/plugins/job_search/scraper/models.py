@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 from enum import Enum
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
@@ -27,6 +28,9 @@ from pydantic import (
     StringConstraints,
     field_validator,
 )
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
 class JobStatus(str, Enum):
@@ -280,12 +284,12 @@ class Source(Protocol):
 
     ``SOURCE_REGISTRY: dict[str, Source]`` is the explicit dispatch dict.
 
-    Note: signature takes the raw config dict rather than ``ScraperConfig`` —
-    the live scraper layer threads the unmodelled top-level dict (it carries
-    plugin-namespaced settings beyond ``ScraperConfig``).
+    The callable receives a ``ScrapeContext`` carrying the validated
+    ``JobSearchPlugin`` model plus the run's known-URL dedup set; sources read
+    their transport/role knobs off ``ctx.plugin``.
     """
 
-    def __call__(self, config: dict[str, Any]) -> list[RawScrapedJob]: ...
+    def __call__(self, ctx: ScrapeContext) -> list[RawScrapedJob]: ...
 
 
 __all__ = [

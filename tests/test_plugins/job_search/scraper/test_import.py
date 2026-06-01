@@ -48,11 +48,12 @@ def test_run_returns_zero_when_scraper_disabled(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Disabled scraper prints a hint and returns 0 without touching network."""
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
     from daily_driver.plugins.job_search.scraper import run
 
-    cfg = {"job_search": {"scraper": {"enabled": False}}}
+    plugin = JobSearchPlugin.model_validate({"scraper": {"enabled": False}})
 
-    rc = run(cfg, tmp_path)
+    rc = run(plugin, tmp_path)
 
     assert rc == 0
     captured = capsys.readouterr()

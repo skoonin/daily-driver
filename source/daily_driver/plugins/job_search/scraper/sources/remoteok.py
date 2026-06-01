@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -9,23 +11,26 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     _http_session,
 )
 
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
 log = get_logger(__name__)
 
 
-def scrape_remoteok(config: dict) -> list[dict]:
+def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     """Fetch jobs from RemoteOK's public JSON API.
 
     GET https://remoteok.com/api returns all current listings as JSON.
     No auth or browser required. We filter client-side with matches_roles().
     """
-    from daily_driver.plugins.job_search.scraper.runner import matches_roles, roles_list
+    from daily_driver.plugins.job_search.scraper.runner import matches_roles
 
-    roles = roles_list(config)
-    session = _http_session(config)
+    roles = list(ctx.plugin.roles)
+    session = _http_session(ctx)
     jobs: list[dict] = []
     seen_ids: set[str] = set()
 
-    resp = _api_get(session, "https://remoteok.com/api", config, label="remoteok")
+    resp = _api_get(session, "https://remoteok.com/api", ctx, label="remoteok")
     if not resp:
         return jobs
 
@@ -33,7 +38,7 @@ def scrape_remoteok(config: dict) -> list[dict]:
         if "position" not in item:
             continue
         role = item["position"]
-        if not matches_roles(role, roles, config):
+        if not matches_roles(role, roles, ctx.plugin):
             continue
         job_id = str(item.get("id", ""))
         if job_id in seen_ids:

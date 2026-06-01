@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import weworkremotely as wwr_module
 
 _FIXTURE = (
@@ -15,24 +17,26 @@ _FIXTURE = (
 
 def _config(
     roles: list[str] | None = None, categories: list[str] | None = None
-) -> dict[str, Any]:
-    return {
-        "job_search": {
-            "roles": roles if roles is not None else ["Engineer", "SRE"],
-            "scraper": {
-                "enabled": True,
-                "timeout": 1,
-                "max_retries": 0,
-            },
-            "sources": {
-                "weworkremotely": {
-                    "wwr_categories": (
-                        categories if categories is not None else ["programming"]
-                    ),
+) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "roles": roles if roles is not None else ["Engineer", "SRE"],
+                "scraper": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "max_retries": 0,
                 },
-            },
-        }
-    }
+                "sources": {
+                    "weworkremotely": {
+                        "wwr_categories": (
+                            categories if categories is not None else ["programming"]
+                        ),
+                    },
+                },
+            }
+        )
+    )
 
 
 def _rss_response() -> MagicMock:

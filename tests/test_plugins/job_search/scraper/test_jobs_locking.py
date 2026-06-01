@@ -11,8 +11,10 @@ from typing import Any
 import pytest
 
 from daily_driver.plugins.job_search import jobs_archive
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 from daily_driver.plugins.job_search.scraper import csv_io, runner
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
 def _write_jobs_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -67,7 +69,7 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
     from daily_driver.plugins.job_search.scraper import enrichment
 
     def interrupting_enrich_company(
-        jobs: list[dict[str, Any]], config: dict | None = None, *, budget: int = 0
+        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
     ) -> dict[str, int]:
         jobs[0]["product"] = "Saved before interrupt"
         jobs[0]["gd_rating"] = "4.2"
@@ -84,7 +86,7 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
     monkeypatch.setattr(enrichment, "enrich_fit_and_notes", should_not_run)
 
     with pytest.raises(KeyboardInterrupt):
-        csv_io.backfill({"job_search": {}}, csv_path)
+        csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
 
     rows = _read_jobs_csv(csv_path)
     assert rows[0]["Product/Purpose"] == "Saved before interrupt"
@@ -119,14 +121,14 @@ def test_backfill_uses_shared_jobs_lock_path(
     from daily_driver.plugins.job_search.scraper import enrichment
 
     def enrich_company(
-        jobs: list[dict[str, Any]], config: dict | None = None, *, budget: int = 0
+        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
     ) -> dict[str, int]:
         jobs[0]["product"] = "Acme product"
         jobs[0]["gd_rating"] = "unknown"
         return {"enriched": 1, "skipped_cached": 0, "failed": 0}
 
     def enrich_fit_notes(
-        jobs: list[dict[str, Any]], config: dict | None = None, *, budget: int = 0
+        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
     ) -> dict[str, int]:
         jobs[0]["fit"] = "7"
         jobs[0]["notes"] = "Saved"
@@ -136,7 +138,7 @@ def test_backfill_uses_shared_jobs_lock_path(
     monkeypatch.setattr(enrichment, "enrich_company_descriptions", enrich_company)
     monkeypatch.setattr(enrichment, "enrich_fit_and_notes", enrich_fit_notes)
 
-    csv_io.backfill({"job_search": {}}, csv_path)
+    csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
 
     assert lock_calls == [jobs_lock_path(csv_path)]
     # Exactly one .bak per backfill run (taken at the start, before mutations).
@@ -163,7 +165,7 @@ def test_run_uses_shared_jobs_lock_path(
     )
 
     rc = runner.run(
-        {"job_search": {"scraper": {"enabled": True}}},
+        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
         tmp_path,
         dry_run=True,
     )

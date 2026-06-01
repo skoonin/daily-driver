@@ -10,29 +10,33 @@ from unittest.mock import patch
 
 import pytest
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.csv_io import (
     CANONICAL_HEADER,
     _migrate_legacy_header,
     backfill,
 )
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 # ---------------------------------------------------------------------------
 # Item 5 — backfill must not pass sys.maxsize as budget
 # ---------------------------------------------------------------------------
 
-_MINIMAL_CONFIG: dict[str, Any] = {
-    "job_search": {
-        "scraper": {
-            "enabled": True,
-            "timeout": 5,
-            "max_retries": 1,
-        },
-        "enrichment": {
-            "max_enrich_companies": 10,
-            "detail_delay_seconds": 0,
-        },
-    }
-}
+_MINIMAL_CTX = ScrapeContext(
+    plugin=JobSearchPlugin.model_validate(
+        {
+            "scraper": {
+                "enabled": True,
+                "timeout": 5,
+                "max_retries": 1,
+            },
+            "enrichment": {
+                "max_enrich_companies": 10,
+                "detail_delay_seconds": 0,
+            },
+        }
+    )
+)
 
 
 def _write_minimal_csv(path: Path, *, needs_enrichment: bool = True) -> None:
@@ -82,9 +86,8 @@ def test_backfill_uses_config_budget_not_maxsize(tmp_path: Path) -> None:
             "daily_driver.plugins.job_search.scraper.enrichment.enrich_fit_and_notes",
             side_effect=_capture_fit,
         ),
-        patch("daily_driver.plugins.job_search.scraper.runner.validate_config"),
     ):
-        backfill(_MINIMAL_CONFIG, csv_path)
+        backfill(_MINIMAL_CTX, csv_path)
 
     assert called_with, "enrichment functions were not called at all"
     for call in called_with:
@@ -106,9 +109,8 @@ def test_backfill_skips_enrichment_when_all_rows_filled(tmp_path: Path) -> None:
         patch(
             "daily_driver.plugins.job_search.scraper.enrichment.enrich_fit_and_notes"
         ) as mock_fit,
-        patch("daily_driver.plugins.job_search.scraper.runner.validate_config"),
     ):
-        backfill(_MINIMAL_CONFIG, csv_path)
+        backfill(_MINIMAL_CTX, csv_path)
 
     mock_company.assert_not_called()
     mock_fit.assert_not_called()

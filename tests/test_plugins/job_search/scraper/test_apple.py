@@ -9,27 +9,31 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import apple as apple_module
 
 _FIXTURE = Path(__file__).parents[3] / "fixtures" / "scraper" / "apple" / "sample.json"
 
 
-def _config(roles: list[str] | None = None) -> dict[str, Any]:
-    return {
-        "job_search": {
-            "roles": roles if roles is not None else ["Engineer", "SRE"],
-            "scraper": {
-                "enabled": True,
-                "timeout": 5,
-                "max_retries": 0,
-                "headless": True,
-                "max_pages": 1,
-            },
-            "locations": {
-                "countries": ["US"],
-            },
-        }
-    }
+def _config(roles: list[str] | None = None) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "roles": roles if roles is not None else ["Engineer", "SRE"],
+                "scraper": {
+                    "enabled": True,
+                    "timeout": 5,
+                    "max_retries": 0,
+                    "headless": True,
+                    "max_pages": 1,
+                },
+                "locations": {
+                    "countries": ["US"],
+                },
+            }
+        )
+    )
 
 
 def _make_fake_page(api_payload: dict[str, Any]) -> MagicMock:

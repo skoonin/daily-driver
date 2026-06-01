@@ -5,11 +5,14 @@ from __future__ import annotations
 import functools
 import time
 from contextlib import contextmanager
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import requests
 
 from daily_driver.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -127,12 +130,10 @@ def country_params(country: str) -> dict[str, str]:
     return params
 
 
-def _http_session(config: dict) -> requests.Session:
+def _http_session(ctx: ScrapeContext) -> requests.Session:
     """Build a reusable requests.Session from scraper config."""
-    from daily_driver.plugins.job_search.scraper.runner import user_agent
-
     session = requests.Session()
-    session.headers["User-Agent"] = user_agent(config)
+    session.headers["User-Agent"] = ctx.plugin.scraper.user_agent
     return session
 
 
@@ -150,7 +151,7 @@ def _retry_after_seconds(resp: requests.Response) -> float | None:
 def _api_get(
     session: requests.Session,
     url: str,
-    config: dict,
+    ctx: ScrapeContext,
     *,
     label: str = "",
     max_retries: int | None = None,
@@ -162,15 +163,8 @@ def _api_get(
     `Retry-After` header when present; otherwise applies exponential backoff
     (1.5s, 3s, 6s, ... capped at 30s). `sleep` is a seam for tests.
     """
-    from daily_driver.plugins.job_search.scraper.runner import (
-        max_retries as cfg_max_retries,
-    )
-    from daily_driver.plugins.job_search.scraper.runner import (
-        timeout_seconds,
-    )
-
-    timeout = timeout_seconds(config)
-    retries = cfg_max_retries(config) if max_retries is None else max_retries
+    timeout = ctx.plugin.scraper.timeout
+    retries = ctx.plugin.scraper.max_retries if max_retries is None else max_retries
     last_exc: requests.RequestException | None = None
 
     for attempt in range(retries + 1):
@@ -223,15 +217,13 @@ def _has_playwright() -> bool:
 
 
 @contextmanager
-def _playwright_browser(config: dict) -> Any:
+def _playwright_browser(ctx: ScrapeContext) -> Any:
     """Yield a Playwright Page with non-headless Firefox and realistic settings.
 
     Non-headless by default -- avoids most bot-detection heuristics on LinkedIn,
     Indeed, and Wellfound without requiring a logged-in session.
     Set job_search.scraper.headless: true in config to run headless.
     """
-    from daily_driver.plugins.job_search.scraper.runner import scraper_cfg, user_agent
-
     if not _has_playwright():
         raise ImportError(
             "playwright not installed -- reinstall daily-driver and run: playwright install firefox"
@@ -240,8 +232,8 @@ def _playwright_browser(config: dict) -> Any:
     from playwright.sync_api import Error as PWError
     from playwright.sync_api import sync_playwright
 
-    headless = scraper_cfg(config).headless
-    ua = user_agent(config)
+    headless = ctx.plugin.scraper.headless
+    ua = ctx.plugin.scraper.user_agent
 
     with sync_playwright() as pw:
         try:
@@ -251,16 +243,16 @@ def _playwright_browser(config: dict) -> Any:
                 "browser launch failed (run: playwright install firefox): %s", exc
             )
             raise
-        ctx = browser.new_context(
+        browser_ctx = browser.new_context(
             user_agent=ua,
             viewport={"width": 1280, "height": 800},
             locale="en-US",
         )
-        page = ctx.new_page()
+        page = browser_ctx.new_page()
         try:
             yield page
         finally:
-            ctx.close()
+            browser_ctx.close()
             browser.close()
 
 

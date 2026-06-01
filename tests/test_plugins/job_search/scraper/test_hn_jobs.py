@@ -6,6 +6,8 @@ from datetime import date
 from typing import Any
 from unittest.mock import MagicMock
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import hn_jobs as hn_jobs_module
 from daily_driver.plugins.job_search.scraper.sources.hn_jobs import _parse_title
 
@@ -14,19 +16,21 @@ def _config(
     roles: list[str] | None = None,
     max_posts: int = 100,
     max_age_days: int = 0,
-) -> dict[str, Any]:
-    return {
-        "job_search": {
-            "roles": roles or ["SRE", "Engineer"],
-            "scraper": {
-                "enabled": True,
-                "timeout": 1,
-                "max_retries": 0,
-                "max_age_days": max_age_days,
-            },
-            "sources": {"hn_jobs": {"hn_max_posts": max_posts}},
-        }
-    }
+) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "roles": roles or ["SRE", "Engineer"],
+                "scraper": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "max_retries": 0,
+                    "max_age_days": max_age_days,
+                },
+                "sources": {"hn_jobs": {"hn_max_posts": max_posts}},
+            }
+        )
+    )
 
 
 def _algolia_response(hits: list[dict[str, Any]]) -> MagicMock:

@@ -8,8 +8,8 @@ Covers the filter path that decides which scraped jobs survive to the CSV:
 
 from __future__ import annotations
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.runner import (
-    _known_urls_from_config,
     dedup_key,
     location_matches,
     matches_roles,
@@ -19,6 +19,12 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     jobspy_country,
 )
 
+
+def _plugin(**kwargs: object) -> JobSearchPlugin:
+    """Build a JobSearchPlugin for the location/role filters under test."""
+    return JobSearchPlugin.model_validate(kwargs)
+
+
 # ---------------------------------------------------------------------------
 # location_matches
 # ---------------------------------------------------------------------------
@@ -26,65 +32,47 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 
 class TestLocationMatches:
     def test_accepts_remote_when_remote_enabled(self) -> None:
-        cfg = {
-            "job_search": {"locations": {"remote": True, "cities": [], "countries": []}}
-        }
-        assert location_matches({"location": "Remote, Worldwide"}, cfg) is True
+        plugin = _plugin(locations={"remote": True, "cities": [], "countries": []})
+        assert location_matches({"location": "Remote, Worldwide"}, plugin) is True
 
     def test_empty_location_accepted_when_remote_enabled(self) -> None:
-        cfg = {"job_search": {"locations": {"remote": True}}}
-        assert location_matches({"location": ""}, cfg) is True
-        assert location_matches({}, cfg) is True
+        plugin = _plugin(locations={"remote": True})
+        assert location_matches({"location": ""}, plugin) is True
+        assert location_matches({}, plugin) is True
 
     def test_empty_location_rejected_when_remote_disabled(self) -> None:
-        cfg = {
-            "job_search": {
-                "locations": {"remote": False, "cities": ["Vancouver"], "countries": []}
-            }
-        }
-        assert location_matches({"location": ""}, cfg) is False
+        plugin = _plugin(
+            locations={"remote": False, "cities": ["Vancouver"], "countries": []}
+        )
+        assert location_matches({"location": ""}, plugin) is False
 
     def test_city_match_case_insensitive(self) -> None:
-        cfg = {
-            "job_search": {
-                "locations": {"remote": False, "cities": ["Vancouver"], "countries": []}
-            }
-        }
-        assert location_matches({"location": "vancouver, BC"}, cfg) is True
-        assert location_matches({"location": "Toronto, ON"}, cfg) is False
+        plugin = _plugin(
+            locations={"remote": False, "cities": ["Vancouver"], "countries": []}
+        )
+        assert location_matches({"location": "vancouver, BC"}, plugin) is True
+        assert location_matches({"location": "Toronto, ON"}, plugin) is False
 
     def test_country_match(self) -> None:
-        cfg = {
-            "job_search": {
-                "locations": {"remote": False, "cities": [], "countries": ["CA"]}
-            }
-        }
-        assert location_matches({"location": "Toronto, Canada"}, cfg) is True
-        assert location_matches({"location": "New York, NY"}, cfg) is False
+        plugin = _plugin(locations={"remote": False, "cities": [], "countries": ["CA"]})
+        assert location_matches({"location": "Toronto, Canada"}, plugin) is True
+        assert location_matches({"location": "New York, NY"}, plugin) is False
 
     def test_country_beyond_original_six_matches(self) -> None:
         # Countries are derived from JobSpy's enum, so NL (and ~70 others) work
         # without a hand-maintained entry.
-        cfg = {
-            "job_search": {
-                "locations": {"remote": False, "cities": [], "countries": ["NL"]}
-            }
-        }
-        assert location_matches({"location": "Amsterdam, Netherlands"}, cfg) is True
+        plugin = _plugin(locations={"remote": False, "cities": [], "countries": ["NL"]})
+        assert location_matches({"location": "Amsterdam, Netherlands"}, plugin) is True
 
     def test_bare_iso_code_not_false_matched(self) -> None:
         # "US" matches via "usa"/"united states", never the 2-char "us" — which
         # would spuriously hit "Austin".
-        cfg = {
-            "job_search": {
-                "locations": {"remote": False, "cities": [], "countries": ["US"]}
-            }
-        }
-        assert location_matches({"location": "Austin, TX"}, cfg) is False
-        assert location_matches({"location": "Denver, USA"}, cfg) is True
+        plugin = _plugin(locations={"remote": False, "cities": [], "countries": ["US"]})
+        assert location_matches({"location": "Austin, TX"}, plugin) is False
+        assert location_matches({"location": "Denver, USA"}, plugin) is True
 
     def test_no_locations_block_accepts_everything(self) -> None:
-        assert location_matches({"location": "Mars"}, {}) is True
+        assert location_matches({"location": "Mars"}, _plugin()) is True
 
 
 # ---------------------------------------------------------------------------
@@ -146,25 +134,6 @@ class TestDedupKey:
 
     def test_different_company_different_key(self) -> None:
         assert dedup_key("Acme", "SRE") != dedup_key("Globex", "SRE")
-
-
-class TestKnownUrlsFromConfig:
-    """Adapters read pruned/dedup URLs from the config dict's _known_urls key.
-
-    The orchestrator stuffs the union of jobs.csv + jobs.archive.csv URLs in
-    here so Playwright adapters (Apple) can short-circuit during pagination
-    without re-deriving the dedup state.
-    """
-
-    def test_returns_empty_set_when_key_absent(self) -> None:
-        assert _known_urls_from_config({}) == set()
-
-    def test_returns_set_when_key_present(self) -> None:
-        urls = {
-            "https://jobs.apple.com/x/details/1",
-            "https://remoteok.com/remote-jobs/2",
-        }
-        assert _known_urls_from_config({"_known_urls": urls}) == urls
 
 
 class TestCountryDerivation:

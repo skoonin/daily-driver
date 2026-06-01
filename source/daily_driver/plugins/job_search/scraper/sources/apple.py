@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -11,10 +11,13 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     country_params,
 )
 
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
 log = get_logger(__name__)
 
 
-def scrape_apple(config: dict) -> list[dict]:
+def scrape_apple(ctx: ScrapeContext) -> list[dict]:
     """Playwright scraper for Apple's careers search via internal JSON API.
 
     Apple's jobs site is a React SPA. Server-rendered HTML shows generic
@@ -29,29 +32,25 @@ def scrape_apple(config: dict) -> list[dict]:
     Iterates each configured country's locale x search term.
     """
     from daily_driver.plugins.job_search.scraper.runner import (
-        _known_urls_from_config,
         _search_terms,
         countries_list,
         matches_roles,
-        roles_list,
-        scraper_cfg,
-        timeout_seconds,
     )
 
-    cfg = scraper_cfg(config)
-    roles = roles_list(config)
-    terms = _search_terms(config)
-    timeout_ms = timeout_seconds(config) * 1000
+    cfg = ctx.plugin.scraper
+    roles = list(ctx.plugin.roles)
+    terms = _search_terms(ctx.plugin)
+    timeout_ms = cfg.timeout * 1000
     max_pages = cfg.max_pages
     jobs: list[dict] = []
     seen_positions: set[str] = set()
-    known_urls = _known_urls_from_config(config)
+    known_urls = ctx.known_urls
     skipped_known = 0
     base_url = "https://jobs.apple.com"
 
     try:
-        with _playwright_browser(config) as page:
-            for country in countries_list(config):
+        with _playwright_browser(ctx) as page:
+            for country in countries_list(ctx.plugin):
                 params = country_params(country)
                 if not params:
                     continue
@@ -118,7 +117,7 @@ def scrape_apple(config: dict) -> list[dict]:
                     for item in api_results:
                         try:
                             title = item.get("postingTitle", "")
-                            if not title or not matches_roles(title, roles, config):
+                            if not title or not matches_roles(title, roles, ctx.plugin):
                                 continue
                             position_id = item.get("positionId", "") or item.get(
                                 "id", ""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 from daily_driver.core.clock import today
@@ -11,10 +12,13 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     _http_session,
 )
 
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
 log = get_logger(__name__)
 
 
-def scrape_weworkremotely(config: dict) -> list[dict]:
+def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
     """Fetch jobs from WeWorkRemotely's public RSS feeds.
 
     WWR publishes per-category RSS at
@@ -25,17 +29,16 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
     from daily_driver.plugins.job_search.config import WeWorkRemotelyToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
-        roles_list,
         source_toggle,
     )
 
-    roles = roles_list(config)
-    session = _http_session(config)
+    roles = list(ctx.plugin.roles)
+    session = _http_session(ctx)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
     categories = source_toggle(
-        config, "weworkremotely", WeWorkRemotelyToggle
+        ctx.plugin, "weworkremotely", WeWorkRemotelyToggle
     ).wwr_categories
     if not categories:
         log.warning("[weworkremotely] no wwr_categories configured; skipping")
@@ -43,7 +46,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
 
     for category in categories:
         url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
-        resp = _api_get(session, url, config, label="weworkremotely")
+        resp = _api_get(session, url, ctx, label="weworkremotely")
         if not resp:
             continue
 
@@ -64,7 +67,7 @@ def scrape_weworkremotely(config: dict) -> list[dict]:
             else:
                 company, role = "", raw_title
 
-            if not role or not matches_roles(role, roles, config):
+            if not role or not matches_roles(role, roles, ctx.plugin):
                 continue
             if link in seen_urls:
                 continue

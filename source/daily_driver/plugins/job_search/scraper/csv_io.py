@@ -19,6 +19,7 @@ if sys.platform != "win32":
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -355,18 +356,14 @@ def _rewrite_jobs_csv(
     tmp_path.rename(csv_path)
 
 
-def backfill(config: dict[str, Any], csv_path: Path) -> None:
+def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
     from daily_driver.plugins.job_search.scraper.enrichment import (
         enrich_company_descriptions,
         enrich_fit_and_notes,
     )
-    from daily_driver.plugins.job_search.scraper.runner import (
-        ScraperError,
-        validate_config,
-    )
+    from daily_driver.plugins.job_search.scraper.runner import ScraperError
 
-    validate_config(config)
     if not csv_path.exists():
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
@@ -412,8 +409,8 @@ def backfill(config: dict[str, Any], csv_path: Path) -> None:
         log.info("[backfill] backed up to %s", backup.name)
 
         try:
-            enrich_company_descriptions(jobs, config, budget=0)
-            enrich_fit_and_notes(jobs, config, budget=0)
+            enrich_company_descriptions(jobs, ctx, budget=0)
+            enrich_fit_and_notes(jobs, ctx, budget=0)
         except KeyboardInterrupt:
             try:
                 _rewrite_jobs_csv(csv_path, header, jobs)

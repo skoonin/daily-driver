@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -18,6 +18,9 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     _api_get,
     _http_session,
 )
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -77,7 +80,7 @@ def _parse_title(title: str) -> tuple[str, str, str]:
     return company, role, "Unknown"
 
 
-def scrape_hn_jobs(config: dict) -> list[dict]:
+def scrape_hn_jobs(ctx: ScrapeContext) -> list[dict]:
     """Fetch curated YC job stories from HN via Algolia (`tags=job`).
 
     Algolia's `search_by_date` orders by recency, which matches how a user
@@ -87,17 +90,15 @@ def scrape_hn_jobs(config: dict) -> list[dict]:
     from daily_driver.plugins.job_search.config import HackerNewsToggle
     from daily_driver.plugins.job_search.scraper.runner import (
         matches_roles,
-        max_age_days,
-        roles_list,
         source_toggle,
     )
 
-    max_posts = source_toggle(config, "hn_jobs", HackerNewsToggle).hn_max_posts
-    roles = roles_list(config)
-    session = _http_session(config)
+    max_posts = source_toggle(ctx.plugin, "hn_jobs", HackerNewsToggle).hn_max_posts
+    roles = list(ctx.plugin.roles)
+    session = _http_session(ctx)
 
     age_filter = ""
-    age_days = max_age_days(config)
+    age_days = ctx.plugin.scraper.max_age_days
     if age_days > 0:
         cutoff_epoch = int(time.time() - timedelta(days=age_days).total_seconds())
         age_filter = f"&numericFilters=created_at_i>{cutoff_epoch}"
@@ -107,7 +108,7 @@ def scrape_hn_jobs(config: dict) -> list[dict]:
         f"?tags=job&hitsPerPage={min(max(max_posts, 1), 1000)}"
         f"{age_filter}"
     )
-    resp = _api_get(session, jobs_url, config, label="hn_jobs")
+    resp = _api_get(session, jobs_url, ctx, label="hn_jobs")
     if not resp:
         return []
 
@@ -124,7 +125,7 @@ def scrape_hn_jobs(config: dict) -> list[dict]:
         if not company:
             continue
 
-        if not matches_roles(title, roles, config):
+        if not matches_roles(title, roles, ctx.plugin):
             continue
 
         url = (hit.get("url") or "").strip()

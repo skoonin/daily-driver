@@ -26,9 +26,10 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
-def _enrich_pool_size(config: dict[str, Any] | None) -> int:
+def _enrich_pool_size(ctx: ScrapeContext) -> int:
     """Worker count for enrichment, keyed off the active provider; 1 = serial.
 
     Each provider carries its own max_parallel: ollama is bounded by local RAM,
@@ -36,7 +37,7 @@ def _enrich_pool_size(config: dict[str, Any] | None) -> int:
     change the max_enrich_* budget (which still caps how many jobs are enriched)
     or the per-call timeout.
     """
-    ai_cfg = ai_provider.resolve_ai_config(config)
+    ai_cfg = ctx.ai
     if ai_cfg.enrichment.provider == "ollama":
         return max(1, ai_cfg.ollama.max_parallel)
     return max(1, ai_cfg.claude.max_parallel)
@@ -100,7 +101,7 @@ log = get_logger(__name__)
 
 def _fetch_company_info(
     company: str,
-    config: dict[str, Any] | None,
+    ctx: ScrapeContext,
     include_gd: bool,
     timeout: int,
 ) -> tuple[str, str, bool]:
@@ -122,7 +123,7 @@ def _fetch_company_info(
         )
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, config=config, timeout=timeout, format_json=False
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=False
         )
     except AITimeoutError as exc:
         log.warning(
@@ -173,7 +174,7 @@ def _fetch_company_info(
 
 def _enrich_company_descriptions_parallel(
     jobs: list[dict[str, Any]],
-    config: dict[str, Any],
+    ctx: ScrapeContext,
     *,
     budget: int,
     include_gd: bool,
@@ -218,7 +219,7 @@ def _enrich_company_descriptions_parallel(
     futures: dict[Any, str] = {}
     previous_handler = _install_interrupt_notifier(futures, timeout, "companies")
     for c in companies:
-        futures[pool.submit(_fetch_company_info, c, config, include_gd, timeout)] = c
+        futures[pool.submit(_fetch_company_info, c, ctx, include_gd, timeout)] = c
     try:
         for fut in as_completed(futures):
             company = futures[fut]
@@ -247,7 +248,7 @@ def _enrich_company_descriptions_parallel(
 
 
 def enrich_company_descriptions(
-    jobs: list[dict[str, Any]], config: dict[str, Any] | None = None, *, budget: int = 0
+    jobs: list[dict[str, Any]], ctx: ScrapeContext, *, budget: int = 0
 ) -> dict[str, int]:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
@@ -259,20 +260,12 @@ def enrich_company_descriptions(
 
     Returns a stats dict with keys: enriched, skipped_cached, failed.
     """
-    from daily_driver.plugins.job_search.scraper.runner import (
-        enrich_timeout,
-        enrichment_cfg,
-    )
-
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-    if (
-        ai_provider.resolve_ai_config(config).enrichment.provider == "claude"
-        and shutil.which("claude") is None
-    ):
+    if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return stats
 
-    cfg = enrichment_cfg(config)
+    cfg = ctx.plugin.enrichment
     if budget <= 0:
         budget = cfg.max_enrich_companies
     include_gd = cfg.enrich_gd_rating
@@ -282,7 +275,7 @@ def enrich_company_descriptions(
         for job in jobs
         if not job.get("product") and job.get("company", "").strip()
     }
-    pool_size = _enrich_pool_size(config)
+    pool_size = _enrich_pool_size(ctx)
     log.info(
         "[enrich] enriching up to %d companies (%d unique%s)...",
         budget,
@@ -290,16 +283,16 @@ def enrich_company_descriptions(
         f", parallel={pool_size}" if pool_size > 1 else "",
     )
 
-    if pool_size > 1 and config is not None:
+    if pool_size > 1:
         return _enrich_company_descriptions_parallel(
             jobs,
-            config,
+            ctx,
             budget=budget,
             include_gd=include_gd,
             pool_size=pool_size,
             unique_companies=unique_companies,
             stats=stats,
-            timeout=enrich_timeout(config),
+            timeout=cfg.enrich_timeout,
         )
 
     cache: dict[str, dict[str, str]] = {}
@@ -334,7 +327,7 @@ def enrich_company_descriptions(
                 cache[company] = {"product": "", "gd_rating": ""}
             else:
                 product, gd_rating, failed = _fetch_company_info(
-                    company, config, include_gd, enrich_timeout(config)
+                    company, ctx, include_gd, cfg.enrich_timeout
                 )
                 cache[company] = {"product": product, "gd_rating": gd_rating}
                 if failed:
@@ -349,15 +342,12 @@ def enrich_company_descriptions(
     return stats
 
 
-def _location_summary(config: dict[str, Any]) -> str:
-    from daily_driver.plugins.job_search.scraper.runner import (
-        home_city,
-        locations_config,
-    )
+def _location_summary(ctx: ScrapeContext) -> str:
+    from daily_driver.plugins.job_search.scraper.runner import home_city
     from daily_driver.plugins.job_search.scraper.sources._http import country_names
 
-    loc_cfg = locations_config(config)
-    parts = [f"Based in: {home_city(config)}"]
+    loc_cfg = ctx.plugin.locations
+    parts = [f"Based in: {home_city(ctx.plugin)}"]
     if loc_cfg is None:
         parts.append("Remote: yes")
         return "; ".join(parts)
@@ -506,7 +496,7 @@ def _fetch_fit_notes_for_job(
     role_persona: str,
     loc_summary: str,
     hc: str,
-    config: dict[str, Any] | None,
+    ctx: ScrapeContext,
     timeout: int,
     criteria: Sequence[Criterion] = (),
     context: str = "",
@@ -527,7 +517,7 @@ def _fetch_fit_notes_for_job(
 
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, config=config, timeout=timeout, format_json=True
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=True
         )
     except AITimeoutError as exc:
         log.warning(
@@ -605,7 +595,7 @@ def _fetch_fit_notes_for_job(
 
 def _enrich_fit_and_notes_parallel(
     jobs: list[dict[str, Any]],
-    config: dict[str, Any],
+    ctx: ScrapeContext,
     *,
     budget: int,
     pool_size: int,
@@ -679,7 +669,7 @@ def _enrich_fit_and_notes_parallel(
                 role_persona,
                 loc_summary,
                 hc,
-                config,
+                ctx,
                 timeout,
                 criteria,
                 context,
@@ -713,7 +703,7 @@ def _enrich_fit_and_notes_parallel(
 
 
 def enrich_fit_and_notes(
-    jobs: list[dict[str, Any]], config: dict[str, Any], *, budget: int = 0
+    jobs: list[dict[str, Any]], ctx: ScrapeContext, *, budget: int = 0
 ) -> dict[str, int]:
     """Populate Fit score and Notes in-place for new jobs via a single Claude CLI call per job.
 
@@ -741,35 +731,27 @@ def enrich_fit_and_notes(
 
     Returns a stats dict: {"enriched": N, "skipped_budget": N, "skipped_no_desc": 0, "failed": N}.
     """
-    from daily_driver.plugins.job_search.scraper.runner import (
-        enrich_timeout,
-        enrichment_cfg,
-        home_city,
-        persona,
-    )
+    from daily_driver.plugins.job_search.scraper.runner import home_city
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
-    if (
-        ai_provider.resolve_ai_config(config).enrichment.provider == "claude"
-        and shutil.which("claude") is None
-    ):
+    if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return stats
 
-    cfg = enrichment_cfg(config)
+    cfg = ctx.plugin.enrichment
     if not cfg.enrich_fit or not cfg.enrich_notes:
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
         return stats
 
     if budget <= 0:
         budget = cfg.max_enrich_fit
-    loc_summary = _location_summary(config)
-    role_persona = persona(config)
-    hc = home_city(config)
+    loc_summary = _location_summary(ctx)
+    role_persona = ctx.plugin.persona or "SRE/Platform/Infra engineer"
+    hc = home_city(ctx.plugin)
     crit_list = list(cfg.criteria)
-    context_text = (config or {}).get("context", "") or ""
+    context_text = ctx.context_text
 
-    pool_size = _enrich_pool_size(config)
+    pool_size = _enrich_pool_size(ctx)
     eligible_count = sum(
         1
         for j in jobs
@@ -810,17 +792,17 @@ def enrich_fit_and_notes(
             no_desc,
         )
 
-    if pool_size > 1 and config is not None:
+    if pool_size > 1:
         stats = _enrich_fit_and_notes_parallel(
             jobs,
-            config,
+            ctx,
             budget=budget,
             pool_size=pool_size,
             role_persona=role_persona,
             loc_summary=loc_summary,
             hc=hc,
             stats=stats,
-            timeout=enrich_timeout(config),
+            timeout=cfg.enrich_timeout,
             criteria=crit_list,
             context=context_text,
         )
@@ -858,8 +840,8 @@ def enrich_fit_and_notes(
             role_persona,
             loc_summary,
             hc,
-            config,
-            enrich_timeout(config),
+            ctx,
+            cfg.enrich_timeout,
             crit_list,
             context_text,
         )
@@ -904,7 +886,7 @@ def enrich_fit_and_notes(
     return stats
 
 
-def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> None:
+def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
     """Fetch each job's detail page and populate comp/posted_date in place.
 
     Caches by URL within the run so jobs that share a detail URL only generate
@@ -913,10 +895,8 @@ def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> No
     are swallowed — missing data is the expected outcome for boards that don't
     expose JSON-LD, not an error worth aborting the run for.
     """
-    from daily_driver.plugins.job_search.scraper.runner import enrichment_cfg
-
     cache: dict[str, dict[str, Any]] = {}
-    cfg = enrichment_cfg(config)
+    cfg = ctx.plugin.enrichment
     delay = cfg.detail_delay_seconds
 
     # Hosts whose detail pages we deliberately skip:
@@ -967,8 +947,8 @@ def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> No
                 time.sleep(delay)
             fetched_count += 1
             if session is None:
-                session = _http_session(config)
-            resp = _api_get(session, url, config, label="detail")
+                session = _http_session(ctx)
+            resp = _api_get(session, url, ctx, label="detail")
             if resp is None:
                 details = {}
             else:
@@ -1002,7 +982,7 @@ def enrich_job_details(jobs: list[dict[str, Any]], config: dict[str, Any]) -> No
 
 def enrich_company_descriptions_typed(
     jobs: list[EnrichedJob],  # noqa: F821
-    config: dict[str, Any] | None = None,
+    ctx: ScrapeContext,
     *,
     budget: int = 0,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
@@ -1018,7 +998,7 @@ def enrich_company_descriptions_typed(
     )
 
     working = [_enriched_to_dict(j) for j in jobs]
-    stats = enrich_company_descriptions(working, config, budget=budget)
+    stats = enrich_company_descriptions(working, ctx, budget=budget)
     out = [
         j.model_copy(update=_dict_to_enriched_updates(d))
         for j, d in zip(jobs, working, strict=True)
@@ -1028,7 +1008,7 @@ def enrich_company_descriptions_typed(
 
 def enrich_fit_and_notes_typed(
     jobs: list[EnrichedJob],  # noqa: F821
-    config: dict[str, Any],
+    ctx: ScrapeContext,
     *,
     budget: int = 0,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:  # noqa: F821
@@ -1039,7 +1019,7 @@ def enrich_fit_and_notes_typed(
     )
 
     working = [_enriched_to_dict(j) for j in jobs]
-    stats = enrich_fit_and_notes(working, config, budget=budget)
+    stats = enrich_fit_and_notes(working, ctx, budget=budget)
     out = [
         j.model_copy(update=_dict_to_enriched_updates(d))
         for j, d in zip(jobs, working, strict=True)
@@ -1049,7 +1029,7 @@ def enrich_fit_and_notes_typed(
 
 def enrich_job_details_typed(
     jobs: list[EnrichedJob],  # noqa: F821
-    config: dict[str, Any],
+    ctx: ScrapeContext,
 ) -> list[EnrichedJob]:  # noqa: F821
     """Typed wrapper around ``enrich_job_details``.
 
@@ -1065,7 +1045,7 @@ def enrich_job_details_typed(
     )
 
     working = [_enriched_to_dict(j) for j in jobs]
-    enrich_job_details(working, config)
+    enrich_job_details(working, ctx)
     out: list[Any] = []
     for j, d in zip(jobs, working, strict=True):
         updates = _dict_to_enriched_updates(d)
