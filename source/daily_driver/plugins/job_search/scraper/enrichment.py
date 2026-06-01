@@ -394,7 +394,9 @@ def _fold_criteria_values(
         value = values.get(c.label)
         if not isinstance(value, str):
             continue
-        cleaned = value.strip()
+        # Collapse any embedded newlines/runs of whitespace the LLM may emit so
+        # the folded segment stays single-line for Notes/CSV.
+        cleaned = " ".join(value.split())
         if not cleaned or cleaned.lower() in _CRITERIA_SKIP_VALUES:
             continue
         notes += f" | {c.label}: {cleaned}" if notes else f"{c.label}: {cleaned}"

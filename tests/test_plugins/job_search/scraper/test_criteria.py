@@ -54,6 +54,40 @@ def test_criterion_rejects_extra_keys() -> None:
         )
 
 
+def test_criterion_strips_surrounding_whitespace() -> None:
+    crit = Criterion.model_validate({"label": "  Sponsorship  ", "assess": " ask? "})
+    assert crit.label == "Sponsorship"
+    assert crit.assess == "ask?"
+
+
+@pytest.mark.parametrize("field", ["label", "assess"])
+def test_criterion_rejects_blank(field: str) -> None:
+    data = {"label": "X", "assess": "y"}
+    data[field] = "   "
+    with pytest.raises(ValidationError):
+        Criterion.model_validate(data)
+
+
+@pytest.mark.parametrize("field", ["label", "assess"])
+def test_criterion_rejects_multiline(field: str) -> None:
+    data = {"label": "X", "assess": "y"}
+    data[field] = "a\nb"
+    with pytest.raises(ValidationError):
+        Criterion.model_validate(data)
+
+
+def test_enrichment_criteria_rejects_duplicate_labels() -> None:
+    with pytest.raises(ValidationError):
+        EnrichmentConfig.model_validate(
+            {
+                "criteria": [
+                    {"label": "Sponsorship", "assess": "a"},
+                    {"label": "Sponsorship", "assess": "b"},
+                ]
+            }
+        )
+
+
 def test_enrichment_criteria_default_empty() -> None:
     cfg = EnrichmentConfig()
     assert cfg.criteria == []
@@ -127,6 +161,11 @@ def test_fold_skips_unknown_na_and_empty_case_insensitive() -> None:
 
 def test_fold_skips_missing_label() -> None:
     assert _fold_criteria_values("notes", _CRITERIA, {}) == "notes"
+
+
+def test_fold_collapses_embedded_whitespace() -> None:
+    out = _fold_criteria_values("notes", _CRITERIA, {"Sponsorship": "Yes\nH-1B  only"})
+    assert out == "notes | Sponsorship: Yes H-1B only"
 
 
 def test_fold_tolerates_non_str_value() -> None:

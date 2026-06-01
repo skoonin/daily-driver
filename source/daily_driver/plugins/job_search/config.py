@@ -153,6 +153,18 @@ class Criterion(BaseModel):
     label: str = Field(description="")
     assess: str = Field(description="")
 
+    @field_validator("label", "assess")
+    @classmethod
+    def _single_line_non_empty(cls, value: str) -> str:
+        # label rides the prompt and the "Label: value" Notes segment; newlines
+        # would break the single-line Notes/CSV invariant.
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        if "\n" in cleaned or "\r" in cleaned:
+            raise ValueError("must be a single line")
+        return cleaned
+
 
 class EnrichmentConfig(BaseModel):
     """Knobs for the post-scrape enrichment passes (comp, fit, notes)."""
@@ -206,6 +218,16 @@ class EnrichmentConfig(BaseModel):
             ]
         },
     )
+
+    @field_validator("criteria")
+    @classmethod
+    def _unique_labels(cls, value: list[Criterion]) -> list[Criterion]:
+        # The LLM keys its response object by label; duplicates collapse to one
+        # value yet would fold multiple times into Notes.
+        labels = [c.label for c in value]
+        if len(labels) != len(set(labels)):
+            raise ValueError("criteria labels must be unique")
+        return value
 
 
 class JobSearchPlugin(BaseModel):
