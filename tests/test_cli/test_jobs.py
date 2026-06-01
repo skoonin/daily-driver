@@ -306,7 +306,6 @@ def test_jobs_status_json_with_last_run(
         "new_jobs": 3,
         "enriched_fit_notes": 3,
         "enriched_product": 2,
-        "skipped_below_comp": 0,
     }
     (ws / "jobs-last-run.json").write_text(json.dumps(last_run), encoding="utf-8")
 

@@ -11,15 +11,12 @@ stage's instance.
 from __future__ import annotations
 
 import datetime as dt
-import re
 from enum import Enum
 from typing import (
     Annotated,
     Any,
     ClassVar,
-    Literal,
     Protocol,
-    Self,
     runtime_checkable,
 )
 
@@ -29,59 +26,24 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
-    model_validator,
 )
 
 
 class JobStatus(str, Enum):
     FOUND = "found"
     SKIPPED = "skipped"
-    SKIPPED_COMP = "skipped-comp"
     APPLIED = "applied"
     REJECTED = "rejected"
     DROPPED = "dropped"
 
 
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
-# passes (fit/notes/product). skipped-comp belongs here: below-floor jobs are
-# kept for visibility, not worth spending enrichment calls on.
-ENRICH_SKIP_STATUSES: frozenset[str] = frozenset(
-    {JobStatus.SKIPPED.value, JobStatus.SKIPPED_COMP.value}
-)
+# passes (fit/notes/product): kept for visibility, not worth spending
+# enrichment calls on.
+ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
 
 
-CompPeriod = Literal["hour", "month", "year"]
-CurrencyCode = Literal["USD", "CAD", "GBP", "EUR"]
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
-
-_COMP_SYMBOL_TO_CURRENCY: dict[str, CurrencyCode] = {
-    "£": "GBP",
-    "€": "EUR",
-    "ca$": "CAD",
-}
-
-_COMP_CURRENCY_RE = re.compile(
-    r"""
-    (?:
-        (?P<code>USD|CAD|GBP|EUR)\s*
-        |
-        (?P<sym>CA\$|£|€|\$)
-    )
-    """,
-    re.VERBOSE | re.IGNORECASE,
-)
-
-_COMP_AMOUNT_RE = re.compile(r"[\d,]+(?:\.\d+)?[KkMm]?")
-
-_COMP_PERIOD_MAP: dict[str, CompPeriod] = {
-    "yr": "year",
-    "year": "year",
-    "mo": "month",
-    "month": "month",
-    "hr": "hour",
-    "hour": "hour",
-}
 
 
 def _parse_k_salary(s: str) -> int | None:
@@ -99,149 +61,6 @@ def _parse_k_salary(s: str) -> int | None:
         return int(float(s))
     except (ValueError, TypeError):
         return None
-
-
-class Comp(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    min_native: int | None = Field(default=None, ge=0)
-    max_native: int | None = Field(default=None, ge=0)
-    currency: CurrencyCode | None = None
-    period: CompPeriod = "year"
-    raw_display: str = ""
-
-    @model_validator(mode="after")
-    def _check_consistency(self) -> Self:
-        has_amount = self.min_native is not None or self.max_native is not None
-        if has_amount and self.currency is None:
-            raise ValueError("Comp.currency required when any amount is set")
-        if (
-            self.min_native is not None
-            and self.max_native is not None
-            and self.min_native > self.max_native
-        ):
-            raise ValueError(
-                f"Comp.min_native ({self.min_native}) > max_native ({self.max_native})"
-            )
-        return self
-
-    @property
-    def is_known(self) -> bool:
-        return self.min_native is not None or self.max_native is not None
-
-    def meets_threshold(self, threshold: int) -> tuple[bool, str]:
-        """Compare the listing's own comp figure to the floor — no FX conversion.
-
-        Fails open on unknown comp (``max_native is None``) so unpriced jobs are
-        surfaced rather than dropped. Currency is intentionally ignored: the goal
-        is detecting whether the posting names a too-low number, not normalizing
-        currencies into a common unit.
-        """
-        if self.max_native is None:
-            return True, ""
-        if self.max_native >= threshold:
-            return True, ""
-        return (
-            False,
-            f"below comp threshold (max {self.max_native:,} < {threshold:,})",
-        )
-
-    def __str__(self) -> str:
-        if not self.is_known:
-            return self.raw_display
-        sym = "$" if self.currency == "USD" else f"{self.currency} "
-        suffix = {"hour": "/hr", "month": "/mo", "year": "/yr"}[self.period]
-        if (
-            self.min_native is not None
-            and self.max_native is not None
-            and self.min_native != self.max_native
-        ):
-            return f"{sym}{self.min_native:,}-{sym}{self.max_native:,}{suffix}"
-        amt = self.min_native if self.min_native is not None else self.max_native
-        return f"{sym}{amt:,}{suffix}"
-
-    @classmethod
-    def parse(cls, display: str) -> Comp:
-        """Parse a free-form comp display string into a Comp.
-
-        Currency detection precedence: explicit ISO code > symbol (CA$ > $ > £ > €).
-        Bare ``$`` defaults to USD. Returns an unknown ``Comp`` (preserving
-        ``raw_display``) on unparseable input.
-
-        Examples::
-            >>> Comp.parse("$150,000-$200,000").currency
-            'USD'
-            >>> Comp.parse("CAD 120,000-160,000/yr").currency
-            'CAD'
-            >>> Comp.parse("unpublished").is_known
-            False
-        """
-        if not display or not display.strip():
-            return cls(raw_display=display)
-
-        s = display.strip()
-
-        period: CompPeriod = "year"
-        period_match = re.search(r"/\s*(yr|year|mo|month|hr|hour)\b", s, re.IGNORECASE)
-        if period_match:
-            period = _COMP_PERIOD_MAP.get(period_match.group(1).lower(), "year")
-            s = s[: period_match.start()]
-
-        currencies_found: list[CurrencyCode] = []
-        amounts_found: list[int] = []
-
-        pos = 0
-        while pos < len(s):
-            cm = _COMP_CURRENCY_RE.match(s, pos)
-            if cm:
-                code = cm.group("code")
-                sym = cm.group("sym")
-                if code:
-                    upper = code.upper()
-                    if upper in ("USD", "CAD", "GBP", "EUR"):
-                        currencies_found.append(upper)  # type: ignore[arg-type]
-                elif sym:
-                    currencies_found.append(
-                        _COMP_SYMBOL_TO_CURRENCY.get(sym.lower(), "USD")
-                    )
-                pos = cm.end()
-                while pos < len(s) and s[pos] == " ":
-                    pos += 1
-                am = _COMP_AMOUNT_RE.match(s, pos)
-                if am:
-                    val = _parse_k_salary(am.group())
-                    if val is not None:
-                        amounts_found.append(val)
-                    pos = am.end()
-            elif s[pos] in "-–— ,":
-                pos += 1
-            else:
-                am = _COMP_AMOUNT_RE.match(s, pos)
-                if am:
-                    val = _parse_k_salary(am.group())
-                    if val is not None:
-                        amounts_found.append(val)
-                    pos = am.end()
-                else:
-                    pos += 1
-
-        if not amounts_found:
-            return cls(raw_display=display)
-
-        currency: CurrencyCode = currencies_found[0] if currencies_found else "USD"
-
-        comp_min = amounts_found[0]
-        comp_max = amounts_found[1] if len(amounts_found) >= 2 else amounts_found[0]
-        if comp_min > comp_max:
-            comp_min, comp_max = comp_max, comp_min
-
-        return cls(
-            min_native=comp_min,
-            max_native=comp_max,
-            currency=currency,
-            period=period,
-            raw_display=display,
-        )
 
 
 class RawScrapedJob(BaseModel):
@@ -277,7 +96,7 @@ class NormalizedJob(BaseModel):
     source: NonEmptyStr
     source_canonical: NonEmptyStr
     source_board: str = ""
-    comp: Comp = Field(default_factory=Comp)
+    comp: str = ""
     date_found: dt.date
 
     @classmethod
@@ -310,14 +129,14 @@ class NormalizedJob(BaseModel):
             source=raw.source,
             source_canonical=canonical,
             source_board=board,
-            comp=Comp.parse(raw.comp_display),
+            comp=raw.comp_display,
             date_found=raw.date_found,
         )
 
 
 class JobDetails(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    comp: Comp | None = None
+    comp: str = ""
     posted_date: dt.date | None = None
     description_text: str = ""
 
@@ -334,7 +153,7 @@ class EnrichedJob(BaseModel):
     source: NonEmptyStr
     source_canonical: NonEmptyStr
     source_board: str = ""
-    comp: Comp = Field(default_factory=Comp)
+    comp: str = ""
     date_found: dt.date
 
     product: str = "(auto-scraped -- needs fill)"
@@ -381,7 +200,7 @@ class EnrichedJob(BaseModel):
 
     def with_details(self, details: JobDetails) -> EnrichedJob:
         updates: dict[str, Any] = {}
-        if details.comp is not None and not self.comp.is_known:
+        if details.comp and not self.comp:
             updates["comp"] = details.comp
         if details.posted_date and self.posted_date is None:
             updates["posted_date"] = details.posted_date
@@ -394,10 +213,7 @@ class EnrichedJob(BaseModel):
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
-        if (
-            self.status in (JobStatus.SKIPPED, JobStatus.SKIPPED_COMP)
-            and self.skip_reason
-        ):
+        if self.status is JobStatus.SKIPPED and self.skip_reason:
             notes = (
                 f"{self.notes} | {self.skip_reason}".strip(" |")
                 if self.notes
@@ -410,7 +226,7 @@ class EnrichedJob(BaseModel):
             "Location": self.location,
             "Role": self.role,
             "Fit": "" if self.fit is None else str(self.fit),
-            "Comp": str(self.comp),
+            "Comp": self.comp,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
@@ -445,7 +261,7 @@ class EnrichedJob(BaseModel):
             location=row.get("Location", ""),
             role=row.get("Role", "") or "(unknown)",
             fit=_opt_int(row.get("Fit", "")),
-            comp=Comp.parse(row.get("Comp", "")),
+            comp=row.get("Comp", ""),
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
@@ -473,9 +289,6 @@ class Source(Protocol):
 
 
 __all__ = [
-    "Comp",
-    "CompPeriod",
-    "CurrencyCode",
     "EnrichedJob",
     "JobDetails",
     "JobStatus",

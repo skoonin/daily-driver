@@ -130,8 +130,8 @@ class TestCompFromDescription:
         assert comp == "$150,000–200,000/yr"
 
     def test_hourly_is_annualized_not_raw(self) -> None:
-        # Regression guard: hourly figures must be annualized, else Comp's
-        # period-agnostic threshold check rejects them as below an annual floor.
+        # Regression guard: hourly figures are annualized so the Comp column
+        # reads as a comparable yearly amount.
         comp = _comp_from_description("Pay range $50 - $70 per hour")
         assert comp == "$104,000–145,600/yr"
         assert "/hr" not in comp

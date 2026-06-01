@@ -112,11 +112,6 @@ def validate_config(config: dict[str, Any] | None) -> None:
     _model(config)
 
 
-def min_comp_usd(config: dict[str, Any]) -> int:
-    """Compensation floor (USD) for the comp-threshold filter."""
-    return _model(config).min_comp_usd
-
-
 def scraper_cfg(config: dict[str, Any] | None) -> ScraperConfig:
     """Return the transport ScraperConfig model (with all defaults applied)."""
     return _model(config).scraper
@@ -759,7 +754,6 @@ def run(
     I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
     responsible for exit handling.
     """
-    from daily_driver.plugins.job_search.scraper.comp import comp_meets_threshold_typed
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         _migrate_legacy_header,
@@ -771,7 +765,6 @@ def run(
         enrich_fit_and_notes_typed,
         enrich_job_details_typed,
     )
-    from daily_driver.plugins.job_search.scraper.models import JobStatus
 
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
@@ -873,42 +866,6 @@ def run(
         Console.info("Dry-run mode: skipping job-detail enrichment.")
         log.info("[dry-run] skipping enrich_job_details (claude calls)")
 
-    skipped_below_comp = 0
-    comp_filtered: list[EnrichedJob] = []
-    for job in typed_jobs:
-        if job.status in (JobStatus.SKIPPED, JobStatus.SKIPPED_COMP):
-            comp_filtered.append(job)
-            continue
-        ok, reason = comp_meets_threshold_typed(job, config)
-        if ok:
-            comp_filtered.append(job)
-            continue
-        existing_notes = job.notes.strip()
-        new_notes = f"{existing_notes}; {reason}" if existing_notes else reason
-        comp_filtered.append(
-            job.model_copy(
-                update={"status": JobStatus.SKIPPED_COMP, "notes": new_notes}
-            )
-        )
-        skipped_below_comp += 1
-        log.info(
-            "[comp-filter] skipped-comp: %s | %s | comp=%r",
-            job.company or "?",
-            job.role or "?",
-            str(job.comp),
-        )
-    typed_jobs = comp_filtered
-    if skipped_below_comp:
-        Console.info(
-            f"Flagged {skipped_below_comp} jobs below the "
-            f"{min_comp_usd(config):,} comp threshold (kept, marked skipped-comp)."
-        )
-    log.info(
-        "Comp-threshold filter: %d marked skipped-comp below %d",
-        skipped_below_comp,
-        min_comp_usd(config),
-    )
-
     if dry_run:
         Console.info("Dry-run mode: skipping product + fit/notes enrichment.")
         log.info(
@@ -954,13 +911,11 @@ def run(
     )
 
     # Reconciling funnel so the user can account for every job. Location is the
-    # only filter that REMOVES jobs; the comp filter merely flags below-floor
-    # jobs (still written, marked skipped-comp), hence "flagged" not a drop.
+    # only filter that REMOVES jobs.
     Console.info(
         f"Funnel: {len(all_jobs)} scraped → {pre_filter} new "
         f"→ {pre_filter - filtered} after location "
-        f"→ {len(typed_jobs)} {'ready' if dry_run else 'to write'} "
-        f"({skipped_below_comp} flagged below comp)."
+        f"→ {len(typed_jobs)} {'ready' if dry_run else 'to write'}."
     )
 
     if dry_run:
@@ -990,7 +945,6 @@ def run(
         "new_jobs": written,
         "enriched_fit_notes": fn_stats["enriched"],
         "enriched_product": product_stats["enriched"],
-        "skipped_below_comp": skipped_below_comp,
     }
     last_run_path = output_dir / "jobs-last-run.json"
     try:

@@ -1,7 +1,6 @@
 """Tests for scraper pure-function filters (no network, no HTML).
 
 Covers the filter path that decides which scraped jobs survive to the CSV:
-- `comp_meets_threshold_typed`: comp-floor gating (fails open on unknown comp).
 - `location_matches`: remote + cities + countries allow-list.
 - `matches_roles`: include/exclude wildcards, tier-1/2/2b logic.
 - `dedup_key`: cross-site duplicate key stability.
@@ -9,12 +8,6 @@ Covers the filter path that decides which scraped jobs survive to the CSV:
 
 from __future__ import annotations
 
-from daily_driver.plugins.job_search.scraper.comp import comp_meets_threshold_typed
-from daily_driver.plugins.job_search.scraper.models import (
-    EnrichedJob,
-    NormalizedJob,
-    RawScrapedJob,
-)
 from daily_driver.plugins.job_search.scraper.runner import (
     _known_urls_from_config,
     dedup_key,
@@ -25,64 +18,6 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     country_names,
     jobspy_country,
 )
-
-
-def _enriched_with_comp(comp_display: str) -> EnrichedJob:
-    """Build an EnrichedJob whose typed Comp comes from a display string."""
-    raw = RawScrapedJob(
-        company="Acme",
-        role="SRE",
-        url="https://example.com/j",
-        source="remoteok",
-        location="Remote",
-        comp_display=comp_display,
-    )
-    return EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
-
-
-# ---------------------------------------------------------------------------
-# comp_meets_threshold_typed
-# ---------------------------------------------------------------------------
-
-
-class TestCompThreshold:
-    def test_accepts_when_cmax_above_threshold(self) -> None:
-        ok, reason = comp_meets_threshold_typed(
-            _enriched_with_comp("$220,000"),
-            {"job_search": {"min_comp_usd": 180_000}},
-        )
-        assert ok is True
-        assert reason == ""
-
-    def test_accepts_when_cmax_equals_threshold(self) -> None:
-        ok, _ = comp_meets_threshold_typed(
-            _enriched_with_comp("$180,000"),
-            {"job_search": {"min_comp_usd": 180_000}},
-        )
-        assert ok is True
-
-    def test_rejects_when_cmax_below_threshold(self) -> None:
-        ok, reason = comp_meets_threshold_typed(
-            _enriched_with_comp("$120,000"),
-            {"job_search": {"min_comp_usd": 180_000}},
-        )
-        assert ok is False
-        assert "below comp threshold" in reason
-        assert "120,000" in reason
-
-    def test_fails_open_when_comp_unknown(self) -> None:
-        """Jobs without listed comp must reach CSV for manual review."""
-        ok, _ = comp_meets_threshold_typed(
-            _enriched_with_comp("competitive"),
-            {"job_search": {"min_comp_usd": 180_000}},
-        )
-        assert ok is True
-
-    def test_default_threshold_is_180k(self) -> None:
-        """Missing config falls back to a 180k default."""
-        ok, _ = comp_meets_threshold_typed(_enriched_with_comp("$179,999"), {})
-        assert ok is False
-
 
 # ---------------------------------------------------------------------------
 # location_matches

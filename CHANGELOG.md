@@ -11,9 +11,9 @@ log`. Versioned release history starts at 1.0.
 - **Compensation now recovered for non-US jobs**: JobSpy only regexes salary
   out of job descriptions for US listings, so Indeed/LinkedIn jobs in Canada
   (and every other country) landed with a blank `Comp`. `scraper/sources/jobspy.py`
-  now runs the same description extraction for every search country, annualizes
-  hourly/monthly figures (so they aren't wrongly cut by the annual comp
-  threshold), and stamps currency from the search country.
+  now runs the same description extraction for every search country and
+  annualizes hourly/monthly figures so the `Comp` column reads as a comparable
+  yearly amount.
 - **generate fallbacks no longer silently corrupt installs or discard user `settings.local.json`**: three bare `except Exception` catches in the generate path were masking real failures. `_render_settings` and `_render_initial_config` now narrow to the expected error types and log the offending path/template at WARNING before falling back. A malformed existing `settings.local.json` is now copied to `settings.local.json.invalid` (and logged) before the rendered defaults replace it, instead of being discarded silently on the next `doctor --fix`.
 - **Three concurrency races (P0 correctness)**: (1) `tracker update --note` lost
   one of two concurrent appends — the note was read and concatenated outside the
@@ -29,12 +29,11 @@ log`. Versioned release history starts at 1.0.
 ### Changed
 
 - **Fit scoring now reads `context.md`**: the fit/notes enrichment prompt injects the workspace's `context.md` (when present) into every job evaluation, so fit weighs how well the candidate's real experience matches the role — not just the one-line `persona`. Notes now justify the score and the location fit instead of listing the tech stack; the criteria block is reworded to state the ask explicitly. Without a `context.md`, fit falls back to role/company/location scoring as before. `jobs run` logs a token-cost estimate when `context.md` is large, since it rides every per-job call. The scaffolded `context.md` template gained Experience/Skills and Location-preferences sections to match.
-- **Location is the only filter that removes jobs**: `jobs run` now surfaces
-  every job matching your configured countries/cities. Jobs whose found comp is
-  below `min_comp_usd` are kept and marked a new `skipped-comp` status rather
-  than dropped; jobs with no listed comp are surfaced. `min_comp_usd` is compared
-  against each listing's own figure with no currency conversion.
-- **`jobs run` output reconciles the filter funnel**: the comp-flag count,
+- **Location is the only filter that removes jobs**: `jobs run` surfaces every
+  job matching your configured countries/cities. Compensation is display-only —
+  the scraper writes whatever amount it finds to the `Comp` column and never
+  filters, drops, or flags a job on it.
+- **`jobs run` output reconciles the filter funnel**: the location-filter count,
   enrichment failure/skip counts, a real-run enrichment heads-up, and a one-line
   `Funnel: N scraped → … → K written` summary are now shown at default
   verbosity, so jobs no longer vanish between pipeline stages unexplained.
@@ -43,16 +42,23 @@ log`. Versioned release history starts at 1.0.
   location filter and Indeed search, with no per-country code to add. Bare
   2-letter ISO codes are still excluded from location matching to avoid false
   positives (e.g. "us" matching "Austin").
-- **Comp is no longer labeled with a currency**: description-recovered comp keeps
-  the source's own symbol instead of being re-stamped per search country. Currency
-  classification was vestigial once the threshold went currency-agnostic and the
-  currency filter was removed; the number alongside the location is enough.
+- **Comp is no longer labeled with a currency**: recovered comp keeps the
+  source's own symbol instead of being re-stamped per search country; the number
+  alongside the location is enough.
 
 ### Removed
 
+- **Compensation is now a plain display string**: the typed `Comp` model (with
+  its free-form parser, currency normalization, and period handling), the
+  `plugins.job_search.min_comp_usd` config field, the comp-threshold filter pass,
+  and the `skipped-comp` status are all gone. The scraper still extracts whatever
+  amount it finds and writes it to the `Comp` column verbatim, but comp never
+  filters, drops, or flags a job — location is the only filter that removes jobs.
+  Existing configs that set `min_comp_usd` must remove it (the config model is
+  `extra="forbid"`).
 - **Currency filter and FX conversion**: the `plugins.job_search.primary_currency`
   config field, the currency-mismatch drop, and the `_fx` USD-conversion table
-  are gone. Comp is compared in the listing's own currency and non-matching
+  are gone. Comp is shown in the listing's own currency and non-matching
   currencies are no longer dropped (existing configs with `primary_currency` set
   must remove it — the config model is `extra="forbid"`).
 - **Dead code in scraper module**: deleted `scraper/runner.py` `__all__` block (mis-described public surface), removed `scraper/runner.py:_to_int` duplicate (the surviving copy lives in `scraper/comp.py`), and dropped the parallel `SOURCE_REGISTRY` + `_typed_source` wrapper from `scraper/sources/__init__.py` (its lone consumer in `cli/commands/help.py` now enumerates `SCRAPERS` directly). Tautological `tests/test_scraper/test_source_registry.py` removed.

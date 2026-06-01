@@ -1,11 +1,8 @@
-"""Compensation parsing and threshold/currency filters."""
+"""Compensation display helpers: format a found amount for the Comp column."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+from typing import Any
 
 # Currency code → display prefix. Anything not listed falls through to the
 # raw code prefixed with a space (e.g. "EUR 100,000/yr").
@@ -74,23 +71,9 @@ def _format_comp(base_salary: dict[str, Any]) -> str:
     return f"{prefix}{amount}{suffix}"
 
 
-def comp_meets_threshold_typed(
-    job: EnrichedJob, config: dict[str, Any]
-) -> tuple[bool, str]:
-    """Typed comp-floor gate operating on ``EnrichedJob.comp``.
-
-    Delegates to ``Comp.meets_threshold``, which fails open on unknown comp
-    (max_native is None) so unpriced roles still reach the CSV.
-    """
-    from daily_driver.plugins.job_search.scraper.runner import min_comp_usd
-
-    return job.comp.meets_threshold(min_comp_usd(config))
-
-
 __all__ = [
     "_COMP_CURRENCY_PREFIX",
     "_COMP_UNIT_SUFFIX",
     "_format_comp",
-    "comp_meets_threshold_typed",
     "_to_int",
 ]

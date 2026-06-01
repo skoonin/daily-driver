@@ -74,10 +74,9 @@ def _comp_from_description(description: str) -> str:
     # Lazy import: keeps this module importable without python-jobspy installed.
     from jobspy.util import extract_salary
 
-    # enforce_annual_salary=True annualizes hourly/monthly figures. Comp.meets_threshold
-    # compares against an annual floor without normalizing by period, so a raw "/hr"
-    # or "/mo" amount would be wrongly flagged below threshold. Annualized values
-    # always carry a "yearly" interval, hence the hardcoded suffix below.
+    # enforce_annual_salary=True annualizes hourly/monthly figures so the Comp
+    # column reads as a yearly amount; annualized values always carry a "yearly"
+    # interval, hence the hardcoded suffix below.
     _interval, lo, hi, currency = extract_salary(
         description, enforce_annual_salary=True
     )

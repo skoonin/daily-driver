@@ -95,13 +95,6 @@ def test_typed_enrichers_preserve_immutability(fake_config: dict[str, Any]) -> N
 
 
 def test_typed_enrichers_handle_skipped_status(fake_config: dict[str, Any]) -> None:
-    j = _enriched(status=JobStatus.SKIPPED, skip_reason="below comp")
+    j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
     out = enrich_job_details_typed([j], fake_config)
     assert out[0].status is JobStatus.SKIPPED
-
-
-def test_typed_enrichers_skip_skipped_comp_status(fake_config: dict[str, Any]) -> None:
-    # skipped-comp jobs are surfaced but excluded from enrichment, like skipped.
-    j = _enriched(status=JobStatus.SKIPPED_COMP, skip_reason="below comp threshold")
-    out = enrich_job_details_typed([j], fake_config)
-    assert out[0].status is JobStatus.SKIPPED_COMP

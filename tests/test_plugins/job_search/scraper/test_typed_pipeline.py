@@ -43,7 +43,7 @@ def test_jobspy_to_normalized_end_to_end() -> None:
     assert norm.source == "linkedin"
     assert norm.source_canonical == "linkedin"
     assert norm.source_board == ""
-    assert norm.comp.is_known and norm.comp.currency == "USD"
+    assert norm.comp == "$150,000–200,000/yr"
     assert norm.date_found == dt.date.today()  # noqa: DTZ011
 
 

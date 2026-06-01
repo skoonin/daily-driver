@@ -34,7 +34,6 @@ tracker:
 plugins:
   job_search:
     persona: "Senior SRE"
-    min_comp_usd: 180000
     locations:
       home_city: "Vancouver, BC"
       remote: true
@@ -45,7 +44,6 @@ plugins:
     config = load(cfg_file)
     assert config.plugins.job_search is not None
     assert config.plugins.job_search.persona == "Senior SRE"
-    assert config.plugins.job_search.min_comp_usd == 180000
     assert config.plugins.job_search.locations.remote is True
 
 

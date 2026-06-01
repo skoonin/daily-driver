@@ -11,7 +11,6 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     append_jobs_typed,
 )
 from daily_driver.plugins.job_search.scraper.models import (
-    Comp,
     EnrichedJob,
     JobStatus,
     NormalizedJob,
@@ -63,12 +62,12 @@ def test_append_jobs_typed_handles_skipped_with_reason(tmp_path: Path) -> None:
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
 
-    j = _enriched(status=JobStatus.SKIPPED, skip_reason="below comp threshold")
+    j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
     append_jobs_typed(csv_path, [j], CANONICAL_HEADER)
 
     row = _read_rows(csv_path)[0]
     assert row["Status"] == "skipped"
-    assert "below comp threshold" in row["Notes"]
+    assert "manually skipped" in row["Notes"]
 
 
 def test_append_jobs_typed_round_trips_via_from_csv_row(tmp_path: Path) -> None:
@@ -113,7 +112,7 @@ def test_typed_and_legacy_writers_produce_same_columns(tmp_path: Path) -> None:
         "url": "https://example.com/j",
         "source": "remoteok",
         "location": "Remote",
-        "comp": str(Comp.parse("$150,000-$200,000")),
+        "comp": "$150,000-$200,000",
         "fit": 6,
         "notes": "x",
         "status": "found",

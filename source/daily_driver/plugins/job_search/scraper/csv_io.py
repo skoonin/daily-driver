@@ -249,7 +249,7 @@ def _enriched_to_dict(job: EnrichedJob) -> dict[str, Any]:  # noqa: F821
         "source": job.source,
         "source_canonical": job.source_canonical,
         "source_board": job.source_board,
-        "comp": str(job.comp),
+        "comp": job.comp,
         "date_found": job.date_found.isoformat(),
         "product": job.product,
         "gd_rating": job.gd_rating,
@@ -265,7 +265,7 @@ def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
 
     Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
     """
-    from daily_driver.plugins.job_search.scraper.models import Comp, JobStatus
+    from daily_driver.plugins.job_search.scraper.models import JobStatus
 
     updates: dict[str, Any] = {}
     if "product" in d:
@@ -287,10 +287,8 @@ def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
         updates["status"] = JobStatus(d["status"])
     if "skip_reason" in d:
         updates["skip_reason"] = d["skip_reason"]
-    if "comp" in d and isinstance(d["comp"], str) and d["comp"]:
-        # Re-parse only when the enricher updated the display string.
-        new_comp = Comp.parse(d["comp"])
-        updates["comp"] = new_comp
+    if "comp" in d and d["comp"]:
+        updates["comp"] = d["comp"]
     return updates
 
 
