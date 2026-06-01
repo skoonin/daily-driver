@@ -9,11 +9,13 @@ import shutil
 import signal
 import sys
 import time
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
+from daily_driver.plugins.job_search.config import Criterion
 from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
 from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -373,8 +375,38 @@ def _location_summary(config: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+# Criterion values that mean "nothing to surface" — folded results equal to one
+# of these (case-insensitive) add no Notes noise, keeping the common case quiet.
+_CRITERIA_SKIP_VALUES = {"unknown", "n/a"}
+
+
+def _fold_criteria_values(
+    notes: str, criteria: Sequence[Criterion], values: dict[str, Any]
+) -> str:
+    """Append meaningful criterion values to a job's notes, quiet by default.
+
+    Each configured criterion whose LLM-returned value is meaningful becomes a
+    "Label: value" segment joined onto ``notes`` with " | ". Empty / "unknown"
+    / "n/a" values (case-insensitive, see ``_CRITERIA_SKIP_VALUES``) and
+    non-string values are skipped so the common case adds nothing.
+    """
+    for c in criteria:
+        value = values.get(c.label)
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or cleaned.lower() in _CRITERIA_SKIP_VALUES:
+            continue
+        notes += f" | {c.label}: {cleaned}" if notes else f"{c.label}: {cleaned}"
+    return notes
+
+
 def _build_fit_notes_prompt(
-    job: dict[str, Any], role_persona: str, loc_summary: str, hc: str
+    job: dict[str, Any],
+    role_persona: str,
+    loc_summary: str,
+    hc: str,
+    criteria: Sequence[Criterion] = (),
 ) -> str:
     role = job.get("role", "unknown")
     company = job.get("company", "unknown")
@@ -396,16 +428,41 @@ def _build_fit_notes_prompt(
     )
     if product:
         prompt += f"Company: {product}\n"
+    if not criteria:
+        prompt += (
+            f"{desc_section}\n\n"
+            "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
+            '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}\n\n'
+            "fit: rate 1-10 how well this role fits the candidate based on role/company/location. "
+            "If you truly lack enough information to assess, return 5.\n"
+            "notes: one-line summary including key tech stack, remote policy "
+            f"(e.g. 'Remote US-only', 'Hybrid {hc}', 'Remote {hc} OK'), red flags. "
+            "If description is absent, return notes as empty string. "
+            "Do not guess or hallucinate notes when you have no description.\n"
+            "Do not include any preamble, explanation, or markdown -- only the JSON object."
+        )
+        return prompt
+
+    # Criteria configured: extend the JSON contract with a "criteria" object and
+    # list each label + its natural-language assessment instruction.
+    criteria_lines = "\n".join(f"- {c.label}: {c.assess}" for c in criteria)
+    labels = ", ".join(f'"{c.label}"' for c in criteria)
     prompt += (
         f"{desc_section}\n\n"
         "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
-        '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>"}\n\n'
+        '{"fit": <integer 1-10>, "notes": "<one line, max 25 words>", '
+        '"criteria": {<one entry per criterion below, keyed by its label>}}\n\n'
         "fit: rate 1-10 how well this role fits the candidate based on role/company/location. "
         "If you truly lack enough information to assess, return 5.\n"
         "notes: one-line summary including key tech stack, remote policy "
         f"(e.g. 'Remote US-only', 'Hybrid {hc}', 'Remote {hc} OK'), red flags. "
         "If description is absent, return notes as empty string. "
         "Do not guess or hallucinate notes when you have no description.\n"
+        "criteria: evaluate each item below against the job description, keyed by "
+        f"its label ({labels}). Base each value strictly on the description; answer "
+        '"unknown" when the description is silent or absent. Keep each value short '
+        "(a few words max):\n"
+        f"{criteria_lines}\n"
         "Do not include any preamble, explanation, or markdown -- only the JSON object."
     )
     return prompt
@@ -418,11 +475,12 @@ def _fetch_fit_notes_for_job(
     hc: str,
     config: dict[str, Any] | None,
     timeout: int,
+    criteria: Sequence[Criterion] = (),
 ) -> tuple[str, str, bool]:
     """Worker: fetch fit/notes for one job. Returns (fit_str, notes_str, failed)."""
     company = job.get("company", "unknown")
     role = job.get("role", "unknown")
-    prompt = _build_fit_notes_prompt(job, role_persona, loc_summary, hc)
+    prompt = _build_fit_notes_prompt(job, role_persona, loc_summary, hc, criteria)
     log.debug(
         "%s company=%s role=%s prompt=%r",
         _enrich_tag("enrich-fit-notes"),
@@ -494,6 +552,10 @@ def _fetch_fit_notes_for_job(
 
     score = min(int(fit_val), 10)
     notes_str = notes_val if isinstance(notes_val, str) else ""
+    if criteria:
+        criteria_obj = parsed.get("criteria")
+        if isinstance(criteria_obj, dict):
+            notes_str = _fold_criteria_values(notes_str, criteria, criteria_obj)
     log.debug(
         "%s company=%s role=%s parsed fit=%d/10 notes=%r",
         _enrich_tag("enrich-fit-notes"),
@@ -516,6 +578,7 @@ def _enrich_fit_and_notes_parallel(
     hc: str,
     stats: dict[str, int],
     timeout: int,
+    criteria: Sequence[Criterion] = (),
 ) -> dict[str, int]:
     """Parallel path for enrich_fit_and_notes (claude or ollama)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -581,6 +644,7 @@ def _enrich_fit_and_notes_parallel(
                 hc,
                 config,
                 timeout,
+                criteria,
             )
         ] = j
     # `applied` tracks futures whose result has been written to `jobs`/`stats`,
@@ -664,6 +728,7 @@ def enrich_fit_and_notes(
     loc_summary = _location_summary(config)
     role_persona = persona(config)
     hc = home_city(config)
+    crit_list = list(cfg.criteria)
 
     pool_size = _enrich_pool_size(config)
     eligible_count = sum(
@@ -703,6 +768,7 @@ def enrich_fit_and_notes(
             hc=hc,
             stats=stats,
             timeout=enrich_timeout(config),
+            criteria=crit_list,
         )
         log.info(
             "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
@@ -734,7 +800,13 @@ def enrich_fit_and_notes(
             break
 
         fit_str, notes_str, failed = _fetch_fit_notes_for_job(
-            job, role_persona, loc_summary, hc, config, enrich_timeout(config)
+            job,
+            role_persona,
+            loc_summary,
+            hc,
+            config,
+            enrich_timeout(config),
+            crit_list,
         )
         calls_made += 1
         company = job.get("company", "unknown")

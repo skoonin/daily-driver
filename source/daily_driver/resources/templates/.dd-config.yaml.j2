@@ -152,6 +152,31 @@ tracker:
 #       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
 #       # 0 to disable the filter. Other sources are implicitly recent.
 #       max_age_days: 30
+#     # Post-scrape enrichment: optional LLM passes that add Product,
+#     # Glassdoor rating, a fit score, and a Notes summary. Each pass
+#     # costs API calls; the max_* values cap how many run.
+#     enrichment:
+#       # Seconds before a single enrichment LLM call is abandoned.
+#       enrich_timeout: 30
+#       # Cap on company-description lookups per run (bounds API cost).
+#       max_enrich_companies: 50
+#       # Look up each company's Glassdoor rating during enrichment.
+#       enrich_gd_rating: true
+#       # Score each job 1-10 for fit against your persona and locations.
+#       enrich_fit: true
+#       # Generate a one-line Notes summary (tech stack, remote policy, red flags).
+#       enrich_notes: true
+#       # Cap on fit/notes LLM calls per run (bounds API cost).
+#       max_enrich_fit: 50
+#       # Pause between detail-page fetches, in seconds, to avoid rate limits.
+#       detail_delay_seconds: 0.5
+#       # Extra things to assess in each job description. Each becomes a
+#       # "Label: value" segment appended to Notes. `assess` is a
+#       # natural-language instruction the LLM reasons about, not a
+#       # keyword match.
+#       criteria:
+#         - label: Sponsorship
+#           assess: "Does the role offer visa sponsorship?"
 #     sources:
 #
 #       # All keys are optional; omitted = on (SourceToggle defaults

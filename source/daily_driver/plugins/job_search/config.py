@@ -141,31 +141,70 @@ class ScraperConfig(BaseModel):
     )
 
 
+class Criterion(BaseModel):
+    """One user-declared thing to look for in a job description.
+
+    `assess` is a natural-language instruction the enrichment LLM reasons
+    about (so polarity and negation survive), not a keyword to match.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(description="")
+    assess: str = Field(description="")
+
+
 class EnrichmentConfig(BaseModel):
     """Knobs for the post-scrape enrichment passes (comp, fit, notes)."""
 
     model_config = ConfigDict(extra="forbid")
 
     enrich_timeout: int = Field(
-        default=30, description="", json_schema_extra={"template_skip": True}
+        default=30,
+        description="Seconds before a single enrichment LLM call is abandoned.",
     )
     max_enrich_companies: int = Field(
-        default=50, description="", json_schema_extra={"template_skip": True}
+        default=50,
+        description="Cap on company-description lookups per run (bounds API cost).",
     )
     enrich_gd_rating: bool = Field(
-        default=True, description="", json_schema_extra={"template_skip": True}
+        default=True,
+        description="Look up each company's Glassdoor rating during enrichment.",
     )
     enrich_fit: bool = Field(
-        default=True, description="", json_schema_extra={"template_skip": True}
+        default=True,
+        description="Score each job 1-10 for fit against your persona and locations.",
     )
     enrich_notes: bool = Field(
-        default=True, description="", json_schema_extra={"template_skip": True}
+        default=True,
+        description=(
+            "Generate a one-line Notes summary (tech stack, remote policy, red flags)."
+        ),
     )
     max_enrich_fit: int = Field(
-        default=50, description="", json_schema_extra={"template_skip": True}
+        default=50,
+        description="Cap on fit/notes LLM calls per run (bounds API cost).",
     )
     detail_delay_seconds: float = Field(
-        default=0.5, description="", json_schema_extra={"template_skip": True}
+        default=0.5,
+        description="Pause between detail-page fetches, in seconds, to avoid rate limits.",
+    )
+    criteria: list[Criterion] = Field(
+        default=[],
+        description=(
+            "Extra things to assess in each job description. Each becomes a\n"
+            '"Label: value" segment appended to Notes. `assess` is a\n'
+            "natural-language instruction the LLM reasons about, not a\n"
+            "keyword match."
+        ),
+        json_schema_extra={
+            "template_example": [
+                {
+                    "label": "Sponsorship",
+                    "assess": "Does the role offer visa sponsorship?",
+                }
+            ]
+        },
     )
 
 
@@ -216,8 +255,11 @@ class JobSearchPlugin(BaseModel):
     )
     enrichment: EnrichmentConfig = Field(
         default=EnrichmentConfig(),
-        description="",
-        json_schema_extra={"template_skip": True},
+        description=(
+            "Post-scrape enrichment: optional LLM passes that add Product,\n"
+            "Glassdoor rating, a fit score, and a Notes summary. Each pass\n"
+            "costs API calls; the max_* values cap how many run."
+        ),
     )
     sources: dict[str, SourceToggle] = Field(
         default_factory=dict,
