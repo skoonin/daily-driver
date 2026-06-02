@@ -46,3 +46,4 @@ MANIFEST
 *~
 .idea/
 .ipynb_checkpoints/
+**/worktrees

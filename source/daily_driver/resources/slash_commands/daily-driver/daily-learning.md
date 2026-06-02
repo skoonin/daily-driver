@@ -1,6 +1,6 @@
 ---
 name: daily-learning
-description: Daily 5-10 minute interview practice - behavioral STAR drills, technical fundamentals, system design
+description: Daily 5-10 minute interview practice - behavioral STAR drills, technical fundamentals, coding drills, system design
 ---
 
 Short interview-practice session. Aim for 5-10 minutes total — don't derail morning planning. One question at a time, wait for the answer, give specific feedback, follow up once or twice, then close out and write a brief log.
@@ -18,7 +18,7 @@ Pick today's default focus from `dow_num` (1=Mon ... 7=Sun):
 | Day | Default focus |
 |-----|---------------|
 | Mon (1) | behavioral (STAR drills) |
-| Tue (2) | technical-fundamentals |
+| Tue (2) | technical-fundamentals (alternate concept Qs with coding drills) |
 | Wed (3) | system-design |
 | Thu (4) | behavioral (STAR drills) |
 | Fri (5) | leadership / influence |
@@ -100,9 +100,11 @@ For each answer, score against STAR explicitly:
 
 Common weak spots to flag specifically: "we" instead of "I", missing metric in Result, hedge words ("kind of", "sort of"), no tradeoff named in Action. Don't say "great job" — name the specific gap and ask a sharpening follow-up. Once. Then move on.
 
-### Technical Fundamentals
+### Technical Fundamentals & Coding
 
-Scope to the role types in step 1. SRE / platform / infra examples:
+On a technical-fundamentals day, alternate between **concept questions** and **coding drills** — don't do only one mode for weeks. Check the recent practice log (step 2): if the last technical-fundamentals session was concept-heavy, lead with a coding drill this time, and vice versa. Note the sub-mode in the log's `## Questions` so the rotation stays balanced.
+
+**Concept questions.** Scope to the role types in step 1. SRE / platform / infra examples:
 
 - Walk me through what happens when a TCP connection is established between two hosts.
 - A pod is in CrashLoopBackOff. Walk me through your debug path, fastest signal first.
@@ -111,6 +113,13 @@ Scope to the role types in step 1. SRE / platform / infra examples:
 - What is the failure mode of a leader-follower replicated database during a network partition? How do you reason about the user-visible impact?
 
 Score the answer for: precision of vocabulary, willingness to say "I don't know" where appropriate, ability to navigate from symptom to system layer, and depth of follow-up handling.
+
+**Coding drills.** Scope to SRE / platform / infra reality — not algorithm puzzles. Two styles, vary across sessions:
+
+- *Practical scripting / debugging* — give a small, real task or a broken snippet (bash/Python/Go). Examples: parse a log file and emit the top-N error sources; write a healthcheck that retries with backoff and exits non-zero on failure; this script silently drops errors — fix it; reason out loud about what a given snippet does and where it breaks. Keep it small enough to talk through in a few minutes; the user can type an answer or describe it.
+- *Code reading / review* — paste a short snippet and ask for the bug, the race, or a design critique. Tests judgment over blank-page recall: "what's wrong here," "what happens under concurrent calls," "what would you change before this ships."
+
+Score coding answers for: correctness and edge-case awareness (empty input, failure paths, off-by-one), idiomatic use of the language, whether they reason about failure modes before happy path, and whether they catch silent-failure / error-swallowing patterns. Don't say "looks good" — name the specific bug or the missing edge case, ask one sharpening follow-up, then move on.
 
 ### System Design
 
