@@ -17,7 +17,7 @@ def test_merge_dedup_same_url_first_source_wins() -> None:
     second = {"url": "https://x/y", "company": "Acme", "role": "SRE", "source": "b"}
     results = [("source_a", [first]), ("source_b", [second])]
 
-    jobs, failed = runner._merge_and_dedup(results, {})
+    jobs, failed = runner._merge_and_dedup(results)
 
     assert jobs == [first]
     assert failed == []
@@ -35,7 +35,7 @@ def test_merge_dedup_same_company_role_first_source_wins() -> None:
     second = {"url": "https://b/2", "company": "Acme", "role": "SRE"}
     results = [("source_a", [first]), ("source_b", [second])]
 
-    jobs, failed = runner._merge_and_dedup(results, {})
+    jobs, failed = runner._merge_and_dedup(results)
 
     assert jobs == [first]
     assert failed == []
@@ -51,7 +51,7 @@ def test_merge_dedup_exception_recorded_in_failed_sources() -> None:
         ("bad_src", RuntimeError("boom")),
     ]
 
-    jobs, failed = runner._merge_and_dedup(results, {})
+    jobs, failed = runner._merge_and_dedup(results)
 
     assert jobs == [ok]
     assert failed == ["bad_src"]
@@ -61,7 +61,7 @@ def test_merge_dedup_empty_input_returns_empty() -> None:
     """No results in means empty jobs and empty failed_sources out."""
     from daily_driver.plugins.job_search.scraper import runner
 
-    jobs, failed = runner._merge_and_dedup([], {})
+    jobs, failed = runner._merge_and_dedup([])
 
     assert jobs == []
     assert failed == []

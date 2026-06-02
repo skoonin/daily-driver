@@ -108,7 +108,6 @@ def run(args: argparse.Namespace) -> int:
     # deferred: core.summary pulls in requests (~47ms) and ai_provider /
     # clipboard are only needed on the dispatch path, not at parser build.
     from daily_driver.core.summary import (
-        ai_routing_dict,
         build_json_bundle,
         parse_range,
         render_prompt,
@@ -165,7 +164,7 @@ def run(args: argparse.Namespace) -> int:
             output = ai_provider.invoke_for(
                 "summary",
                 prompt,
-                config=ai_routing_dict(workspace.config),
+                ai=workspace.config.ai,
                 timeout=args.timeout,
                 format_json=False,
             )

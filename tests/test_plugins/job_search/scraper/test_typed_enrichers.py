@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
     enrich_company_descriptions_typed,
     enrich_fit_and_notes_typed,
@@ -18,6 +18,7 @@ from daily_driver.plugins.job_search.scraper.models import (
     NormalizedJob,
     RawScrapedJob,
 )
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
 def _enriched(**overrides: object) -> EnrichedJob:
@@ -34,18 +35,18 @@ def _enriched(**overrides: object) -> EnrichedJob:
 
 
 @pytest.fixture
-def fake_config() -> dict[str, Any]:
-    return {
-        "plugins": {
-            "job_search": {
+def fake_config() -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
                 "scraper": {"enabled": True},
                 "enrichment": {"max_enrich_companies": 0},
             }
-        }
-    }
+        )
+    )
 
 
-def test_typed_enrichers_return_new_instances(fake_config: dict[str, Any]) -> None:
+def test_typed_enrichers_return_new_instances(fake_config: ScrapeContext) -> None:
     """Frozen-model invariant: enrichers must return new instances."""
     j = _enriched()
     # company description path short-circuits when claude CLI absent — that's fine.
@@ -55,7 +56,7 @@ def test_typed_enrichers_return_new_instances(fake_config: dict[str, Any]) -> No
 
 
 def test_typed_company_enrich_passes_through_when_no_claude(
-    fake_config: dict[str, Any],
+    fake_config: ScrapeContext,
 ) -> None:
     j = _enriched()
     with patch("shutil.which", return_value=None):
@@ -66,7 +67,7 @@ def test_typed_company_enrich_passes_through_when_no_claude(
 
 
 def test_typed_fit_enrich_passes_through_with_zero_budget(
-    fake_config: dict[str, Any],
+    fake_config: ScrapeContext,
 ) -> None:
     j = _enriched()
     out, stats = enrich_fit_and_notes_typed([j], fake_config, budget=0)
@@ -76,7 +77,7 @@ def test_typed_fit_enrich_passes_through_with_zero_budget(
 
 
 def test_typed_job_details_short_circuits_when_description_present(
-    fake_config: dict[str, Any],
+    fake_config: ScrapeContext,
 ) -> None:
     j = _enriched(description_text="already populated")
     out = enrich_job_details_typed([j], fake_config)
@@ -85,7 +86,7 @@ def test_typed_job_details_short_circuits_when_description_present(
     assert out[0].description_text == "already populated"
 
 
-def test_typed_enrichers_preserve_immutability(fake_config: dict[str, Any]) -> None:
+def test_typed_enrichers_preserve_immutability(fake_config: ScrapeContext) -> None:
     """Input EnrichedJob instances must not be mutated (Q14: frozen=True)."""
     j = _enriched(notes="original")
     enrich_fit_and_notes_typed([j], fake_config, budget=0)
@@ -94,14 +95,7 @@ def test_typed_enrichers_preserve_immutability(fake_config: dict[str, Any]) -> N
     assert j.fit is None
 
 
-def test_typed_enrichers_handle_skipped_status(fake_config: dict[str, Any]) -> None:
-    j = _enriched(status=JobStatus.SKIPPED, skip_reason="below comp")
+def test_typed_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
+    j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
     out = enrich_job_details_typed([j], fake_config)
     assert out[0].status is JobStatus.SKIPPED
-
-
-def test_typed_enrichers_skip_skipped_comp_status(fake_config: dict[str, Any]) -> None:
-    # skipped-comp jobs are surfaced but excluded from enrichment, like skipped.
-    j = _enriched(status=JobStatus.SKIPPED_COMP, skip_reason="below comp threshold")
-    out = enrich_job_details_typed([j], fake_config)
-    assert out[0].status is JobStatus.SKIPPED_COMP

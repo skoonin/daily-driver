@@ -139,32 +139,27 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         )
         return 1
 
-    # The ai: block lives at the top level of .dd-config.yaml; ai_provider
-    # dispatch reads it via `config.get("ai")`. Without this, every job
-    # `run` and `--backfill` silently defaults to claude regardless of the
-    # workspace's `ai.enrichment.provider: ollama` setting.
-    config = {
-        "job_search": plugins.job_search.model_dump(exclude_none=True, mode="json"),
-        "ai": workspace.config.ai.model_dump(mode="json"),
-    }
+    plugin = plugins.job_search
+    ai = workspace.config.ai
     # context.md, when present, rides every fit/notes enrichment prompt so the
     # fit score reflects the candidate's real background (see enrich_fit_and_notes).
+    context_text = ""
     context_path = workspace.root / "context.md"
     if context_path.is_file():
         context_text = context_path.read_text(encoding="utf-8").strip()
-        if context_text:
-            config["context"] = context_text
     output_dir = workspace.output_dir
     csv_path = output_dir / "jobs.csv"
 
     try:
         if args.backfill:
-            run_backfill(config, csv_path)
+            run_backfill(plugin, csv_path, ai=ai, context_text=context_text)
             return 0
 
         return run_scrape(
-            config,
+            plugin,
             output_dir,
+            ai=ai,
+            context_text=context_text,
             dry_run=args.dry_run,
             sources_override=sources_override,
         )

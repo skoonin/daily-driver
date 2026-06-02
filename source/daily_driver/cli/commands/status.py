@@ -15,11 +15,6 @@ from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core import clock
 from daily_driver.core.console import Console
 
-# Statuses considered terminal — entries in these are excluded from "stalled".
-_TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {"completed", "done", "closed", "dropped", "withdrawn", "rejected"}
-)
-
 _STALE_DAYS = 14
 _RECENT_DAYS = 7
 
@@ -154,7 +149,7 @@ def _detect_setup_gaps(workspace: Any, all_entries: list[Any]) -> list[dict[str,
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.tracker import TERMINAL_STATUSES, Tracker
     from daily_driver.core.workspace import WorkspaceError
 
     try:
@@ -187,8 +182,7 @@ def run(args: argparse.Namespace) -> int:
     stalled = [
         e
         for e in all_entries
-        if e.status not in _TERMINAL_STATUSES
-        and _to_utc(e.updated_at) < stale_threshold
+        if e.status not in TERMINAL_STATUSES and _to_utc(e.updated_at) < stale_threshold
     ]
 
     # Recent: updated within last 7 days, sorted most-recent first

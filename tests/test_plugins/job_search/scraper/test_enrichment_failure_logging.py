@@ -13,19 +13,22 @@ from __future__ import annotations
 import logging
 from unittest.mock import patch
 
+from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError
-from daily_driver.plugins.job_search.scraper import enrichment
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
-def _config() -> dict:
+def _config() -> ScrapeContext:
     # max_parallel=1 keeps enrichment on the main thread so the warning carries
     # the "[enrich]" tag (not "[enrich wN]"); these tests assert log content,
     # not concurrency — the worker-tag path is covered in test_enrichment_parallel.
-    return {
-        "ai": {"claude": {"max_parallel": 1}},
-        "job_search": {"enrichment": {"enrich_timeout": 5}},
-    }
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate({"enrichment": {"enrich_timeout": 5}}),
+        ai=AIConfig.model_validate({"claude": {"max_parallel": 1}}),
+    )
 
 
 def test_company_descriptions_warning_includes_stdout(caplog) -> None:
@@ -81,7 +84,7 @@ def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> No
     jobs = [{"company": "Acme", "role": "SRE"}]
     captured: dict = {}
 
-    def fake_invoke(task, prompt, *, config, timeout, format_json):
+    def fake_invoke(task, prompt, *, ai, timeout, format_json):
         captured["task"] = task
         captured["format_json"] = format_json
         return "Acme makes widgets\n4.1\n"
@@ -100,7 +103,7 @@ def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
     jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/j/1"}]
     captured: dict = {}
 
-    def fake_invoke(task, prompt, *, config, timeout, format_json):
+    def fake_invoke(task, prompt, *, ai, timeout, format_json):
         captured["task"] = task
         captured["format_json"] = format_json
         return '{"fit": 7, "notes": "kubernetes-heavy"}'

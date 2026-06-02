@@ -22,6 +22,8 @@ from pathlib import Path
 from daily_driver.core.locking import file_lock
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 
+# Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
+# row reaches and never leaves, so prune archives them by default.
 DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
 
 

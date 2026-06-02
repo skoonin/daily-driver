@@ -306,7 +306,6 @@ def test_jobs_status_json_with_last_run(
         "new_jobs": 3,
         "enriched_fit_notes": 3,
         "enriched_product": 2,
-        "skipped_below_comp": 0,
     }
     (ws / "jobs-last-run.json").write_text(json.dumps(last_run), encoding="utf-8")
 
@@ -606,9 +605,9 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
 
 
 def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
-    """Regression: jobs `run --backfill` must include the workspace's `ai:` block
-    in the config dict it passes to enrichment. Without this, every backfill
-    call silently defaults to claude regardless of ai.enrichment.provider.
+    """Regression: jobs `run --backfill` must pass the workspace's typed `AIConfig`
+    to enrichment. Without this, every backfill call silently defaults to claude
+    regardless of ai.enrichment.provider.
     """
     from daily_driver.cli.cli import app
 
@@ -640,14 +639,9 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
 
     assert rc == 0
     assert mock_backfill.called
-    args, _kwargs = mock_backfill.call_args
-    config = args[0]
-    assert "ai" in config, (
-        "config dict passed to run_backfill is missing the `ai` block; "
-        f"got keys: {sorted(config.keys())}"
-    )
-    assert config["ai"]["enrichment"]["provider"] == "ollama"
-    assert config["ai"]["enrichment"]["model"] == "qwen2.5:32b"
+    ai = mock_backfill.call_args.kwargs["ai"]
+    assert ai.enrichment.provider == "ollama"
+    assert ai.enrichment.model == "qwen2.5:32b"
 
 
 def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
@@ -679,7 +673,5 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
-    args, _kwargs = mock_run.call_args
-    config = args[0]
-    assert "ai" in config
-    assert config["ai"]["enrichment"]["provider"] == "ollama"
+    ai = mock_run.call_args.kwargs["ai"]
+    assert ai.enrichment.provider == "ollama"

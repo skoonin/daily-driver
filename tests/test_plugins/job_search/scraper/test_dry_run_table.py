@@ -35,16 +35,21 @@ def test_fix_mojibake_handles_empty_string():
 
 
 def test_dry_run_table_renders_columns_and_count():
+    import datetime as dt
+
     from daily_driver.plugins.job_search.scraper import _print_dry_run_table
+    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
     jobs = [
-        {
-            "source": "RemoteOK",
-            "company": "Cayuse",
-            "role": "Staff SRE",
-            "location": "Remote",
-            "url": "https://remoteok.com/x",
-        },
+        EnrichedJob(
+            company="Cayuse",
+            role="Staff SRE",
+            location="Remote",
+            url="https://remoteok.com/x",
+            source="RemoteOK",
+            source_canonical="remoteok",
+            date_found=dt.date.today(),  # noqa: DTZ011
+        ),
     ]
     buf = io.StringIO()
     with redirect_stdout(buf):

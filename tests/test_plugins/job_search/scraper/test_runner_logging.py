@@ -17,18 +17,23 @@ import time
 
 import pytest
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
-def _cfg_with_sources(enabled_ids: list[str], *, workers: int = 4) -> dict:
-    """Build a minimal scraper config that enables the given source IDs."""
-    return {
-        "job_search": {
-            "scraper": {
-                "enabled": True,
-                "parallel_workers": workers,
-            },
-            "sources": {sid: {"enabled": True} for sid in enabled_ids},
-        }
-    }
+
+def _cfg_with_sources(enabled_ids: list[str], *, workers: int = 4) -> ScrapeContext:
+    """Build a minimal scraper context that enables the given source IDs."""
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "scraper": {
+                    "enabled": True,
+                    "parallel_workers": workers,
+                },
+                "sources": {sid: {"enabled": True} for sid in enabled_ids},
+            }
+        )
+    )
 
 
 def test_run_one_logs_starting_at_info(caplog) -> None:

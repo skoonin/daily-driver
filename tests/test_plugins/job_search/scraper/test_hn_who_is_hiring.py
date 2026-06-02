@@ -10,6 +10,8 @@ from datetime import date
 from typing import Any
 from unittest.mock import MagicMock
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import (
     hn_who_is_hiring as hn_module,
 )
@@ -27,18 +29,20 @@ def _comments_response(hits: list[dict[str, Any]]) -> MagicMock:
     return resp
 
 
-def _config(roles: list[str] | None = None) -> dict[str, Any]:
-    return {
-        "job_search": {
-            "roles": roles or ["SRE"],
-            "scraper": {
-                "enabled": True,
-                "timeout": 1,
-                "max_retries": 0,
-            },
-            "sources": {"hn_who_is_hiring": {"hn_max_posts": 100}},
-        }
-    }
+def _config(roles: list[str] | None = None) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "roles": roles or ["SRE"],
+                "scraper": {
+                    "enabled": True,
+                    "timeout": 1,
+                    "max_retries": 0,
+                },
+                "sources": {"hn_who_is_hiring": {"hn_max_posts": 100}},
+            }
+        )
+    )
 
 
 def test_thread_id_resolved_from_algolia_stories(monkeypatch: Any) -> None:

@@ -45,10 +45,6 @@ class Plugin:
     # All launchd labels this plugin manages, swept unconditionally on
     # uninstall regardless of whether the job is currently configured.
     launchd_labels: tuple[str, ...] = ()
-    # launchd labels installed by previous releases of this plugin; core
-    # scheduler sweeps them on install/uninstall so a renamed/relocated job
-    # doesn't leave an orphaned plist firing the old argv.
-    legacy_launchd_labels: tuple[str, ...] = ()
     # Dotted path to ``run_checks(workspace) -> list[CheckResult]``, lazily
     # imported by core.doctor. None means the plugin contributes no health
     # checks.

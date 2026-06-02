@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import requests
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources._http import _api_get
 
 
@@ -23,8 +24,12 @@ def _fake_response(status: int, headers: dict[str, str] | None = None) -> MagicM
     return resp
 
 
-def _config_with_timeout(max_retries: int = 3) -> dict[str, Any]:
-    return {"job_search": {"scraper": {"timeout": 1, "max_retries": max_retries}}}
+def _config_with_timeout(max_retries: int = 3) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"scraper": {"timeout": 1, "max_retries": max_retries}}
+        )
+    )
 
 
 def test_max_retries_from_config_applies_when_not_overridden() -> None:

@@ -171,7 +171,6 @@ def test_job_search_plugin_minimal():
     assert m.roles == []
     assert m.domain_keywords == []
     assert m.seniority_keywords == []
-    assert m.min_comp_usd == 180000
     assert isinstance(m.scraper, ScraperConfig)
     assert isinstance(m.enrichment, EnrichmentConfig)
     assert isinstance(m.sources, dict)
@@ -188,12 +187,10 @@ def test_job_search_plugin_full():
         roles=["Senior SRE", "Staff Platform Engineer"],
         domain_keywords=["kubernetes", "terraform"],
         seniority_keywords=["staff", "senior"],
-        min_comp_usd=200000,
         scraper=ScraperConfig(enabled=True, timeout=60, parallel_workers=2),
     )
     assert m.persona == "Staff SRE"
     assert m.roles == ["Senior SRE", "Staff Platform Engineer"]
-    assert m.min_comp_usd == 200000
     assert m.scraper.enabled is True
     assert m.scraper.timeout == 60
     assert m.scraper.parallel_workers == 2

@@ -1,0 +1,78 @@
+"""Cross-vertical enrichment infra: pool sizing, worker tags, interrupt notifier."""
+
+from __future__ import annotations
+
+import os
+import signal
+import sys
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+
+def _enrich_pool_size(ctx: ScrapeContext) -> int:
+    """Worker count for enrichment, keyed off the active provider; 1 = serial.
+
+    Each provider carries its own max_parallel: ollama is bounded by local RAM,
+    claude by API rate limits. Parallelism only raises throughput — it does not
+    change the max_enrich_* budget (which still caps how many jobs are enriched)
+    or the per-call timeout.
+    """
+    ai_cfg = ctx.ai
+    if ai_cfg.enrichment.provider == "ollama":
+        return max(1, ai_cfg.ollama.max_parallel)
+    return max(1, ai_cfg.claude.max_parallel)
+
+
+def _enrich_tag(prefix: str) -> str:
+    """Return [prefix] in main thread, [prefix wN] in a pool worker."""
+    import threading
+
+    name = threading.current_thread().name
+    if name == "MainThread":
+        return f"[{prefix}]"
+    suffix = name.rsplit("_", 1)
+    if len(suffix) == 2 and suffix[1].isdigit():
+        return f"[{prefix} w{suffix[1]}]"
+    return f"[{prefix}]"
+
+
+def _install_interrupt_notifier(
+    futures: dict[Any, Any], timeout_s: int, item: str
+) -> Any:
+    """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
+
+    Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
+    process exits the way it would have without us. Returns the previous
+    handler so the caller can restore it in a finally clause.
+
+    `item` is the user-vocabulary noun ("companies" or "jobs"); `futures`
+    is the live mapping so the message can name how many are in progress.
+    """
+    interrupt_count = [0]
+    previous = signal.getsignal(signal.SIGINT)
+
+    def handler(_signum: int, _frame: Any) -> None:
+        interrupt_count[0] += 1
+        if interrupt_count[0] == 1:
+            in_flight = sum(1 for f in futures if not f.done())
+            print(
+                f"\nStopping — waiting for {in_flight} {item} still being "
+                f"enriched (up to {timeout_s}s each). Press Ctrl-C again "
+                "to quit now and lose what's in progress.",
+                file=sys.stderr,
+                flush=True,
+            )
+            raise KeyboardInterrupt
+        # Second press: hand control back to whatever handler the parent had
+        # before we installed ours, then re-raise the signal. Falls back to
+        # SIG_DFL if `previous` isn't installable (e.g. a non-callable token).
+        try:
+            signal.signal(signal.SIGINT, previous)
+        except (TypeError, ValueError):
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    signal.signal(signal.SIGINT, handler)
+    return previous

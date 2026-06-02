@@ -258,14 +258,6 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={"inline_comment": '["senior", "staff", "principal"]'},
     )
-    min_comp_usd: int = Field(
-        default=180000,
-        description=(
-            "Pay floor, compared directly against each listing's own comp figure\n"
-            "with no currency conversion. Jobs whose found comp is below it are\n"
-            "kept but marked `skipped-comp`; jobs with no listed comp are surfaced."
-        ),
-    )
     locations: Locations | None = Field(
         default=None,
         description="",

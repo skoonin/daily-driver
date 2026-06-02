@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from bs4 import BeautifulSoup
 
 from daily_driver.core.clock import today
@@ -11,10 +13,13 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     _http_session,
 )
 
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
 log = get_logger(__name__)
 
 
-def scrape_greenhouse(config: dict) -> list[dict]:
+def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
 
     Reads board slugs from config at
@@ -24,22 +29,19 @@ def scrape_greenhouse(config: dict) -> list[dict]:
     which returns all jobs with full HTML descriptions in a single request.
     """
     from daily_driver.plugins.job_search.config import GreenhouseToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
-        matches_roles,
-        roles_list,
-        source_toggle,
-    )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
-    roles = roles_list(config)
-    boards = source_toggle(config, "greenhouse", GreenhouseToggle).greenhouse_boards
-    session = _http_session(config)
+    roles = list(ctx.plugin.roles)
+    boards = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle).greenhouse_boards
+    session = _http_session(ctx)
     jobs: list[dict] = []
 
     for board in boards:
         api_url = (
             f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
         )
-        resp = _api_get(session, api_url, config, label=f"greenhouse/{board}")
+        resp = _api_get(session, api_url, ctx, label=f"greenhouse/{board}")
         if not resp:
             continue
         data = resp.json()
@@ -54,7 +56,7 @@ def scrape_greenhouse(config: dict) -> list[dict]:
 
         for entry in board_jobs:
             title = entry.get("title", "")
-            if not title or not matches_roles(title, roles, config):
+            if not title or not matches_roles(title, roles, ctx.plugin):
                 continue
 
             loc = entry.get("location", {})

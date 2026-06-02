@@ -14,7 +14,11 @@ from __future__ import annotations
 
 import argparse
 
-from daily_driver.cli._common import add_global_flags, resolve_workspace
+from daily_driver.cli._common import (
+    add_global_flags,
+    add_session_args,
+    resolve_workspace,
+)
 from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
@@ -47,22 +51,7 @@ def add_parser(
         parents=parents,
         help="Interactive mid-day check-in session (runs /check-in via claude)",
     )
-    parser.add_argument(
-        "--session-name",
-        default=None,
-        help="Custom name for this Claude session (defaults to a timestamped name)",
-    )
-    parser.add_argument(
-        "--agent",
-        default="work-planner",
-        help="Claude agent to load (default: work-planner)",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use.",
-    )
+    add_session_args(parser)
     parser.add_argument(
         "--no-resume",
         action="store_true",

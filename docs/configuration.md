@@ -163,17 +163,14 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 | `roles` | list[string] | `[]` |
 | `domain_keywords` | list[string] | `[]` |
 | `seniority_keywords` | list[string] | `[]` |
-| `min_comp_usd` | int | 180000 |
 | `locations` | object or null | null |
 | `scraper` | object | see `ScraperConfig` below |
 | `enrichment` | object | see `EnrichmentConfig` below |
 | `sources` | dict[string, object] | `{}` (keyed by source id) |
 
-`min_comp_usd` is the pay-floor input. It is compared against the listing's own
-comp figure with no currency conversion: jobs whose found comp is below the
-floor are kept but marked `skipped-comp`; jobs with no listed comp are surfaced.
-Location (countries/cities) is the only filter that removes jobs. Seniority
-filtering is driven by `seniority_keywords`.
+Compensation is display-only: the scraper writes whatever amount it finds to the
+`Comp` column and never filters on it. Location (countries/cities) is the only
+filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
 
 ### `locations`
 
@@ -320,7 +317,6 @@ plugins:
   job_search:
     persona: "Senior SRE, IC-track only"
     seniority_keywords: [senior, staff, principal]
-    min_comp_usd: 180000
     locations:
       home_city: Vancouver, BC
       remote: true

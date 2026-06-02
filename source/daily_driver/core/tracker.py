@@ -39,6 +39,14 @@ JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
 )
 
 
+# Terminal lifecycle states (entry won't progress): union across categories.
+# status.py uses this to exclude entries from "stalled"; the job-prune default
+# (jobs_archive.DEFAULT_PRUNE_STATUSES) is the job-terminal subset.
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {"done", "ruled-out", "dropped", "rejected", "closed"}
+)
+
+
 def _recommended_for_category(category: str) -> tuple[str, ...]:
     if category == "job":
         return JOB_RECOMMENDED_STATUSES

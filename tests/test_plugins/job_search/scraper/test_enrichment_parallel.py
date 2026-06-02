@@ -15,42 +15,48 @@ from typing import Any
 
 import pytest
 
+from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import enrichment
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
-def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> dict:
-    return {
-        "ai": {
-            "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-            "ollama": {"max_parallel": max_parallel},
-        },
-        "job_search": {
+def _enrichment_plugin(budget: int) -> JobSearchPlugin:
+    return JobSearchPlugin.model_validate(
+        {
             "enrichment": {
                 "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
                 "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             }
-        },
-    }
+        }
+    )
 
 
-def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> dict:
-    return {
-        "ai": {
-            "enrichment": {"provider": "claude"},
-            "claude": {"max_parallel": max_parallel},
-        },
-        "job_search": {
-            "enrichment": {
-                "max_enrich_companies": budget,
-                "max_enrich_fit": budget,
-                "enrich_gd_rating": False,
-                "enrich_timeout": 5,
+def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=_enrichment_plugin(budget),
+        ai=AIConfig.model_validate(
+            {
+                "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
+                "ollama": {"max_parallel": max_parallel},
             }
-        },
-    }
+        ),
+    )
+
+
+def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
+    return ScrapeContext(
+        plugin=_enrichment_plugin(budget),
+        ai=AIConfig.model_validate(
+            {
+                "enrichment": {"provider": "claude"},
+                "claude": {"max_parallel": max_parallel},
+            }
+        ),
+    )
 
 
 def _job(company: str, idx: int = 0) -> dict[str, Any]:

@@ -70,6 +70,32 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_session_args(parser: argparse.ArgumentParser) -> None:
+    """Register the Claude-session flags shared by the interactive launchers.
+
+    day-start, day-end, check-in, and the generic launcher factory all expose
+    the same `--session-name` / `--agent` / `--model` trio; this keeps their
+    definitions in one place. Call BEFORE add_global_flags so these render
+    above the global-options group.
+    """
+    parser.add_argument(
+        "--session-name",
+        default=None,
+        help="Custom name for this Claude session (defaults to a timestamped name)",
+    )
+    parser.add_argument(
+        "--agent",
+        default="work-planner",
+        help="Claude agent to load (default: work-planner)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        choices=["sonnet", "opus", "haiku"],
+        help="Claude model to use.",
+    )
+
+
 def resolve_workspace(args: argparse.Namespace) -> Workspace:
     """Discover the workspace from the global `--workspace` flag or CWD.
 

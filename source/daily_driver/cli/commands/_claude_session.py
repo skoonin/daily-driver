@@ -12,7 +12,11 @@ import argparse
 from collections.abc import Callable
 from datetime import date
 
-from daily_driver.cli._common import add_global_flags, resolve_workspace
+from daily_driver.cli._common import (
+    add_global_flags,
+    add_session_args,
+    resolve_workspace,
+)
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.workspace import Workspace, WorkspaceError
@@ -65,22 +69,7 @@ def register_interactive_launcher(
         parents=parents or [],
         help=help_text,
     )
-    parser.add_argument(
-        "--session-name",
-        default=None,
-        help="Custom name for this Claude session (defaults to a timestamped name)",
-    )
-    parser.add_argument(
-        "--agent",
-        default="work-planner",
-        help="Claude agent to load (default: work-planner)",
-    )
-    parser.add_argument(
-        "--model",
-        default=None,
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use.",
-    )
+    add_session_args(parser)
     add_global_flags(parser)
     parser.set_defaults(func=_build_run(slash_command, session_prefix))
     return parser

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -12,10 +12,13 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     _http_session,
 )
 
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
 log = get_logger(__name__)
 
 
-def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
+def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
     """Scrape the current month's HN Who's Hiring thread via Algolia API.
 
     Thread discovery uses Algolia's `author_whoishiring` story search rather
@@ -25,22 +28,21 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
     Comment headline format (convention): "Company | Role | Location | ..."
     """
     from daily_driver.plugins.job_search.config import HackerNewsToggle
-    from daily_driver.plugins.job_search.scraper.runner import (
-        matches_roles,
-        roles_list,
-        source_toggle,
-    )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
-    max_posts = source_toggle(config, "hn_who_is_hiring", HackerNewsToggle).hn_max_posts
-    roles = roles_list(config)
-    session = _http_session(config)
+    max_posts = source_toggle(
+        ctx.plugin, "hn_who_is_hiring", HackerNewsToggle
+    ).hn_max_posts
+    roles = list(ctx.plugin.roles)
+    session = _http_session(ctx)
     current_month_str = today().strftime("%B %Y")
 
     stories_url = (
         "https://hn.algolia.com/api/v1/search_by_date"
         "?tags=story,author_whoishiring&hitsPerPage=12"
     )
-    stories_resp = _api_get(session, stories_url, config, label="hn_who_is_hiring")
+    stories_resp = _api_get(session, stories_url, ctx, label="hn_who_is_hiring")
     if not stories_resp:
         return []
 
@@ -64,9 +66,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
         f"https://hn.algolia.com/api/v1/search"
         f"?tags=comment,story_{thread_id}&hitsPerPage=1000"
     )
-    algolia_resp = _api_get(
-        session, algolia_url, config, label="hn_who_is_hiring_algolia"
-    )
+    algolia_resp = _api_get(session, algolia_url, ctx, label="hn_who_is_hiring_algolia")
     if not algolia_resp:
         return []
 
@@ -114,7 +114,7 @@ def scrape_hn_who_is_hiring(config: dict) -> list[dict]:
         company = parts[0]
         role = parts[1] if len(parts) > 1 else ""
 
-        if not matches_roles(" ".join(parts), roles, config):
+        if not matches_roles(" ".join(parts), roles, ctx.plugin):
             continue
 
         location = "Remote"

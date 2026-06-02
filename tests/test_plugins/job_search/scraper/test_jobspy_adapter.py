@@ -6,7 +6,9 @@ import datetime as dt
 
 import pytest
 
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
+from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources.jobspy import (
     _comp_from_description,
     jobspy_row_to_raw,
@@ -130,8 +132,8 @@ class TestCompFromDescription:
         assert comp == "$150,000–200,000/yr"
 
     def test_hourly_is_annualized_not_raw(self) -> None:
-        # Regression guard: hourly figures must be annualized, else Comp's
-        # period-agnostic threshold check rejects them as below an annual floor.
+        # Regression guard: hourly figures are annualized so the Comp column
+        # reads as a comparable yearly amount.
         comp = _comp_from_description("Pay range $50 - $70 per hour")
         assert comp == "$104,000–145,600/yr"
         assert "/hr" not in comp
@@ -151,17 +153,19 @@ class TestPerSiteScrapers:
     """The thin per-site wrappers forward the correct ``site_name`` list."""
 
     @staticmethod
-    def _config() -> dict[str, object]:
-        return {
-            "job_search": {
-                "roles": ["software engineer"],
-                "locations": {"countries": ["US"]},
-                "scraper": {
-                    "enabled": True,
-                    "search_terms": ["software engineer"],
-                },
-            }
-        }
+    def _config() -> ScrapeContext:
+        return ScrapeContext(
+            plugin=JobSearchPlugin.model_validate(
+                {
+                    "roles": ["software engineer"],
+                    "locations": {"countries": ["US"]},
+                    "scraper": {
+                        "enabled": True,
+                        "search_terms": ["software engineer"],
+                    },
+                }
+            )
+        )
 
     @staticmethod
     def _install_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:

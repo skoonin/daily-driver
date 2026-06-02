@@ -208,7 +208,6 @@ plugins:
   job_search:
     persona: "Senior SRE, IC-track only"
     seniority_keywords: [senior, staff, principal]
-    min_comp_usd: 180000
     locations:
       home_city: Vancouver, BC
       remote: true
