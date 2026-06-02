@@ -128,9 +128,22 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                                 continue
                             seen_positions.add(position_id)
                             locs = item.get("locations", [])
-                            location = (
-                                locs[0].get("name", "Various") if locs else "Various"
-                            )
+                            # Keep countryName: a bare city ("Seattle") matches no
+                            # country alias in location_matches(), so the country
+                            # branch would drop every Apple job.
+                            if locs:
+                                first = locs[0]
+                                parts = [
+                                    first.get(field, "")
+                                    for field in (
+                                        "name",
+                                        "stateProvince",
+                                        "countryName",
+                                    )
+                                ]
+                                location = ", ".join(p for p in parts if p) or "Various"
+                            else:
+                                location = "Various"
                             job_id = item.get("id", position_id)
                             slug = item.get("transformedPostingTitle", "")
                             detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
