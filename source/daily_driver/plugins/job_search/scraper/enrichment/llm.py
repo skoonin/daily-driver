@@ -270,16 +270,14 @@ def enrich_company_descriptions(
 
 
 def _location_summary(ctx: ScrapeContext) -> str:
+    from daily_driver.plugins.job_search.scraper.countries import country_names
     from daily_driver.plugins.job_search.scraper.runner import home_city
-    from daily_driver.plugins.job_search.scraper.sources._http import country_names
 
     loc_cfg = ctx.plugin.locations
     parts = [f"Based in: {home_city(ctx.plugin)}"]
     if loc_cfg is None:
         parts.append("Remote: yes")
         return "; ".join(parts)
-    if loc_cfg.cities:
-        parts.append("Preferred cities: " + ", ".join(loc_cfg.cities))
     if loc_cfg.countries:
         # Aliases are stored lowercase for matching; the longest is the full
         # country name (not the "usa"/"uk" abbrev). Title-case it for the prompt.
