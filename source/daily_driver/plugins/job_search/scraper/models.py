@@ -282,14 +282,17 @@ class EnrichedJob(BaseModel):
 class Source(Protocol):
     """Protocol for a scraper source callable.
 
-    ``SOURCE_REGISTRY: dict[str, Source]`` is the explicit dispatch dict.
+    ``SCRAPERS: dict[str, Source]`` (in ``scraper/sources/__init__.py``) is the
+    explicit dispatch dict.
 
     The callable receives a ``ScrapeContext`` carrying the validated
     ``JobSearchPlugin`` model plus the run's known-URL dedup set; sources read
-    their transport/role knobs off ``ctx.plugin``.
+    their transport/role knobs off ``ctx.plugin``. Adapters emit wire-format
+    dicts; ``runner._enriched_from_scraped`` performs the one dict -> model
+    validation step downstream.
     """
 
-    def __call__(self, ctx: ScrapeContext) -> list[RawScrapedJob]: ...
+    def __call__(self, ctx: ScrapeContext) -> list[dict[str, Any]]: ...
 
 
 __all__ = [

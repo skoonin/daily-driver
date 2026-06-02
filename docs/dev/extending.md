@@ -110,7 +110,7 @@ This recipe applies to the `job_search` plugin. Each scraper lives in its own mo
 ### Pipeline
 
 ```
-scrape_<name>(config) → list[dict]
+scrape_<name>(ctx: ScrapeContext) → list[dict]
     ↓
 run_all_scrapers:
     phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 4)
@@ -120,7 +120,7 @@ merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/J
     → enrich_fit_and_notes (headless claude, optional) → append_jobs_typed (flock-guarded)
 ```
 
-Phase assignment is config-driven: `type: playwright` on a source routes it to phase 2.
+Phase assignment is code-driven: a source listed in `scraper.runner._PLAYWRIGHT_SOURCES` routes to phase 2. (`SourceToggle` is `extra="forbid"`, so there is no `type:` config knob for this.)
 
 ### Scraper interface
 
