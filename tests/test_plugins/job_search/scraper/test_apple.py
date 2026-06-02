@@ -122,6 +122,64 @@ def test_returns_empty_when_playwright_unavailable(monkeypatch: Any) -> None:
     assert jobs == []
 
 
+def test_emits_country_in_location(monkeypatch: Any) -> None:
+    """countryName must be joined into the emitted location string."""
+    payload: dict[str, Any] = {
+        "res": {
+            "searchResults": [
+                {
+                    "postingTitle": "Senior Site Reliability Engineer",
+                    "positionId": "200111",
+                    "id": "200111",
+                    "transformedPostingTitle": "senior-sre",
+                    "locations": [
+                        {
+                            "name": "Seattle",
+                            "stateProvince": "",
+                            "countryName": "United States of America",
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    page = _make_fake_page(payload)
+    monkeypatch.setattr(
+        apple_module, "_playwright_browser", lambda cfg: _fake_browser(page)
+    )
+
+    jobs = apple_module.scrape_apple(_config())
+    assert len(jobs) == 1
+    assert jobs[0]["location"] == "Seattle, United States of America"
+
+
+def test_location_falls_back_to_various_when_locations_empty(
+    monkeypatch: Any,
+) -> None:
+    """Empty locations[] preserves the 'Various' fallback."""
+    payload: dict[str, Any] = {
+        "res": {
+            "searchResults": [
+                {
+                    "postingTitle": "Senior Site Reliability Engineer",
+                    "positionId": "200222",
+                    "id": "200222",
+                    "transformedPostingTitle": "senior-sre",
+                    "locations": [],
+                }
+            ]
+        }
+    }
+    page = _make_fake_page(payload)
+    monkeypatch.setattr(
+        apple_module, "_playwright_browser", lambda cfg: _fake_browser(page)
+    )
+
+    jobs = apple_module.scrape_apple(_config())
+    assert len(jobs) == 1
+    assert jobs[0]["location"] == "Various"
+
+
 def test_skips_items_without_position_id(monkeypatch: Any) -> None:
     """Items missing positionId must not be returned."""
     payload: dict[str, Any] = {

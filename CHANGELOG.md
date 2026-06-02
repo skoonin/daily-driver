@@ -6,6 +6,18 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Apple jobs no longer dropped by the location filter**: the Apple scraper
+  emitted a bare city (`"Seattle"`) as the job location, which matches no
+  country-name alias, so `location_matches` silently dropped every Apple job
+  when filtering by country (the run funnel collapsed to `new → 0 after
+  location`). Apple's API hands `countryName` in the same record; the scraper
+  now joins city, state/province, and country into `"Seattle, United States of
+  America"`, so the existing country branch matches. Fix is Apple-only — other
+  bare-location sources (greenhouse, HN, remoteok, wwr) genuinely lack a country
+  in their upstream data and are left as a follow-up. (#69)
+
 ## [0.1.0] — 2026-06-01
 
 ### Fixed

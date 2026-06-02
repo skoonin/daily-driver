@@ -8,6 +8,11 @@ asserted explicitly here.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
+
 
 def test_merge_dedup_same_url_first_source_wins() -> None:
     """Two sources return the same URL: the first source's row survives."""
@@ -65,3 +70,30 @@ def test_merge_dedup_empty_input_returns_empty() -> None:
 
     assert jobs == []
     assert failed == []
+
+
+def _us_plugin() -> JobSearchPlugin:
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
+
+    return JobSearchPlugin.model_validate(
+        {
+            "roles": ["Engineer"],
+            "locations": {"countries": ["US"], "cities": []},
+        }
+    )
+
+
+def test_location_matches_accepts_city_plus_country() -> None:
+    """Enriched 'City, Country' Apple strings must pass the country branch."""
+    from daily_driver.plugins.job_search.scraper.runner import location_matches
+
+    job = {"location": "Seattle, United States of America"}
+    assert location_matches(job, _us_plugin()) is True
+
+
+def test_location_matches_rejects_wrong_country() -> None:
+    """The fix must not loosen the filter — wrong-country jobs still drop."""
+    from daily_driver.plugins.job_search.scraper.runner import location_matches
+
+    job = {"location": "Toronto, Canada"}
+    assert location_matches(job, _us_plugin()) is False
