@@ -1,8 +1,7 @@
-"""Shared HTTP / Playwright helpers and country lookup tables for scrapers."""
+"""Shared HTTP / Playwright helpers for scrapers."""
 
 from __future__ import annotations
 
-import functools
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -27,107 +26,6 @@ HTTPTimeout = requests.exceptions.Timeout
 _RETRY_STATUS_CODES: frozenset[int] = frozenset({429, 503})
 _DEFAULT_BACKOFF_SECONDS: float = 1.5
 _MAX_BACKOFF_SECONDS: float = 30.0
-
-
-# Per-scraper parameters for each supported country. Add a row here when
-# introducing a new country code in .dd-config.yaml.
-#
-# Keys:
-#   apple_locale          - path segment for jobs.apple.com/{locale}/search
-#   linkedin_location     - value for LinkedIn's ?location= query param
-#   indeed_host           - hostname for Indeed's regional site
-COUNTRY_MAP: dict[str, dict[str, str]] = {
-    "US": {
-        "apple_locale": "en-us",
-        "linkedin_location": "United States",
-        "indeed_host": "www.indeed.com",
-    },
-    "CA": {
-        "apple_locale": "en-ca",
-        "linkedin_location": "Canada",
-        "indeed_host": "ca.indeed.com",
-    },
-    "GB": {
-        "apple_locale": "en-gb",
-        "linkedin_location": "United Kingdom",
-        "indeed_host": "uk.indeed.com",
-    },
-    "IE": {
-        "apple_locale": "en-ie",
-        "linkedin_location": "Ireland",
-        "indeed_host": "ie.indeed.com",
-    },
-    "AU": {
-        "apple_locale": "en-au",
-        "linkedin_location": "Australia",
-        "indeed_host": "au.indeed.com",
-    },
-    "ZA": {
-        "apple_locale": "en-za",
-        "linkedin_location": "South Africa",
-        "indeed_host": "za.indeed.com",
-    },
-}
-
-# Curated location-text aliases JobSpy's country names omit: the constituent
-# UK nations plus "UK". The >2-char filter below applies only to enum-derived
-# names (so bare ISO codes like "us" can't false-match "Austin"); aliases here
-# are added verbatim, deliberately keeping the safe 2-char "uk".
-_COUNTRY_NAME_ALIASES: dict[str, list[str]] = {
-    "GB": ["uk", "england", "scotland", "wales"],
-}
-
-
-@functools.lru_cache(maxsize=1)
-def _country_table() -> dict[str, tuple[list[str], str]]:
-    """ISO alpha-2 -> (location-match aliases, JobSpy country name).
-
-    Derived from JobSpy's ``Country`` enum so every country JobSpy can scrape is
-    supported, and the location filter never silently desyncs from a hand-kept
-    list. Lazy + cached: the heavy jobspy import is deferred until country
-    matching is actually needed, keeping cheap CLI commands fast.
-    """
-    from jobspy.model import Country
-
-    table: dict[str, tuple[list[str], str]] = {}
-    for c in Country:
-        raw = c.value[1] if len(c.value) > 1 else ""
-        # value[1] is the ISO code, sometimes "subdomain:iso" (e.g. "www:us",
-        # "uk:gb"); take the part after the colon when present.
-        code = (raw.partition(":")[2] or raw).upper()
-        if len(code) != 2:  # skip meta-entries like WORLDWIDE ("www")
-            continue
-        raw_names = [n.strip() for n in c.value[0].split(",") if n.strip()]
-        aliases = [n for n in raw_names if len(n) > 2] + _COUNTRY_NAME_ALIASES.get(
-            code, []
-        )
-        table[code] = (aliases, raw_names[0])
-    return table
-
-
-def country_names(code: str) -> list[str]:
-    """Location-text aliases for an ISO alpha-2 code ([] if JobSpy lacks it)."""
-    entry = _country_table().get(code.upper())
-    return entry[0] if entry else []
-
-
-def jobspy_country(code: str, default: str) -> str:
-    """JobSpy country name for an ISO code, or ``default`` if JobSpy lacks it."""
-    entry = _country_table().get(code.upper())
-    return entry[1] if entry else default
-
-
-def country_params(country: str) -> dict[str, str]:
-    """Look up per-scraper parameters for an ISO country code.
-
-    Returns {} and logs a warning for unknown codes so the caller can skip
-    that country without crashing the run.
-    """
-    params = COUNTRY_MAP.get(country.upper())
-    if params is None:
-        log.warning("[country] unknown country code %r, skipping", country)
-        return {}
-    return params
 
 
 def _http_session(ctx: ScrapeContext) -> requests.Session:
@@ -261,13 +159,9 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
 
 
 __all__ = [
-    "COUNTRY_MAP",
-    "country_names",
-    "jobspy_country",
     "Session",
     "HTTPError",
     "HTTPTimeout",
-    "country_params",
     "_http_session",
     "_api_get",
     "_has_playwright",

@@ -6,6 +6,17 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: removed the `plugins.job_search.locations.cities` config field**
+  and the city branch of `location_matches`; filtering is now on `countries`
+  (and `remote`) only. Hard break, no compat shim (pre-1.0 personal tool). (#70)
+- **Apple scraper now scopes by Apple's postLocation code** (resolved live via
+  the `jobs.apple.com` refData API), navigating `en-us/search?location=x-<CODE>`
+  so titles return in English for every country; country lookups moved from
+  `sources/_http.py` to a new `scraper/countries.py` module. Removes the old
+  six-country ceiling — Apple now covers any country it posts in. (#70)
+
 ### Fixed
 
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper

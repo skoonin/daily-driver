@@ -169,7 +169,7 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 | `sources` | dict[string, object] | `{}` (keyed by source id) |
 
 Compensation is display-only: the scraper writes whatever amount it finds to the
-`Comp` column and never filters on it. Location (countries/cities) is the only
+`Comp` column and never filters on it. Location (countries) is the only
 filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
 
 ### `locations`
@@ -179,7 +179,6 @@ filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
 | `home_city` | string or null | null |
 | `remote` | bool | false |
 | `countries` | list[string] | `[]` |
-| `cities` | list[string] | `[]` |
 
 ### `scraper` (`ScraperConfig`)
 

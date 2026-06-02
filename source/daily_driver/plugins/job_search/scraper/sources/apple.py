@@ -6,10 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins.job_search.scraper.sources._http import (
-    _playwright_browser,
-    country_params,
+from daily_driver.plugins.job_search.scraper.countries import (
+    APPLE_LOCALE,
+    apple_postlocation_code,
+    country_names,
 )
+from daily_driver.plugins.job_search.scraper.sources._http import _playwright_browser
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -50,19 +52,39 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
 
     try:
         with _playwright_browser(ctx) as page:
-            for country in countries_list(ctx.plugin):
-                params = country_params(country)
-                if not params:
-                    continue
-                locale = params["apple_locale"]
+            # Resolve via the browser page's request API so the refData call
+            # reuses the page session and avoids bot detection. A failed lookup
+            # (network, bot-block, non-JSON) returns {} so the country is skipped
+            # cleanly instead of aborting the whole Apple run.
+            def _fetch_json(u: str) -> Any:
+                try:
+                    return page.request.get(u).json()
+                except Exception as exc:  # noqa: BLE001
+                    log.debug("[apple] refData request failed for %s: %s", u, exc)
+                    return {}
 
-                # Navigate once per locale; reuse the page for each term
-                url = f"{base_url}/{locale}/search"
+            for country in countries_list(ctx.plugin):
+                # Pass the full alias list: Apple's API rejects JobSpy's primary
+                # abbreviation ("usa", "uk") but resolves the spelled-out name.
+                code_pl = apple_postlocation_code(country_names(country), _fetch_json)
+                if code_pl is None:
+                    log.debug(
+                        "[apple] no postLocation code for %s; skipping "
+                        "(JobSpy still covers it)",
+                        country,
+                    )
+                    continue
+
+                # Navigate once per country; reuse the page for each term. en-us
+                # locale yields English titles; ?location=x-<CODE> scopes country.
+                url = f"{base_url}/{APPLE_LOCALE}/search?location=x-{code_pl}"
                 try:
                     page.goto(url, timeout=timeout_ms, wait_until="networkidle")
                     page.wait_for_timeout(1500)
                 except Exception as exc:
-                    log.warning("[apple] navigation failed for %s: %s", locale, exc)
+                    log.warning(
+                        "[apple] navigation failed for %s: %s", APPLE_LOCALE, exc
+                    )
                     continue
 
                 for term in terms:
@@ -86,7 +108,9 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                             "input.search-typeahead-input"
                         )
                         if not search_input:
-                            log.warning("[apple] search input not found for %s", locale)
+                            log.warning(
+                                "[apple] search input not found for %s", APPLE_LOCALE
+                            )
                             break
 
                         search_input.click()
@@ -146,7 +170,9 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                                 location = "Various"
                             job_id = item.get("id", position_id)
                             slug = item.get("transformedPostingTitle", "")
-                            detail_url = f"{base_url}/{locale}/details/{job_id}/{slug}"
+                            detail_url = (
+                                f"{base_url}/{APPLE_LOCALE}/details/{job_id}/{slug}"
+                            )
                             if detail_url in known_urls:
                                 skipped_known += 1
                                 continue
@@ -166,7 +192,7 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
 
                     log.debug(
                         "[apple] %s/%s: %d API results, %d matched",
-                        locale,
+                        APPLE_LOCALE,
                         term,
                         len(api_results),
                         len(jobs),

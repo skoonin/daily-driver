@@ -21,11 +21,11 @@ from daily_driver.core.logging import get_logger
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.scraper.countries import country_names
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
     HTTPError,
     HTTPTimeout,
-    country_names,
 )
 
 if TYPE_CHECKING:
@@ -104,7 +104,6 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
 
     Accepts if any of:
       - remote: true and job location contains "remote" (or is empty/missing)
-      - job location contains any entry from locations.cities
       - job location contains a country name from locations.countries
     Returns True (accept) when no locations block is configured.
     """
@@ -119,10 +118,6 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
 
     if loc_cfg.remote and "remote" in loc:
         return True
-
-    for city in loc_cfg.cities:
-        if city.lower() in loc:
-            return True
 
     for code in loc_cfg.countries:
         for name in country_names(code):

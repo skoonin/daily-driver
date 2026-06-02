@@ -25,7 +25,6 @@ class Locations(BaseModel):
         description="",
         json_schema_extra={"template_example": ["CA", "US"]},
     )
-    cities: list[str] = Field(default=[], description="")
 
 
 class JobsConfig(BaseModel):
