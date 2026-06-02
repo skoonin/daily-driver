@@ -69,14 +69,35 @@ def _enabled_playwright_sources(workspace: Workspace) -> list[str]:
     ]
 
 
-def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
-    """Warn when a Playwright source is enabled but its Firefox build is missing.
+# Canonical display casing per engine; .capitalize() would render "Webkit".
+_ENGINE_DISPLAY = {"firefox": "Firefox", "chromium": "Chromium", "webkit": "WebKit"}
 
-    The ``playwright`` pip package installs without the ~100 MB browser binary
+
+def _configured_browser(workspace: Workspace) -> str:
+    """Return the configured Playwright engine, defaulting to firefox.
+
+    Only called after ``_enabled_playwright_sources`` confirms a Playwright
+    source is on, which already proves ``config.plugins`` resolves. ``job_search``
+    is a dynamic plugin attribute (not declared on ``PluginsConfig``), and test
+    stubs may omit ``scraper`` — hence the two ``getattr`` guards.
+    """
+    from daily_driver.integrations import playwright as pw
+
+    job_cfg = getattr(workspace.config.plugins, "job_search", None)
+    scraper = getattr(job_cfg, "scraper", None)
+    return getattr(scraper, "browser", None) or pw.DEFAULT_ENGINE
+
+
+def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
+    """Warn when a Playwright source is enabled but its browser build is missing.
+
+    The ``playwright`` pip package installs without the browser binaries
     (wheels run no install-time code), so an enabled Apple source dies at
-    launch. Gated to macOS — the only platform the launchers target — and
-    emitted only when such a source is actually configured on, so users who do
-    not run Playwright sources never see browser noise.
+    launch. Checks the configured engine
+    (``plugins.job_search.scraper.browser``). Gated to macOS — the only
+    platform the launchers target — and emitted only when such a source is
+    actually configured on, so users who do not run Playwright sources never
+    see browser noise.
     """
     from daily_driver.core.doctor import CheckResult
     from daily_driver.integrations import playwright as pw
@@ -86,17 +107,18 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
     enabled = _enabled_playwright_sources(workspace)
     if not enabled:
         return None
-    if pw.firefox_installed():
+    engine = _configured_browser(workspace)
+    if pw.browser_installed(engine):
         return None
     return CheckResult(
         name="Playwright browser",
         status="WARNING",
         detail=(
-            f"Firefox browser not installed; source(s) {', '.join(enabled)} "
-            f"will fail at launch"
+            f"{_ENGINE_DISPLAY.get(engine, engine.capitalize())} browser not "
+            f"installed; source(s) {', '.join(enabled)} will fail at launch"
         ),
-        fix_hint="Run: daily-driver doctor --fix (or: playwright install firefox)",
-        plugin_fixer=pw.install_firefox,
+        fix_hint=f"Run: daily-driver doctor --fix (or: playwright install {engine})",
+        plugin_fixer=lambda: pw.install_browser(engine),
     )
 
 

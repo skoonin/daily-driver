@@ -218,15 +218,19 @@ def _has_playwright() -> bool:
 
 @contextmanager
 def _playwright_browser(ctx: ScrapeContext) -> Any:
-    """Yield a Playwright Page with non-headless Firefox and realistic settings.
+    """Yield a Playwright Page with a realistic, non-headless browser context.
 
     Non-headless by default -- avoids most bot-detection heuristics on LinkedIn,
     Indeed, and Wellfound without requiring a logged-in session.
-    Set job_search.scraper.headless: true in config to run headless.
+    Set plugins.job_search.scraper.headless: true in config to run headless.
+    The engine is selectable via plugins.job_search.scraper.browser (firefox
+    default).
     """
+    engine = ctx.plugin.scraper.browser
     if not _has_playwright():
         raise ImportError(
-            "playwright not installed -- reinstall daily-driver and run: playwright install firefox"
+            f"playwright not installed -- reinstall daily-driver and run: "
+            f"playwright install {engine}"
         )
 
     from playwright.sync_api import Error as PWError
@@ -237,10 +241,10 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
 
     with sync_playwright() as pw:
         try:
-            browser = pw.firefox.launch(headless=headless)
+            browser = getattr(pw, engine).launch(headless=headless)
         except (PWError, OSError) as exc:
             log.error(
-                "browser launch failed (run: playwright install firefox): %s", exc
+                "browser launch failed (run: playwright install %s): %s", engine, exc
             )
             raise
         browser_ctx = browser.new_context(

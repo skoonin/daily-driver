@@ -216,11 +216,22 @@ def test_scraper_config_defaults():
     assert m.headless is False
     assert m.parallel_workers == 4
     assert m.max_pages == 3
+    assert m.browser == "firefox"
 
 
 def test_scraper_config_rejects_extra():
     with pytest.raises(ValidationError):
         ScraperConfig(unknown_flag=True)
+
+
+def test_scraper_config_accepts_known_browsers():
+    for engine in ("firefox", "chromium", "webkit"):
+        assert ScraperConfig(browser=engine).browser == engine
+
+
+def test_scraper_config_rejects_unknown_browser():
+    with pytest.raises(ValidationError):
+        ScraperConfig(browser="safari")
 
 
 def test_scraper_config_rejects_moved_enrichment_field():

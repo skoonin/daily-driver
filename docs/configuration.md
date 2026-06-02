@@ -196,6 +196,11 @@ Transport / retry knobs shared by every source.
 | `headless` | bool | false |
 | `parallel_workers` | int | 4 |
 | `max_pages` | int | 3 |
+| `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
+
+`browser` selects the Playwright engine for browser-driven sources (Apple). The
+chosen engine must be installed first (`playwright install <engine>`); `doctor`
+checks for the configured engine and `doctor --fix` installs it.
 
 ### `enrichment` (`EnrichmentConfig`)
 
