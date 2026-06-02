@@ -6,6 +6,8 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-01
+
 ### Fixed
 
 - **Compensation now recovered for non-US jobs**: JobSpy only regexes salary
