@@ -396,10 +396,11 @@ def _per_source_funnel(
 ) -> dict[str, dict[str, int]]:
     """Per-source breakdown: found / new / known (already in csv) / loc_skip.
 
-    Mirrors the global pipeline (cross-source dedup in first-wins order, then
-    the already-known check, then the location filter) so the per-source counts
-    reconcile with the Completed line. ``dup`` is within-run duplicates
-    (intra-source + cross-source), surfaced only for the verbose detail.
+    Mirrors the global pipeline exactly -- cross-source dedup (first-wins),
+    then the already-known check, then the url-less drop, then the location
+    filter -- so the per-source ``new``/``loc_skip`` counts reconcile with the
+    Completed line. Within-run duplicates and url-less new jobs are dropped
+    (not tallied), matching what the pipeline writes.
     """
     stats: dict[str, dict[str, int]] = {}
     seen_urls: set[str] = set()
@@ -408,21 +409,22 @@ def _per_source_funnel(
         if isinstance(result, Exception):
             continue
         counts = stats.setdefault(
-            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0, "dup": 0}
+            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
         )
         for job in result:
             counts["found"] += 1
             url = job.get("url", "")
             key = dedup_key(job.get("company", ""), job.get("role", ""))
             if (url and url in seen_urls) or (key and key in seen_keys):
-                counts["dup"] += 1
-                continue
+                continue  # within-run duplicate
             if url:
                 seen_urls.add(url)
             if key:
                 seen_keys.add(key)
             if (url and url in known_urls) or (key and key in known_keys):
                 counts["known"] += 1
+            elif not url:
+                continue  # url-less new jobs are dropped before the funnel
             elif location_matches(job, plugin):
                 counts["new"] += 1
             else:
