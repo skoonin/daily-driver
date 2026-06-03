@@ -15,7 +15,7 @@ log`. Versioned release history starts at 1.0.
   When stderr is not an interactive terminal (cron, launchd, pipes) it falls
   back to plain discrete lines with no ANSI. All human progress now goes to
   stderr — per-source status that previously printed to stdout moved to
-  stderr, leaving stdout for the dry-run table and future `--json`.
+  stderr, leaving stdout for the dry-run table and future `--json`. (#71)
 
 ## [0.1.0] — 2026-06-01
 
