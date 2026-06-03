@@ -1,27 +1,29 @@
 """Phased live progress for long-running commands.
 
 A small, domain-neutral wrapper over ``rich.progress.Progress`` for any
-command that runs a sequence of labelled phases and wants visible, monotonic
+command that runs a sequence of labelled groups and wants visible, monotonic
 progress while it works. Two render modes, chosen once at construction:
 
-* TTY: an animated live block on the bound console (spinner + label +
-  N/total + elapsed), redrawn in place, persisting each phase's final state.
-* non-TTY (cron, launchd, CI, pipes): discrete plain lines, no ANSI, no
-  in-place rewrite. ``advance`` is silent; phases print on done.
+* TTY: an animated live block on the bound console (status marker + label +
+  count + note + elapsed), redrawn in place, persisting each group's final
+  state. A static status marker (``-`` done, ``x`` failed, ``>`` running,
+  blank pending) replaces a spinner so the four states are distinguishable;
+  the elapsed timer ticks for liveness during long blocking work.
+* non-TTY (cron, launchd, CI, pipes, and ``-vv`` debug streaming): discrete
+  plain lines, no ANSI, no in-place rewrite. ``start``/``advance`` are silent;
+  rows print one line when they finish.
 
 The bound console is expected to be the stderr console so the live block
-coexists with the RichHandler verbose stream (same console -> Rich
-interleaves log lines above the live region) and leaves stdout a clean data
-channel.
+coexists with the verbose log stream and leaves stdout a clean data channel.
 
-Two phase shapes:
+Structure: a run owns one or more :class:`Group` blocks. A group renders a
+header row that counts its finished children, plus child rows of two shapes:
 
-* ``phase(label, total)`` -> :class:`Phase`: a single N/total counter, for
-  work measured as "M of N units done" (e.g. enrichment loops). ``advance``
-  is :data:`ProgressCallback`-compatible for threading into worker loops.
-* ``checklist(label)`` -> :class:`Checklist`: a header counter plus one row
-  per dynamically-discovered item (e.g. per-source scraping), each row
-  flipping from spinner to a final ok/failed status.
+* :meth:`Group.item` -> :class:`Item`: a status row (scraping sources) that
+  goes pending -> running -> ok/failed.
+* :meth:`Group.phase` -> :class:`Phase`: an N/total counter row (enrichment
+  loops). ``advance`` is :data:`ProgressCallback`-compatible for threading
+  into worker loops.
 """
 
 from __future__ import annotations
@@ -31,16 +33,9 @@ from types import TracebackType
 from typing import Optional
 
 import rich.console as rich_console
-from rich.progress import (
-    Progress,
-    ProgressColumn,
-    SpinnerColumn,
-)
+from rich.progress import Progress, ProgressColumn
 from rich.progress import Task as _Task
-from rich.progress import (
-    TextColumn,
-    TimeElapsedColumn,
-)
+from rich.progress import TextColumn, TimeElapsedColumn
 from rich.table import Column
 from rich.text import Text
 
@@ -48,40 +43,38 @@ from rich.text import Text
 ProgressCallback = Callable[[int, Optional[str]], None]
 
 
-class _CountColumn(ProgressColumn):
-    """Render the completed count, adding ``/total`` only when a total is known.
+class _StatusColumn(ProgressColumn):
+    """One-glyph row state: ``x`` failed, ``-`` done, ``>`` running, blank pending."""
 
-    ``MofNCompleteColumn`` renders ``N/?`` for indeterminate tasks; this keeps
-    a live spinner-driven count readable as just ``N`` until a total is set.
-    Compact rows (checklist sub-items) render nothing -- a per-item ``1/1`` is
-    noise, and the meaningful count lives on the checklist header.
+    def render(self, task: _Task) -> Text:
+        if task.fields.get("failed"):
+            return Text("x", style="red")
+        if task.total is not None and task.completed >= task.total:
+            return Text("-", style="green")
+        if task.started:
+            return Text(">", style="cyan")
+        return Text(" ")
+
+
+class _CountColumn(ProgressColumn):
+    """``M/N`` for counter rows; bare ``N`` when the total is unknown.
+
+    Blank for pending (not-yet-started) rows and for compact rows (status
+    sub-items, whose ``1/1`` would be noise -- the count lives on the header).
     """
 
     def render(self, task: _Task) -> Text:
-        if task.fields.get("compact"):
+        if task.fields.get("compact") or not task.started:
             return Text("")
         if task.total is None:
             return Text(str(int(task.completed)), style="progress.percentage")
         return Text(f"{int(task.completed)}/{int(task.total)}")
 
 
-class _ElapsedColumn(TimeElapsedColumn):
-    """Elapsed time, suppressed for compact rows.
-
-    Checklist sub-items are created at completion, so their own elapsed reads
-    ``0:00:00`` and contradicts the real duration already in the row note.
-    """
-
-    def render(self, task: _Task) -> Text:
-        if task.fields.get("compact"):
-            return Text("")
-        return super().render(task)
-
-
 def _columns() -> list[ProgressColumn]:
-    """Uniform column set for every task: spinner, label, count, note, time."""
+    """Uniform column set: status, label, count, note, elapsed."""
     return [
-        SpinnerColumn(finished_text="-"),
+        _StatusColumn(),
         TextColumn("{task.description}"),
         _CountColumn(),
         TextColumn(
@@ -89,16 +82,16 @@ def _columns() -> list[ProgressColumn]:
             style="dim",
             table_column=Column(overflow="ellipsis", no_wrap=True),
         ),
-        _ElapsedColumn(),
+        TimeElapsedColumn(),
     ]
 
 
 class RunProgress:
     """Owns the live display for one command run.
 
-    Use as a context manager. In TTY mode ``__enter__`` starts the live
-    region and ``__exit__`` stops it (restoring the terminal) even when the
-    body raises -- so a propagating ``KeyboardInterrupt`` unwinds cleanly.
+    Use as a context manager. In TTY mode ``__enter__`` starts the live region
+    and ``__exit__`` stops it (restoring the terminal) even when the body
+    raises -- so a propagating ``KeyboardInterrupt`` unwinds cleanly.
     """
 
     def __init__(
@@ -137,64 +130,13 @@ class RunProgress:
             self._progress.stop()
             self._progress = None
 
-    def phase(self, label: str, total: int | None = None) -> Phase:
-        """A single N/total counter phase."""
-        return Phase(self._progress, self._console, label, total)
-
-    def checklist(self, label: str) -> Checklist:
-        """A header counter plus one row per item discovered at runtime."""
-        return Checklist(self._progress, self._console, label)
+    def group(self, label: str) -> Group:
+        """A header row that counts its finished children, plus child rows."""
+        return Group(self._progress, self._console, label)
 
 
-class Phase:
-    """A single counter phase.
-
-    ``advance`` counts a unit of completed work and doubles as a
-    :data:`ProgressCallback`. ``done`` pins the live total to the count reached
-    and freezes the row with a caller-supplied summary.
-    """
-
-    def __init__(
-        self,
-        progress: Progress | None,
-        console: rich_console.Console,
-        label: str,
-        total: int | None,
-    ) -> None:
-        self._progress = progress
-        self._console = console
-        self._label = label
-        self.completed = 0
-        self._task_id = None
-        if progress is not None:
-            self._task_id = progress.add_task(label, total=total, note="")
-
-    def advance(self, n: int = 1, detail: str | None = None) -> None:
-        self.completed += n
-        if self._progress is not None and self._task_id is not None:
-            if detail is not None:
-                self._progress.update(self._task_id, advance=n, note=detail)
-            else:
-                self._progress.update(self._task_id, advance=n)
-
-    def done(self, summary: str | None = None) -> None:
-        text = summary if summary is not None else f"{self.completed} done"
-        if self._progress is not None and self._task_id is not None:
-            # Pin the total to the work actually counted so the task reads as
-            # finished: the spinner resolves to its finished marker and the
-            # elapsed timer freezes.
-            self._progress.update(self._task_id, total=self.completed, note=text)
-            self._progress.stop_task(self._task_id)
-        else:
-            self._console.print(f"{self._label}: {text}")
-
-
-class Checklist:
-    """A header counter with one sub-row per item.
-
-    ``start(label)`` adds a spinner row; ``ChecklistItem.finish`` flips it to a
-    final status and advances the header counter.
-    """
+class Group:
+    """A labelled block: a header counter plus :class:`Item`/:class:`Phase` rows."""
 
     def __init__(
         self,
@@ -205,48 +147,126 @@ class Checklist:
         self._progress = progress
         self._console = console
         self._label = label
-        self._count = 0
+        self._total = 0
         self._header_id = None
         if progress is not None:
-            self._header_id = progress.add_task(label, total=None, note="")
-        else:
-            self._console.print(f"{label}...")
+            # Open total so the header reads as running (">"), not a momentary
+            # done ("-") at 0/0 before any child is added.
+            self._header_id = progress.add_task(label, total=None, note="", start=True)
 
-    def start(self, label: str) -> ChecklistItem:
-        return ChecklistItem(self, f"  {label}")
+    def item(self, label: str) -> Item:
+        """A status sub-row (pending -> running -> ok/failed)."""
+        self._total += 1
+        self._sync_total()
+        return Item(self, label)
 
-    def _finish(self, n: int = 1) -> None:
-        self._count += n
+    def phase(self, label: str) -> Phase:
+        """A counter sub-row (advance is ProgressCallback-compatible)."""
+        self._total += 1
+        self._sync_total()
+        return Phase(self, label)
+
+    def _sync_total(self) -> None:
         if self._progress is not None and self._header_id is not None:
-            self._progress.update(self._header_id, advance=n)
+            self._progress.update(self._header_id, total=self._total)
+
+    def _child_finished(self) -> None:
+        # advance=1 is applied under rich's task lock, so this is safe to call
+        # from the Phase-1 worker threads without a separate counter to race.
+        if self._progress is not None and self._header_id is not None:
+            self._progress.update(self._header_id, advance=1)
 
     def done(self, summary: str | None = None) -> None:
         if self._progress is not None and self._header_id is not None:
-            self._progress.update(
-                self._header_id, total=self._count, note=summary or ""
-            )
+            self._progress.update(self._header_id, note=summary or "")
             self._progress.stop_task(self._header_id)
         elif summary is not None:
             self._console.print(f"{self._label}: {summary}")
 
 
-class ChecklistItem:
-    """One row of a :class:`Checklist`."""
+class _Row:
+    """Shared state/behaviour for a group's sub-rows."""
 
-    def __init__(self, parent: Checklist, label: str) -> None:
-        self._parent = parent
+    def __init__(
+        self, group: Group, label: str, *, compact: bool, total: int | None
+    ) -> None:
+        self._group = group
         self._label = label
         self._task_id = None
-        progress = parent._progress
+        self._started = False
+        progress = group._progress
         if progress is not None:
-            self._task_id = progress.add_task(label, total=1, note="", compact=True)
+            self._task_id = progress.add_task(
+                f"  {label}",
+                total=total,
+                completed=0,
+                note="pending",
+                compact=compact,
+                failed=False,
+                start=False,
+            )
+
+    def start(self) -> None:
+        """Flip pending -> running. Idempotent; the note guard keeps a later
+        per-item detail from being clobbered back to ``running...``."""
+        if self._started:
+            return
+        self._started = True
+        progress = self._group._progress
+        if progress is not None and self._task_id is not None:
+            progress.start_task(self._task_id)
+            progress.update(self._task_id, note="running...")
+
+
+class Item(_Row):
+    """A status sub-row for a discrete unit of work (e.g. one scraper source)."""
+
+    def __init__(self, group: Group, label: str) -> None:
+        super().__init__(group, label, compact=True, total=1)
 
     def finish(self, ok: bool = True, detail: str | None = None) -> None:
         note = detail if detail is not None else ("ok" if ok else "failed")
-        progress = self._parent._progress
+        progress = self._group._progress
         if progress is not None and self._task_id is not None:
-            progress.update(self._task_id, completed=1, note=note)
+            progress.start_task(self._task_id)
+            progress.update(self._task_id, completed=1, note=note, failed=not ok)
             progress.stop_task(self._task_id)
         else:
-            self._parent._console.print(f"{self._label.strip()}: {note}")
-        self._parent._finish(1)
+            self._group._console.print(f"{self._label}: {note}")
+        self._group._child_finished()
+
+
+class Phase(_Row):
+    """An N/total counter sub-row for a loop of completed units."""
+
+    def __init__(self, group: Group, label: str) -> None:
+        # Open total: a counter row shows a bare count until done() pins the
+        # total to the count reached, so a partial run never shows a misleading
+        # denominator.
+        super().__init__(group, label, compact=False, total=None)
+        self.completed = 0
+
+    def advance(self, n: int = 1, detail: str | None = None) -> None:
+        self.start()
+        self.completed += n
+        progress = self._group._progress
+        if progress is not None and self._task_id is not None:
+            if detail is not None:
+                progress.update(self._task_id, completed=self.completed, note=detail)
+            else:
+                progress.update(self._task_id, completed=self.completed)
+
+    def done(self, summary: str | None = None) -> None:
+        text = summary if summary is not None else f"{self.completed} done"
+        progress = self._group._progress
+        if progress is not None and self._task_id is not None:
+            progress.start_task(self._task_id)
+            # Pin the total to the count reached so the row reads as finished:
+            # the status marker resolves to done and the elapsed timer freezes.
+            progress.update(
+                self._task_id, total=self.completed, completed=self.completed, note=text
+            )
+            progress.stop_task(self._task_id)
+        else:
+            self._group._console.print(f"{self._label}: {text}")
+        self._group._child_finished()

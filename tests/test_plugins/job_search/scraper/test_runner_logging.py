@@ -192,7 +192,7 @@ def test_run_one_reports_completion_via_callback(capsys, monkeypatch) -> None:
     sid, ok, detail = calls[0]
     assert sid == "fake_src"
     assert ok is True
-    assert "1 jobs" in detail
+    assert "1 found" in detail
     # No per-source progress leaks to stdout anymore.
     captured = capsys.readouterr()
     assert "Now checking" not in captured.out
@@ -235,21 +235,28 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
     Console.quiet_mode = False
     monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: False))
 
-    def fake_scrape(_ctx, *, sources_override=None, on_source_done=None):
+    def fake_scrape(
+        _ctx,
+        *,
+        sources_override=None,
+        on_source_done=None,
+        on_source_start=None,
+        on_sources_enabled=None,
+    ):
+        if on_sources_enabled is not None:
+            on_sources_enabled(["remoteok"])
+        if on_source_start is not None:
+            on_source_start("remoteok")
         if on_source_done is not None:
-            on_source_done("remoteok", True, "1 jobs (0.1s)")
-        return (
-            [
-                {
-                    "company": "Acme",
-                    "role": "SRE",
-                    "url": "https://acme.test/1",
-                    "source": "remoteok",
-                    "location": "Remote",
-                }
-            ],
-            [],
-        )
+            on_source_done("remoteok", True, "1 found in 0.1s")
+        job = {
+            "company": "Acme",
+            "role": "SRE",
+            "url": "https://acme.test/1",
+            "source": "remoteok",
+            "location": "Remote",
+        }
+        return ([job], [], [("remoteok", [job])])
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
     monkeypatch.setattr(
@@ -266,12 +273,13 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
 
     captured = capsys.readouterr()
     assert rc == 0
-    # Funnel uses ASCII arrows, never the Unicode arrow.
-    assert "->" in captured.err
+    # Completed accounting line, ASCII only (no Unicode arrow).
+    assert "Completed:" in captured.err
+    assert "found" in captured.err
     assert "→" not in captured.err
     # Non-TTY mode emits no ANSI escape sequences.
     assert "\x1b[" not in captured.err
-    # Scraping phase header and per-source row appear on stderr.
+    # Scraping group summary and per-source row appear on stderr.
     assert "Scraping sources" in captured.err
     assert "remoteok" in captured.err
     # The dry-run table renders on stdout.
@@ -283,6 +291,8 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
 ) -> None:
     """A ^C during enrichment must unwind the RunProgress context (stopping the
     Live) and propagate KeyboardInterrupt to the CLI boundary, not be swallowed."""
+    import logging
+
     from daily_driver.core import progress as progress_mod
     from daily_driver.core.console import Console
     from daily_driver.plugins.job_search.scraper import runner
@@ -290,6 +300,8 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     Console._user_console = None
     Console._log_console = None
     Console.quiet_mode = False
+    # Normal verbosity: -v/-vv drop the live block this test asserts on.
+    monkeypatch.setattr(logging.getLogger("daily_driver"), "level", logging.WARNING)
     monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: True))
 
     stops: list[bool] = []
@@ -304,8 +316,9 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     monkeypatch.setattr(
         runner,
         "run_all_scrapers",
-        lambda _ctx, *, sources_override=None, on_source_done=None: (
+        lambda _ctx, **_kw: (
             [{"company": "A", "role": "R", "url": "https://a.test/1", "source": "s"}],
+            [],
             [],
         ),
     )

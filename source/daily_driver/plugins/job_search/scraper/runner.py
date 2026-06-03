@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -18,8 +19,8 @@ import yaml
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.core.logging import get_logger
-from daily_driver.core.progress import RunProgress
+from daily_driver.core.logging import deferred_logs, get_logger
+from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
@@ -235,6 +236,52 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
 # pydantic -- browser classification must live in code, not config.
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
+# Display names for the live scraping rows. Source ids are pipeline-internal;
+# these are what a user reads. Unmapped ids fall back to a de-underscored form.
+_SOURCE_DISPLAY_NAMES: dict[str, str] = {
+    "weworkremotely": "we work remotely",
+    "hn_who_is_hiring": "hn who's hiring",
+    "hn_jobs": "hn jobs",
+    "jobspy_linkedin": "linkedin",
+    "jobspy_indeed": "indeed",
+    "jobspy_google": "google",
+}
+
+
+def _display_name(source_id: str) -> str:
+    return _SOURCE_DISPLAY_NAMES.get(source_id, source_id.replace("_", " "))
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Human elapsed: ``6m 41s`` for a minute or more, else ``6.1s``."""
+    if seconds >= 60:
+        minutes, secs = divmod(int(round(seconds)), 60)
+        return f"{minutes}m {secs}s"
+    return f"{seconds:.1f}s"
+
+
+def _intra_source_duplicates(jobs: list[dict[str, Any]]) -> int:
+    """Count a source's own duplicate rows (same URL or company+role key).
+
+    Apple's locale loop, for example, returns the same posting under several
+    locales; this surfaces that on the source row without waiting for the
+    cross-source merge.
+    """
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+    unique = 0
+    for job in jobs:
+        url = job.get("url", "")
+        key = dedup_key(job.get("company", ""), job.get("role", ""))
+        if (url and url in seen_urls) or (key and key in seen_keys):
+            continue
+        if url:
+            seen_urls.add(url)
+        if key:
+            seen_keys.add(key)
+        unique += 1
+    return len(jobs) - unique
+
 
 def _ctx_with_headless(ctx: ScrapeContext, headless: bool) -> ScrapeContext:
     """Return a new ScrapeContext with job_search.scraper.headless overridden.
@@ -257,22 +304,26 @@ def _run_one(
     source_id: str,
     ctx: ScrapeContext,
     on_source_done: Callable[[str, bool, str], None] | None = None,
+    on_source_start: Callable[[str], None] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
     Returns the job list on success, or the caught exception on failure. The
     orchestrator classifies exceptions into failed_sources during merge.
 
-    Reports completion through ``on_source_done(source_id, ok, detail)`` so the
-    live display can render a per-source row. ``detail`` carries the job count
-    and elapsed time on success, or the failure reason on error. The callback
-    drives only the thread-safe progress display, so it is safe to invoke from
-    the Phase-1 worker threads. The matching log lines stay on stderr for the
-    debug stream.
+    Brackets the scrape with ``on_source_start(source_id)`` and
+    ``on_source_done(source_id, ok, detail)`` so the live display can open a
+    per-source row when the work begins (spinner + ticking elapsed) and freeze
+    it with the job count or failure reason when it ends. Both callbacks drive
+    only the thread-safe progress display, so they are safe to invoke from the
+    Phase-1 worker threads. The matching log lines stay on stderr for the debug
+    stream.
     """
     scraper_fn = SCRAPERS[source_id]
     timeout = ctx.plugin.scraper.timeout
     log.info("[%s] starting", source_id)
+    if on_source_start is not None:
+        on_source_start(source_id)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(ctx)
@@ -295,8 +346,19 @@ def _run_one(
         return exc
     elapsed = time.perf_counter() - start
     log.info("[%s] took %.1fs (%d jobs)", source_id, elapsed, len(jobs))
+    # Intra-source duplicates (e.g. apple's locale overlap) are diagnostic, not
+    # the dedup the user cares about (already-in-csv); surface only at -v.
+    intra_dup = _intra_source_duplicates(jobs)
+    if intra_dup:
+        log.info(
+            "[%s] scrape complete: %d entries were intra-source duplicates",
+            source_id,
+            intra_dup,
+        )
     if on_source_done is not None:
-        on_source_done(source_id, True, f"{len(jobs)} jobs ({elapsed:.1f}s)")
+        on_source_done(
+            source_id, True, f"{len(jobs)} found in {_fmt_duration(elapsed)}"
+        )
     return jobs
 
 
@@ -331,12 +393,58 @@ def _merge_and_dedup(
     return all_jobs, failed_sources
 
 
+def _per_source_funnel(
+    results: list[tuple[str, list[dict[str, Any]] | Exception]],
+    known_urls: set[str],
+    known_keys: set[str],
+    plugin: JobSearchPlugin,
+) -> dict[str, dict[str, int]]:
+    """Per-source breakdown: found / new / known (already in csv) / loc_skip.
+
+    Mirrors the global pipeline (cross-source dedup in first-wins order, then
+    the already-known check, then the location filter) so the per-source counts
+    reconcile with the Completed line. ``dup`` is within-run duplicates
+    (intra-source + cross-source), surfaced only for the verbose detail.
+    """
+    stats: dict[str, dict[str, int]] = {}
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+    for source_id, result in results:
+        if isinstance(result, Exception):
+            continue
+        counts = stats.setdefault(
+            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0, "dup": 0}
+        )
+        for job in result:
+            counts["found"] += 1
+            url = job.get("url", "")
+            key = dedup_key(job.get("company", ""), job.get("role", ""))
+            if (url and url in seen_urls) or (key and key in seen_keys):
+                counts["dup"] += 1
+                continue
+            if url:
+                seen_urls.add(url)
+            if key:
+                seen_keys.add(key)
+            if (url and url in known_urls) or (key and key in known_keys):
+                counts["known"] += 1
+            elif location_matches(job, plugin):
+                counts["new"] += 1
+            else:
+                counts["loc_skip"] += 1
+    return stats
+
+
 def run_all_scrapers(
     ctx: ScrapeContext,
     *,
     sources_override: list[str] | None = None,
     on_source_done: Callable[[str, bool, str], None] | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+    on_source_start: Callable[[str], None] | None = None,
+    on_sources_enabled: Callable[[list[str]], None] | None = None,
+) -> tuple[
+    list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
+]:
     """Run all enabled scrapers and deduplicate results within this run.
 
     Two phases:
@@ -376,11 +484,16 @@ def run_all_scrapers(
         enabled = [sid for sid in SCRAPERS if _is_enabled(sid)]
         disabled = [sid for sid in SCRAPERS if not _is_enabled(sid)]
     for sid in disabled:
-        log.info("[%s] disabled in config, skipping", sid)
+        log.debug("[%s] disabled in config, skipping", sid)
 
     non_headless = _PLAYWRIGHT_SOURCES
     headless_sources = [sid for sid in enabled if sid not in non_headless]
     visible_sources = [sid for sid in enabled if sid in non_headless]
+
+    # Announce the full run order up front so the display can list every source
+    # as pending before any of them start.
+    if on_sources_enabled is not None:
+        on_sources_enabled(headless_sources + visible_sources)
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
@@ -396,7 +509,9 @@ def run_all_scrapers(
         pool = ThreadPoolExecutor(max_workers=max(1, workers))
         try:
             futures = {
-                pool.submit(_run_one, sid, headless_ctx, on_source_done): sid
+                pool.submit(
+                    _run_one, sid, headless_ctx, on_source_done, on_source_start
+                ): sid
                 for sid in headless_sources
             }
             for fut in as_completed(futures):
@@ -421,9 +536,12 @@ def run_all_scrapers(
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
-            results.append((sid, _run_one(sid, visible_ctx, on_source_done)))
+            results.append(
+                (sid, _run_one(sid, visible_ctx, on_source_done, on_source_start))
+            )
 
-    return _merge_and_dedup(results)
+    all_jobs, failed_sources = _merge_and_dedup(results)
+    return all_jobs, failed_sources, results
 
 
 # ── Notification ─────────────────────────────────────────────────────────────
@@ -577,16 +695,47 @@ def run(
     )
 
     title = "Job search run (dry-run)" if dry_run else "Job search run"
-    with RunProgress(
-        Console.get_log_console(), tty=Console.is_tty(), title=title
-    ) as rp:
-        scrape_phase = rp.checklist("Scraping sources")
-        all_jobs, failed_sources = run_all_scrapers(
+    # The live block is a normal-mode affordance. At -v / -vv the user wants the
+    # log stream itself, live, as the run progresses -- so drop the live block
+    # (which would otherwise garble under concurrent worker-thread logs) and let
+    # records stream. Line-mode progress lines still print as rows finish.
+    verbose = logging.getLogger("daily_driver").getEffectiveLevel() <= logging.INFO
+    tty = Console.is_tty() and not verbose
+    # Normal mode only: defer logs past the live block so warnings print as a
+    # clean section below it instead of cutting into the live region.
+    with (
+        deferred_logs(tty),
+        RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
+    ):
+        scrape_group = rp.group("Scraping sources")
+        # Rows keyed by source id: created pending when the run order resolves,
+        # flipped to running on start, frozen on completion. Tolerant of a
+        # start/done without a prior enabled announcement (e.g. in tests).
+        source_rows: dict[str, Item] = {}
+
+        def _row(sid: str) -> Item:
+            row = source_rows.get(sid)
+            if row is None:
+                row = scrape_group.item(_display_name(sid))
+                source_rows[sid] = row
+            return row
+
+        def _on_enabled(sids: list[str]) -> None:
+            for sid in sids:
+                _row(sid)
+
+        def _on_started(sid: str) -> None:
+            _row(sid).start()
+
+        def _on_done(sid: str, ok: bool, detail: str) -> None:
+            _row(sid).finish(ok, detail)
+
+        all_jobs, failed_sources, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
-            on_source_done=lambda sid, ok, detail: scrape_phase.start(sid).finish(
-                ok, detail
-            ),
+            on_sources_enabled=_on_enabled,
+            on_source_start=_on_started,
+            on_source_done=_on_done,
         )
 
         new_jobs = [
@@ -612,7 +761,9 @@ def run(
             log.info("Filtered %d jobs by location preferences", filtered)
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
-        scrape_phase.done(f"{len(all_jobs)} scraped, {len(new_jobs)} new")
+        # pre_filter (not the post-location count) so "new" matches the
+        # Completed line and isn't conflated with location matches.
+        scrape_group.done(f"{len(all_jobs)} found, {pre_filter} new")
 
         # Cross from the dict-based source boundary into the typed pipeline:
         # every surviving merged dict is validated through RawScrapedJob and
@@ -629,7 +780,14 @@ def run(
                 "failed": 0,
             }
         else:
-            detail_phase = rp.phase("Detail pages")
+            # Create all three phases up front so they read as pending while the
+            # earlier phases run.
+            enrich_group = rp.group("Enriching jobs")
+            detail_phase = enrich_group.phase("Detail pages")
+            product_phase = enrich_group.phase("Company products")
+            fit_phase = enrich_group.phase("Fit and notes")
+
+            detail_phase.start()
             typed_jobs, detail_stats = enrich_job_details_typed(
                 typed_jobs, ctx, progress=detail_phase.advance
             )
@@ -638,7 +796,7 @@ def run(
                 f"{detail_stats['skipped']} skipped ({detail_stats['total']} total)"
             )
 
-            product_phase = rp.phase("Company products")
+            product_phase.start()
             typed_jobs, product_stats = enrich_company_descriptions_typed(
                 typed_jobs, ctx, progress=product_phase.advance
             )
@@ -648,7 +806,7 @@ def run(
                 f"{product_stats['failed']} failed"
             )
 
-            fit_phase = rp.phase("Fit and notes")
+            fit_phase.start()
             typed_jobs, fn_stats = enrich_fit_and_notes_typed(
                 typed_jobs, ctx, progress=fit_phase.advance
             )
@@ -657,6 +815,7 @@ def run(
                 f"{fn_stats['skipped_budget']} skipped (budget), "
                 f"{fn_stats['failed']} failed"
             )
+            enrich_group.done()
 
     n = len(typed_jobs)
     log.info(
@@ -673,14 +832,26 @@ def run(
         product_stats["skipped_cached"],
         product_stats["failed"],
     )
-    # Reconciling funnel so the user can account for every job. Location is the
-    # only filter that REMOVES jobs. The per-phase summaries above carry the
-    # enrichment breakdown, so this is the single persistent accounting line.
-    Console.info(
-        f"Funnel: {len(all_jobs)} scraped -> {pre_filter} new "
-        f"-> {pre_filter - filtered} after location "
-        f"-> {len(typed_jobs)} {'ready' if dry_run else 'to write'}."
+    # Per-source breakdown + a headline that reconciles every job: found (raw
+    # scraped) -> new (not already in csv) -> matched location (the only filter
+    # that removes jobs). Intra/cross-run duplicates are the remainder.
+    funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+    raw_found = sum(c["found"] for c in funnel.values())
+    summary = (
+        f"Completed: {raw_found} found -> {pre_filter} new "
+        f"-> {len(typed_jobs)} matched location"
     )
+    if filtered:
+        summary += f" ({filtered} skipped by location)"
+    Console.info(summary)
+    if funnel:
+        width = max(len(_display_name(sid)) for sid in funnel)
+        for sid, c in funnel.items():
+            Console.info(
+                f"  {_display_name(sid):<{width}}  {c['found']} found, "
+                f"{c['new']} new, {c['known']} already in csv, "
+                f"{c['loc_skip']} skipped (location)"
+            )
 
     if dry_run:
         Console.success(

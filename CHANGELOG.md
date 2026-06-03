@@ -8,14 +8,18 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
-- **`jobs run` now shows live progress instead of going silent**: the run
-  renders a phased display (per-source scraping rows, then detail / company
-  product / fit-and-notes counters with a spinner, running count, and elapsed
-  time) so a long enrichment pass is visibly alive rather than looking hung.
-  When stderr is not an interactive terminal (cron, launchd, pipes) it falls
-  back to plain discrete lines with no ANSI. All human progress now goes to
-  stderr — per-source status that previously printed to stdout moved to
-  stderr, leaving stdout for the dry-run table and future `--json`. (#71)
+- **`jobs run` now shows live progress instead of going silent**: in normal
+  mode the run renders a phased live block — a `Scraping sources` group listing
+  every source (pending -> running -> done, with a static status marker), then
+  an `Enriching jobs` group with detail / company-product / fit-and-notes
+  counters — so a long run is visibly alive rather than looking hung. A
+  per-source breakdown (`found / new / already in csv / skipped by location`)
+  and a reconciling `Completed:` line print at the end. Warnings are collected
+  into a clean section below the live block. At `-v`/`-vv` the live block steps
+  aside and logs stream live as the run progresses. Non-interactive output
+  (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
+  progress now goes to stderr, leaving stdout for the dry-run table and a
+  future `--json`. (#71)
 
 ## [0.1.0] — 2026-06-01
 
