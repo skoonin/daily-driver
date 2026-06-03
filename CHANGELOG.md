@@ -12,6 +12,10 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
+  default `hn_max_posts` cap was hitting on every run, so the same first 100
+  relevance-ranked roles recurred and nothing past them was ever scraped.
+  Raised to 500 (the thread fetch already pulls the whole thread).
 - **`jobs run` now shows live progress instead of going silent**: in normal
   mode the run renders a phased live block — a `Scraping sources` group listing
   every source (pending -> running -> done, with a static status marker), then

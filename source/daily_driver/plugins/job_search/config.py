@@ -67,7 +67,7 @@ class HackerNewsToggle(SourceToggle):
     """
 
     hn_max_posts: int = Field(
-        default=100, description="", json_schema_extra={"template_skip": True}
+        default=500, description="", json_schema_extra={"template_skip": True}
     )
 
 
