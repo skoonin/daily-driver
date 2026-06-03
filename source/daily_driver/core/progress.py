@@ -42,18 +42,29 @@ from rich.text import Text
 # (advance_n, detail) -> None. Threaded into worker loops; never raises.
 ProgressCallback = Callable[[int, Optional[str]], None]
 
+# One-line key for the otherwise-cryptic status markers, shown under the title.
+_LEGEND = "  > running   - done   x failed"
 
-class _StatusColumn(ProgressColumn):
-    """One-glyph row state: ``x`` failed, ``-`` done, ``>`` running, blank pending."""
+
+class _LabelColumn(ProgressColumn):
+    """Status marker + label in one cell.
+
+    Keeping the one-glyph state (``x`` failed, ``-`` done, ``>`` running, blank
+    pending) in the same column as the label means a narrow terminal can't drop
+    the marker independently -- a standalone 1-char column is the first thing
+    Rich's table allocator discards.
+    """
 
     def render(self, task: _Task) -> Text:
         if task.fields.get("failed"):
-            return Text("x", style="red")
-        if task.total is not None and task.completed >= task.total:
-            return Text("-", style="green")
-        if task.started:
-            return Text(">", style="cyan")
-        return Text(" ")
+            marker = Text("x ", style="red")
+        elif task.total is not None and task.completed >= task.total:
+            marker = Text("- ", style="green")
+        elif task.started:
+            marker = Text("> ", style="cyan")
+        else:
+            marker = Text("  ")  # pending
+        return marker + Text(str(task.description))
 
 
 class _CountColumn(ProgressColumn):
@@ -72,10 +83,11 @@ class _CountColumn(ProgressColumn):
 
 
 def _columns() -> list[ProgressColumn]:
-    """Uniform column set: status, label, count, note, elapsed."""
+    """Uniform column set: marker+label, count, note, elapsed."""
     return [
-        _StatusColumn(),
-        TextColumn("{task.description}"),
+        _LabelColumn(
+            table_column=Column(overflow="ellipsis", no_wrap=True),
+        ),
         _CountColumn(),
         TextColumn(
             "{task.fields[note]}",
@@ -110,6 +122,7 @@ class RunProgress:
         if self._title:
             self._console.print(self._title)
         if self._tty:
+            self._console.print(_LEGEND, style="dim")
             self._progress = Progress(
                 *_columns(),
                 console=self._console,

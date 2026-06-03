@@ -83,6 +83,35 @@ def test_title_printed_on_enter():
     assert "Job search run" in buf.getvalue()
 
 
+def test_tty_mode_prints_marker_legend():
+    buf = io.StringIO()
+    console = RichConsole(file=buf, force_terminal=True, color_system=None, width=80)
+    with RunProgress(console, tty=True, title="Job search run"):
+        pass
+    out = buf.getvalue()
+    assert "running" in out and "done" in out and "failed" in out
+
+
+def test_status_marker_survives_narrow_terminal():
+    """Marker lives in the label cell, so it isn't dropped on a narrow width."""
+    from daily_driver.core.progress import Progress, _columns
+
+    buf = io.StringIO()
+    sink = RichConsole(file=buf, force_terminal=True, color_system=None, width=30)
+    progress = Progress(*_columns(), console=sink, auto_refresh=False)
+    rp = RunProgress(sink, tty=True)
+    rp._progress = progress
+    group = rp.group("Scraping sources")
+    group.item("weworkremotely").finish(ok=False, detail="failed (timed out)")
+    render = RichConsole(
+        file=io.StringIO(), force_terminal=True, color_system=None, width=30
+    )
+    with render.capture() as cap:
+        render.print(progress.get_renderable())
+    # The failed marker is present even though the label is ellipsized.
+    assert "x " in cap.get()
+
+
 def test_tty_mode_starts_and_stops_progress():
     with RunProgress(_tty_console(), tty=True) as rp:
         assert rp._progress is not None
