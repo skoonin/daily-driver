@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from daily_driver.core.logging import get_logger
+from daily_driver.core.progress import ProgressCallback
 from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
 from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -20,7 +22,12 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
+def enrich_job_details(
+    jobs: list[dict[str, Any]],
+    ctx: ScrapeContext,
+    *,
+    progress: ProgressCallback | None = None,
+) -> dict[str, int]:
     """Fetch each job's detail page and populate comp/posted_date in place.
 
     Caches by URL within the run so jobs that share a detail URL only generate
@@ -47,17 +54,23 @@ def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
     session: Session | None = None
     fetched_count = 0
     enriched_count = 0
+    skipped_count = 0
     for job in jobs:
         if job.get("comp"):
+            skipped_count += 1
             continue
         if job.get("status") in ENRICH_SKIP_STATUSES:
+            skipped_count += 1
             continue
         url = (job.get("url") or "").strip()
         if not url:
+            skipped_count += 1
             continue
         if "linkedin.com" in url:
+            skipped_count += 1
             continue
         if "news.ycombinator.com" in url:
+            skipped_count += 1
             if not hn_skipped_logged:
                 log.info(
                     "[detail] skipping HN detail enrichment "
@@ -66,6 +79,7 @@ def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
                 hn_skipped_logged = True
             continue
         if "indeed.com" in url:
+            skipped_count += 1
             if not indeed_skipped_logged:
                 log.info(
                     "[detail] skipping Indeed detail enrichment "
@@ -106,9 +120,18 @@ def enrich_job_details(jobs: list[dict[str, Any]], ctx: ScrapeContext) -> None:
         if details.get("description_text") and not job.get("description_text"):
             job["description_text"] = details["description_text"]
 
+        if progress is not None:
+            progress(1, urlsplit(url).netloc or None)
+
     log.info(
         "[detail] fetched %d pages, enriched %d of %d jobs",
         fetched_count,
         enriched_count,
         len(jobs),
     )
+    return {
+        "fetched": fetched_count,
+        "enriched": enriched_count,
+        "skipped": skipped_count,
+        "total": len(jobs),
+    }

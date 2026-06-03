@@ -80,10 +80,11 @@ def test_typed_job_details_short_circuits_when_description_present(
     fake_config: ScrapeContext,
 ) -> None:
     j = _enriched(description_text="already populated")
-    out = enrich_job_details_typed([j], fake_config)
+    out, stats = enrich_job_details_typed([j], fake_config)
     assert len(out) == 1
     # description_text preserved from input.
     assert out[0].description_text == "already populated"
+    assert stats["total"] == 1
 
 
 def test_typed_enrichers_preserve_immutability(fake_config: ScrapeContext) -> None:
@@ -97,5 +98,5 @@ def test_typed_enrichers_preserve_immutability(fake_config: ScrapeContext) -> No
 
 def test_typed_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
     j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
-    out = enrich_job_details_typed([j], fake_config)
+    out, _stats = enrich_job_details_typed([j], fake_config)
     assert out[0].status is JobStatus.SKIPPED

@@ -21,6 +21,7 @@ from daily_driver.plugins.job_search.scraper.enrichment._shared import (
 from daily_driver.plugins.job_search.scraper.models import ENRICH_SKIP_STATUSES
 
 if TYPE_CHECKING:
+    from daily_driver.core.progress import ProgressCallback
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
@@ -109,6 +110,7 @@ def _enrich_company_descriptions_parallel(
     unique_companies: set[str],
     stats: dict[str, int],
     timeout: int,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """Parallel path for enrich_company_descriptions (claude or ollama)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -154,6 +156,8 @@ def _enrich_company_descriptions_parallel(
             cache[company] = {"product": product, "gd_rating": gd_rating}
             if failed:
                 stats["failed"] += 1
+            if progress is not None:
+                progress(1, company)
         pool.shutdown(wait=True)
     except KeyboardInterrupt:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -165,6 +169,8 @@ def _enrich_company_descriptions_parallel(
                     cache[company] = {"product": product, "gd_rating": gd_rating}
                     if failed:
                         stats["failed"] += 1
+                    if progress is not None:
+                        progress(1, company)
         _stitch()
         raise
     finally:
@@ -175,7 +181,11 @@ def _enrich_company_descriptions_parallel(
 
 
 def enrich_company_descriptions(
-    jobs: list[dict[str, Any]], ctx: ScrapeContext, *, budget: int = 0
+    jobs: list[dict[str, Any]],
+    ctx: ScrapeContext,
+    *,
+    budget: int = 0,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """Populate Product/Purpose and GD Rating in-place using the Claude CLI.
 
@@ -220,6 +230,7 @@ def enrich_company_descriptions(
             unique_companies=unique_companies,
             stats=stats,
             timeout=cfg.enrich_timeout,
+            progress=progress,
         )
 
     cache: dict[str, dict[str, str]] = {}
@@ -260,6 +271,8 @@ def enrich_company_descriptions(
                 if failed:
                     stats["failed"] += 1
                 calls_made += 1
+                if progress is not None:
+                    progress(1, company)
         cached = cache.get(company, {})
         if cached.get("product"):
             job["product"] = cached["product"]
@@ -533,6 +546,7 @@ def _enrich_fit_and_notes_parallel(
     timeout: int,
     criteria: Sequence[Criterion] = (),
     context: str = "",
+    progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """Parallel path for enrich_fit_and_notes (claude or ollama)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -612,6 +626,8 @@ def _enrich_fit_and_notes_parallel(
             fit_str, notes_str, failed = fut.result()
             _apply(job, fit_str, notes_str, failed)
             applied.add(id(fut))
+            if progress is not None:
+                progress(1, job.get("company"))
         pool.shutdown(wait=True)
     except KeyboardInterrupt:
         pool.shutdown(wait=False, cancel_futures=True)
@@ -622,6 +638,8 @@ def _enrich_fit_and_notes_parallel(
                 job = futures[fut]
                 fit_str, notes_str, failed = fut.result()
                 _apply(job, fit_str, notes_str, failed)
+                if progress is not None:
+                    progress(1, job.get("company"))
         raise
     finally:
         signal.signal(signal.SIGINT, previous_handler)
@@ -630,7 +648,11 @@ def _enrich_fit_and_notes_parallel(
 
 
 def enrich_fit_and_notes(
-    jobs: list[dict[str, Any]], ctx: ScrapeContext, *, budget: int = 0
+    jobs: list[dict[str, Any]],
+    ctx: ScrapeContext,
+    *,
+    budget: int = 0,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, int]:
     """Populate Fit score and Notes in-place for new jobs via a single Claude CLI call per job.
 
@@ -732,6 +754,7 @@ def enrich_fit_and_notes(
             timeout=cfg.enrich_timeout,
             criteria=crit_list,
             context=context_text,
+            progress=progress,
         )
         log.info(
             "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
@@ -773,6 +796,8 @@ def enrich_fit_and_notes(
             context_text,
         )
         calls_made += 1
+        if progress is not None:
+            progress(1, job.get("company"))
         company = job.get("company", "unknown")
         pre_fit = job.get("fit", "")
         pre_notes = job.get("notes", "")

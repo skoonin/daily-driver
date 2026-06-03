@@ -6,6 +6,17 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+### Changed
+
+- **`jobs run` now shows live progress instead of going silent**: the run
+  renders a phased display (per-source scraping rows, then detail / company
+  product / fit-and-notes counters with a spinner, running count, and elapsed
+  time) so a long enrichment pass is visibly alive rather than looking hung.
+  When stderr is not an interactive terminal (cron, launchd, pipes) it falls
+  back to plain discrete lines with no ANSI. All human progress now goes to
+  stderr — per-source status that previously printed to stdout moved to
+  stderr, leaving stdout for the dry-run table and future `--json`.
+
 ## [0.1.0] — 2026-06-01
 
 ### Fixed

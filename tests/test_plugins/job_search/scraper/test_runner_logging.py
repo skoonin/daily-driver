@@ -175,22 +175,160 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
         stop.set()
 
 
-def test_run_emits_user_progress_per_source(capsys, monkeypatch) -> None:
-    """`_run_one` prints a `Now checking <id>...` line to stdout (not stderr)
-    before the scraper starts, and a completion summary line after success."""
+def test_run_one_reports_completion_via_callback(capsys, monkeypatch) -> None:
+    """`_run_one` reports success through on_source_done(sid, ok, detail) and
+    no longer prints per-source progress to stdout."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    monkeypatch.setattr(runner, "SCRAPERS", {"fake_src": lambda _cfg: [{"x": 1}]})
+    calls: list[tuple[str, bool, str]] = []
+    runner._run_one(
+        "fake_src",
+        _cfg_with_sources(["fake_src"]),
+        lambda sid, ok, detail: calls.append((sid, ok, detail)),
+    )
+
+    assert len(calls) == 1
+    sid, ok, detail = calls[0]
+    assert sid == "fake_src"
+    assert ok is True
+    assert "1 jobs" in detail
+    # No per-source progress leaks to stdout anymore.
+    captured = capsys.readouterr()
+    assert "Now checking" not in captured.out
+    assert "fake_src" not in captured.out
+
+
+def test_run_all_scrapers_invokes_callback_per_source(monkeypatch) -> None:
+    """run_all_scrapers forwards on_source_done to each source it runs."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    def _boom(_cfg):
+        raise runner.HTTPTimeout("slow")
+
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"ok_src": lambda _cfg: [{"x": 1}], "bad_src": _boom},
+    )
+    calls: list[tuple[str, bool, str]] = []
+    runner.run_all_scrapers(
+        _cfg_with_sources(["ok_src", "bad_src"]),
+        sources_override=["ok_src", "bad_src"],
+        on_source_done=lambda sid, ok, detail: calls.append((sid, ok, detail)),
+    )
+
+    by_sid = {sid: (ok, detail) for sid, ok, detail in calls}
+    assert by_sid["ok_src"][0] is True
+    assert by_sid["bad_src"][0] is False
+    assert "failed" in by_sid["bad_src"][1]
+
+
+def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None:
+    """Non-TTY dry-run: progress is plain (no ANSI) on stderr with an ASCII
+    funnel, and the dry-run table lands on stdout."""
     from daily_driver.core.console import Console
     from daily_driver.plugins.job_search.scraper import runner
 
-    # Reset Rich consoles so they bind to the current capsys-wrapped stdio.
     Console._user_console = None
     Console._log_console = None
     Console.quiet_mode = False
+    monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: False))
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"fake_src": lambda _cfg: [{"x": 1}]})
-    runner._run_one("fake_src", _cfg_with_sources(["fake_src"]))
+    def fake_scrape(_ctx, *, sources_override=None, on_source_done=None):
+        if on_source_done is not None:
+            on_source_done("remoteok", True, "1 jobs (0.1s)")
+        return (
+            [
+                {
+                    "company": "Acme",
+                    "role": "SRE",
+                    "url": "https://acme.test/1",
+                    "source": "remoteok",
+                    "location": "Remote",
+                }
+            ],
+            [],
+        )
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
+
+    rc = runner.run(
+        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
+        dry_run=True,
+    )
 
     captured = capsys.readouterr()
-    assert "Now checking fake_src" in captured.out
-    assert "fake_src: 1 jobs" in captured.out
-    # The start line must not leak onto stderr.
-    assert "Now checking fake_src" not in captured.err
+    assert rc == 0
+    # Funnel uses ASCII arrows, never the Unicode arrow.
+    assert "->" in captured.err
+    assert "→" not in captured.err
+    # Non-TTY mode emits no ANSI escape sequences.
+    assert "\x1b[" not in captured.err
+    # Scraping phase header and per-source row appear on stderr.
+    assert "Scraping sources" in captured.err
+    assert "remoteok" in captured.err
+    # The dry-run table renders on stdout.
+    assert "Acme" in captured.out
+
+
+def test_run_keyboard_interrupt_propagates_and_stops_live(
+    tmp_path, monkeypatch
+) -> None:
+    """A ^C during enrichment must unwind the RunProgress context (stopping the
+    Live) and propagate KeyboardInterrupt to the CLI boundary, not be swallowed."""
+    from daily_driver.core import progress as progress_mod
+    from daily_driver.core.console import Console
+    from daily_driver.plugins.job_search.scraper import runner
+
+    Console._user_console = None
+    Console._log_console = None
+    Console.quiet_mode = False
+    monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: True))
+
+    stops: list[bool] = []
+    real_exit = progress_mod.RunProgress.__exit__
+
+    def tracking_exit(self, *exc):
+        stops.append(self._progress is not None)
+        return real_exit(self, *exc)
+
+    monkeypatch.setattr(progress_mod.RunProgress, "__exit__", tracking_exit)
+
+    monkeypatch.setattr(
+        runner,
+        "run_all_scrapers",
+        lambda _ctx, *, sources_override=None, on_source_done=None: (
+            [{"company": "A", "role": "R", "url": "https://a.test/1", "source": "s"}],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
+
+    def interrupt(*_a, **_kw):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.enrichment.enrich_job_details_typed",
+        interrupt,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(
+            JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            tmp_path,
+            dry_run=False,
+        )
+
+    # __exit__ ran during the unwind with an active Live to stop.
+    assert stops == [True]

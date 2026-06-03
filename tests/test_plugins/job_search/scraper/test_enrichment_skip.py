@@ -124,6 +124,41 @@ def test_other_urls_route_through_api_get(fake_config: ScrapeContext) -> None:
     assert parse.call_count == 1
 
 
+def test_progress_callback_fires_once_per_real_fetch(
+    fake_config: ScrapeContext,
+) -> None:
+    """progress() advances per fetched job; skipped jobs only bump the skip tally."""
+    jobs = [
+        _job("https://boards.greenhouse.io/acme/jobs/1"),
+        _job("https://boards.greenhouse.io/acme/jobs/2"),
+        _job("https://news.ycombinator.com/item?id=1"),  # skipped (no fetch)
+        _job("https://acme.com/job", comp="$200k"),  # skipped (has comp)
+    ]
+    fake_resp = MagicMock()
+    fake_resp.text = "<html></html>"
+    calls: list[tuple[int, str | None]] = []
+
+    with (
+        patch(
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get",
+            return_value=fake_resp,
+        ),
+        patch(
+            "daily_driver.plugins.job_search.scraper.enrichment.detail._parse_detail_page",
+            return_value={},
+        ),
+    ):
+        stats = enrich_job_details(
+            jobs, fake_config, progress=lambda n, d: calls.append((n, d))
+        )
+
+    assert len(calls) == 2  # only the two greenhouse jobs do real work
+    assert all(n == 1 for n, _ in calls)
+    assert stats["fetched"] == 2
+    assert stats["skipped"] == 2
+    assert stats["total"] == 4
+
+
 def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
     """When `_api_get` gives up (None), enrichment continues without mutating the job."""
     jobs = [_job("https://boards.greenhouse.io/acme/jobs/123")]

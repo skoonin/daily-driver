@@ -86,6 +86,18 @@ class Console:
         return cls._log_console
 
     @classmethod
+    def is_tty(cls) -> bool:
+        """Whether the stderr console can render an interactive live display.
+
+        The live progress display targets stderr, so its capability — not
+        stdout's — decides animated vs plain-line mode. Delegating to Rich's
+        ``is_terminal`` (rather than a bare ``isatty()``) folds in the
+        ``TERM=dumb`` and ``NO_COLOR``/``FORCE_COLOR`` cases where the fd is a
+        TTY but Rich cannot animate it.
+        """
+        return cls.get_log_console().is_terminal
+
+    @classmethod
     def get_user_console(cls) -> rich_console.Console:
         """Return the stdout console."""
         if cls._user_console is None:
