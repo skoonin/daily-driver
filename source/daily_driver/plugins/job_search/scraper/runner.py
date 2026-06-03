@@ -886,7 +886,7 @@ def run(
         last_run_path.write_text(
             json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
         )
-        log.info("Run manifest written to %s", last_run_path)
+        log.debug("Run manifest written to %s", last_run_path)
     except OSError as exc:
         log.warning("Could not write run manifest: %s", exc)
 

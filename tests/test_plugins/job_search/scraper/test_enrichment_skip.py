@@ -63,7 +63,7 @@ def test_hn_item_url_is_skipped_without_fetch(
         "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
     ) as api_get:
         with caplog.at_level(
-            "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
+            "DEBUG", logger="daily_driver.plugins.job_search.scraper.enrichment"
         ):
             enrich_job_details(jobs, fake_config)
     # All HTTP now funnels through `_api_get`; a skipped host must not even
@@ -87,7 +87,7 @@ def test_indeed_url_is_skipped_without_fetch(
         "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
     ) as api_get:
         with caplog.at_level(
-            "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
+            "DEBUG", logger="daily_driver.plugins.job_search.scraper.enrichment"
         ):
             enrich_job_details(jobs, fake_config)
     assert api_get.call_count == 0

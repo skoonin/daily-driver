@@ -72,7 +72,7 @@ def enrich_job_details(
         if "news.ycombinator.com" in url:
             skipped_count += 1
             if not hn_skipped_logged:
-                log.info(
+                log.debug(
                     "[detail] skipping HN detail enrichment "
                     "(rate-limited; title-derived data only)"
                 )
@@ -81,7 +81,7 @@ def enrich_job_details(
         if "indeed.com" in url:
             skipped_count += 1
             if not indeed_skipped_logged:
-                log.info(
+                log.debug(
                     "[detail] skipping Indeed detail enrichment "
                     "(JobSpy already populates description)"
                 )

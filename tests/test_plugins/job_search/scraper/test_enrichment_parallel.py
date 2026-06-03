@@ -214,6 +214,31 @@ def test_fit_notes_progress_callback_fires_per_job(
     assert sum(n for n, _ in advances) == 4
 
 
+def test_fit_notes_emits_progress_heartbeat_at_info(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The fit/notes loop logs an N/total heartbeat at INFO for -v visibility."""
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
+    )
+    jobs = [
+        {
+            "company": f"Co{i}",
+            "role": "SRE",
+            "location": "Remote",
+            "fit": "",
+            "notes": "",
+        }
+        for i in range(10)
+    ]
+    with caplog.at_level(
+        "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
+    ):
+        enrichment.enrich_fit_and_notes(jobs, _ollama_config(max_parallel=4))
+    beats = [r for r in caplog.records if "/10 jobs done" in r.getMessage()]
+    assert beats, "expected an N/10 jobs done heartbeat line at INFO"
+
+
 def test_worker_log_tag_in_parallel_path(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
