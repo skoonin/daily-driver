@@ -137,7 +137,6 @@ tracker:
 #       home_city: "Vancouver, BC"
 #       remote: true
 #       countries: [CA, US]
-#       cities: []
 #     scraper:
 #       enabled: false
 #       # Retries for HTTP 429/503 responses (rate limits). Honors the
@@ -148,6 +147,10 @@ tracker:
 #       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
 #       # 0 to disable the filter. Other sources are implicitly recent.
 #       max_age_days: 30
+#       # Playwright engine for browser-driven sources (Apple). One of
+#       # firefox, chromium, webkit. The chosen engine must be installed
+#       # (`playwright install <engine>`).
+#       browser: firefox
 #     # Post-scrape enrichment: optional LLM passes that add Product,
 #     # Glassdoor rating, a fit score, and a Notes summary. Each pass
 #     # costs API calls; the max_* values cap how many run.

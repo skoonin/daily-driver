@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -25,7 +25,6 @@ class Locations(BaseModel):
         description="",
         json_schema_extra={"template_example": ["CA", "US"]},
     )
-    cities: list[str] = Field(default=[], description="")
 
 
 class JobsConfig(BaseModel):
@@ -138,6 +137,14 @@ class ScraperConfig(BaseModel):
     )
     max_pages: int = Field(
         default=3, description="", json_schema_extra={"template_skip": True}
+    )
+    browser: Literal["firefox", "chromium", "webkit"] = Field(
+        default="firefox",
+        description=(
+            "Playwright engine for browser-driven sources (Apple). One of\n"
+            "firefox, chromium, webkit. The chosen engine must be installed\n"
+            "(`playwright install <engine>`)."
+        ),
     )
 
 

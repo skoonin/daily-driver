@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.scraper.comp import _COMP_CURRENCY_PREFIX, _to_int
-from daily_driver.plugins.job_search.scraper.sources._http import (
+from daily_driver.plugins.job_search.scraper.countries import (
     country_names,
     jobspy_country,
 )

@@ -84,7 +84,7 @@ def test_playwright_check_skipped_when_apple_disabled(monkeypatch):
 def test_playwright_check_ok_when_browser_installed(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     monkeypatch.setattr(
-        "daily_driver.integrations.playwright.firefox_installed", lambda: True
+        "daily_driver.integrations.playwright.browser_installed", lambda engine: True
     )
     ws = _ws_with_sources(apple=True)
     assert doctor._check_playwright_browser(ws) is None
@@ -93,15 +93,50 @@ def test_playwright_check_ok_when_browser_installed(monkeypatch):
 def test_playwright_check_warns_with_fixer_when_missing(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     monkeypatch.setattr(
-        "daily_driver.integrations.playwright.firefox_installed", lambda: False
+        "daily_driver.integrations.playwright.browser_installed", lambda engine: False
     )
-    from daily_driver.integrations import playwright as pw
-
     ws = _ws_with_sources(apple=True)
     row = doctor._check_playwright_browser(ws)
 
     assert row is not None
     assert row.name == "Playwright browser"
     assert row.status == "WARNING"
-    assert row.plugin_fixer is pw.install_firefox
+    assert row.plugin_fixer is not None
     assert "apple" in row.detail
+    # Defaults to firefox when no browser is configured.
+    assert "Firefox" in row.detail
+
+
+def test_playwright_check_uses_configured_engine(monkeypatch):
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    seen: list[str] = []
+
+    def _installed(engine: str) -> bool:
+        seen.append(engine)
+        return False
+
+    monkeypatch.setattr(
+        "daily_driver.integrations.playwright.browser_installed", _installed
+    )
+    ws = _ws_with_sources(apple=True)
+    ws.config.plugins.job_search.scraper = SimpleNamespace(browser="chromium")
+    row = doctor._check_playwright_browser(ws)
+
+    assert seen == ["chromium"]
+    assert row is not None
+    assert "Chromium" in row.detail
+    assert "playwright install chromium" in row.fix_hint
+
+
+def test_playwright_check_webkit_display_casing(monkeypatch):
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "daily_driver.integrations.playwright.browser_installed", lambda engine: False
+    )
+    ws = _ws_with_sources(apple=True)
+    ws.config.plugins.job_search.scraper = SimpleNamespace(browser="webkit")
+    row = doctor._check_playwright_browser(ws)
+
+    assert row is not None
+    # Canonical casing "WebKit", not .capitalize()'s "Webkit".
+    assert "WebKit browser not installed" in row.detail

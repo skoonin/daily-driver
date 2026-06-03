@@ -6,6 +6,10 @@ log`. Versioned release history starts at 1.0.
 
 ## [Unreleased]
 
+### Added
+
+- **Selectable Playwright browser engine**: `plugins.job_search.scraper.browser` (`firefox` default, or `chromium`/`webkit`) chooses the engine for browser-driven sources (Apple). The launcher resolves it via `getattr(pw, engine).launch(...)`, the `Literal` field rejects unknown engines at config-load, and `doctor` / `doctor --fix` check and install whichever engine is configured rather than always Firefox. (#68)
+
 ### Changed
 
 - **`jobs run` now shows live progress instead of going silent**: in normal
@@ -20,6 +24,26 @@ log`. Versioned release history starts at 1.0.
   (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
   progress now goes to stderr, leaving stdout for the dry-run table and a
   future `--json`. (#71)
+- **BREAKING: removed the `plugins.job_search.locations.cities` config field**
+  and the city branch of `location_matches`; filtering is now on `countries`
+  (and `remote`) only. Hard break, no compat shim (pre-1.0 personal tool). (#70)
+- **Apple scraper now scopes by Apple's postLocation code** (resolved live via
+  the `jobs.apple.com` refData API), navigating `en-us/search?location=x-<CODE>`
+  so titles return in English for every country; country lookups moved from
+  `sources/_http.py` to a new `scraper/countries.py` module. Removes the old
+  six-country ceiling — Apple now covers any country it posts in. (#70)
+
+### Fixed
+
+- **Apple jobs no longer dropped by the location filter**: the Apple scraper
+  emitted a bare city (`"Seattle"`) as the job location, which matches no
+  country-name alias, so `location_matches` silently dropped every Apple job
+  when filtering by country (the run funnel collapsed to `new → 0 after
+  location`). Apple's API hands `countryName` in the same record; the scraper
+  now joins city, state/province, and country into `"Seattle, United States of
+  America"`, so the existing country branch matches. Fix is Apple-only — other
+  bare-location sources (greenhouse, HN, remoteok, wwr) genuinely lack a country
+  in their upstream data and are left as a follow-up. (#69)
 
 ## [0.1.0] — 2026-06-01
 
