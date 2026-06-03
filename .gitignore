@@ -1,15 +1,10 @@
 *.log
 *.tmp
-!**/claude_cli.py
-!**/test_claude_cli.py
-!**/_claude_session.py
-!**/test_claude_launchers.py
+.claude/
 .playwright-mcp/
 .mcp.json
 .session.lock
 backups/
-# settings.json
-# context.md
 coverage.json
 .coverage
 .tox/
@@ -30,6 +25,7 @@ test_reports/
 .env
 .env.*
 !.env.example
+.venv/
 
 # Packaging artifacts
 *.egg-info/
@@ -47,3 +43,4 @@ MANIFEST
 .idea/
 .ipynb_checkpoints/
 **/worktrees
+dist/
