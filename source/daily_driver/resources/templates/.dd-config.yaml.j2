@@ -109,6 +109,7 @@ tracker:
 #     endpoint: "http://localhost:11434"
 #     # Ollama is materially slower than the claude API; give it room.
 #     timeout: 60
+#     max_parallel: 4
 
 # Optional: focus mode defaults.
 # focus:
@@ -147,6 +148,17 @@ tracker:
 #       # `hn_jobs` (which has 17k+ historical entries via Algolia). Set to
 #       # 0 to disable the filter. Other sources are implicitly recent.
 #       max_age_days: 30
+#       # User-Agent header sent by the HTTP/RSS scrapers.
+#       user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
+#       # Per-source HTTP / browser timeout, in seconds.
+#       timeout: 30
+#       # Override the search terms sent to query-based sources (JobSpy,
+#       # Apple). When unset, terms are derived from roles and keywords.
+#       search_terms: null
+#       # Worker threads for the parallel (headless) scrape phase.
+#       parallel_workers: 4
+#       # Pagination / scroll passes per search term (Apple, JobSpy).
+#       max_pages: 3
 #       # Playwright engine for browser-driven sources (Apple). One of
 #       # firefox, chromium, webkit. The chosen engine must be installed
 #       # (`playwright install <engine>`).
@@ -183,10 +195,24 @@ tracker:
 #       #
 #       # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
 #       remoteok: false            # remoteok.com RSS
-#       weworkremotely: false            # weworkremotely.com listings
-#       hn_who_is_hiring: false            # HN monthly "Who is hiring?" thread
-#       hn_jobs: false            # HN curated jobs (YC-funded company posts)
-#       greenhouse: false            # Greenhouse boards (configurable list)
+#       weworkremotely:            # weworkremotely.com listings
+#         enabled: false
+#         # WeWorkRemotely category slugs to fetch, e.g. "devops-sysadmin"
+#         # (becomes /categories/remote-devops-sysadmin-jobs.rss). An empty list
+#         # scrapes nothing; this source needs at least one category.
+#         wwr_categories: []
+#       hn_who_is_hiring:            # HN monthly "Who is hiring?" thread
+#         enabled: false
+#         hn_max_posts: 500
+#       hn_jobs:            # HN curated jobs (YC-funded company posts)
+#         enabled: false
+#         hn_max_posts: 500
+#       greenhouse:            # Greenhouse boards (configurable list)
+#         enabled: false
+#         # Greenhouse board slugs to scrape (the "<slug>" in
+#         # boards.greenhouse.io/<slug>). Each board's full posting list is fetched
+#         # in one request; add the companies you are targeting.
+#         greenhouse_boards: [anthropic]
 #
 #       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
@@ -201,3 +227,7 @@ tracker:
 #         linkedin: true
 #         indeed: true
 #         google: true
+#         jobs:
+#           results_wanted_per_query: 50
+#           hours_old: 168
+#           country_indeed: USA

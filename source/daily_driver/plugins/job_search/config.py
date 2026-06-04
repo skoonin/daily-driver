@@ -6,6 +6,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Shared so the toggle field and the sources-block template comment stay in sync.
+_WWR_CATEGORIES_DESC = (
+    'WeWorkRemotely category slugs to fetch, e.g. "devops-sysadmin"\n'
+    "(becomes /categories/remote-devops-sysadmin-jobs.rss). An empty list\n"
+    "scrapes nothing; this source needs at least one category."
+)
+_GREENHOUSE_BOARDS_DESC = (
+    'Greenhouse board slugs to scrape (the "<slug>" in\n'
+    "boards.greenhouse.io/<slug>). Each board's full posting list is fetched\n"
+    "in one request; add the companies you are targeting."
+)
+
 
 class Locations(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -46,16 +58,14 @@ class SourceToggle(BaseModel):
 class WeWorkRemotelyToggle(SourceToggle):
     """WeWorkRemotely source toggle plus its per-source category list."""
 
-    wwr_categories: list[str] = Field(
-        default=[], description="", json_schema_extra={"template_skip": True}
-    )
+    wwr_categories: list[str] = Field(default=[], description=_WWR_CATEGORIES_DESC)
 
 
 class GreenhouseToggle(SourceToggle):
     """Greenhouse source toggle plus its per-source board slug list."""
 
     greenhouse_boards: list[str] = Field(
-        default=["anthropic"], description="", json_schema_extra={"template_skip": True}
+        default=["anthropic"], description=_GREENHOUSE_BOARDS_DESC
     )
 
 
@@ -66,9 +76,7 @@ class HackerNewsToggle(SourceToggle):
     `hn_max_posts` cap.
     """
 
-    hn_max_posts: int = Field(
-        default=500, description="", json_schema_extra={"template_skip": True}
-    )
+    hn_max_posts: int = Field(default=500, description="")
 
 
 class JobspyToggle(SourceToggle):
@@ -77,9 +85,7 @@ class JobspyToggle(SourceToggle):
     linkedin: bool = Field(default=True, description="")
     indeed: bool = Field(default=True, description="")
     google: bool = Field(default=True, description="")
-    jobs: JobsConfig = Field(
-        default=JobsConfig(), description="", json_schema_extra={"template_skip": True}
-    )
+    jobs: JobsConfig = Field(default=JobsConfig(), description="")
 
 
 # Maps a source key to the SourceToggle subclass that carries its per-source
@@ -120,23 +126,31 @@ class ScraperConfig(BaseModel):
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) "
             "Gecko/20100101 Firefox/128.0"
         ),
-        description="",
-        json_schema_extra={"template_skip": True},
+        description="User-Agent header sent by the HTTP/RSS scrapers.",
     )
     timeout: int = Field(
-        default=30, description="", json_schema_extra={"template_skip": True}
+        default=30,
+        description="Per-source HTTP / browser timeout, in seconds.",
     )
     search_terms: list[str] | None = Field(
-        default=None, description="", json_schema_extra={"template_skip": True}
+        default=None,
+        description=(
+            "Override the search terms sent to query-based sources (JobSpy,\n"
+            "Apple). When unset, terms are derived from roles and keywords."
+        ),
     )
+    # Overridden per scrape phase by the orchestrator (_ctx_with_headless), so a
+    # user value has no effect; deliberately kept out of the generated template.
     headless: bool = Field(
         default=False, description="", json_schema_extra={"template_skip": True}
     )
     parallel_workers: int = Field(
-        default=4, description="", json_schema_extra={"template_skip": True}
+        default=4,
+        description="Worker threads for the parallel (headless) scrape phase.",
     )
     max_pages: int = Field(
-        default=3, description="", json_schema_extra={"template_skip": True}
+        default=3,
+        description="Pagination / scroll passes per search term (Apple, JobSpy).",
     )
     browser: Literal["firefox", "chromium", "webkit"] = Field(
         default="firefox",
@@ -288,17 +302,26 @@ class JobSearchPlugin(BaseModel):
         json_schema_extra={
             "template_example": {
                 "remoteok": False,
-                "weworkremotely": False,
-                "hn_who_is_hiring": False,
-                "hn_jobs": False,
-                "greenhouse": False,
+                "weworkremotely": {"enabled": False, "wwr_categories": []},
+                "hn_who_is_hiring": {"enabled": False, "hn_max_posts": 500},
+                "hn_jobs": {"enabled": False, "hn_max_posts": 500},
+                "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
                 "apple": False,
                 "jobspy": {
                     "enabled": True,
                     "linkedin": True,
                     "indeed": True,
                     "google": True,
+                    "jobs": {
+                        "results_wanted_per_query": 50,
+                        "hours_old": 168,
+                        "country_indeed": "USA",
+                    },
                 },
+            },
+            "template_example_field_comments": {
+                "weworkremotely": {"wwr_categories": _WWR_CATEGORIES_DESC},
+                "greenhouse": {"greenhouse_boards": _GREENHOUSE_BOARDS_DESC},
             },
             "template_example_inline_comments": {
                 "remoteok": "remoteok.com RSS",

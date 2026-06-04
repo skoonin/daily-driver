@@ -32,6 +32,13 @@ log`. Versioned release history starts at 1.0.
   (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
   progress now goes to stderr, leaving stdout for the dry-run table and a
   future `--json`. (#71)
+- **Generated `.dd-config.yaml` now surfaces every user-configurable setting**:
+  the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`,
+  `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested
+  under each source (`wwr_categories`, `greenhouse_boards`, `hn_max_posts`, and
+  the `jobspy.jobs` query block), and `ai.ollama.max_parallel` — all previously
+  valid config but hidden from the template. `scraper.headless` stays out: it is
+  overridden per scrape phase, so a value set there has no effect. (#71)
 - **BREAKING: removed the `plugins.job_search.locations.cities` config field**
   and the city branch of `location_matches`; filtering is now on `countries`
   (and `remote`) only. Hard break, no compat shim (pre-1.0 personal tool). (#70)
