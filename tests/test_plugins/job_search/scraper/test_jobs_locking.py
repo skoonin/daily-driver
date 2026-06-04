@@ -158,7 +158,7 @@ def test_run_uses_shared_jobs_lock_path(
         yield
 
     monkeypatch.setattr(runner, "file_lock", fake_file_lock)
-    monkeypatch.setattr(runner, "run_all_scrapers", lambda *_a, **_kw: ([], []))
+    monkeypatch.setattr(runner, "run_all_scrapers", lambda *_a, **_kw: ([], [], []))
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),

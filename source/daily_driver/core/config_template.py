@@ -318,11 +318,28 @@ def _render_keyed_value(
         out = [f"{indent}{name}:"]
         inline_comments = extra.get("template_example_inline_comments", {})
         block_comments = extra.get("template_example_block_comments", {})
+        field_comments = extra.get("template_example_field_comments", {})
         for k, v in value.items():
             if k in block_comments:
                 out.append("")
                 out.extend(_wrap_comment(block_comments[k], indent=indent + "  "))
-            if isinstance(v, (dict, list)):
+            if isinstance(v, dict) and v:
+                # Nested entry (e.g. a per-source toggle with its own knobs).
+                # Render `key:` with any inline descriptor, then each child,
+                # prefixing comment lines for children named in
+                # template_example_field_comments.
+                head = f"{indent}  {k}:"
+                if k in inline_comments:
+                    head = f"{head}            # {inline_comments[k]}"
+                out.append(head)
+                sub_comments = field_comments.get(k, {})
+                for sk, sv in v.items():
+                    if sk in sub_comments:
+                        out.extend(
+                            _wrap_comment(sub_comments[sk], indent=indent + "    ")
+                        )
+                    out.extend(_render_dict_entry(sk, sv, indent + "    "))
+            elif isinstance(v, (dict, list)):
                 out.extend(_render_dict_entry(k, v, indent + "  "))
             else:
                 line = f"{indent}  {k}: {_format_scalar(v)}"

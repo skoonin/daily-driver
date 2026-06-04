@@ -133,7 +133,7 @@ def test_help_sources_lists_known_scrapers(
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
     # SOURCE_REGISTRY ships at least these.
-    for src in ("remoteok", "weworkremotely", "greenhouse", "jobspy_linkedin"):
+    for src in ("remoteok", "weworkremotely", "greenhouse", "linkedin"):
         assert src in data["sources"]["sources"]
 
 

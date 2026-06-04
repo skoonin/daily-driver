@@ -97,3 +97,43 @@ def test_location_matches_rejects_wrong_country() -> None:
 
     job = {"location": "Toronto, Canada"}
     assert location_matches(job, _us_plugin()) is False
+
+
+def test_per_source_funnel_reconciles_and_drops_urlless() -> None:
+    """found counts everything; new/known/loc_skip mirror the global pipeline.
+
+    A url-less new job is counted as found but dropped (not 'new'), matching
+    run()'s url-less filter, so per-source 'new' never exceeds the headline.
+    """
+    from daily_driver.plugins.job_search.scraper.runner import _per_source_funnel
+
+    us = "Seattle, United States"
+    results = [
+        (
+            "src",
+            [
+                {"url": "https://a/1", "company": "A", "role": "Eng", "location": us},
+                {"url": "https://a/1", "company": "A", "role": "Eng", "location": us},
+                {
+                    "url": "https://known/1",
+                    "company": "K",
+                    "role": "Eng",
+                    "location": us,
+                },
+                {
+                    "url": "https://a/2",
+                    "company": "B",
+                    "role": "Eng",
+                    "location": "Berlin, Germany",
+                },
+                {"url": "", "company": "NoUrl", "role": "Eng", "location": us},
+            ],
+        )
+    ]
+    funnel = _per_source_funnel(results, {"https://known/1"}, set(), _us_plugin())
+    c = funnel["src"]
+    assert c["found"] == 5
+    assert c["new"] == 1  # only the url-bearing US job; url-less one dropped
+    assert c["known"] == 1
+    assert c["loc_skip"] == 1  # Berlin, wrong country
+    assert "dup" not in c  # the dead counter is gone

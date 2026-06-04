@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -17,7 +19,8 @@ import yaml
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.core.logging import get_logger
+from daily_driver.core.logging import deferred_logs, get_logger
+from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
@@ -228,6 +231,53 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
 # pydantic -- browser classification must live in code, not config.
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
+# Display names for the live scraping rows. Source ids are pipeline-internal;
+# these are what a user reads. Unmapped ids fall back to a de-underscored form.
+# The three JobSpy aggregator sites share one config toggle (`sources.jobspy`),
+# so their source ids route there rather than to a per-id toggle.
+_JOBSPY_SITES: frozenset[str] = frozenset({"linkedin", "indeed", "google"})
+
+_SOURCE_DISPLAY_NAMES: dict[str, str] = {
+    "weworkremotely": "we work remotely",
+    "hn_who_is_hiring": "hn who's hiring",
+    "hn_jobs": "hn jobs",
+}
+
+
+def _display_name(source_id: str) -> str:
+    return _SOURCE_DISPLAY_NAMES.get(source_id, source_id.replace("_", " "))
+
+
+def _fmt_duration(seconds: float) -> str:
+    """Human elapsed: ``6m 41s`` for a minute or more, else ``6.1s``."""
+    if seconds >= 60:
+        minutes, secs = divmod(int(round(seconds)), 60)
+        return f"{minutes}m {secs}s"
+    return f"{seconds:.1f}s"
+
+
+def _intra_source_duplicates(jobs: list[dict[str, Any]]) -> int:
+    """Count a source's own duplicate rows (same URL or company+role key).
+
+    Apple's locale loop, for example, returns the same posting under several
+    locales; this surfaces that on the source row without waiting for the
+    cross-source merge.
+    """
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+    unique = 0
+    for job in jobs:
+        url = job.get("url", "")
+        key = dedup_key(job.get("company", ""), job.get("role", ""))
+        if (url and url in seen_urls) or (key and key in seen_keys):
+            continue
+        if url:
+            seen_urls.add(url)
+        if key:
+            seen_keys.add(key)
+        unique += 1
+    return len(jobs) - unique
+
 
 def _ctx_with_headless(ctx: ScrapeContext, headless: bool) -> ScrapeContext:
     """Return a new ScrapeContext with job_search.scraper.headless overridden.
@@ -246,22 +296,30 @@ def _ctx_with_headless(ctx: ScrapeContext, headless: bool) -> ScrapeContext:
     )
 
 
-def _run_one(source_id: str, ctx: ScrapeContext) -> list[dict[str, Any]] | Exception:
+def _run_one(
+    source_id: str,
+    ctx: ScrapeContext,
+    on_source_done: Callable[[str, bool, str], None] | None = None,
+    on_source_start: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
     Returns the job list on success, or the caught exception on failure. The
     orchestrator classifies exceptions into failed_sources during merge.
 
-    Emits an unconditional user-facing start/finish pair on stdout (bypassing
-    quiet-mode and verbosity gates) so `daily-driver jobs run` shows progress
-    before any scraper completes. The matching log lines stay on stderr for
-    the debug stream.
+    Brackets the scrape with ``on_source_start(source_id)`` and
+    ``on_source_done(source_id, ok, detail)`` so the live display can open a
+    per-source row when the work begins (spinner + ticking elapsed) and freeze
+    it with the job count or failure reason when it ends. Both callbacks drive
+    only the thread-safe progress display, so they are safe to invoke from the
+    Phase-1 worker threads. The matching log lines stay on stderr for the debug
+    stream.
     """
     scraper_fn = SCRAPERS[source_id]
     timeout = ctx.plugin.scraper.timeout
-    user_console = Console.get_user_console()
-    user_console.print(f"Now checking {source_id}...")
     log.info("[%s] starting", source_id)
+    if on_source_start is not None:
+        on_source_start(source_id)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(ctx)
@@ -269,19 +327,34 @@ def _run_one(source_id: str, ctx: ScrapeContext) -> list[dict[str, Any]] | Excep
         # HTTPTimeout/HTTPError alias requests exceptions; the stub-less
         # `requests` import types them as Any, so narrow on the way out.
         log.warning("[%s] timed out after %ds", source_id, timeout)
-        user_console.print(f"  {source_id}: failed (timed out after {timeout}s)")
+        if on_source_done is not None:
+            on_source_done(source_id, False, f"failed (timed out after {timeout}s)")
         return cast(Exception, exc)
     except HTTPError as exc:
         log.warning("[%s] request failed: %s", source_id, exc)
-        user_console.print(f"  {source_id}: failed ({exc})")
+        if on_source_done is not None:
+            on_source_done(source_id, False, f"failed ({exc})")
         return cast(Exception, exc)
     except Exception as exc:  # noqa: BLE001
         log.error("[%s] unexpected error: %s", source_id, exc, exc_info=True)
-        user_console.print(f"  {source_id}: failed ({exc})")
+        if on_source_done is not None:
+            on_source_done(source_id, False, f"failed ({exc})")
         return exc
     elapsed = time.perf_counter() - start
     log.info("[%s] took %.1fs (%d jobs)", source_id, elapsed, len(jobs))
-    user_console.print(f"  {source_id}: {len(jobs)} jobs ({elapsed:.1f}s)")
+    # Intra-source duplicates (e.g. apple's locale overlap) are diagnostic, not
+    # the dedup the user cares about (already-in-csv); surface only at -v.
+    intra_dup = _intra_source_duplicates(jobs)
+    if intra_dup:
+        log.info(
+            "[%s] scrape complete: %d entries were intra-source duplicates",
+            source_id,
+            intra_dup,
+        )
+    if on_source_done is not None:
+        on_source_done(
+            source_id, True, f"{len(jobs)} found in {_fmt_duration(elapsed)}"
+        )
     return jobs
 
 
@@ -316,11 +389,60 @@ def _merge_and_dedup(
     return all_jobs, failed_sources
 
 
+def _per_source_funnel(
+    results: list[tuple[str, list[dict[str, Any]] | Exception]],
+    known_urls: set[str],
+    known_keys: set[str],
+    plugin: JobSearchPlugin,
+) -> dict[str, dict[str, int]]:
+    """Per-source breakdown: found / new / known (already in csv) / loc_skip.
+
+    Mirrors the global pipeline exactly -- cross-source dedup (first-wins),
+    then the already-known check, then the url-less drop, then the location
+    filter -- so the per-source ``new``/``loc_skip`` counts reconcile with the
+    Completed line. Within-run duplicates and url-less new jobs are dropped
+    (not tallied), matching what the pipeline writes.
+    """
+    stats: dict[str, dict[str, int]] = {}
+    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
+    for source_id, result in results:
+        if isinstance(result, Exception):
+            continue
+        counts = stats.setdefault(
+            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
+        )
+        for job in result:
+            counts["found"] += 1
+            url = job.get("url", "")
+            key = dedup_key(job.get("company", ""), job.get("role", ""))
+            if (url and url in seen_urls) or (key and key in seen_keys):
+                continue  # within-run duplicate
+            if url:
+                seen_urls.add(url)
+            if key:
+                seen_keys.add(key)
+            if (url and url in known_urls) or (key and key in known_keys):
+                counts["known"] += 1
+            elif not url:
+                continue  # url-less new jobs are dropped before the funnel
+            elif location_matches(job, plugin):
+                counts["new"] += 1
+            else:
+                counts["loc_skip"] += 1
+    return stats
+
+
 def run_all_scrapers(
     ctx: ScrapeContext,
     *,
     sources_override: list[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+    on_source_done: Callable[[str, bool, str], None] | None = None,
+    on_source_start: Callable[[str], None] | None = None,
+    on_sources_enabled: Callable[[list[str]], None] | None = None,
+) -> tuple[
+    list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
+]:
     """Run all enabled scrapers and deduplicate results within this run.
 
     Two phases:
@@ -348,23 +470,27 @@ def run_all_scrapers(
     else:
 
         def _is_enabled(sid: str) -> bool:
-            if sid.startswith("jobspy_"):
-                site = sid[len("jobspy_") :]
+            if sid in _JOBSPY_SITES:
                 toggle = source_cfg.get("jobspy")
                 if toggle is None or not toggle.enabled:
                     return False
-                return getattr(toggle, site, True)
+                return getattr(toggle, sid, True)
             toggle = source_cfg.get(sid)
             return toggle.enabled if toggle is not None else False
 
         enabled = [sid for sid in SCRAPERS if _is_enabled(sid)]
         disabled = [sid for sid in SCRAPERS if not _is_enabled(sid)]
     for sid in disabled:
-        log.info("[%s] disabled in config, skipping", sid)
+        log.debug("[%s] disabled in config, skipping", sid)
 
     non_headless = _PLAYWRIGHT_SOURCES
     headless_sources = [sid for sid in enabled if sid not in non_headless]
     visible_sources = [sid for sid in enabled if sid in non_headless]
+
+    # Announce the full run order up front so the display can list every source
+    # as pending before any of them start.
+    if on_sources_enabled is not None:
+        on_sources_enabled(headless_sources + visible_sources)
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
@@ -380,7 +506,9 @@ def run_all_scrapers(
         pool = ThreadPoolExecutor(max_workers=max(1, workers))
         try:
             futures = {
-                pool.submit(_run_one, sid, headless_ctx): sid
+                pool.submit(
+                    _run_one, sid, headless_ctx, on_source_done, on_source_start
+                ): sid
                 for sid in headless_sources
             }
             for fut in as_completed(futures):
@@ -405,9 +533,12 @@ def run_all_scrapers(
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
-            results.append((sid, _run_one(sid, visible_ctx)))
+            results.append(
+                (sid, _run_one(sid, visible_ctx, on_source_done, on_source_start))
+            )
 
-    return _merge_and_dedup(results)
+    all_jobs, failed_sources = _merge_and_dedup(results)
+    return all_jobs, failed_sources, results
 
 
 # ── Notification ─────────────────────────────────────────────────────────────
@@ -515,8 +646,6 @@ def run(
     lock_path = jobs_lock_path(csv_path)
     ai_cfg = ai or AIConfig()
 
-    Console.info("Starting jobs run...")
-
     if not plugin.scraper.enabled:
         Console.warning(
             "Scraper disabled. Set plugins.job_search.scraper.enabled: true "
@@ -551,9 +680,6 @@ def run(
         len(known_keys),
         csv_path,
     )
-    Console.info(
-        f"Loaded existing job index ({len(known_urls)} URLs, {len(known_keys)} keys)."
-    )
 
     # Carry the merged dedup set on the context so adapters that build their
     # URL deterministically (Apple, Wellfound) can short-circuit during
@@ -565,71 +691,134 @@ def run(
         known_urls=frozenset(known_urls),
     )
 
-    if sources_override:
-        Console.info(f"Scraping selected sources: {', '.join(sources_override)}")
-    else:
-        Console.info("Scraping enabled sources from config...")
-    all_jobs, failed_sources = run_all_scrapers(ctx, sources_override=sources_override)
+    title = "Job search run (dry-run)" if dry_run else "Job search run"
+    # The live block is a normal-mode affordance. At -v / -vv the user wants the
+    # log stream itself, live, as the run progresses -- so drop the live block
+    # (which would otherwise garble under concurrent worker-thread logs) and let
+    # records stream. Line-mode progress lines still print as rows finish.
+    verbose = logging.getLogger("daily_driver").getEffectiveLevel() <= logging.INFO
+    tty = Console.is_tty() and not verbose
+    # Normal mode only: defer logs past the live block so warnings print as a
+    # clean section below it instead of cutting into the live region.
+    with (
+        deferred_logs(tty),
+        RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
+    ):
+        scrape_group = rp.group("Scraping sources")
+        # Rows keyed by source id: created pending when the run order resolves,
+        # flipped to running on start, frozen on completion. Tolerant of a
+        # start/done without a prior enabled announcement (e.g. in tests).
+        source_rows: dict[str, Item] = {}
 
-    new_jobs = [
-        j
-        for j in all_jobs
-        if (not j.get("url") or j["url"] not in known_urls)
-        and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
-    ]
+        def _row(sid: str) -> Item:
+            row = source_rows.get(sid)
+            if row is None:
+                row = scrape_group.item(_display_name(sid))
+                source_rows[sid] = row
+            return row
 
-    urlless = [j for j in new_jobs if not j.get("url")]
-    if urlless:
-        log.warning(
-            "Dropping %d jobs with no URL (cannot dedup on future runs)",
-            len(urlless),
+        def _on_enabled(sids: list[str]) -> None:
+            for sid in sids:
+                _row(sid)
+
+        def _on_started(sid: str) -> None:
+            _row(sid).start()
+
+        def _on_done(sid: str, ok: bool, detail: str) -> None:
+            _row(sid).finish(ok, detail)
+
+        all_jobs, failed_sources, source_results = run_all_scrapers(
+            ctx,
+            sources_override=sources_override,
+            on_sources_enabled=_on_enabled,
+            on_source_start=_on_started,
+            on_source_done=_on_done,
         )
-    new_jobs = [j for j in new_jobs if j.get("url")]
 
-    Console.info(f"Scrape complete: {len(all_jobs)} total jobs, {len(new_jobs)} new.")
-    log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
+        new_jobs = [
+            j
+            for j in all_jobs
+            if (not j.get("url") or j["url"] not in known_urls)
+            and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
+        ]
 
-    pre_filter = len(new_jobs)
-    new_jobs = [j for j in new_jobs if location_matches(j, plugin)]
-    filtered = pre_filter - len(new_jobs)
-    if filtered:
-        Console.info(f"Filtered {filtered} jobs by location preferences.")
-        log.info("Filtered %d jobs by location preferences", filtered)
+        urlless = [j for j in new_jobs if not j.get("url")]
+        if urlless:
+            log.warning(
+                "Dropping %d jobs with no URL (cannot dedup on future runs)",
+                len(urlless),
+            )
+        new_jobs = [j for j in new_jobs if j.get("url")]
+        log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
 
-    if failed_sources:
-        log.warning("Failed sources: %s", ", ".join(failed_sources))
-
-    # Cross from the dict-based source boundary into the typed pipeline:
-    # every surviving merged dict is validated through RawScrapedJob and lifted
-    # to a frozen EnrichedJob. The rest of the pipeline operates on these.
-    typed_jobs: list[EnrichedJob] = [_enriched_from_scraped(j) for j in new_jobs]
-
-    if not dry_run:
-        Console.info("Enriching job details...")
-        typed_jobs = enrich_job_details_typed(typed_jobs, ctx)
-    else:
-        Console.info("Dry-run mode: skipping job-detail enrichment.")
-        log.info("[dry-run] skipping enrich_job_details (claude calls)")
-
-    if dry_run:
-        Console.info("Dry-run mode: skipping product + fit/notes enrichment.")
-        log.info(
-            "[dry-run] skipping enrich_company_descriptions and enrich_fit_and_notes (claude calls)"
+        pre_filter = len(new_jobs)
+        new_jobs = [j for j in new_jobs if location_matches(j, plugin)]
+        filtered = pre_filter - len(new_jobs)
+        if filtered:
+            log.info("Filtered %d jobs by location preferences", filtered)
+        if failed_sources:
+            log.warning("Failed sources: %s", ", ".join(failed_sources))
+        # raw_found = total scraped before cross-source dedup, so the header
+        # matches the per-source rows and the Completed line; len(all_jobs)
+        # would show the deduped count and contradict them. Reused below for
+        # the Completed line. pre_filter (not the post-location count) so "new"
+        # matches the Completed line and isn't conflated with location matches.
+        raw_found = sum(
+            len(jobs) for _, jobs in source_results if not isinstance(jobs, Exception)
         )
-        product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-        fn_stats = {
-            "enriched": 0,
-            "skipped_budget": 0,
-            "skipped_no_desc": 0,
-            "failed": 0,
-        }
-    else:
-        Console.info(
-            f"Enriching {len(typed_jobs)} jobs via claude "
-            "(company product + fit/notes; this may take a few minutes)..."
-        )
-        typed_jobs, product_stats = enrich_company_descriptions_typed(typed_jobs, ctx)
-        typed_jobs, fn_stats = enrich_fit_and_notes_typed(typed_jobs, ctx)
+        scrape_group.done(f"{raw_found} found, {pre_filter} new")
+
+        # Cross from the dict-based source boundary into the typed pipeline:
+        # every surviving merged dict is validated through RawScrapedJob and
+        # lifted to a frozen EnrichedJob. The rest operates on these.
+        typed_jobs: list[EnrichedJob] = [_enriched_from_scraped(j) for j in new_jobs]
+
+        if dry_run:
+            log.info("[dry-run] skipping enrichment (claude calls)")
+            product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
+            fn_stats = {
+                "enriched": 0,
+                "skipped_budget": 0,
+                "skipped_no_desc": 0,
+                "failed": 0,
+            }
+        else:
+            # Create all three phases up front so they read as pending while the
+            # earlier phases run.
+            enrich_group = rp.group("Enriching jobs")
+            detail_phase = enrich_group.phase("Detail pages")
+            product_phase = enrich_group.phase("Company products")
+            fit_phase = enrich_group.phase("Fit and notes")
+
+            detail_phase.start()
+            typed_jobs, detail_stats = enrich_job_details_typed(
+                typed_jobs, ctx, progress=detail_phase.advance
+            )
+            detail_phase.done(
+                f"{detail_stats['enriched']} enriched, "
+                f"{detail_stats['skipped']} skipped ({detail_stats['total']} total)"
+            )
+
+            product_phase.start()
+            typed_jobs, product_stats = enrich_company_descriptions_typed(
+                typed_jobs, ctx, progress=product_phase.advance
+            )
+            product_phase.done(
+                f"{product_stats['enriched']} enriched, "
+                f"{product_stats['skipped_cached']} cached, "
+                f"{product_stats['failed']} failed"
+            )
+
+            fit_phase.start()
+            typed_jobs, fn_stats = enrich_fit_and_notes_typed(
+                typed_jobs, ctx, progress=fit_phase.advance
+            )
+            fit_phase.done(
+                f"{fn_stats['enriched']} enriched, "
+                f"{fn_stats['skipped_budget']} skipped (budget), "
+                f"{fn_stats['failed']} failed"
+            )
+            enrich_group.done()
 
     n = len(typed_jobs)
     log.info(
@@ -646,20 +835,25 @@ def run(
         product_stats["skipped_cached"],
         product_stats["failed"],
     )
-    Console.info(
-        "Enrichment complete: "
-        f"fit+notes {fn_stats['enriched']}/{n} "
-        f"({fn_stats['failed']} failed, {fn_stats['skipped_budget']} skipped for budget), "
-        f"product {product_stats['enriched']}/{n} ({product_stats['failed']} failed)."
+    # Per-source breakdown + a headline that reconciles every job: found (raw
+    # scraped) -> new (not already in csv) -> matched location (the only filter
+    # that removes jobs). Intra/cross-run duplicates are the remainder.
+    funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+    summary = (
+        f"Completed: {raw_found} found -> {pre_filter} new "
+        f"-> {len(typed_jobs)} matched location"
     )
-
-    # Reconciling funnel so the user can account for every job. Location is the
-    # only filter that REMOVES jobs.
-    Console.info(
-        f"Funnel: {len(all_jobs)} scraped → {pre_filter} new "
-        f"→ {pre_filter - filtered} after location "
-        f"→ {len(typed_jobs)} {'ready' if dry_run else 'to write'}."
-    )
+    if filtered:
+        summary += f" ({filtered} skipped by location)"
+    Console.info(summary)
+    if funnel:
+        width = max(len(_display_name(sid)) for sid in funnel)
+        for sid, c in funnel.items():
+            Console.info(
+                f"  {_display_name(sid):<{width}}  {c['found']} found, "
+                f"{c['new']} new, {c['known']} already in csv, "
+                f"{c['loc_skip']} skipped (location)"
+            )
 
     if dry_run:
         Console.success(
@@ -694,7 +888,7 @@ def run(
         last_run_path.write_text(
             json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
         )
-        log.info("Run manifest written to %s", last_run_path)
+        log.debug("Run manifest written to %s", last_run_path)
     except OSError as exc:
         log.warning("Could not write run manifest: %s", exc)
 

@@ -113,6 +113,37 @@ def test_claude_path_serial_when_max_parallel_one(
     ), f"non-main threads used: {thread_names}"
 
 
+def test_progress_callback_fires_per_company_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """progress() advances once per company in the parallel path."""
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Some product")
+    jobs = [_job(f"Co{i}") for i in range(4)]
+    advances: list[tuple[int, str | None]] = []
+    enrichment.enrich_company_descriptions(
+        jobs,
+        _ollama_config(max_parallel=4),
+        progress=lambda n, d: advances.append((n, d)),
+    )
+    assert sum(n for n, _ in advances) == 4
+    assert {d for _, d in advances} == {f"Co{i}" for i in range(4)}
+
+
+def test_progress_callback_fires_per_company_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """progress() advances once per fetched company in the serial path."""
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Some product")
+    jobs = [_job(f"Co{i}") for i in range(3)]
+    advances: list[tuple[int, str | None]] = []
+    enrichment.enrich_company_descriptions(
+        jobs,
+        _claude_config(max_parallel=1),
+        progress=lambda n, d: advances.append((n, d)),
+    )
+    assert sum(n for n, _ in advances) == 3
+
+
 def test_ollama_budget_respected_under_parallel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,6 +186,57 @@ def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> 
     enrichment.enrich_fit_and_notes(jobs, _ollama_config())
 
     assert all(j["fit"] == "7/10" for j in jobs)
+
+
+def test_fit_notes_progress_callback_fires_per_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """progress() advances once per enriched job in the fit/notes parallel path."""
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
+    )
+    jobs = [
+        {
+            "company": f"Co{i}",
+            "role": "SRE",
+            "location": "Remote",
+            "fit": "",
+            "notes": "",
+        }
+        for i in range(4)
+    ]
+    advances: list[tuple[int, str | None]] = []
+    enrichment.enrich_fit_and_notes(
+        jobs,
+        _ollama_config(max_parallel=4),
+        progress=lambda n, d: advances.append((n, d)),
+    )
+    assert sum(n for n, _ in advances) == 4
+
+
+def test_fit_notes_emits_progress_heartbeat_at_info(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The fit/notes loop logs an N/total heartbeat at INFO for -v visibility."""
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
+    )
+    jobs = [
+        {
+            "company": f"Co{i}",
+            "role": "SRE",
+            "location": "Remote",
+            "fit": "",
+            "notes": "",
+        }
+        for i in range(10)
+    ]
+    with caplog.at_level(
+        "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
+    ):
+        enrichment.enrich_fit_and_notes(jobs, _ollama_config(max_parallel=4))
+    beats = [r for r in caplog.records if "/10 jobs done" in r.getMessage()]
+    assert beats, "expected an N/10 jobs done heartbeat line at INFO"
 
 
 def test_worker_log_tag_in_parallel_path(

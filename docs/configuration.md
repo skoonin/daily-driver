@@ -192,10 +192,11 @@ Transport / retry knobs shared by every source.
 | `user_agent` | string | Firefox/128 UA |
 | `timeout` | int | 30 |
 | `search_terms` | list[string] or null | null |
-| `headless` | bool | false |
 | `parallel_workers` | int | 4 |
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
+
+`headless` is not user-configurable. The field exists on the model but is overridden per scrape phase, so a value set in `.dd-config.yaml` has no effect; it is intentionally omitted from the generated config scaffold.
 
 `browser` selects the Playwright engine for browser-driven sources (Apple). The
 chosen engine must be installed first (`playwright install <engine>`); `doctor`
@@ -253,7 +254,7 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 |-----------|--------|---------------------------|
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
-| `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`100`) |
+| `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
 | `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`/`google`) + `jobs` (`JobsConfig`) |
 | any other | `SourceToggle` | (enable/disable only) |
 

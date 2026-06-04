@@ -235,8 +235,14 @@ Full field reference in [configuration.md](configuration.md#pluginsjob_search).
 | `hn_who_is_hiring` | Hacker News monthly thread |
 | `hn_jobs` | YC-funded jobs |
 | `greenhouse` | One row per `greenhouse_boards` entry |
-| `jobspy` | LinkedIn / Indeed / Glassdoor / Google via JobSpy |
+| `linkedin` | LinkedIn via JobSpy |
+| `indeed` | Indeed via JobSpy |
+| `google` | Google Jobs via JobSpy |
 | `apple` | Apple careers (requires Playwright) |
+
+`linkedin`, `indeed`, and `google` are the CLI selectors for `jobs run -S`.
+In `.dd-config.yaml` they are sub-toggles under the `jobspy:` source
+(`jobspy.linkedin`, etc.), not top-level source keys.
 
 `daily-driver jobs run --list-sources` prints the live set. `daily-driver
 help sources` does the same.
@@ -382,12 +388,14 @@ daily-driver summary -r week -j > /tmp/week.json
 
 The status banners ("Starting jobs run...", "Scrape complete: ...") still print to your terminal because they are on stderr — they do not contaminate the piped data.
 
+At normal verbosity on a TTY, `jobs run` shows a live, in-place progress display while it works: a "Scraping sources" group (one row per source with a `>` / `-` / `x` status marker and a per-source count) and an "Enriching jobs" group. It ends with a `Completed:` line that reconciles totals (found -> new -> matched location, plus "(N skipped by location)" when applicable); any warnings collect into a block below. At `-v` / `-vv` the live display is dropped and timestamped logs stream instead, with heartbeats during slow phases (Apple scraping, enrichment).
+
 Verbosity is controlled by two mutually exclusive flags:
 
 | Flag | Effect |
 |---|---|
-| (default) | WARNING and ERROR logs; normal status lines |
-| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts) |
+| (default) | WARNING and ERROR logs; normal status lines; live progress display on a TTY for `jobs run` |
+| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts); replaces the live `jobs run` display with streamed timestamped logs |
 | `-vv` | Adds DEBUG logs (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
 | `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and warnings-as-status |
 

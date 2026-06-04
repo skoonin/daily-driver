@@ -264,12 +264,7 @@ class OllamaConfig(BaseModel):
         default=60,
         description="Ollama is materially slower than the claude API; give it room.",
     )
-    max_parallel: int = Field(
-        default=4,
-        ge=1,
-        description="",
-        json_schema_extra={"template_skip": True},
-    )
+    max_parallel: int = Field(default=4, ge=1, description="")
 
 
 class ClaudeProviderConfig(BaseModel):

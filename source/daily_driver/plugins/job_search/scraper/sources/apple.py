@@ -197,6 +197,10 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                         len(api_results),
                         len(jobs),
                     )
+
+                # Per-country heartbeat at INFO so -v shows motion through the
+                # long (multi-minute, multi-country) Apple scrape.
+                log.info("[apple] %s: %d roles matched so far", country, len(jobs))
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 

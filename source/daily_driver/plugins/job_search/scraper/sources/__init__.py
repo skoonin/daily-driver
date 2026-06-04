@@ -31,9 +31,9 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
     "hn_jobs": scrape_hn_jobs,
     "greenhouse": scrape_greenhouse,
-    "jobspy_linkedin": scrape_jobspy_linkedin,
-    "jobspy_indeed": scrape_jobspy_indeed,
-    "jobspy_google": scrape_jobspy_google,
+    "linkedin": scrape_jobspy_linkedin,
+    "indeed": scrape_jobspy_indeed,
+    "google": scrape_jobspy_google,
     "apple": scrape_apple,
 }
 

@@ -18,7 +18,8 @@ daily_driver/
 │   └── commands/            # one module per subcommand; argparse + presentation only
 ├── core/                    # workspace, config, tracker, locking, generate, scheduler...
 │   ├── console.py           # two-stream Rich Console (stdout + stderr)
-│   ├── logging.py           # stdlib logger with RichHandler on stderr
+│   ├── logging.py           # stdlib logger with live-aware RichHandler on stderr
+│   ├── progress.py          # domain-neutral live progress display (rich Live)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
 ├── gathers/                 # read-only readers: calendar, git, sessions, notes
 ├── integrations/            # subprocess + external-service boundary: claude_cli,
@@ -115,8 +116,9 @@ Two separate concerns, one shared Rich color theme.
 
 **`core.logging`** — stdlib `logging` configured for the `daily_driver` namespace only; third-party loggers are untouched.
 
-- `configure(verbosity)` accepts `"quiet" | "normal" | "verbose" | "debug"` and maps to `ERROR / WARNING / INFO / DEBUG`. Attaches a single `RichHandler` whose console is `Console.get_log_console()` so log lines and `Console.*` lines share the same stderr stream and theme.
+- `configure(verbosity)` accepts `"quiet" | "normal" | "verbose" | "debug"` and maps to `ERROR / WARNING / INFO / DEBUG`. Attaches a single live-aware `RichHandler` whose console is `Console.get_log_console()` so log lines and `Console.*` lines share the same stderr stream and theme. Timestamps are shown only from `-v` up; bare-mode warnings read as a clean `WARNING <message>`.
 - Re-entrant: removes any existing `RichHandler` on the logger before attaching a new one, so repeated `configure()` calls (tests, in-process re-runs) don't stack levels or handlers. `propagate=False` keeps lines from leaking to the root logger.
+- `deferred_logs(active)` is a context manager that buffers log records while a live progress display owns the terminal, then replays them below the stopped display on exit (including on exception) under a `Warnings (N):` header. A raw log write would otherwise cut into the live region and commit half-frames to scrollback. It is a no-op when inactive or before `configure()`. In verbose mode (`-v`/`-vv`) the live display is skipped and logs stream live with timestamps instead.
 - `get_logger(name)` returns child loggers under `daily_driver.<name>` — use this in `core/`, `gathers/`, `plugins/`, never bare `logging.getLogger(__name__)` outside the package root.
 - `log_query_window(logger, label, since, until)` is a convenience for emitting a DEBUG (`-vv`) line describing the resolved gather window; useful for diagnosing empty-result false negatives where the bug is window math rather than extraction.
 
@@ -134,6 +136,8 @@ Two separate concerns, one shared Rich color theme.
 | Long-running module log | `dd_logging.get_logger(__name__).info(...)` etc. | stderr | log level |
 
 The split exists so `daily-driver tracker list --json | jq …` and `daily-driver paths daily-plan | xargs $EDITOR` work cleanly: only the data payload hits stdout; every status line goes to stderr regardless of verbosity.
+
+**`core.progress`** — a domain-neutral, app-wide live-progress foundation built on Rich. `RunProgress` is a context manager that owns a Rich `Live` region (bound to the stderr console so it coexists with the log stream and leaves stdout a clean data channel) and exposes Groups (a header row that counts its finished children), Items (compact status sub-rows: pending -> running -> ok/failed), and Phases (open-counter sub-rows whose `advance` is a `ProgressCallback` for threading into worker loops). Status markers (`>` running, `-` done, `x` failed) are merged into the label cell so a narrow terminal's table allocator can't drop a standalone marker column, and a one-line legend is printed under the title. In non-TTY mode (cron, launchd, CI, pipes, `-vv` debug streaming) rows print discrete plain lines on finish instead of redrawing in place. Designed for reuse across the app; `daily-driver jobs run` is the first consumer.
 
 ## Flock model
 

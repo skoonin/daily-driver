@@ -12,6 +12,33 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
+  use `linkedin` / `indeed` / `google` instead of `jobspy_linkedin` /
+  `jobspy_indeed` / `jobspy_google`. The `sources.jobspy.*` config block is
+  unchanged.
+- **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
+  default `hn_max_posts` cap was hitting on every run, so the same first 100
+  relevance-ranked roles recurred and nothing past them was ever scraped.
+  Raised to 500 (the thread fetch already pulls the whole thread).
+- **`jobs run` now shows live progress instead of going silent**: in normal
+  mode the run renders a phased live block — a `Scraping sources` group listing
+  every source (pending -> running -> done, with a static status marker), then
+  an `Enriching jobs` group with detail / company-product / fit-and-notes
+  counters — so a long run is visibly alive rather than looking hung. A
+  per-source breakdown (`found / new / already in csv / skipped by location`)
+  and a reconciling `Completed:` line print at the end. Warnings are collected
+  into a clean section below the live block. At `-v`/`-vv` the live block steps
+  aside and logs stream live as the run progresses. Non-interactive output
+  (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
+  progress now goes to stderr, leaving stdout for the dry-run table and a
+  future `--json`. (#71)
+- **Generated `.dd-config.yaml` now surfaces every user-configurable setting**:
+  the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`,
+  `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested
+  under each source (`wwr_categories`, `greenhouse_boards`, `hn_max_posts`, and
+  the `jobspy.jobs` query block), and `ai.ollama.max_parallel` — all previously
+  valid config but hidden from the template. `scraper.headless` stays out: it is
+  overridden per scrape phase, so a value set there has no effect. (#71)
 - **BREAKING: removed the `plugins.job_search.locations.cities` config field**
   and the city branch of `location_matches`; filtering is now on `countries`
   (and `remote`) only. Hard break, no compat shim (pre-1.0 personal tool). (#70)
