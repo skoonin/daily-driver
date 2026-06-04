@@ -211,7 +211,9 @@ Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](confi
 
 Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via the provider configured under `ai.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). `--dry-run` prints matches without writing. `--backfill` re-enriches empty fields on existing rows. `-S` / `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits.
 
-Available sources: `apple`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `jobspy`, `remoteok`, `weworkremotely`. Run `daily-driver help sources` for the same list at runtime.
+Available sources: `apple`, `google`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `indeed`, `linkedin`, `remoteok`, `weworkremotely`. Run `daily-driver help sources` for the same list at runtime.
+
+At normal verbosity on a TTY, `jobs run` shows a live, in-place progress display: a "Scraping sources" group (one row per enabled source with a status marker — `>` running, `-` done, `x` failed — and a per-source count) and an "Enriching jobs" group. It ends with a `Completed:` summary line reconciling totals (found, new, matched location, plus `(N skipped by location)` when rows were dropped for location); warnings print in a block below. At `-v` (INFO) or `-vv` (DEBUG) the live display is dropped and logs stream live instead.
 
 ### `jobs status [--json]`
 
