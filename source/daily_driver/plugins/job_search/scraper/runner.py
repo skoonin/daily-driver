@@ -233,13 +233,14 @@ _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
+# The three JobSpy aggregator sites share one config toggle (`sources.jobspy`),
+# so their source ids route there rather than to a per-id toggle.
+_JOBSPY_SITES: frozenset[str] = frozenset({"linkedin", "indeed", "google"})
+
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "weworkremotely": "we work remotely",
     "hn_who_is_hiring": "hn who's hiring",
     "hn_jobs": "hn jobs",
-    "jobspy_linkedin": "linkedin",
-    "jobspy_indeed": "indeed",
-    "jobspy_google": "google",
 }
 
 
@@ -469,12 +470,11 @@ def run_all_scrapers(
     else:
 
         def _is_enabled(sid: str) -> bool:
-            if sid.startswith("jobspy_"):
-                site = sid[len("jobspy_") :]
+            if sid in _JOBSPY_SITES:
                 toggle = source_cfg.get("jobspy")
                 if toggle is None or not toggle.enabled:
                     return False
-                return getattr(toggle, site, True)
+                return getattr(toggle, sid, True)
             toggle = source_cfg.get(sid)
             return toggle.enabled if toggle is not None else False
 

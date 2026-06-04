@@ -12,6 +12,10 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
+  use `linkedin` / `indeed` / `google` instead of `jobspy_linkedin` /
+  `jobspy_indeed` / `jobspy_google`. The `sources.jobspy.*` config block is
+  unchanged.
 - **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
   default `hn_max_posts` cap was hitting on every run, so the same first 100
   relevance-ranked roles recurred and nothing past them was ever scraped.
