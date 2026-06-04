@@ -123,12 +123,15 @@ class RunProgress:
             self._console.print(self._title)
         if self._tty:
             self._console.print(_LEGEND, style="dim")
+            # redirect_stdout/stderr default to True: Rich then intercepts
+            # stray Python-level writes (library logging, warnings) during the
+            # live block and renders them above the region instead of letting
+            # them cut in and duplicate it. (Subprocess fd writes -- a visible
+            # browser, a CLI -- still bypass this; those sources are loud.)
             self._progress = Progress(
                 *_columns(),
                 console=self._console,
                 transient=False,
-                redirect_stdout=False,
-                redirect_stderr=False,
             )
             self._progress.start()
         return self
