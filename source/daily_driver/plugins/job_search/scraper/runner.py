@@ -758,9 +758,15 @@ def run(
             log.info("Filtered %d jobs by location preferences", filtered)
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
-        # pre_filter (not the post-location count) so "new" matches the
-        # Completed line and isn't conflated with location matches.
-        scrape_group.done(f"{len(all_jobs)} found, {pre_filter} new")
+        # raw_found = total scraped before cross-source dedup, so the header
+        # matches the per-source rows and the Completed line; len(all_jobs)
+        # would show the deduped count and contradict them. Reused below for
+        # the Completed line. pre_filter (not the post-location count) so "new"
+        # matches the Completed line and isn't conflated with location matches.
+        raw_found = sum(
+            len(jobs) for _, jobs in source_results if not isinstance(jobs, Exception)
+        )
+        scrape_group.done(f"{raw_found} found, {pre_filter} new")
 
         # Cross from the dict-based source boundary into the typed pipeline:
         # every surviving merged dict is validated through RawScrapedJob and
@@ -833,7 +839,6 @@ def run(
     # scraped) -> new (not already in csv) -> matched location (the only filter
     # that removes jobs). Intra/cross-run duplicates are the remainder.
     funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
-    raw_found = sum(c["found"] for c in funnel.values())
     summary = (
         f"Completed: {raw_found} found -> {pre_filter} new "
         f"-> {len(typed_jobs)} matched location"
