@@ -104,6 +104,31 @@ def live_log_window(active: bool) -> Iterator[None]:
             handler.console.print(f"\nWarnings: {count} (shown above)")
 
 
+def adopt_third_party_loggers(prefix: str) -> None:
+    """Route a third-party logger family through the daily_driver handler.
+
+    Libraries like JobSpy attach their own ``StreamHandler`` -- bound to the
+    real stderr at import time -- to each ``<prefix>:<site>`` logger. That
+    handle bypasses Rich's live-region redirect and cuts into an active
+    progress block. Replacing those handlers with our shared live-aware handler
+    (and aligning each logger's level to the configured verbosity) makes their
+    lines scroll above the block like our own logs, and stay silent in normal
+    mode. Call once, single-threaded, before any of those loggers emit. A no-op
+    before ``configure()``.
+    """
+    handler = _handler
+    if handler is None:
+        return
+    for name in list(stdlog.root.manager.loggerDict):
+        if name == prefix or name.startswith(f"{prefix}:"):
+            lib = stdlog.getLogger(name)
+            for existing in lib.handlers[:]:
+                lib.removeHandler(existing)
+            lib.addHandler(handler)
+            lib.setLevel(handler.level)
+            lib.propagate = False
+
+
 def get_logger(name: str) -> stdlog.Logger:
     """Return a child logger under the daily_driver namespace.
 

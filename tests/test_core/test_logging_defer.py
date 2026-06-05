@@ -108,3 +108,37 @@ def test_live_log_window_noop_when_inactive():
         assert "Warnings:" not in out
     finally:
         ddlog._handler = None
+
+
+def test_adopt_third_party_loggers_reroutes_and_aligns_level():
+    """A third-party logger's own stderr handler is replaced by ours, its level
+    aligned to ours, and propagation disabled -- so its lines route above the
+    live block instead of bypassing Rich's redirect."""
+    own_buf = io.StringIO()
+    third_party = logging.getLogger("FakeLib:SiteA")
+    third_party.handlers.clear()
+    own_handler = logging.StreamHandler(own_buf)
+    third_party.addHandler(own_handler)
+    third_party.setLevel(logging.INFO)
+    third_party.propagate = True
+
+    buf, our_logger = _bind_handler(show_time=False)
+    our_handler = our_logger.handlers[0]  # level WARNING from _bind_handler
+    ddlog._handler = our_handler
+    try:
+        ddlog.adopt_third_party_loggers("FakeLib")
+
+        assert third_party.handlers == [our_handler]
+        assert third_party.level == our_handler.level  # WARNING -> INFO suppressed
+        assert third_party.propagate is False
+
+        # An INFO line is now filtered (our level is WARNING); a WARNING routes
+        # through our handler's buffer, not the library's own stderr handler.
+        third_party.info("chatty progress")
+        third_party.warning("real problem")
+        assert "chatty progress" not in buf.getvalue()
+        assert "real problem" in buf.getvalue()
+        assert own_buf.getvalue() == ""
+    finally:
+        ddlog._handler = None
+        third_party.handlers.clear()

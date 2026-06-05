@@ -18,7 +18,11 @@ import yaml
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.core.logging import get_logger, live_log_window
+from daily_driver.core.logging import (
+    adopt_third_party_loggers,
+    get_logger,
+    live_log_window,
+)
 from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
@@ -496,6 +500,18 @@ def run_all_scrapers(
     # as pending before any of them start.
     if on_sources_enabled is not None:
         on_sources_enabled(headless_sources + visible_sources)
+
+    # JobSpy attaches its own stderr-bound log handlers at import; those bypass
+    # the live block's redirect and cut into it. Reroute them through our
+    # live-aware handler here -- single-threaded, before the parallel phase
+    # spawns any JobSpy worker -- so their lines scroll above the block.
+    if any(sid in _JOBSPY_SITES for sid in enabled):
+        try:
+            import jobspy  # noqa: F401  -- force the JobSpy:* site loggers to exist
+        except ImportError:
+            pass
+        else:
+            adopt_third_party_loggers("JobSpy")
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 

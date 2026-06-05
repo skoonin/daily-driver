@@ -144,6 +144,40 @@ def test_phase2_forces_headless_when_block_active(monkeypatch) -> None:
     assert seen == [True]
 
 
+def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
+    """A JobSpy site in the run reroutes the JobSpy:* loggers through our handler
+    before the parallel phase, so their lines can't bypass the live block."""
+    import logging as stdlog
+
+    from daily_driver.core import logging as ddlog
+    from daily_driver.core.console import Console
+    from daily_driver.plugins.job_search.scraper import runner
+
+    # Mimic the library: a JobSpy site logger with its own stderr handler.
+    js = stdlog.getLogger("JobSpy:LinkedIn")
+    js.handlers.clear()
+    js.addHandler(stdlog.StreamHandler())
+    js.propagate = False
+
+    Console._user_console = None
+    Console._log_console = None
+    saved = ddlog._handler
+    ddlog.configure("normal")
+    our_handler = ddlog._handler
+
+    monkeypatch.setattr(runner, "SCRAPERS", {"linkedin": lambda _ctx: []})
+    try:
+        runner.run_all_scrapers(
+            _cfg_with_sources(["linkedin"], workers=1),
+            sources_override=["linkedin"],
+        )
+        assert js.handlers == [our_handler]
+        assert js.propagate is False
+    finally:
+        ddlog._handler = saved
+        js.handlers.clear()
+
+
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
     monkeypatch,
 ) -> None:
