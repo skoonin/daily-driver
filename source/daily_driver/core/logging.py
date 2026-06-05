@@ -11,7 +11,7 @@ import logging as stdlog
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from rich.logging import RichHandler
 
@@ -21,40 +21,33 @@ _handler: _LiveAwareRichHandler | None = None
 
 
 class _LiveAwareRichHandler(RichHandler):
-    """Rich log handler that can defer records past an active live display.
+    """Rich log handler that tallies warnings emitted under a live display.
 
-    While a live progress block owns the terminal, ``start_deferring()``
-    buffers records instead of printing them (a raw log write would cut into
-    the live region and commit half-frames to scrollback). ``flush_deferred()``
-    replays the buffer below the stopped display, under a ``Warnings (N):``
-    header when timestamps are off (normal mode).
+    Records always emit immediately. While a live progress block owns the
+    terminal, Rich relocates each write above the region (thread-safe, via the
+    live render lock), so warnings surface as they happen instead of cutting in.
+    ``start_counting()`` / ``stop_counting()`` tally WARN+ records over a run so
+    a terse ``Warnings: N`` reconciliation line can close it in normal mode.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self._show_time = bool(kwargs.get("show_time", True))
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        self._deferring = False
-        self._buffer: list[stdlog.LogRecord] = []
+    def __init__(self, *args: Any, show_time: bool = True, **kwargs: Any) -> None:
+        self._show_time = show_time
+        super().__init__(*args, show_time=show_time, **kwargs)
+        self._counting = False
+        self._warn_count = 0
 
     def emit(self, record: stdlog.LogRecord) -> None:
-        if self._deferring:
-            self._buffer.append(record)
-        else:
-            super().emit(record)
+        if self._counting and record.levelno >= stdlog.WARNING:
+            self._warn_count += 1
+        super().emit(record)
 
-    def start_deferring(self) -> None:
-        self._deferring = True
+    def start_counting(self) -> None:
+        self._counting = True
+        self._warn_count = 0
 
-    def flush_deferred(self) -> None:
-        self._deferring = False
-        buffered, self._buffer = self._buffer, []
-        if not buffered:
-            return
-        warnings = sum(1 for r in buffered if r.levelno >= stdlog.WARNING)
-        if not self._show_time and warnings:
-            self.console.print(f"\nWarnings ({warnings}):")
-        for record in buffered:
-            super().emit(record)
+    def stop_counting(self) -> int:
+        self._counting = False
+        return self._warn_count
 
 
 def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None:
@@ -89,22 +82,26 @@ def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None
 
 
 @contextmanager
-def deferred_logs(active: bool) -> Iterator[None]:
-    """Buffer log records while a live display owns the terminal.
+def live_log_window(active: bool) -> Iterator[None]:
+    """Stream logs live while a live display owns the terminal.
 
-    When ``active``, records emitted inside the block are held and replayed on
-    exit (including on exception), so they land below the stopped display
-    rather than cutting into it. A no-op when inactive or before configure().
+    Records emit immediately; Rich relocates each one above the active region,
+    so problems surface as they happen rather than being held to the end. On
+    exit (including on exception) a terse ``Warnings: N`` line reconciles the
+    count in normal mode (no timestamps) -- the records themselves already
+    scrolled above the block. A no-op when inactive or before configure().
     """
     handler = _handler
     if not active or handler is None:
         yield
         return
-    handler.start_deferring()
+    handler.start_counting()
     try:
         yield
     finally:
-        handler.flush_deferred()
+        count = handler.stop_counting()
+        if count and not handler._show_time:
+            handler.console.print(f"\nWarnings: {count} (shown above)")
 
 
 def get_logger(name: str) -> stdlog.Logger:

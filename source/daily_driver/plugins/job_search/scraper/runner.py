@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import json
-import logging
 import re
 import time
 from collections.abc import Callable
@@ -19,7 +18,7 @@ import yaml
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.core.logging import deferred_logs, get_logger
+from daily_driver.core.logging import get_logger, live_log_window
 from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
@@ -440,6 +439,7 @@ def run_all_scrapers(
     on_source_done: Callable[[str, bool, str], None] | None = None,
     on_source_start: Callable[[str], None] | None = None,
     on_sources_enabled: Callable[[list[str]], None] | None = None,
+    force_headless: bool = False,
 ) -> tuple[
     list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
 ]:
@@ -457,6 +457,11 @@ def run_all_scrapers(
     When ``sources_override`` is provided, only those source IDs run regardless
     of the ``sources`` toggles in config. Caller is responsible for
     validating IDs against ``SCRAPERS``.
+
+    ``force_headless`` overrides the serial phase to run headless. The visible
+    Firefox is the one uncontrolled terminal writer during the run; when a live
+    progress block is pinned it can't share the terminal with a browser window,
+    so the caller forces headless to keep the block clean.
     """
     cfg = ctx.plugin.scraper
     source_cfg = ctx.plugin.sources
@@ -524,12 +529,14 @@ def run_all_scrapers(
         else:
             pool.shutdown(wait=True)
 
-    # Phase 2: non-headless, serial (preserves pre-parallel behavior)
+    # Phase 2: serial (preserves pre-parallel behavior). Visible browser by
+    # default to dodge bot detection; forced headless via force_headless.
     if visible_sources:
-        visible_ctx = _ctx_with_headless(ctx, False)
+        visible_ctx = _ctx_with_headless(ctx, force_headless)
         log.info(
-            "[phase2] running %d non-headless scrapers serially (%s)",
+            "[phase2] running %d %s scrapers serially (%s)",
             len(visible_sources),
+            "headless" if force_headless else "non-headless",
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
@@ -692,16 +699,13 @@ def run(
     )
 
     title = "Job search run (dry-run)" if dry_run else "Job search run"
-    # The live block is a normal-mode affordance. At -v / -vv the user wants the
-    # log stream itself, live, as the run progresses -- so drop the live block
-    # (which would otherwise garble under concurrent worker-thread logs) and let
-    # records stream. Line-mode progress lines still print as rows finish.
-    verbose = logging.getLogger("daily_driver").getEffectiveLevel() <= logging.INFO
-    tty = Console.is_tty() and not verbose
-    # Normal mode only: defer logs past the live block so warnings print as a
-    # clean section below it instead of cutting into the live region.
+    # The live block renders on any TTY; verbosity controls only how much scrolls
+    # above it. Rich relocates log writes above the active region, so WARN+ (and
+    # INFO/DEBUG heartbeats under -v/-vv) stream live as the run progresses while
+    # the block stays pinned. Non-TTY (cron/pipe) gets plain line mode, no block.
+    tty = Console.is_tty()
     with (
-        deferred_logs(tty),
+        live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
     ):
         scrape_group = rp.group("Scraping sources")
@@ -733,6 +737,8 @@ def run(
             on_sources_enabled=_on_enabled,
             on_source_start=_on_started,
             on_source_done=_on_done,
+            # Force Apple headless while the live block owns the terminal.
+            force_headless=tty,
         )
 
         new_jobs = [

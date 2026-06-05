@@ -1,4 +1,9 @@
-"""Deferred-logging behaviour for the live-aware handler."""
+"""Live-window log behaviour for the live-aware handler.
+
+Records always stream immediately (Rich relocates them above an active live
+region); the handler only tallies WARN+ records so a terse ``Warnings (N):``
+line can close a run in normal mode.
+"""
 
 from __future__ import annotations
 
@@ -25,19 +30,32 @@ def _bind_handler(show_time: bool) -> tuple[io.StringIO, logging.Logger]:
     return buf, logger
 
 
-def test_records_buffer_while_deferring_and_flush_below():
+def test_records_stream_live_while_counting():
+    """Records emit immediately while the live window is active (no buffering)."""
     buf, logger = _bind_handler(show_time=False)
     handler = logger.handlers[0]
 
-    handler.start_deferring()
+    handler.start_counting()
     logger.warning("[apple] unknown country code")
-    # Nothing emitted while deferring.
-    assert "unknown country code" not in buf.getvalue()
+    # Streamed live, not held.
+    assert "unknown country code" in buf.getvalue()
 
-    handler.flush_deferred()
-    out = buf.getvalue()
-    assert "Warnings (1):" in out  # header only in no-timestamp (normal) mode
-    assert "unknown country code" in out
+    count = handler.stop_counting()
+    assert count == 1
+
+
+def test_stop_counting_tallies_only_warnings():
+    """INFO records reach the live stream but don't count toward the warning total."""
+    buf, logger = _bind_handler(show_time=False)
+    handler = logger.handlers[0]
+    handler.setLevel(logging.INFO)
+    logger.setLevel(logging.INFO)
+
+    handler.start_counting()
+    logger.info("[scraper] heartbeat")
+    logger.warning("[apple] one problem")
+    assert "heartbeat" in buf.getvalue()
+    assert handler.stop_counting() == 1
 
 
 def test_brackets_survive_without_markup():
@@ -47,19 +65,46 @@ def test_brackets_survive_without_markup():
     assert "[apple]" in buf.getvalue()
 
 
-def test_non_deferred_emits_immediately():
+def test_live_log_window_prints_count_in_normal_mode():
+    """Normal mode (no timestamps): the window closes with a Warnings (N): line."""
     buf, logger = _bind_handler(show_time=False)
-    logger.warning("[scraper] live line")
-    assert "live line" in buf.getvalue()
+    handler = logger.handlers[0]
+    ddlog._handler = handler
+    try:
+        with ddlog.live_log_window(active=True):
+            logger.warning("[apple] something")
+        out = buf.getvalue()
+        assert "something" in out  # streamed live
+        assert "Warnings: 1 (shown above)" in out  # terse end-of-run count
+    finally:
+        ddlog._handler = None
 
 
-def test_verbose_mode_has_no_warnings_header():
-    """With timestamps on (-v/-vv), the flushed block omits the count header."""
+def test_live_log_window_no_count_in_verbose_mode():
+    """With timestamps on (-v/-vv), no trailing count line — the stream stands alone."""
     buf, logger = _bind_handler(show_time=True)
     handler = logger.handlers[0]
-    handler.start_deferring()
-    logger.warning("[apple] something")
-    handler.flush_deferred()
-    out = buf.getvalue()
-    assert "Warnings (" not in out
-    assert "something" in out
+    ddlog._handler = handler
+    try:
+        with ddlog.live_log_window(active=True):
+            logger.warning("[apple] something")
+        out = buf.getvalue()
+        assert "Warnings:" not in out
+        assert "something" in out
+    finally:
+        ddlog._handler = None
+
+
+def test_live_log_window_noop_when_inactive():
+    """Inactive window is a pure no-op: no count line even with warnings."""
+    buf, logger = _bind_handler(show_time=False)
+    handler = logger.handlers[0]
+    ddlog._handler = handler
+    try:
+        with ddlog.live_log_window(active=False):
+            logger.warning("[apple] something")
+        out = buf.getvalue()
+        assert "something" in out
+        assert "Warnings:" not in out
+    finally:
+        ddlog._handler = None

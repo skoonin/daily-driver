@@ -108,6 +108,42 @@ def test_apple_is_classified_as_playwright_source() -> None:
     assert "apple" in _PLAYWRIGHT_SOURCES
 
 
+def test_phase2_runs_visible_browser_by_default(monkeypatch) -> None:
+    """Without a pinned block, the serial phase keeps its visible (non-headless)
+    browser -- the default that dodges Apple's bot detection."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
+    )
+
+    runner.run_all_scrapers(_cfg_with_sources(["apple"], workers=1))
+
+    assert seen == [False]
+
+
+def test_phase2_forces_headless_when_block_active(monkeypatch) -> None:
+    """A pinned live block can't share the terminal with a visible Firefox window,
+    so force_headless=True runs the serial phase headless."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
+    )
+
+    runner.run_all_scrapers(
+        _cfg_with_sources(["apple"], workers=1), force_headless=True
+    )
+
+    assert seen == [True]
+
+
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
     monkeypatch,
 ) -> None:
@@ -242,6 +278,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
         on_source_done=None,
         on_source_start=None,
         on_sources_enabled=None,
+        force_headless=False,
     ):
         if on_sources_enabled is not None:
             on_sources_enabled(["remoteok"])
@@ -300,7 +337,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     Console._user_console = None
     Console._log_console = None
     Console.quiet_mode = False
-    # Normal verbosity: -v/-vv drop the live block this test asserts on.
+    # The live block renders on any TTY now; verbosity only sets stream density.
     monkeypatch.setattr(logging.getLogger("daily_driver"), "level", logging.WARNING)
     monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: True))
 

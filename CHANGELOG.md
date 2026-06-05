@@ -26,12 +26,16 @@ log`. Versioned release history starts at 1.0.
   an `Enriching jobs` group with detail / company-product / fit-and-notes
   counters — so a long run is visibly alive rather than looking hung. A
   per-source breakdown (`found / new / already in csv / skipped by location`)
-  and a reconciling `Completed:` line print at the end. Warnings are collected
-  into a clean section below the live block. At `-v`/`-vv` the live block steps
-  aside and logs stream live as the run progresses. Non-interactive output
-  (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
-  progress now goes to stderr, leaving stdout for the dry-run table and a
-  future `--json`. (#71)
+  and a reconciling `Completed:` line print at the end. The live block renders
+  on any interactive terminal and stays pinned; verbosity controls only how much
+  scrolls above it (normal: warnings only; `-v`: INFO heartbeats and per-source
+  timings; `-vv`: the full stream). Problems surface live above the block as
+  they happen, with a terse end-of-run `Warnings (N):` count, instead of being
+  held back to a section at the end. During the serial Apple phase the browser
+  runs headless while the block is pinned so its window can't cut into the
+  display. Non-interactive output (cron, launchd, pipes) falls back to plain
+  lines with no ANSI. All human progress now goes to stderr, leaving stdout for
+  the dry-run table and a future `--json`. (#71, #72)
 - **Generated `.dd-config.yaml` now surfaces every user-configurable setting**:
   the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`,
   `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested
