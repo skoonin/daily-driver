@@ -66,7 +66,7 @@ def test_brackets_survive_without_markup():
 
 
 def test_live_log_window_prints_count_in_normal_mode():
-    """Normal mode (no timestamps): the window closes with a Warnings (N): line."""
+    """Normal mode (no timestamps): the window closes with a `Warnings: N (shown above)` line."""
     buf, logger = _bind_handler(show_time=False)
     handler = logger.handlers[0]
     ddlog._handler = handler
