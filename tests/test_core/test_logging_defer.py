@@ -1,8 +1,9 @@
 """Live-window log behaviour for the live-aware handler.
 
 Records always stream immediately (Rich relocates them above an active live
-region); the handler only tallies WARN+ records so a terse ``Warnings (N):``
+region); the handler only tallies WARN+ records so a terse ``Warnings: N (shown above)``
 line can close a run in normal mode.
+"""
 """
 
 from __future__ import annotations
