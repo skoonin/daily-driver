@@ -30,7 +30,7 @@ log`. Versioned release history starts at 1.0.
   on any interactive terminal and stays pinned; verbosity controls only how much
   scrolls above it (normal: warnings only; `-v`: INFO heartbeats and per-source
   timings; `-vv`: the full stream). Problems surface live above the block as
-  they happen, with a terse end-of-run `Warnings (N):` count, instead of being
+  they happen, with a terse end-of-run `Warnings: N (shown above)` line, instead of being
   held back to a section at the end. During the serial Apple phase the browser
   runs headless while the block is pinned so its window can't cut into the
   display. Non-interactive output (cron, launchd, pipes) falls back to plain
