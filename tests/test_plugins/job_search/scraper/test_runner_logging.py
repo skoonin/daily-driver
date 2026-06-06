@@ -146,18 +146,27 @@ def test_phase2_forces_headless_when_block_active(monkeypatch) -> None:
 
 def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
     """A JobSpy site in the run reroutes the JobSpy:* loggers through our handler
-    before the parallel phase, so their lines can't bypass the live block."""
+    before the parallel phase, so their lines can't bypass the live block.
+
+    Covers the capitalization gap: jobspy logs "finished scraping" via
+    ``create_logger(site.value.capitalize())`` (``JobSpy:Linkedin``), a different
+    logger from its import-time module one (``JobSpy:LinkedIn``). Both must end
+    up on our handler, and a subsequent jobspy ``create_logger`` must NOT re-add
+    its own stderr handler.
+    """
     import logging as stdlog
+
+    import jobspy
 
     from daily_driver.core import logging as ddlog
     from daily_driver.core.console import Console
     from daily_driver.plugins.job_search.scraper import runner
 
-    # Mimic the library: a JobSpy site logger with its own stderr handler.
-    js = stdlog.getLogger("JobSpy:LinkedIn")
-    js.handlers.clear()
-    js.addHandler(stdlog.StreamHandler())
-    js.propagate = False
+    # Mimic the library's import-time module logger: own stderr handler.
+    module_logger = stdlog.getLogger("JobSpy:LinkedIn")
+    module_logger.handlers.clear()
+    module_logger.addHandler(stdlog.StreamHandler())
+    module_logger.propagate = False
 
     Console._user_console = None
     Console._log_console = None
@@ -171,11 +180,17 @@ def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
             _cfg_with_sources(["linkedin"], workers=1),
             sources_override=["linkedin"],
         )
-        assert js.handlers == [our_handler]
-        assert js.propagate is False
+        # Both the import-time and the runtime-cased loggers route through us.
+        assert module_logger.handlers == [our_handler]
+        runtime_logger = stdlog.getLogger("JobSpy:Linkedin")
+        assert runtime_logger.handlers == [our_handler]
+
+        # The exact runtime call jobspy makes must not re-add a stderr handler.
+        assert jobspy.create_logger("Linkedin").handlers == [our_handler]
     finally:
         ddlog._handler = saved
-        js.handlers.clear()
+        module_logger.handlers.clear()
+        stdlog.getLogger("JobSpy:Linkedin").handlers.clear()
 
 
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(

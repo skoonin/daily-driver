@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -501,16 +502,25 @@ def run_all_scrapers(
     if on_sources_enabled is not None:
         on_sources_enabled(headless_sources + visible_sources)
 
-    # JobSpy attaches its own stderr-bound log handlers at import; those bypass
-    # the live block's redirect and cut into it. Reroute them through our
-    # live-aware handler here -- single-threaded, before the parallel phase
-    # spawns any JobSpy worker -- so their lines scroll above the block.
-    if any(sid in _JOBSPY_SITES for sid in enabled):
+    # JobSpy attaches its own stderr-bound log handlers that bypass the live
+    # block's redirect and cut into it. Reroute them through our live-aware
+    # handler here -- single-threaded, before the parallel phase spawns any
+    # JobSpy worker -- so their lines scroll above the block.
+    jobspy_enabled = [sid for sid in enabled if sid in _JOBSPY_SITES]
+    if jobspy_enabled:
         try:
-            import jobspy  # noqa: F401  -- force the JobSpy:* site loggers to exist
+            import jobspy  # noqa: F401  -- create the import-time JobSpy:* loggers
         except ImportError:
             pass
         else:
+            # jobspy logs "finished scraping" at scrape time via
+            # create_logger(site.value.capitalize()) -- a name that differs from
+            # its import-time module logger (e.g. "Linkedin" vs "LinkedIn") and
+            # so isn't adopted yet. Force the runtime-named loggers to exist now
+            # so adoption attaches our handler first; jobspy's create_logger then
+            # won't add its own stderr handler (it only adds when none exist).
+            for sid in jobspy_enabled:
+                logging.getLogger(f"JobSpy:{sid.capitalize()}")
             adopt_third_party_loggers("JobSpy")
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
