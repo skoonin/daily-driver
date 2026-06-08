@@ -327,7 +327,6 @@ def test_jobspy_toggle_per_site_flags():
                 "enabled": True,
                 "linkedin": False,
                 "indeed": True,
-                "google": True,
             }
         }
     )
@@ -336,7 +335,6 @@ def test_jobspy_toggle_per_site_flags():
     assert toggle.enabled is True
     assert toggle.linkedin is False
     assert toggle.indeed is True
-    assert toggle.google is True
 
 
 def test_jobspy_toggle_carries_jobs_config():

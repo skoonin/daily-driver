@@ -84,7 +84,6 @@ class JobspyToggle(SourceToggle):
 
     linkedin: bool = Field(default=True, description="")
     indeed: bool = Field(default=True, description="")
-    google: bool = Field(default=True, description="")
     jobs: JobsConfig = Field(default=JobsConfig(), description="")
 
 
@@ -311,7 +310,6 @@ class JobSearchPlugin(BaseModel):
                     "enabled": True,
                     "linkedin": True,
                     "indeed": True,
-                    "google": True,
                     "jobs": {
                         "results_wanted_per_query": 50,
                         "hours_old": 168,

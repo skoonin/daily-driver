@@ -12,7 +12,6 @@ from .greenhouse import scrape_greenhouse
 from .hn_jobs import scrape_hn_jobs
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
 from .jobspy import (
-    scrape_jobspy_google,
     scrape_jobspy_indeed,
     scrape_jobspy_linkedin,
 )
@@ -33,7 +32,6 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "greenhouse": scrape_greenhouse,
     "linkedin": scrape_jobspy_linkedin,
     "indeed": scrape_jobspy_indeed,
-    "google": scrape_jobspy_google,
     "apple": scrape_apple,
 }
 

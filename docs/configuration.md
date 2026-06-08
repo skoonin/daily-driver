@@ -255,7 +255,7 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
-| `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`/`google`) + `jobs` (`JobsConfig`) |
+| `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`) + `jobs` (`JobsConfig`) |
 | any other | `SourceToggle` | (enable/disable only) |
 
 `jobspy.jobs` (jobspy aggregator query settings):
@@ -277,8 +277,7 @@ sources:
   jobspy:
     enabled: true
     linkedin: true
-    indeed: true
-    google: true     # glassdoor intentionally excluded (HTTP 400 from JobSpy)
+    indeed: true     # google/glassdoor excluded: broken/unsupported in JobSpy
     jobs:
       results_wanted_per_query: 25
 ```

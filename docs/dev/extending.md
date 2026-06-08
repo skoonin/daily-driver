@@ -158,7 +158,7 @@ Monkeypatch the HTTP client or Playwright context to return fixture bytes; asser
 
 ### JobSpy vs native parser
 
-**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes. The shipped per-site JobSpy scrapers register under the bare ids `linkedin`, `indeed`, and `google` in the `SCRAPERS` dict — these are also the `jobs run -S <id>` selectors. In `.dd-config.yaml` they remain sub-toggles under `jobspy:` (`jobspy.linkedin`, etc.).
+**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes — Google for Jobs is currently broken upstream (token/JS-gated; returns 0) and is *not* shipped. The shipped per-site JobSpy scrapers register under the bare ids `linkedin` and `indeed` in the `SCRAPERS` dict — these are also the `jobs run -S <id>` selectors. In `.dd-config.yaml` they remain sub-toggles under `jobspy:` (`jobspy.linkedin`, etc.).
 
 **Write a native scraper** when:
 

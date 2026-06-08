@@ -1,109 +1,102 @@
 """Phased live progress for long-running commands.
 
-A small, domain-neutral wrapper over ``rich.progress.Progress`` for any
-command that runs a sequence of labelled groups and wants visible, monotonic
-progress while it works. Two render modes, chosen once at construction:
+A small, domain-neutral facade over ``enlighten`` for any command that runs a
+sequence of labelled groups and wants visible, monotonic progress while it
+works. Two render modes, chosen once at construction (and downgraded if the
+terminal will not cooperate):
 
-* TTY: an animated live block on the bound console (status marker + label +
-  count + note + elapsed), redrawn in place, persisting each group's final
-  state. A static status marker (``-`` done, ``x`` failed, ``>`` running,
-  blank pending) replaces a spinner so the four states are distinguishable;
-  the elapsed timer ticks for liveness during long blocking work.
-* non-TTY (cron, launchd, CI, pipes, and ``-vv`` debug streaming): discrete
-  plain lines, no ANSI, no in-place rewrite. ``start``/``advance`` are silent;
-  rows print one line when they finish.
+* live (TTY): an enlighten ``Manager`` pins a region at the bottom of the
+  terminal. Every row is one ``manager.counter`` created once and mutated in
+  place -- the idiom every enlighten example uses; bars persist (``leave=True``)
+  at their final state. Each group renders a header bar counting its finished
+  children, with a red ``add_subcounter`` so ok (green) vs failed (red) sources
+  show as coloured segments. Each source is its own bar: a known total fills by
+  page (JobSpy), an unknown total counts up, and an instant/opaque source
+  (``total=1``) fills 0->1 on finish; on finish the result is folded into the
+  bar's label (``linkedin  61 found``, recoloured red on failure). Enrichment
+  phases are their own fill bars. No per-line repaint and no background refresh
+  thread -- bars redraw only on update.
+* plain (non-TTY -- cron, launchd, CI, pipes -- or an unresponsive TTY):
+  discrete plain lines on the bound console, no ANSI, no in-place rewrite.
+  ``start``/``advance`` are silent; rows print one line when they finish.
 
-The bound console is expected to be the stderr console so the live block
-coexists with the verbose log stream and leaves stdout a clean data channel.
+The bound console is the stderr console; the enlighten manager binds the same
+underlying ``sys.stderr`` object, so bars and the plain log stream interleave on
+one channel and leave stdout a clean data channel.
+
+Concurrency: ``on_source_*`` callbacks fire from Phase-1 worker threads. A
+single :class:`threading.Lock` guards facade state and the (non-thread-safe)
+enlighten calls; every facade method takes it once and never nests it. enlighten
+issues a cursor-position query (``ESC[6n``, ``term.get_location``) on every bar
+write while it maintains the scroll region, each with a 1s timeout -- so the lock
+is, in principle, held across a blocking call. Two things keep that safe in
+practice: the eager probe in ``__enter__`` downgrades a terminal that is
+unresponsive *at startup* to plain mode (no manager, no queries), and on the
+surviving live path a responsive terminal answers each query in well under a
+millisecond. The residual risk is a terminal that stalls *mid-run* (an SSH or
+multiplexer hiccup): bar updates then serialize behind a 1s-timeout query under
+the lock -- degraded throughput, not deadlock or display corruption. Facade
+methods are hard no-ops after ``__exit__`` (a ``_closed`` flag checked under the
+lock) so a worker that finishes after a Ctrl-C teardown is safe.
 
 Structure: a run owns one or more :class:`Group` blocks. A group renders a
-header row that counts its finished children, plus child rows of two shapes:
+header progress bar that counts its finished children, plus child rows of two
+shapes:
 
 * :meth:`Group.item` -> :class:`Item`: a status row (scraping sources) that
   goes pending -> running -> ok/failed.
-* :meth:`Group.phase` -> :class:`Phase`: an N/total counter row (enrichment
+* :meth:`Group.phase` -> :class:`Phase`: an N/total progress bar (enrichment
   loops). ``advance`` is :data:`ProgressCallback`-compatible for threading
   into worker loops.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from types import TracebackType
 from typing import Optional
 
+import enlighten
 import rich.console as rich_console
-from rich.progress import Progress, ProgressColumn
-from rich.progress import Task as _Task
-from rich.progress import TextColumn, TimeElapsedColumn
-from rich.table import Column
-from rich.text import Text
+
+from daily_driver.core.console import Console
 
 # (advance_n, detail) -> None. Threaded into worker loops; never raises.
 ProgressCallback = Callable[[int, Optional[str]], None]
 
-# One-line key for the otherwise-cryptic status markers, shown under the title.
-_LEGEND = "  > running   - done   x failed"
+# Bounded wait for the terminal to answer the cursor-position query (ESC[6n)
+# issued during eager scroll-region setup. A responsive terminal replies in well
+# under a millisecond; if none arrives in this window the terminal cannot host a
+# pinned scroll region, so we fall back to plain line mode instead of stalling
+# every later bar update for a full timeout. Kept short so entry never hangs.
+_CURSOR_QUERY_TIMEOUT = 0.5
 
+# Progress-bar layout: description, percentage, fill bar, count/total. No
+# elapsed/rate fields -- enlighten has no refresh thread, so a time field would
+# only move on update() and read as stale; the bar fill is the liveness signal.
+_BAR_FORMAT = "{desc}{desc_pad}{percentage:3.0f}%|{bar}| {count:{len_total}d}/{total:d}"
+# Shown before a total is known (or once count reaches total): just desc + count.
+_COUNTER_FORMAT = "{desc}{desc_pad}{count:d}"
 
-class _LabelColumn(ProgressColumn):
-    """Status marker + label in one cell.
+# Blank rows pinned at the very bottom of the live block so it sits a little
+# above the terminal's last line rather than flush against it.
+_BOTTOM_MARGIN_ROWS = 2
 
-    Keeping the one-glyph state (``x`` failed, ``-`` done, ``>`` running, blank
-    pending) in the same column as the label means a narrow terminal can't drop
-    the marker independently -- a standalone 1-char column is the first thing
-    Rich's table allocator discards.
-    """
-
-    def render(self, task: _Task) -> Text:
-        if task.fields.get("failed"):
-            marker = Text("x ", style="red")
-        elif task.total is not None and task.completed >= task.total:
-            marker = Text("- ", style="green")
-        elif task.started:
-            marker = Text("> ", style="cyan")
-        else:
-            marker = Text("  ")  # pending
-        return marker + Text(str(task.description))
-
-
-class _CountColumn(ProgressColumn):
-    """``M/N`` for counter rows; bare ``N`` when the total is unknown.
-
-    Blank for pending (not-yet-started) rows and for compact rows (status
-    sub-items, whose ``1/1`` would be noise -- the count lives on the header).
-    """
-
-    def render(self, task: _Task) -> Text:
-        if task.fields.get("compact") or not task.started:
-            return Text("")
-        if task.total is None:
-            return Text(str(int(task.completed)), style="progress.percentage")
-        return Text(f"{int(task.completed)}/{int(task.total)}")
-
-
-def _columns() -> list[ProgressColumn]:
-    """Uniform column set: marker+label, count, note, elapsed."""
-    return [
-        _LabelColumn(
-            table_column=Column(overflow="ellipsis", no_wrap=True),
-        ),
-        _CountColumn(),
-        TextColumn(
-            "{task.fields[note]}",
-            style="dim",
-            table_column=Column(overflow="ellipsis", no_wrap=True),
-        ),
-        TimeElapsedColumn(),
-    ]
+_OK_COLOR = "green"  # group-header fill (finished-ok children)
+_FAIL_COLOR = "red"  # group-header failed subcounter + a failed source bar
+_SOURCE_BAR_COLOR = "blue"  # per-source progress bar
+_PHASE_COLOR = "cyan"  # enrichment phase bar
 
 
 class RunProgress:
     """Owns the live display for one command run.
 
-    Use as a context manager. In TTY mode ``__enter__`` starts the live region
-    and ``__exit__`` stops it (restoring the terminal) even when the body
-    raises -- so a propagating ``KeyboardInterrupt`` unwinds cleanly.
+    Use as a context manager. ``__enter__`` decides between live (enlighten) and
+    plain mode -- including a bounded-wait probe that downgrades an unresponsive
+    TTY to plain -- and ``__exit__`` tears the manager down (restoring the
+    terminal) even when the body raises, so a propagating ``KeyboardInterrupt``
+    unwinds cleanly. After teardown every facade method is a hard no-op.
     """
 
     def __init__(
@@ -116,25 +109,70 @@ class RunProgress:
         self._console = console
         self._tty = tty
         self._title = title
-        self._progress: Progress | None = None
+        self._manager: enlighten.Manager | None = None
+        self._title_bar: enlighten.StatusBar | None = None
+        self._lock = threading.Lock()
+        self._closed = False
+        # enlighten honours colour names regardless of the app's --no-color flag,
+        # so gate colour ourselves to keep --no-color a true no-colour run.
+        self._color = not Console._no_color
 
     def __enter__(self) -> RunProgress:
-        if self._title:
-            self._console.print(self._title)
         if self._tty:
-            self._console.print(_LEGEND, style="dim")
-            # redirect_stdout/stderr default to True: Rich then intercepts
-            # stray Python-level writes (library logging, warnings) during the
-            # live block and renders them above the region instead of letting
-            # them cut in and duplicate it. (Subprocess fd writes -- a visible
-            # browser, a CLI -- still bypass this; those sources are loud.)
-            self._progress = Progress(
-                *_columns(),
-                console=self._console,
-                transient=False,
-            )
-            self._progress.start()
+            self._manager = self._start_live()
+        if self._manager is not None:
+            # Reserve the bottom margin first so every real bar lands above it.
+            self._pin_bottom_margin()
+            # Enlighten anchors every bar to the bottom of the terminal. Printing
+            # the title as an ordinary line leaves it where the cursor was (near
+            # the top of a fresh terminal), so the whole terminal height shows as
+            # blank space between the title and the bottom-pinned bars. Pinning
+            # the title as a status bar instead -- created first, so it takes the
+            # top slot of the block (see _add_counter's reversed-order placement)
+            # -- sets it flush above the bars; the empty space falls above the
+            # block, the normal bottom-anchored look.
+            if self._title:
+                self._title_bar = self._manager.status_bar(self._title, leave=True)
+        elif self._title:
+            # Plain mode (non-TTY or unresponsive terminal): one ordinary line.
+            self._plain_print(self._title)
         return self
+
+    def _start_live(self) -> enlighten.Manager | None:
+        """Bring up the enlighten manager, or return ``None`` for plain mode.
+
+        Single-threaded and called once, before any worker spawns. The cursor
+        query here is the eager scroll-region setup: if the terminal does not
+        answer within the timeout we cannot pin a region, so we disable the
+        manager and fall back to plain mode rather than letting every later
+        bar update pay the timeout.
+        """
+        manager = enlighten.get_manager(stream=self._console.file)
+        if not manager.enabled:
+            # Stream is not a usable TTY (get_manager already disabled it).
+            return None
+        row, _col = manager.term.get_location(timeout=_CURSOR_QUERY_TIMEOUT)
+        if row < 0:
+            manager.enabled = False
+            return None
+        return manager
+
+    def _pin_bottom_margin(self) -> None:
+        """Pin blank status bars at the lowest positions so the live block sits a
+        couple of rows above the terminal's last line. Each empty status bar
+        holds one row; pinned at positions 1..N they keep those bottom rows
+        blank while every real bar takes a position above them.
+        """
+        manager = self._manager
+        if manager is None:
+            return
+        # enlighten rejects a pinned position greater than the terminal height,
+        # so clamp the margin to what fits and keep at least one row for the bars
+        # -- a 1-row terminal gets no margin rather than a ValueError out of
+        # __enter__ (which would skip __exit__ and leave the scroll region set).
+        rows = min(_BOTTOM_MARGIN_ROWS, max(0, manager.height - 1))
+        for position in range(1, rows + 1):
+            manager.status_bar("", position=position, leave=True)
 
     def __exit__(
         self,
@@ -142,147 +180,304 @@ class RunProgress:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        if self._progress is not None:
-            self._progress.stop()
-            self._progress = None
+        with self._lock:
+            self._closed = True
+            manager = self._manager
+            self._manager = None
+        # stop() restores the scroll region and cursor; run it outside the lock.
+        # _closed is already set and _manager cleared, so no late worker call can
+        # touch the manager concurrently.
+        if manager is not None:
+            manager.stop()
 
     def group(self, label: str) -> Group:
-        """A header row that counts its finished children, plus child rows."""
-        return Group(self._progress, self._console, label)
+        """A header progress bar that counts its finished children, plus rows."""
+        return Group(self, label)
+
+    def _plain_print(self, message: str) -> None:
+        """Print one plain-mode line, unless quiet mode is suppressing routine
+        output. Quiet keeps only warnings/errors, so progress lines are dropped.
+        """
+        if Console.quiet_mode:
+            return
+        self._console.print(message)
+
+    def note(self, message: str) -> None:
+        """Emit a one-off informational line above the live bars.
+
+        In live mode this is a plain write to the same stderr stream the warning
+        handler uses -- enlighten's scroll region carries it above the pinned
+        bars. We deliberately avoid the Rich console here: its cursor management
+        competes with enlighten's and clips the start of the line. In plain mode
+        it is an ordinary printed line.
+        """
+        with self._lock:
+            if self._closed:
+                return
+            if self._manager is not None:
+                stream = self._console.file
+                stream.write(message + "\n")
+                stream.flush()
+            else:
+                self._plain_print(message)
+
+    # ----------------------------------------------------------------- #
+    # Lock-held primitives. Callers hold ``self._lock`` and have checked
+    # ``self._closed``; these touch the manager and never re-acquire the lock.
+    # ----------------------------------------------------------------- #
+
+    def _open_counter_locked(
+        self, desc: str, total: int, *, color: str | None = None
+    ) -> enlighten.Counter | None:
+        """Create a persistent (``leave=True``) counter, or None in plain mode.
+
+        Every row is one counter created once and mutated in place (``count``,
+        ``total``, ``desc``, ``color``) through its whole lifecycle -- the idiom
+        every enlighten example uses. ``leave=True`` keeps it pinned at its final
+        state; creating/closing/recreating bars instead makes enlighten thrash
+        the reserved scroll region.
+        """
+        if self._manager is None:
+            return None
+        counter = self._manager.counter(
+            total=total,
+            desc=desc,
+            bar_format=_BAR_FORMAT,
+            counter_format=_COUNTER_FORMAT,
+            color=(color if self._color else None),
+            leave=True,
+        )
+        counter.refresh()  # a fresh counter is invisible until refreshed; show pending now
+        return counter
 
 
 class Group:
-    """A labelled block: a header counter plus :class:`Item`/:class:`Phase` rows."""
+    """A labelled block: a header progress bar plus :class:`Item`/:class:`Phase` rows."""
 
-    def __init__(
-        self,
-        progress: Progress | None,
-        console: rich_console.Console,
-        label: str,
-    ) -> None:
-        self._progress = progress
-        self._console = console
+    def __init__(self, owner: RunProgress, label: str) -> None:
+        self._owner = owner
         self._label = label
+        self._completed = 0
         self._total = 0
-        self._header_id = None
-        if progress is not None:
-            # Open total so the header reads as running (">"), not a momentary
-            # done ("-") at 0/0 before any child is added.
-            self._header_id = progress.add_task(label, total=None, note="", start=True)
+        self._bar: enlighten.Counter | None = None
+        self._failed: enlighten.SubCounter | None = None
 
     def item(self, label: str) -> Item:
         """A status sub-row (pending -> running -> ok/failed)."""
-        self._total += 1
-        self._sync_total()
+        self._register_child()
         return Item(self, label)
 
-    def phase(self, label: str) -> Phase:
-        """A counter sub-row (advance is ProgressCallback-compatible)."""
-        self._total += 1
-        self._sync_total()
-        return Phase(self, label)
+    def phase(self, label: str, total: int | None = None) -> Phase:
+        """A progress-bar sub-row (advance is ProgressCallback-compatible)."""
+        self._register_child()
+        return Phase(self, label, total)
 
-    def _sync_total(self) -> None:
-        if self._progress is not None and self._header_id is not None:
-            self._progress.update(self._header_id, total=self._total)
+    def _register_child(self) -> None:
+        owner = self._owner
+        with owner._lock:
+            if owner._closed:
+                return
+            self._total += 1
+            if owner._manager is None:
+                return
+            if self._bar is None:
+                # Header counts finished children; a red subcounter marks failures
+                # so the bar shows ok (green) vs failed (red) segments.
+                self._bar = owner._open_counter_locked(
+                    self._label, self._total, color=_OK_COLOR
+                )
+                if self._bar is not None and owner._color:
+                    self._failed = self._bar.add_subcounter(_FAIL_COLOR)
+            else:
+                self._bar.total = self._total
+                self._bar.refresh()
 
-    def _child_finished(self) -> None:
-        # advance=1 is applied under rich's task lock, so this is safe to call
-        # from the Phase-1 worker threads without a separate counter to race.
-        if self._progress is not None and self._header_id is not None:
-            self._progress.update(self._header_id, advance=1)
+    def _child_finished_locked(self, ok: bool) -> None:
+        """Advance the header (red segment on failure). Lock held by caller."""
+        self._completed += 1
+        if self._bar is None:
+            return
+        if ok or self._failed is None:
+            self._bar.update()
+        else:
+            self._failed.update()
 
     def done(self, summary: str | None = None) -> None:
-        if self._progress is not None and self._header_id is not None:
-            self._progress.update(self._header_id, note=summary or "")
-            self._progress.stop_task(self._header_id)
-        elif summary is not None:
-            self._console.print(f"{self._label}: {summary}")
+        owner = self._owner
+        with owner._lock:
+            if owner._closed:
+                return
+            if self._bar is not None:
+                # Persist the header at its final count; fold the summary into its
+                # label (e.g. "Scraping sources: 142 found, 138 new  8/8").
+                if summary is not None:
+                    self._bar.desc = f"{self._label}: {summary}"
+                    self._bar.refresh()
+            elif owner._manager is None and summary is not None:
+                owner._plain_print(f"{self._label}: {summary}")
 
 
 class _Row:
-    """Shared state/behaviour for a group's sub-rows."""
+    """Shared state for a group's sub-rows (one persistent counter each)."""
 
-    def __init__(
-        self, group: Group, label: str, *, compact: bool, total: int | None
-    ) -> None:
+    def __init__(self, group: Group, label: str) -> None:
         self._group = group
         self._label = label
-        self._task_id = None
+        self._bar: enlighten.Counter | None = None
         self._started = False
-        progress = group._progress
-        if progress is not None:
-            self._task_id = progress.add_task(
-                f"  {label}",
-                total=total,
-                completed=0,
-                note="pending",
-                compact=compact,
-                failed=False,
-                start=False,
-            )
 
-    def start(self) -> None:
-        """Flip pending -> running. Idempotent; the note guard keeps a later
-        per-item detail from being clobbered back to ``running...``."""
-        if self._started:
+    def _owner(self) -> RunProgress:
+        return self._group._owner
+
+    def _fill_to_total_locked(self) -> None:
+        """Drive the bar to 100% (lock held). Used to mark a row complete."""
+        bar = self._bar
+        if bar is None:
             return
-        self._started = True
-        progress = self._group._progress
-        if progress is not None and self._task_id is not None:
-            progress.start_task(self._task_id)
-            progress.update(self._task_id, note="running...")
+        total = bar.total or 1
+        if bar.count < total:
+            bar.update(total - bar.count)
+        else:
+            bar.refresh()
 
 
 class Item(_Row):
-    """A status sub-row for a discrete unit of work (e.g. one scraper source)."""
+    """A per-source progress bar: one enlighten counter, mutated in place."""
 
-    def __init__(self, group: Group, label: str) -> None:
-        super().__init__(group, label, compact=True, total=1)
+    def start(self, note: str | None = None) -> None:
+        """Pin the source's progress bar. ``note`` (e.g. a slow-source
+        expectation) shows in the label until real progress arrives. Idempotent;
+        silent in plain mode."""
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed or self._started:
+                return
+            self._started = True
+            if owner._manager is None or self._bar is not None:
+                return
+            desc = f"{self._label}  {note}" if note else self._label
+            # total=1 is the default for instant/opaque sources (fill 0->1 on
+            # finish); JobSpy sources get their real page total via progress().
+            self._bar = owner._open_counter_locked(desc, 1, color=_SOURCE_BAR_COLOR)
+
+    def progress(self, completed: int, total: int | None = None) -> None:
+        """Advance the bar from an external signal (e.g. JobSpy's per-page logs):
+        set the page total (grows on overshoot) and the count, dropping the
+        slow-source note once real progress shows. Silent in plain mode."""
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed or owner._manager is None:
+                return
+            self._started = True
+            if self._bar is None:
+                self._bar = owner._open_counter_locked(
+                    self._label, total or 1, color=_SOURCE_BAR_COLOR
+                )
+            if self._bar is None:
+                return
+            self._bar.desc = self._label
+            if total is not None:
+                self._bar.total = max(total, completed)
+            self._bar.update(max(0, completed - self._bar.count))
 
     def finish(self, ok: bool = True, detail: str | None = None) -> None:
         note = detail if detail is not None else ("ok" if ok else "failed")
-        progress = self._group._progress
-        if progress is not None and self._task_id is not None:
-            progress.start_task(self._task_id)
-            progress.update(self._task_id, completed=1, note=note, failed=not ok)
-            progress.stop_task(self._task_id)
-        else:
-            self._group._console.print(f"{self._label}: {note}")
-        self._group._child_finished()
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed:
+                return
+            if owner._manager is not None:
+                if self._bar is not None:
+                    # Freeze the row at its result: fold the detail into the label,
+                    # fill to 100% on success, recolour red on failure.
+                    self._bar.desc = f"{self._label}  {note}"
+                    if ok:
+                        self._fill_to_total_locked()
+                    else:
+                        if owner._color:
+                            self._bar.color = _FAIL_COLOR
+                        self._bar.refresh()
+                self._group._child_finished_locked(ok)
+            else:
+                owner._plain_print(f"{self._label}: {note}")
+
+    def show_breakdown(self, segments: list[tuple[int, str]]) -> None:
+        """Re-base the finished bar as stacked coloured segments.
+
+        Each ``(count, colour)`` becomes one subcounter; the bar's total is reset
+        to their sum, so the bar fills completely as a stacked breakdown of the
+        row's result (e.g. new / duplicate / skipped portions of what a source
+        found).
+        Domain-neutral -- the caller owns what each colour means. Call after
+        :meth:`finish`. Silent in plain mode, after close, or before a bar exists;
+        colours collapse to the base fill under ``--no-color``.
+        """
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed or owner._manager is None or self._bar is None:
+                return
+            total = sum(count for count, _ in segments if count > 0)
+            if total <= 0:
+                return
+            bar = self._bar
+            # The page-progress bar has done its job; rebuild it as an outcome
+            # breakdown. Reset the count and stack one coloured subcounter per
+            # segment -- each update advances the parent too (enlighten), so the
+            # fill sums back to the found total with each segment in its colour.
+            bar.count = 0
+            bar.total = total
+            for count, color in segments:
+                if count > 0:
+                    bar.add_subcounter(color if owner._color else None).update(count)
+            bar.refresh()
 
 
 class Phase(_Row):
-    """An N/total counter sub-row for a loop of completed units."""
+    """An N/total enrichment progress bar (advance is ProgressCallback-compatible)."""
 
-    def __init__(self, group: Group, label: str) -> None:
-        # Open total: a counter row shows a bare count until done() pins the
-        # total to the count reached, so a partial run never shows a misleading
-        # denominator.
-        super().__init__(group, label, compact=False, total=None)
+    def __init__(self, group: Group, label: str, total: int | None = None) -> None:
+        super().__init__(group, label)
         self.completed = 0
+        self._total = total
+
+    def start(self) -> None:
+        """Pin the phase's progress bar (0/total) so it reads as pending."""
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed or self._started:
+                return
+            self._started = True
+            if owner._manager is not None and self._bar is None:
+                self._bar = owner._open_counter_locked(
+                    self._label, self._total or 1, color=_PHASE_COLOR
+                )
 
     def advance(self, n: int = 1, detail: str | None = None) -> None:
-        self.start()
-        self.completed += n
-        progress = self._group._progress
-        if progress is not None and self._task_id is not None:
-            if detail is not None:
-                progress.update(self._task_id, completed=self.completed, note=detail)
-            else:
-                progress.update(self._task_id, completed=self.completed)
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed:
+                return
+            self.completed += n
+            self._started = True
+            if owner._manager is None:
+                return
+            if self._bar is None:
+                self._bar = owner._open_counter_locked(
+                    self._label, self._total or 1, color=_PHASE_COLOR
+                )
+            if self._bar is not None:
+                self._bar.update(n)
 
     def done(self, summary: str | None = None) -> None:
         text = summary if summary is not None else f"{self.completed} done"
-        progress = self._group._progress
-        if progress is not None and self._task_id is not None:
-            progress.start_task(self._task_id)
-            # Pin the total to the count reached so the row reads as finished:
-            # the status marker resolves to done and the elapsed timer freezes.
-            progress.update(
-                self._task_id, total=self.completed, completed=self.completed, note=text
-            )
-            progress.stop_task(self._task_id)
-        else:
-            self._group._console.print(f"{self._label}: {text}")
-        self._group._child_finished()
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed:
+                return
+            if owner._manager is not None:
+                if self._bar is not None:
+                    self._bar.desc = f"{self._label}  {text}"
+                    self._fill_to_total_locked()
+                self._group._child_finished_locked(True)
+            else:
+                owner._plain_print(f"{self._label}: {text}")
