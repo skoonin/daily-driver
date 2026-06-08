@@ -12,7 +12,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 - **Tracker** — YAML-backed list of anything you follow up on (applications, tasks, chores, contacts). Categories are config-driven and extensible via `--extra key=value`.
 - **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
 - **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
-- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, JobSpy for LinkedIn/Indeed/Google, Apple), dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
+- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, JobSpy for LinkedIn/Indeed, Apple), dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
 - **Gather modules** — typed readers for git history and macOS Calendar (icalBuddy).
 - **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
 

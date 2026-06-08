@@ -3,9 +3,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from rich.logging import RichHandler
-
-from daily_driver.core.logging import configure, get_logger, log_query_window
+from daily_driver.core.logging import (
+    _WarnCountingHandler,
+    configure,
+    get_logger,
+    log_query_window,
+)
 
 
 def _daily_driver_logger() -> logging.Logger:
@@ -32,10 +35,10 @@ def test_configure_quiet_sets_error_level() -> None:
     assert _daily_driver_logger().level == logging.ERROR
 
 
-def test_handler_is_rich() -> None:
+def test_handler_is_warn_counting() -> None:
     configure("normal")
     logger = _daily_driver_logger()
-    assert any(isinstance(h, RichHandler) for h in logger.handlers)
+    assert any(isinstance(h, _WarnCountingHandler) for h in logger.handlers)
 
 
 def test_idempotent_no_double_handlers() -> None:

@@ -14,7 +14,6 @@ from daily_driver.plugins.job_search.scraper.sources.jobspy import (
     jobspy_row_to_raw,
     normalize_jobspy_row,
     scrape_jobspy,
-    scrape_jobspy_google,
     scrape_jobspy_indeed,
     scrape_jobspy_linkedin,
 )
@@ -174,7 +173,7 @@ class TestPerSiteScrapers:
         calls: dict[str, object] = {}
 
         def fake(**kwargs: object) -> pd.DataFrame:
-            calls["site_name"] = kwargs.get("site_name")
+            calls.update(kwargs)
             return pd.DataFrame()
 
         import jobspy as jobspy_pkg
@@ -196,13 +195,6 @@ class TestPerSiteScrapers:
         scrape_jobspy_indeed(self._config())
         assert calls["site_name"] == ["indeed"]
 
-    def test_scrape_jobspy_google_calls_correct_site(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy_google(self._config())
-        assert calls["site_name"] == ["google"]
-
     def test_scrape_jobspy_sites_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -210,9 +202,25 @@ class TestPerSiteScrapers:
         scrape_jobspy(self._config(), sites=["indeed"])
         assert calls["site_name"] == ["indeed"]
 
-    def test_scrape_jobspy_default_uses_all_three(
+    def test_scrape_jobspy_default_uses_both_sites(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = self._install_mock(monkeypatch)
         scrape_jobspy(self._config())
-        assert calls["site_name"] == ["linkedin", "indeed", "google"]
+        assert calls["site_name"] == ["linkedin", "indeed"]
+
+    def test_scrape_jobspy_reports_progress_per_term_country(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each (term x country) pair advances the live progress reporter."""
+        from dataclasses import replace
+
+        self._install_mock(monkeypatch)
+        reports: list[tuple[int, int | None]] = []
+        ctx = replace(
+            self._config(), report=lambda done, total: reports.append((done, total))
+        )
+        scrape_jobspy_linkedin(ctx)
+        # One config term x one country -> reported once at (0, 1).
+        assert reports and reports[0] == (0, 1)
+        assert all(total == 1 for _done, total in reports)

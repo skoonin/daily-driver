@@ -6,7 +6,7 @@
 
 Most "why did it do that?" questions answer themselves with a more verbose re-run. Verbose output goes to stderr, so it does not corrupt piped data.
 
-At normal verbosity in a terminal, `jobs run` shows a live in-place progress display ("Scraping sources" and "Enriching jobs" groups, per-source markers `>`/`-`/`x`, a `Completed:` reconciling line, and any warnings below). Passing `-v` or `-vv` drops that live display and streams timestamped logs instead — that log stream is what you want when debugging. The live display is also dropped automatically when output is piped or run under cron/launchd.
+In a terminal, `jobs run` pins a live progress display at the bottom ("Scraping sources" and "Enriching jobs" groups, per-source markers `>`/`-`/`x`, finished rows scrolling up into the scrollback as a record, a `Completed:` reconciling line). The bars persist at every verbosity; `-v` or `-vv` add timestamped logs that scroll above them — that log stream is what you want when debugging. The live display falls back to plain lines automatically when output is piped, run under cron/launchd, or on a terminal that doesn't answer the cursor-position query.
 
 ```bash
 daily-driver jobs run -v               # INFO: per-source progress, enrichment counts
@@ -57,7 +57,7 @@ Other sources keep working without Playwright. To restrict a run to
 non-Playwright sources while debugging:
 
 ```bash
-daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring,greenhouse,linkedin,indeed,google
+daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring,greenhouse,linkedin,indeed
 ```
 
 ## launchd plist won't load

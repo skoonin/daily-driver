@@ -108,6 +108,129 @@ def test_apple_is_classified_as_playwright_source() -> None:
     assert "apple" in _PLAYWRIGHT_SOURCES
 
 
+def test_phase2_runs_visible_browser_by_default(monkeypatch) -> None:
+    """Without a pinned block, the serial phase keeps its visible (non-headless)
+    browser -- the default that dodges Apple's bot detection."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
+    )
+
+    runner.run_all_scrapers(_cfg_with_sources(["apple"], workers=1))
+
+    assert seen == [False]
+
+
+def test_phase2_forces_headless_when_block_active(monkeypatch) -> None:
+    """A pinned live block can't share the terminal with a visible Firefox window,
+    so force_headless=True runs the serial phase headless."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
+    )
+
+    runner.run_all_scrapers(
+        _cfg_with_sources(["apple"], workers=1), force_headless=True
+    )
+
+    assert seen == [True]
+
+
+def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
+    """A JobSpy site in the run reroutes the JobSpy:* loggers through our handler
+    before the parallel phase, so their lines can't bypass the live block.
+
+    Covers the capitalization gap: jobspy logs "finished scraping" via
+    ``create_logger(site.value.capitalize())`` (``JobSpy:Linkedin``), a different
+    logger from its import-time module one (``JobSpy:LinkedIn``). Both must end
+    up on our handler, and a subsequent jobspy ``create_logger`` must NOT re-add
+    its own stderr handler.
+    """
+    import logging as stdlog
+
+    import jobspy
+
+    from daily_driver.core import logging as ddlog
+    from daily_driver.core.console import Console
+    from daily_driver.plugins.job_search.scraper import runner
+
+    # Mimic the library's import-time module logger: own stderr handler.
+    module_logger = stdlog.getLogger("JobSpy:LinkedIn")
+    module_logger.handlers.clear()
+    module_logger.addHandler(stdlog.StreamHandler())
+    module_logger.propagate = False
+
+    Console._user_console = None
+    Console._log_console = None
+    saved = ddlog._handler
+    ddlog.configure("normal")
+    our_handler = ddlog._handler
+
+    monkeypatch.setattr(runner, "SCRAPERS", {"linkedin": lambda _ctx: []})
+    try:
+        runner.run_all_scrapers(
+            _cfg_with_sources(["linkedin"], workers=1),
+            sources_override=["linkedin"],
+        )
+        # Both the import-time and the runtime-cased loggers route through us.
+        assert module_logger.handlers == [our_handler]
+        runtime_logger = stdlog.getLogger("JobSpy:Linkedin")
+        assert runtime_logger.handlers == [our_handler]
+
+        # The exact runtime call jobspy makes must not re-add a stderr handler.
+        assert jobspy.create_logger("Linkedin").handlers == [our_handler]
+    finally:
+        ddlog._handler = saved
+        module_logger.handlers.clear()
+        stdlog.getLogger("JobSpy:Linkedin").handlers.clear()
+
+
+def test_source_breakdown_segments_maps_funnel_to_colors() -> None:
+    """The funnel counts map to coloured segments; the remainder (within-run
+    duplicates / url-less rows) becomes the grey 'other' segment."""
+    from daily_driver.plugins.job_search.scraper.runner import (
+        _source_breakdown_segments,
+    )
+
+    # found == new + known + loc_skip -> no remainder.
+    segs = _source_breakdown_segments(
+        {"found": 61, "new": 40, "known": 15, "loc_skip": 6}
+    )
+    assert segs == [(40, "green"), (15, "magenta"), (6, "yellow"), (0, "bright_black")]
+
+    # found exceeds the classified survivors -> the gap is the grey remainder.
+    segs2 = _source_breakdown_segments(
+        {"found": 10, "new": 2, "known": 1, "loc_skip": 1}
+    )
+    assert segs2[-1] == (6, "bright_black")
+
+
+def test_run_all_scrapers_notes_jobspy_query_count_once(monkeypatch) -> None:
+    """The per-board search count is announced once via on_note -- not per
+    JobSpy site -- so two enabled sites don't duplicate the line."""
+    from daily_driver.plugins.job_search.scraper import runner
+
+    notes: list[str] = []
+    monkeypatch.setattr(
+        runner, "SCRAPERS", {"linkedin": lambda _ctx: [], "indeed": lambda _ctx: []}
+    )
+    runner.run_all_scrapers(
+        _cfg_with_sources(["linkedin", "indeed"], workers=1),
+        sources_override=["linkedin", "indeed"],
+        on_note=notes.append,
+    )
+    assert len(notes) == 1  # one line for both boards, not one per site
+    assert "searches per JobSpy board" in notes[0]
+
+
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
     monkeypatch,
 ) -> None:
@@ -241,7 +364,10 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
         sources_override=None,
         on_source_done=None,
         on_source_start=None,
+        on_source_progress=None,
         on_sources_enabled=None,
+        on_note=None,
+        force_headless=False,
     ):
         if on_sources_enabled is not None:
             on_sources_enabled(["remoteok"])
@@ -286,11 +412,61 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
     assert "Acme" in captured.out
 
 
+def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) -> None:
+    """A failed source yields exit code 1 even though the live block tears down
+    cleanly around it -- the teardown rewrite must not swallow the failure."""
+    from daily_driver.core.console import Console
+    from daily_driver.plugins.job_search.scraper import runner
+
+    Console._user_console = None
+    Console._log_console = None
+    Console.quiet_mode = False
+    monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: False))
+
+    def fake_scrape(
+        _ctx,
+        *,
+        sources_override=None,
+        on_source_done=None,
+        on_source_start=None,
+        on_source_progress=None,
+        on_sources_enabled=None,
+        on_note=None,
+        force_headless=False,
+    ):
+        if on_sources_enabled is not None:
+            on_sources_enabled(["remoteok"])
+        if on_source_start is not None:
+            on_source_start("remoteok")
+        if on_source_done is not None:
+            on_source_done("remoteok", False, "failed (timed out)")
+        # No jobs, one failed source.
+        return ([], ["remoteok"], [("remoteok", runner.HTTPTimeout("slow"))])
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
+
+    rc = runner.run(
+        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
+        dry_run=True,
+    )
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "remoteok" in captured.err
+
+
 def test_run_keyboard_interrupt_propagates_and_stops_live(
     tmp_path, monkeypatch
 ) -> None:
-    """A ^C during enrichment must unwind the RunProgress context (stopping the
-    Live) and propagate KeyboardInterrupt to the CLI boundary, not be swallowed."""
+    """A ^C during enrichment must unwind the RunProgress context (tearing the
+    live display down) and propagate KeyboardInterrupt to the CLI boundary, not
+    be swallowed."""
     import logging
 
     from daily_driver.core import progress as progress_mod
@@ -300,7 +476,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     Console._user_console = None
     Console._log_console = None
     Console.quiet_mode = False
-    # Normal verbosity: -v/-vv drop the live block this test asserts on.
+    # The live block renders on any TTY now; verbosity only sets stream density.
     monkeypatch.setattr(logging.getLogger("daily_driver"), "level", logging.WARNING)
     monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: True))
 
@@ -308,8 +484,11 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     real_exit = progress_mod.RunProgress.__exit__
 
     def tracking_exit(self, *exc):
-        stops.append(self._progress is not None)
-        return real_exit(self, *exc)
+        result = real_exit(self, *exc)
+        # __exit__ ran during the unwind and marked the run closed, so any late
+        # worker callback is now a no-op.
+        stops.append(self._closed)
+        return result
 
     monkeypatch.setattr(progress_mod.RunProgress, "__exit__", tracking_exit)
 
@@ -343,5 +522,5 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
             dry_run=False,
         )
 
-    # __exit__ ran during the unwind with an active Live to stop.
+    # __exit__ ran during the unwind and closed the run.
     assert stops == [True]

@@ -9,29 +9,70 @@ log`. Versioned release history starts at 1.0.
 ### Added
 
 - **Selectable Playwright browser engine**: `plugins.job_search.scraper.browser` (`firefox` default, or `chromium`/`webkit`) chooses the engine for browser-driven sources (Apple). The launcher resolves it via `getattr(pw, engine).launch(...)`, the `Literal` field rejects unknown engines at config-load, and `doctor` / `doctor --fix` check and install whichever engine is configured rather than always Firefox. (#68)
+- **`enlighten` runtime dependency** (reverses the earlier "no enlighten"
+  decision): the `jobs run` live display is now built on enlighten's terminal
+  scroll region instead of Rich's `Progress`. Rich is unchanged for every other
+  table (`status`, `tracker`, `doctor`, dry-run output).
+
+### Removed
+
+- **Google (Google for Jobs) source dropped.** It's broken upstream in
+  `python-jobspy` 1.1.82: Google for Jobs results load via a JS + anti-abuse
+  token flow, so JobSpy's plain HTTP request gets a shell with no job data and
+  returns 0 (verified with a real Google-Jobs search-box query). It also mostly
+  aggregated boards we already scrape directly. The `google` source id, its
+  `sources.jobspy.google` toggle, and the `scrape_jobspy_google` adapter are
+  removed; `jobs run -S google` and `google: true` in config are no longer valid.
 
 ### Changed
 
 - **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
-  use `linkedin` / `indeed` / `google` instead of `jobspy_linkedin` /
-  `jobspy_indeed` / `jobspy_google`. The `sources.jobspy.*` config block is
-  unchanged.
+  use `linkedin` / `indeed` instead of `jobspy_linkedin` / `jobspy_indeed`. The
+  `sources.jobspy.*` config block is unchanged.
 - **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
   default `hn_max_posts` cap was hitting on every run, so the same first 100
   relevance-ranked roles recurred and nothing past them was ever scraped.
   Raised to 500 (the thread fetch already pulls the whole thread).
 - **`jobs run` now shows live progress instead of going silent**: in normal
   mode the run renders a phased live block — a `Scraping sources` group listing
-  every source (pending -> running -> done, with a static status marker), then
+  every source (each a per-source progress bar, pending -> running -> done), then
   an `Enriching jobs` group with detail / company-product / fit-and-notes
   counters — so a long run is visibly alive rather than looking hung. A
   per-source breakdown (`found / new / already in csv / skipped by location`)
-  and a reconciling `Completed:` line print at the end. Warnings are collected
-  into a clean section below the live block. At `-v`/`-vv` the live block steps
-  aside and logs stream live as the run progresses. Non-interactive output
-  (cron, launchd, pipes) falls back to plain lines with no ANSI. All human
-  progress now goes to stderr, leaving stdout for the dry-run table and a
-  future `--json`. (#71)
+  and a reconciling `Completed:` line print at the end. The live block renders
+  on any interactive terminal and stays pinned; verbosity controls only how much
+  scrolls above it (normal: warnings only; `-v`: INFO heartbeats and per-source
+  timings; `-vv`: the full stream; `-q`: suppresses the display and every
+  progress line, leaving only errors). Problems surface live above the block as
+  they happen, with a terse end-of-run `Warnings: N (shown above)` line, instead of being
+  held back to a section at the end. During the serial Apple phase the browser
+  runs headless while the block is pinned so its window can't cut into the
+  display. Non-interactive output (cron, launchd, pipes) falls back to plain
+  lines with no ANSI. All human progress now goes to stderr, leaving stdout for
+  the dry-run table and a future `--json`. (#71, #72)
+- **`jobs run` live display rebuilt on enlighten** (no behaviour regression,
+  fixes long-run stranding): a 2.5-hour run previously stranded ~700 stale
+  copies of the block in the scrollback because Rich repainted the region on
+  every write and ran a background refresh thread that raced the log stream.
+  enlighten pins the bars in a terminal scroll region and lets the terminal
+  scroll logs above them, with no per-line repaint and no refresh thread. Every
+  source is now its own progress bar that fills as it works and stays pinned at
+  its result (`linkedin  61 found`, red on failure), under a `Scraping sources`
+  header bar with green (ok) / red (failed) segments. The per-row ticking elapsed
+  timer is gone — a known-slow board (LinkedIn, Indeed, the headless Apple
+  scrape) shows a one-time "can take several minutes" note until real progress
+  arrives. An unresponsive terminal now falls back to plain-line mode on entry
+  rather than stalling.
+- **Live per-source progress for every board.** Sources used to sit silent
+  during a scrape; now each advances its bar against its own natural unit —
+  search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse,
+  categories for WeWorkRemotely, a single fetch for the rest. One uniform
+  `ctx.report(done, total)` callback drives them all (no per-library log parsing,
+  no extra requests, no background thread).
+- **Finished source bars show a coloured outcome breakdown.** When a source
+  completes, its bar re-colours into stacked segments — new (green), already in
+  `jobs.csv` (magenta), skipped by location (yellow), and the duplicate/url-less
+  remainder (grey) — so the result is readable at a glance, not just a count.
 - **Generated `.dd-config.yaml` now surfaces every user-configurable setting**:
   the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`,
   `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested

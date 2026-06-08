@@ -19,7 +19,11 @@ import yaml
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.core.logging import deferred_logs, get_logger
+from daily_driver.core.logging import (
+    adopt_third_party_loggers,
+    get_logger,
+    live_log_window,
+)
 from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
@@ -40,6 +44,11 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
+def _noop_report(done: int, total: int | None = None) -> None:
+    """Default per-source progress reporter -- discards progress when no live
+    display is attached, so scrapers can call ``ctx.report(...)`` unconditionally."""
+
+
 @dataclass(frozen=True)
 class ScrapeContext:
     """Typed inputs threaded through the scraper layer.
@@ -54,6 +63,10 @@ class ScrapeContext:
     known_urls: frozenset[str] = field(
         default_factory=frozenset
     )  # was config["_known_urls"]
+    # Per-source live-progress reporter ``(done, total) -> None``. Bound per
+    # source by the orchestrator (``_run_one``); every scraper reports against
+    # its own natural unit (term×country, boards, categories, or a single fetch).
+    report: Callable[[int, int | None], None] = _noop_report
 
 
 class ScraperError(RuntimeError):
@@ -235,7 +248,7 @@ _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
 # The three JobSpy aggregator sites share one config toggle (`sources.jobspy`),
 # so their source ids route there rather than to a per-id toggle.
-_JOBSPY_SITES: frozenset[str] = frozenset({"linkedin", "indeed", "google"})
+_JOBSPY_SITES: frozenset[str] = frozenset({"linkedin", "indeed"})
 
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "weworkremotely": "we work remotely",
@@ -246,6 +259,24 @@ _SOURCE_DISPLAY_NAMES: dict[str, str] = {
 
 def _display_name(source_id: str) -> str:
     return _SOURCE_DISPLAY_NAMES.get(source_id, source_id.replace("_", " "))
+
+
+# Per-source expectation notes shown on a live row while it runs. Some boards go
+# quiet for minutes mid-scrape; a note set once at start time (race-free, no
+# timer) reassures the user the row isn't stuck. Unmapped sources show a plain
+# "running" marker.
+_SLOW_SOURCE_NOTES: dict[str, str] = {
+    "linkedin": "running -- can take several minutes",
+    "indeed": "running -- can take several minutes",
+    # Apple runs headless while the live block is pinned (force_headless), so the
+    # note describes the slow headless browser scrape, not a visible window.
+    "apple": "running -- headless browser scrape, can take a minute",
+}
+
+
+def _slow_source_note(source_id: str) -> str | None:
+    """The running-state note for a known-slow source, or None for the default."""
+    return _SLOW_SOURCE_NOTES.get(source_id)
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -301,6 +332,7 @@ def _run_one(
     ctx: ScrapeContext,
     on_source_done: Callable[[str, bool, str], None] | None = None,
     on_source_start: Callable[[str], None] | None = None,
+    on_source_progress: Callable[[str, int, int | None], None] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
@@ -309,17 +341,25 @@ def _run_one(
 
     Brackets the scrape with ``on_source_start(source_id)`` and
     ``on_source_done(source_id, ok, detail)`` so the live display can open a
-    per-source row when the work begins (spinner + ticking elapsed) and freeze
-    it with the job count or failure reason when it ends. Both callbacks drive
-    only the thread-safe progress display, so they are safe to invoke from the
-    Phase-1 worker threads. The matching log lines stay on stderr for the debug
-    stream.
+    per-source row when the work begins and freeze it with the job count or
+    failure reason when it ends. ``on_source_progress`` is bound onto the
+    context as ``ctx.report(done, total)`` so the scraper drives the per-source
+    bar against its own natural unit (term×country, boards, categories, or a
+    single fetch). All three drive only the thread-safe progress display, so
+    they are safe to invoke from the Phase-1 worker threads.
     """
     scraper_fn = SCRAPERS[source_id]
     timeout = ctx.plugin.scraper.timeout
     log.info("[%s] starting", source_id)
     if on_source_start is not None:
         on_source_start(source_id)
+    if on_source_progress is not None:
+        report_cb = on_source_progress  # narrow for the closure below
+
+        def _report(done: int, total: int | None = None) -> None:
+            report_cb(source_id, done, total)
+
+        ctx = replace(ctx, report=_report)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(ctx)
@@ -433,13 +473,48 @@ def _per_source_funnel(
     return stats
 
 
+# Per-source outcome-bar segment colours. enlighten resolves these through
+# blessed; "bright_black" renders as grey for the leftover (within-run duplicates
+# and url-less rows that are found but never reach the new/known/loc_skip funnel).
+_SEG_NEW_COLOR = "green"
+_SEG_KNOWN_COLOR = "magenta"  # not blue: the in-progress source bar fills blue
+_SEG_LOC_SKIP_COLOR = "yellow"
+_SEG_OTHER_COLOR = "bright_black"
+
+
+def _source_breakdown_segments(counts: dict[str, int]) -> list[tuple[int, str]]:
+    """Map a per-source funnel to coloured segments for its finished bar.
+
+    ``counts`` carries ``found`` / ``new`` / ``known`` / ``loc_skip`` (see
+    :func:`_per_source_funnel`). Returns ``(count, colour)`` pairs that
+    :meth:`Item.show_breakdown` stacks into the bar; their counts sum to
+    ``found`` so the fill is the whole result.
+    """
+    found = counts.get("found", 0)
+    new = counts.get("new", 0)
+    known = counts.get("known", 0)
+    loc_skip = counts.get("loc_skip", 0)
+    # The funnel only classifies the deduped survivors; the remainder is the
+    # within-run duplicates and url-less rows that were found but dropped.
+    other = max(0, found - new - known - loc_skip)
+    return [
+        (new, _SEG_NEW_COLOR),
+        (known, _SEG_KNOWN_COLOR),
+        (loc_skip, _SEG_LOC_SKIP_COLOR),
+        (other, _SEG_OTHER_COLOR),
+    ]
+
+
 def run_all_scrapers(
     ctx: ScrapeContext,
     *,
     sources_override: list[str] | None = None,
     on_source_done: Callable[[str, bool, str], None] | None = None,
     on_source_start: Callable[[str], None] | None = None,
+    on_source_progress: Callable[[str, int, int | None], None] | None = None,
     on_sources_enabled: Callable[[list[str]], None] | None = None,
+    on_note: Callable[[str], None] | None = None,
+    force_headless: bool = False,
 ) -> tuple[
     list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
 ]:
@@ -457,6 +532,11 @@ def run_all_scrapers(
     When ``sources_override`` is provided, only those source IDs run regardless
     of the ``sources`` toggles in config. Caller is responsible for
     validating IDs against ``SCRAPERS``.
+
+    ``force_headless`` overrides the serial phase to run headless. The visible
+    Firefox is the one uncontrolled terminal writer during the run; when a live
+    progress block is pinned it can't share the terminal with a browser window,
+    so the caller forces headless to keep the block clean.
     """
     cfg = ctx.plugin.scraper
     source_cfg = ctx.plugin.sources
@@ -492,6 +572,42 @@ def run_all_scrapers(
     if on_sources_enabled is not None:
         on_sources_enabled(headless_sources + visible_sources)
 
+    # JobSpy attaches its own stderr-bound log handlers. Reroute them through our
+    # counting handler here -- single-threaded, before the parallel phase spawns
+    # any JobSpy worker -- so their WARN+ lines count toward the run's
+    # Warnings: N total and read in our format, and stay silent in normal mode.
+    # (Live per-source progress comes from ctx.report, not JobSpy's logs.)
+    jobspy_enabled = [sid for sid in enabled if sid in _JOBSPY_SITES]
+    if jobspy_enabled:
+        try:
+            import jobspy  # noqa: F401  -- create the import-time JobSpy:* loggers
+        except ImportError:
+            pass
+        else:
+            # jobspy logs "finished scraping" at scrape time via
+            # create_logger(site.value.capitalize()) -- a name that differs from
+            # its import-time module logger (e.g. "Linkedin" vs "LinkedIn") and
+            # so isn't adopted yet. Force the runtime-named loggers to exist now
+            # so adoption attaches our handler first; jobspy's create_logger then
+            # won't add its own stderr handler (it only adds when none exist).
+            for sid in jobspy_enabled:
+                logging.getLogger(f"JobSpy:{sid.capitalize()}")
+            adopt_third_party_loggers("JobSpy")
+
+        # Explain the per-board query count once, here in the single-threaded
+        # setup -- not inside each JobSpy worker, which would duplicate the line
+        # (one per site) and race enlighten's cursor. Each JobSpy board searches
+        # every (search term x country) pair.
+        if on_note is not None:
+            from daily_driver.plugins.job_search.scraper.roles import _search_terms
+
+            terms = _search_terms(ctx.plugin)
+            countries = countries_list(ctx.plugin)
+            on_note(
+                f"{len(terms)} search terms x {len(countries)} countries "
+                f"= {len(terms) * len(countries)} searches per JobSpy board"
+            )
+
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
     # Phase 1: headless, parallel
@@ -507,7 +623,12 @@ def run_all_scrapers(
         try:
             futures = {
                 pool.submit(
-                    _run_one, sid, headless_ctx, on_source_done, on_source_start
+                    _run_one,
+                    sid,
+                    headless_ctx,
+                    on_source_done,
+                    on_source_start,
+                    on_source_progress,
                 ): sid
                 for sid in headless_sources
             }
@@ -524,17 +645,28 @@ def run_all_scrapers(
         else:
             pool.shutdown(wait=True)
 
-    # Phase 2: non-headless, serial (preserves pre-parallel behavior)
+    # Phase 2: serial (preserves pre-parallel behavior). Visible browser by
+    # default to dodge bot detection; forced headless via force_headless.
     if visible_sources:
-        visible_ctx = _ctx_with_headless(ctx, False)
+        visible_ctx = _ctx_with_headless(ctx, force_headless)
         log.info(
-            "[phase2] running %d non-headless scrapers serially (%s)",
+            "[phase2] running %d %s scrapers serially (%s)",
             len(visible_sources),
+            "headless" if force_headless else "non-headless",
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
             results.append(
-                (sid, _run_one(sid, visible_ctx, on_source_done, on_source_start))
+                (
+                    sid,
+                    _run_one(
+                        sid,
+                        visible_ctx,
+                        on_source_done,
+                        on_source_start,
+                        on_source_progress,
+                    ),
+                )
             )
 
     all_jobs, failed_sources = _merge_and_dedup(results)
@@ -692,16 +824,16 @@ def run(
     )
 
     title = "Job search run (dry-run)" if dry_run else "Job search run"
-    # The live block is a normal-mode affordance. At -v / -vv the user wants the
-    # log stream itself, live, as the run progresses -- so drop the live block
-    # (which would otherwise garble under concurrent worker-thread logs) and let
-    # records stream. Line-mode progress lines still print as rows finish.
-    verbose = logging.getLogger("daily_driver").getEffectiveLevel() <= logging.INFO
-    tty = Console.is_tty() and not verbose
-    # Normal mode only: defer logs past the live block so warnings print as a
-    # clean section below it instead of cutting into the live region.
+    # The live block renders on any TTY; verbosity controls only how much scrolls
+    # above it. enlighten pins the bars in a terminal scroll region and the
+    # terminal scrolls log lines above them, so WARN+ (and INFO/DEBUG heartbeats
+    # under -v/-vv) stream live as the run progresses while the block stays
+    # pinned. Non-TTY (cron/pipe) -- and an unresponsive TTY -- get plain line
+    # mode, no block. Quiet mode ("errors only") suppresses the block entirely;
+    # the plain-mode progress lines are dropped by RunProgress under quiet too.
+    tty = Console.is_tty() and not Console.quiet_mode
     with (
-        deferred_logs(tty),
+        live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
     ):
         scrape_group = rp.group("Scraping sources")
@@ -722,7 +854,11 @@ def run(
                 _row(sid)
 
         def _on_started(sid: str) -> None:
-            _row(sid).start()
+            _row(sid).start(note=_slow_source_note(sid))
+
+        def _on_progress(sid: str, completed: int, total: int | None) -> None:
+            # Fed from JobSpy's per-page logs; upgrades the row to a live bar.
+            _row(sid).progress(completed, total)
 
         def _on_done(sid: str, ok: bool, detail: str) -> None:
             _row(sid).finish(ok, detail)
@@ -732,7 +868,11 @@ def run(
             sources_override=sources_override,
             on_sources_enabled=_on_enabled,
             on_source_start=_on_started,
+            on_source_progress=_on_progress,
             on_source_done=_on_done,
+            on_note=rp.note,
+            # Force Apple headless while the live block owns the terminal.
+            force_headless=tty,
         )
 
         new_jobs = [
@@ -768,6 +908,15 @@ def run(
         )
         scrape_group.done(f"{raw_found} found, {pre_filter} new")
 
+        # Colour each finished source bar by what it found. The funnel is computed
+        # here, while the bars are still live, and reused for the summary after the
+        # block tears down (it persists -- a `with` block is not a scope).
+        funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+        for sid, counts in funnel.items():
+            row = source_rows.get(sid)
+            if row is not None:
+                row.show_breakdown(_source_breakdown_segments(counts))
+
         # Cross from the dict-based source boundary into the typed pipeline:
         # every surviving merged dict is validated through RawScrapedJob and
         # lifted to a frozen EnrichedJob. The rest operates on these.
@@ -784,11 +933,14 @@ def run(
             }
         else:
             # Create all three phases up front so they read as pending while the
-            # earlier phases run.
+            # earlier phases run. Each enriches the same candidate set, so the
+            # job count is the bar total (enrichment annotates in place, never
+            # drops rows, so the count holds across phases).
+            enrich_total = len(typed_jobs)
             enrich_group = rp.group("Enriching jobs")
-            detail_phase = enrich_group.phase("Detail pages")
-            product_phase = enrich_group.phase("Company products")
-            fit_phase = enrich_group.phase("Fit and notes")
+            detail_phase = enrich_group.phase("Detail pages", total=enrich_total)
+            product_phase = enrich_group.phase("Company products", total=enrich_total)
+            fit_phase = enrich_group.phase("Fit and notes", total=enrich_total)
 
             detail_phase.start()
             typed_jobs, detail_stats = enrich_job_details_typed(
@@ -835,10 +987,10 @@ def run(
         product_stats["skipped_cached"],
         product_stats["failed"],
     )
-    # Per-source breakdown + a headline that reconciles every job: found (raw
-    # scraped) -> new (not already in csv) -> matched location (the only filter
-    # that removes jobs). Intra/cross-run duplicates are the remainder.
-    funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+    # Headline that reconciles every job: found (raw scraped) -> new (not already
+    # in csv) -> matched location (the only filter that removes jobs). Intra/
+    # cross-run duplicates are the remainder. `funnel` (the per-source breakdown)
+    # was computed above while the live bars were up; it is reused here.
     summary = (
         f"Completed: {raw_found} found -> {pre_filter} new "
         f"-> {len(typed_jobs)} matched location"
@@ -849,11 +1001,18 @@ def run(
     if funnel:
         width = max(len(_display_name(sid)) for sid in funnel)
         for sid, c in funnel.items():
-            Console.info(
+            # The grey "other" bar segment (within-run duplicates + url-less rows)
+            # has no count of its own in the funnel; surface it here only when
+            # present so no datum lives in colour alone.
+            other = c["found"] - c["new"] - c["known"] - c["loc_skip"]
+            line = (
                 f"  {_display_name(sid):<{width}}  {c['found']} found, "
                 f"{c['new']} new, {c['known']} already in csv, "
                 f"{c['loc_skip']} skipped (location)"
             )
+            if other > 0:
+                line += f", {other} other"
+            Console.info(line)
 
     if dry_run:
         Console.success(

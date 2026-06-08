@@ -63,7 +63,14 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                     log.debug("[apple] refData request failed for %s: %s", u, exc)
                     return {}
 
-            for country in countries_list(ctx.plugin):
+            # Live progress unit: one country (reported at loop-top so a skipped
+            # country still advances the bar).
+            countries = countries_list(ctx.plugin)
+            total = len(countries)
+            done = 0
+            for country in countries:
+                ctx.report(done, total)
+                done += 1
                 # Pass the full alias list: Apple's API rejects JobSpy's primary
                 # abbreviation ("usa", "uk") but resolves the spelled-out name.
                 code_pl = apple_postlocation_code(country_names(country), _fetch_json)

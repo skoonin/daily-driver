@@ -1,4 +1,4 @@
-"""JobSpy source: LinkedIn + Indeed + Google via the python-jobspy package."""
+"""JobSpy source: LinkedIn + Indeed via the python-jobspy package."""
 
 from __future__ import annotations
 
@@ -149,7 +149,7 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
-    """Headless multi-source scraper via JobSpy (LinkedIn, Indeed, Glassdoor, Google).
+    """Headless multi-source scraper via JobSpy (LinkedIn, Indeed).
 
     Imported lazily so the module still loads when python-jobspy is not yet
     installed — only this scraper fails in that case, not the whole pipeline.
@@ -185,15 +185,24 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     jobs: list[dict] = []
     seen_urls: set[str] = set()
 
+    # Live progress unit: one (search term x country) pair. Reported at the top
+    # of each iteration so a skipped/failed pair (continue below) still advances.
+    # The per-board search count is announced once by the runner (on_note), not
+    # here -- each site runs as its own scraper and would otherwise duplicate it.
+    total = len(terms) * len(countries)
+    done = 0
+
     for term in terms:
         for country in countries:
+            ctx.report(done, total)
+            done += 1
             country_code = country.upper()
             country_indeed = jobspy_country(country_code, default_country_indeed)
             names = country_names(country_code)
             location_name = names[0] if names else country
             # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
             # ("location not parsed") on every request and retries for minutes.
-            run_sites = sites if sites is not None else ["linkedin", "indeed", "google"]
+            run_sites = sites if sites is not None else ["linkedin", "indeed"]
             try:
                 df = jobspy_scrape(
                     site_name=run_sites,
@@ -262,10 +271,6 @@ def scrape_jobspy_indeed(ctx: ScrapeContext) -> list[dict]:
     return scrape_jobspy(ctx, sites=["indeed"])
 
 
-def scrape_jobspy_google(ctx: ScrapeContext) -> list[dict]:
-    return scrape_jobspy(ctx, sites=["google"])
-
-
 __all__ = [
     "_jobspy_str",
     "_format_jobspy_comp",
@@ -274,5 +279,4 @@ __all__ = [
     "scrape_jobspy",
     "scrape_jobspy_linkedin",
     "scrape_jobspy_indeed",
-    "scrape_jobspy_google",
 ]

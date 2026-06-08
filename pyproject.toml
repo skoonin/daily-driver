@@ -26,6 +26,7 @@ dependencies = [
     "pydantic>=2.5,<3",
     "pyyaml>=6.0",
     "rich>=13.7.0",
+    "enlighten>=1.12.0",
     "jinja2>=3.1.0",
     "python-jobspy>=1.1.82",
     "playwright>=1.40.0",
@@ -91,7 +92,7 @@ target-version = ["py311"]
 profile = "black"
 line_length = 88
 known_first_party = ["daily_driver"]
-known_third_party = ["pydantic", "yaml", "jinja2", "rich", "jobspy", "httpx", "pytest"]
+known_third_party = ["pydantic", "yaml", "jinja2", "rich", "enlighten", "jobspy", "httpx", "pytest"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -109,7 +110,7 @@ check_untyped_defs = true
 no_implicit_optional = true
 
 [[tool.mypy.overrides]]
-module = ["jobspy.*"]
+module = ["jobspy.*", "enlighten"]
 ignore_missing_imports = true
 
 # argparse stubs return Any from add_parser() and Namespace attributes;
