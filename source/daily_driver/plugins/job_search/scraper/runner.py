@@ -857,7 +857,7 @@ def run(
             _row(sid).start(note=_slow_source_note(sid))
 
         def _on_progress(sid: str, completed: int, total: int | None) -> None:
-            # Fed from JobSpy's per-page logs; upgrades the row to a live bar.
+            # Fed from each scraper's ctx.report(done, total) callback; upgrades the row to a live bar.
             _row(sid).progress(completed, total)
 
         def _on_done(sid: str, ok: bool, detail: str) -> None:
