@@ -482,6 +482,22 @@ _SEG_LOC_SKIP_COLOR = "yellow"
 _SEG_OTHER_COLOR = "bright_black"
 
 
+def _funnel_other(counts: dict[str, int]) -> int:
+    """The unclassified remainder of a per-source funnel: ``found`` minus the
+    classified survivors (``new`` / ``known`` / ``loc_skip``), clamped at 0.
+
+    The funnel tallies only deduped survivors, so this is the within-run
+    duplicate + url-less rows that were found but never classified.
+    """
+    return max(
+        0,
+        counts.get("found", 0)
+        - counts.get("new", 0)
+        - counts.get("known", 0)
+        - counts.get("loc_skip", 0),
+    )
+
+
 def _source_breakdown_segments(counts: dict[str, int]) -> list[tuple[int, str]]:
     """Map a per-source funnel to coloured segments for its finished bar.
 
@@ -490,18 +506,11 @@ def _source_breakdown_segments(counts: dict[str, int]) -> list[tuple[int, str]]:
     :meth:`Item.show_breakdown` stacks into the bar; their counts sum to
     ``found`` so the fill is the whole result.
     """
-    found = counts.get("found", 0)
-    new = counts.get("new", 0)
-    known = counts.get("known", 0)
-    loc_skip = counts.get("loc_skip", 0)
-    # The funnel only classifies the deduped survivors; the remainder is the
-    # within-run duplicates and url-less rows that were found but dropped.
-    other = max(0, found - new - known - loc_skip)
     return [
-        (new, _SEG_NEW_COLOR),
-        (known, _SEG_KNOWN_COLOR),
-        (loc_skip, _SEG_LOC_SKIP_COLOR),
-        (other, _SEG_OTHER_COLOR),
+        (counts.get("new", 0), _SEG_NEW_COLOR),
+        (counts.get("known", 0), _SEG_KNOWN_COLOR),
+        (counts.get("loc_skip", 0), _SEG_LOC_SKIP_COLOR),
+        (_funnel_other(counts), _SEG_OTHER_COLOR),
     ]
 
 
@@ -1004,7 +1013,7 @@ def run(
             # The grey "other" bar segment (within-run duplicates + url-less rows)
             # has no count of its own in the funnel; surface it here only when
             # present so no datum lives in colour alone.
-            other = c["found"] - c["new"] - c["known"] - c["loc_skip"]
+            other = _funnel_other(c)
             line = (
                 f"  {_display_name(sid):<{width}}  {c['found']} found, "
                 f"{c['new']} new, {c['known']} already in csv, "
