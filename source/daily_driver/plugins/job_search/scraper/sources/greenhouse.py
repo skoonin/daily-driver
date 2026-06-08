@@ -37,7 +37,13 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     session = _http_session(ctx)
     jobs: list[dict] = []
 
+    # Live progress unit: one board (reported at loop-top so a skipped board
+    # still advances the bar).
+    total = len(boards)
+    done = 0
     for board in boards:
+        ctx.report(done, total)
+        done += 1
         api_url = (
             f"https://boards-api.greenhouse.io/v1/boards/{board}/jobs?content=true"
         )

@@ -237,10 +237,9 @@ Full field reference in [configuration.md](configuration.md#pluginsjob_search).
 | `greenhouse` | One row per `greenhouse_boards` entry |
 | `linkedin` | LinkedIn via JobSpy |
 | `indeed` | Indeed via JobSpy |
-| `google` | Google Jobs via JobSpy |
 | `apple` | Apple careers (requires Playwright) |
 
-`linkedin`, `indeed`, and `google` are the CLI selectors for `jobs run -S`.
+`linkedin` and `indeed` are the CLI selectors for `jobs run -S`.
 In `.dd-config.yaml` they are sub-toggles under the `jobspy:` source
 (`jobspy.linkedin`, etc.), not top-level source keys.
 
@@ -388,14 +387,14 @@ daily-driver summary -r week -j > /tmp/week.json
 
 The status banners ("Starting jobs run...", "Scrape complete: ...") still print to your terminal because they are on stderr — they do not contaminate the piped data.
 
-At normal verbosity on a TTY, `jobs run` shows a live, in-place progress display while it works: a "Scraping sources" group (one row per source with a `>` / `-` / `x` status marker and a per-source count) and an "Enriching jobs" group. It ends with a `Completed:` line that reconciles totals (found -> new -> matched location, plus "(N skipped by location)" when applicable); any warnings collect into a block below. At `-v` / `-vv` the live display is dropped and timestamped logs stream instead, with heartbeats during slow phases (Apple scraping, enrichment).
+On a TTY, `jobs run` pins a live progress display at the bottom of the terminal. Every source is its own progress bar that fills as it works and then stays pinned at its result (`linkedin  61 found`, recoloured red on failure); a `Scraping sources` header bar tracks overall completion with green (ok) and red (failed) segments. Each source reports progress against its own natural unit — search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest — so even a fast source shows a bar. An `Enriching jobs` group then shows detail / company / fit fill bars. Known-slow boards show a one-time "running -- can take several minutes" note until real progress arrives, so a long quiet stretch doesn't look like a hang. It ends with a `Completed:` line that reconciles totals (found -> new -> matched location, plus "(N skipped by location)" when applicable). The bars persist at every verbosity; verbosity controls only how much log volume scrolls above them. Problems surface live above the bars as they happen, with a terse `Warnings: N (shown above)` line at the end. A non-interactive stream (cron, launchd, pipes) — or a terminal that doesn't answer the cursor-position query on entry — falls back to plain line-per-row output with no ANSI.
 
 Verbosity is controlled by two mutually exclusive flags:
 
 | Flag | Effect |
 |---|---|
 | (default) | WARNING and ERROR logs; normal status lines; live progress display on a TTY for `jobs run` |
-| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts); replaces the live `jobs run` display with streamed timestamped logs |
+| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts), timestamped and scrolling above the persistent `jobs run` display |
 | `-vv` | Adds DEBUG logs (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
 | `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and warnings-as-status |
 

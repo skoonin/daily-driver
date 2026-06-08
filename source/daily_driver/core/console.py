@@ -79,7 +79,12 @@ class Console:
 
     @classmethod
     def get_log_console(cls) -> rich_console.Console:
-        """Return the stderr console; used by core/logging.py RichHandler."""
+        """Return the stderr console.
+
+        Its underlying ``.file`` (stderr) is the shared stream that
+        core/logging.py's handler and the live display's enlighten manager both
+        bind, so log lines and pinned bars interleave on one channel.
+        """
         if cls._log_console is None:
             cls._setup_consoles()
         assert cls._log_console is not None

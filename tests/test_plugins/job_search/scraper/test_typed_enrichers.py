@@ -36,11 +36,16 @@ def _enriched(**overrides: object) -> EnrichedJob:
 
 @pytest.fixture
 def fake_config() -> ScrapeContext:
+    # Both enrichment budgets are zeroed: enrich_fit_and_notes / company
+    # treat budget<=0 as "unset, use config default" (llm.py:719,218), so a
+    # caller passing budget=0 still enriches at the config default unless the
+    # config itself is 0. Without max_enrich_fit=0 the fit enricher makes real
+    # claude CLI calls on dev machines where `claude` is on PATH.
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
                 "scraper": {"enabled": True},
-                "enrichment": {"max_enrich_companies": 0},
+                "enrichment": {"max_enrich_companies": 0, "max_enrich_fit": 0},
             }
         )
     )
@@ -71,7 +76,8 @@ def test_typed_fit_enrich_passes_through_with_zero_budget(
 ) -> None:
     j = _enriched()
     out, stats = enrich_fit_and_notes_typed([j], fake_config, budget=0)
-    # budget=0 short-circuits; no claude call attempted.
+    # Effective budget 0 (param 0 + config max_enrich_fit 0) => no jobs
+    # enriched, no claude call.
     assert len(out) == 1
     assert out[0].fit == j.fit  # unchanged
 

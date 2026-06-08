@@ -1,8 +1,12 @@
 """Log configuration for the daily_driver package.
 
-Attaches a Rich handler to the `daily_driver` logger only — third-party
-loggers are left untouched. Safe to call configure() multiple times;
-prior handlers are removed before each setup so levels don't stack.
+Attaches a plain counting ``StreamHandler`` to the ``daily_driver`` logger,
+bound to the stderr stream. The handler streams every record immediately and
+tallies WARN+ records over a run so a terse ``Warnings: N`` line can close a run
+in normal mode. Third-party logger families (e.g. JobSpy) can be rerouted
+through the same handler so their warnings are counted and formatted alike. Safe
+to call configure() multiple times; prior handlers are removed before each setup
+so levels don't stack.
 """
 
 from __future__ import annotations
@@ -11,54 +15,53 @@ import logging as stdlog
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Literal
-
-from rich.logging import RichHandler
+from typing import IO, Literal
 
 from daily_driver.core.console import Console
 
-_handler: _LiveAwareRichHandler | None = None
+_handler: _WarnCountingHandler | None = None
+
+# Normal mode reads as a clean "WARNING <message>"; -v/-vv prefix a timestamp so
+# a long run's stream is diagnosable. Matches the pre-enlighten format.
+_PLAIN_FORMAT = "%(levelname)s %(message)s"
+_TIMED_FORMAT = "%(asctime)s %(levelname)s %(message)s"
+_TIME_DATEFMT = "%H:%M:%S"
 
 
-class _LiveAwareRichHandler(RichHandler):
-    """Rich log handler that can defer records past an active live display.
+class _WarnCountingHandler(stdlog.StreamHandler):  # type: ignore[type-arg]
+    """Plain stderr handler that tallies warnings emitted under a live display.
 
-    While a live progress block owns the terminal, ``start_deferring()``
-    buffers records instead of printing them (a raw log write would cut into
-    the live region and commit half-frames to scrollback). ``flush_deferred()``
-    replays the buffer below the stopped display, under a ``Warnings (N):``
-    header when timestamps are off (normal mode).
+    Records always emit immediately. While a live progress block owns the
+    terminal, enlighten's scroll region carries these plain stderr writes above
+    the pinned bars, so warnings surface as they happen instead of cutting in.
+    ``start_counting()`` / ``stop_counting()`` tally WARN+ records over a run so
+    a terse ``Warnings: N`` reconciliation line can close it in normal mode.
     """
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self._show_time = bool(kwargs.get("show_time", True))
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        self._deferring = False
-        self._buffer: list[stdlog.LogRecord] = []
+    def __init__(self, stream: IO[str] | None = None, *, show_time: bool) -> None:
+        super().__init__(stream)
+        self._show_time = show_time
+        self._counting = False
+        self._warn_count = 0
+        fmt = _TIMED_FORMAT if show_time else _PLAIN_FORMAT
+        self.setFormatter(stdlog.Formatter(fmt, datefmt=_TIME_DATEFMT))
 
     def emit(self, record: stdlog.LogRecord) -> None:
-        if self._deferring:
-            self._buffer.append(record)
-        else:
-            super().emit(record)
+        if self._counting and record.levelno >= stdlog.WARNING:
+            self._warn_count += 1
+        super().emit(record)
 
-    def start_deferring(self) -> None:
-        self._deferring = True
+    def start_counting(self) -> None:
+        self._counting = True
+        self._warn_count = 0
 
-    def flush_deferred(self) -> None:
-        self._deferring = False
-        buffered, self._buffer = self._buffer, []
-        if not buffered:
-            return
-        warnings = sum(1 for r in buffered if r.levelno >= stdlog.WARNING)
-        if not self._show_time and warnings:
-            self.console.print(f"\nWarnings ({warnings}):")
-        for record in buffered:
-            super().emit(record)
+    def stop_counting(self) -> int:
+        self._counting = False
+        return self._warn_count
 
 
 def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None:
-    """Set up the daily_driver logger with a Rich stderr handler."""
+    """Set up the daily_driver logger with a plain counting stderr handler."""
     global _handler
     level_map: dict[str, int] = {
         "quiet": stdlog.ERROR,
@@ -69,17 +72,14 @@ def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None
     logger = stdlog.getLogger("daily_driver")
 
     for handler in logger.handlers[:]:
-        if isinstance(handler, RichHandler):
+        if isinstance(handler, _WarnCountingHandler):
             logger.removeHandler(handler)
 
-    # markup=False: scraper messages carry bracketed prefixes (e.g. "[apple]")
-    # that Rich markup would otherwise parse away. Timestamps only from -v up,
-    # so normal-mode warnings read as a clean "WARNING <message>".
-    handler = _LiveAwareRichHandler(
-        console=Console.get_log_console(),
-        show_path=False,
+    # Bind the handler to the same stderr object the live display's enlighten
+    # manager uses, so log lines and pinned bars interleave on one stream.
+    handler = _WarnCountingHandler(
+        stream=Console.get_log_console().file,
         show_time=verbosity in ("verbose", "debug"),
-        markup=False,
     )
     handler.setLevel(level_map[verbosity])
     logger.addHandler(handler)
@@ -89,22 +89,53 @@ def configure(verbosity: Literal["quiet", "normal", "verbose", "debug"]) -> None
 
 
 @contextmanager
-def deferred_logs(active: bool) -> Iterator[None]:
-    """Buffer log records while a live display owns the terminal.
+def live_log_window(active: bool) -> Iterator[None]:
+    """Stream logs live while a live display owns the terminal.
 
-    When ``active``, records emitted inside the block are held and replayed on
-    exit (including on exception), so they land below the stopped display
-    rather than cutting into it. A no-op when inactive or before configure().
+    Records emit immediately; enlighten's scroll region carries each one above
+    the active bars, so problems surface as they happen rather than being held
+    to the end. On exit (including on exception) a terse ``Warnings: N`` line
+    reconciles the count in normal mode (no timestamps) -- the records
+    themselves already scrolled above the block. A no-op when inactive or before
+    configure().
     """
     handler = _handler
     if not active or handler is None:
         yield
         return
-    handler.start_deferring()
+    handler.start_counting()
     try:
         yield
     finally:
-        handler.flush_deferred()
+        count = handler.stop_counting()
+        if count and not handler._show_time:
+            stream = handler.stream
+            stream.write(f"\nWarnings: {count} (shown above)\n")
+            stream.flush()
+
+
+def adopt_third_party_loggers(prefix: str) -> None:
+    """Route a third-party logger family through the daily_driver handler.
+
+    Libraries like JobSpy attach their own ``StreamHandler`` -- bound to the
+    real stderr at import time -- to each ``<prefix>:<site>`` logger. Replacing
+    those handlers with our shared counting handler (and aligning each logger's
+    level to the configured verbosity) makes their WARN+ lines count toward the
+    run's ``Warnings: N`` total and read in our format, while silencing routine
+    INFO chatter in normal mode. Call once, single-threaded, before any of those
+    loggers emit. A no-op before ``configure()``.
+    """
+    handler = _handler
+    if handler is None:
+        return
+    for name in list(stdlog.root.manager.loggerDict):
+        if name == prefix or name.startswith(f"{prefix}:"):
+            lib = stdlog.getLogger(name)
+            for existing in lib.handlers[:]:
+                lib.removeHandler(existing)
+            lib.addHandler(handler)
+            lib.setLevel(handler.level)
+            lib.propagate = False
 
 
 def get_logger(name: str) -> stdlog.Logger:

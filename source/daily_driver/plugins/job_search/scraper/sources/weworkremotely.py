@@ -42,7 +42,13 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
         log.warning("[weworkremotely] no wwr_categories configured; skipping")
         return jobs
 
+    # Live progress unit: one category (reported at loop-top so a skipped
+    # category still advances the bar).
+    total = len(categories)
+    done = 0
     for category in categories:
+        ctx.report(done, total)
+        done += 1
         url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
         resp = _api_get(session, url, ctx, label="weworkremotely")
         if not resp:
