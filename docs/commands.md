@@ -175,7 +175,7 @@ These ship to the workspace `.claude/commands/daily-driver/` tree but are not ex
 
 | Slash command | Purpose |
 | --- | --- |
-| `/daily-learning` | 5-10 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. Renamed from `/interview-prep`. |
+| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. Renamed from `/interview-prep`. |
 
 ## Headless Claude commands
 

@@ -190,7 +190,7 @@ invoke them from inside a running `claude` session.
 
 | Slash command | What it does |
 |---|---|
-| `/daily-learning` | 5-10 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/day-start` and can be run standalone. |
+| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/day-start` and can be run standalone. |
 
 ## Jobs
 

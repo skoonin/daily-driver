@@ -98,6 +98,7 @@ Pre-populate personal items as `plan_items` with `type: personal` from three sou
 3. **Ad-hoc** — ask the user: "Anything extra today beyond [list the recurring items]? Include anything time-bound (doctor, errands, walks)."
 
 For each ad-hoc item, extract:
+
 - `text`: description
 - `time_block`: "HH:MM-HH:MM" if time-bound, null if open-ended
 - `recurring: false`
@@ -118,6 +119,7 @@ Using the work-planner agent behavior, present:
 Use the required time block format: `- HH:MM - HH:MM | <tracker-id> - <label> - Task description` where `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `job-003`). For items not tied to a tracker entry (personal, ad-hoc), omit the tracker-id segment.
 
 Then ask the user:
+
 - Does this look right?
 - Anything to add or reprioritize?
 - Any known interrupts or blockers today?
@@ -126,7 +128,7 @@ Then ask the user:
 
 Before saving the plan, offer interview practice as a short opt-in:
 
-> Want to do interview practice this morning? It's about 5-10 minutes — behavioral STAR, technical fundamentals, or system design depending on the day. (yes / no / skip)
+> Want to do interview practice this morning? It's about 15-30 minutes — behavioral STAR, technical fundamentals, or system design depending on the day. (yes / no / skip)
 
 If the user accepts, point them at the slash command rather than chaining inline — it keeps the plan-save flow clean and lets them run it as a focused session:
 

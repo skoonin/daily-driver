@@ -1,9 +1,9 @@
 ---
 name: daily-learning
-description: Daily 5-10 minute interview practice - behavioral STAR drills, technical fundamentals, coding drills, system design
+description: Daily 15-30 minute interview practice - behavioral STAR drills, technical fundamentals, coding drills, system design
 ---
 
-Short interview-practice session. Aim for 5-10 minutes total — don't derail morning planning. One question at a time, wait for the answer, give specific feedback, follow up once or twice, then close out and write a brief log.
+Short interview-practice session. Aim for 15-30 minutes total — don't derail morning planning. One question at a time, wait for the answer, give specific feedback, follow up once or twice, then close out and write a brief log.
 
 This is a learning tool, not a tracking system. The goal is reps + honest feedback on weak spots, not a complete answer database.
 
