@@ -21,7 +21,7 @@ daily_driver/
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
-├── gathers/                 # read-only readers: calendar, git, sessions, notes
+├── gathers/                 # read-only readers: calendar, git
 ├── integrations/            # subprocess + external-service boundary: claude_cli,
 │                            #   ai_provider, ollama_client, clipboard, launchd,
 │                            #   git, icalbuddy, notify
