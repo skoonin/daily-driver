@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import signal
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _enrich_pool_size,
     _enrich_tag,
     _install_interrupt_notifier,
+    _restore_interrupt_handler,
 )
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
@@ -314,7 +314,7 @@ def enrich_company_descriptions(
             plan.stitch()
             raise
         finally:
-            signal.signal(signal.SIGINT, previous_handler)
+            _restore_interrupt_handler(previous_handler)
         plan.stitch()
         return plan.out, plan.stats
 
@@ -845,7 +845,7 @@ def enrich_fit_and_notes(
                     plan.consume(fut, futures[fut])
             raise
         finally:
-            signal.signal(signal.SIGINT, previous_handler)
+            _restore_interrupt_handler(previous_handler)
         log.info(
             "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
             plan.stats["enriched"],
@@ -990,7 +990,7 @@ def enrich_product_and_fit_concurrently(
             company_plan.stitch()
         raise
     finally:
-        signal.signal(signal.SIGINT, previous_handler)
+        _restore_interrupt_handler(previous_handler)
 
     if company_plan is not None:
         company_plan.stitch()

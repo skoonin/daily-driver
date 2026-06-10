@@ -225,7 +225,12 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
 
     clear_stale_adjacent_lock(csv_path)
     # Hold one shared sentinel lock for the entire backfill lifecycle so run/
-    # prune cannot interleave while we enrich in memory then rewrite.
+    # prune cannot interleave while we enrich in memory then rewrite. The lock is
+    # deliberately held ACROSS the (slow) enrichment phase, not just the rewrite:
+    # backfill rewrites the whole file from its in-memory snapshot, so dropping
+    # the lock during enrichment would let a concurrent run append rows that the
+    # rewrite then clobbers. (run() can drop its lock during enrichment because
+    # it only appends — backfill cannot, because it overwrites.)
     with file_lock(jobs_lock_path(ephemeral_dir)):
         with open(csv_path, newline="", encoding="utf-8") as lock_fh:
             reader = csv.DictReader(lock_fh)

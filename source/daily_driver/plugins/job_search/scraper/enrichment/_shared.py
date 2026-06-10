@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import signal
 import sys
+import threading
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -49,7 +50,14 @@ def _install_interrupt_notifier(
 
     `item` is the user-vocabulary noun ("companies" or "jobs"); `futures`
     is the live mapping so the message can name how many are in progress.
+
+    signal.signal only works on the main thread, so an off-main-thread caller
+    gets no notifier (returns None) instead of a ValueError crash. Pair the
+    return with :func:`_restore_interrupt_handler`, which is likewise a no-op
+    off the main thread.
     """
+    if threading.current_thread() is not threading.main_thread():
+        return None
     interrupt_count = [0]
     previous = signal.getsignal(signal.SIGINT)
 
@@ -76,3 +84,15 @@ def _install_interrupt_notifier(
 
     signal.signal(signal.SIGINT, handler)
     return previous
+
+
+def _restore_interrupt_handler(previous: Any) -> None:
+    """Restore the SIGINT handler returned by :func:`_install_interrupt_notifier`.
+
+    A no-op off the main thread (where the install was also skipped, so
+    ``previous`` is None) — guards the symmetric ``signal.signal`` restore
+    against the same main-thread-only ValueError.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return
+    signal.signal(signal.SIGINT, previous)
