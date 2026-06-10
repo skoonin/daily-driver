@@ -26,6 +26,9 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **`jobs run` now fills the Product column for newly found jobs during the
+  run** (previously only `jobs backfill` filled it). Capped by
+  `max_enrich_companies` (default 50) per run. (#86)
 - **Faster CLI startup**: template-rendering dependencies now load only during
   `init`, not on every command invocation. (#76)
 - **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
