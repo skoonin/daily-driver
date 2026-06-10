@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
-
-if sys.platform != "win32":
-    import fcntl
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
@@ -118,6 +118,10 @@ def append_jobs_typed(
     Header is still passed in so callers can pin the column order to whatever
     is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
     Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
+
+    Serializing concurrent mutations is the caller's contract: hold
+    ``file_lock(jobs_lock_path(...))`` around this call, as ``_rewrite_jobs_csv``
+    requires. This function does not lock.
     """
     from daily_driver.plugins.job_search.scraper.runner import ScraperError
 
@@ -127,8 +131,6 @@ def append_jobs_typed(
     written = 0
     try:
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            if sys.platform != "win32":
-                fcntl.flock(f, fcntl.LOCK_EX)
             writer = csv.DictWriter(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
@@ -266,7 +268,7 @@ def _rewrite_jobs_csv(
     tmp_path.rename(csv_path)
 
 
-def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
+def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
     from daily_driver.plugins.job_search.scraper.enrichment.llm import (
         enrich_company_descriptions,
@@ -277,9 +279,10 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
     if not csv_path.exists():
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
+    clear_stale_adjacent_lock(csv_path)
     # Hold one shared sentinel lock for the entire backfill lifecycle so run/
     # prune cannot interleave while we enrich in memory then rewrite.
-    with file_lock(jobs_lock_path(csv_path)):
+    with file_lock(jobs_lock_path(ephemeral_dir)):
         with open(csv_path, newline="", encoding="utf-8") as lock_fh:
             reader = csv.DictReader(lock_fh)
             header = list(reader.fieldnames or CANONICAL_HEADER)

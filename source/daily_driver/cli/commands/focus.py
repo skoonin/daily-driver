@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import re
 from pathlib import Path
 
@@ -124,8 +125,13 @@ def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unty
 
     lock = _lock_path(workspace)
     lock.parent.mkdir(parents=True, exist_ok=True)
+    # focus.lock is intentionally both lock and payload (lock-as-data). Write
+    # the payload atomically (temp + os.replace) so a crash mid-write can never
+    # leave a truncated JSON body that `focus status` would fail to parse.
     with file_lock(lock, shared=False):
-        lock.write_text(json.dumps(payload), encoding="utf-8")
+        tmp = lock.with_name(lock.name + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, lock)
 
     end_hm = end.strftime("%H:%M")
     msg = f"Focus mode enabled until {end_hm} ({args.duration}m)"

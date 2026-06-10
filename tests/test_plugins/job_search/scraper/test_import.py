@@ -52,7 +52,7 @@ def test_run_returns_zero_when_scraper_disabled(
 
     plugin = JobSearchPlugin.model_validate({"scraper": {"enabled": False}})
 
-    rc = run(plugin, tmp_path)
+    rc = run(plugin, tmp_path, tmp_path)
 
     assert rc == 0
     captured = capsys.readouterr()
