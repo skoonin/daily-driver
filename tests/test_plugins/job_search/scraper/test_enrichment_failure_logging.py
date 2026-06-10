@@ -79,14 +79,13 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
     assert "stderr=" in matched[0]
 
 
-def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> None:
-    """Site 1 (free-text product description) must request format_json=False."""
+def test_company_descriptions_routes_to_enrichment_task(caplog) -> None:
+    """Site 1 (free-text product description) routes to the enrichment task."""
     jobs = [{"company": "Acme", "role": "SRE"}]
     captured: dict = {}
 
-    def fake_invoke(task, prompt, *, ai, timeout, format_json):
+    def fake_invoke(task, prompt, *, ai, timeout):
         captured["task"] = task
-        captured["format_json"] = format_json
         return "Acme makes widgets\n4.1\n"
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
@@ -94,18 +93,16 @@ def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> No
             enrichment.enrich_company_descriptions(jobs, _config())
 
     assert captured["task"] == "enrichment"
-    assert captured["format_json"] is False
     assert jobs[0]["product"] == "Acme makes widgets"
 
 
-def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
-    """Site 2 (fit/notes JSON) must request format_json=True."""
+def test_fit_and_notes_routes_to_enrichment_task(caplog) -> None:
+    """Site 2 (fit/notes JSON) routes to the enrichment task."""
     jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/j/1"}]
     captured: dict = {}
 
-    def fake_invoke(task, prompt, *, ai, timeout, format_json):
+    def fake_invoke(task, prompt, *, ai, timeout):
         captured["task"] = task
-        captured["format_json"] = format_json
         return '{"fit": 7, "notes": "kubernetes-heavy"}'
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
@@ -113,8 +110,7 @@ def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
             enrichment.enrich_fit_and_notes(jobs, _config())
 
     assert captured["task"] == "enrichment"
-    assert captured["format_json"] is True
-    assert jobs[0]["fit"] == "7/10"
+    assert jobs[0]["fit"] == "7"
 
 
 def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:

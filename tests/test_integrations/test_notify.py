@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import patch
 
 from daily_driver.integrations.notify import desktop_notify
@@ -43,3 +44,20 @@ def test_failure_is_swallowed() -> None:
         ):
             # Must not propagate — notifications are best-effort.
             desktop_notify("Job Scraper", "1 new job")
+
+
+def test_timeout_is_swallowed() -> None:
+    """A wedged notifier helper must not hang or crash the caller."""
+    with patch("daily_driver.integrations.notify.shutil.which", return_value=None):
+        with patch(
+            "daily_driver.integrations.notify.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="osascript", timeout=5),
+        ):
+            desktop_notify("Job Scraper", "1 new job")
+
+
+def test_subprocess_calls_bound_by_timeout() -> None:
+    with patch("daily_driver.integrations.notify.shutil.which", return_value=None):
+        with patch("daily_driver.integrations.notify.subprocess.run") as mock_run:
+            desktop_notify("Job Scraper", "1 new job")
+    assert mock_run.call_args.kwargs.get("timeout") == 5

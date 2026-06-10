@@ -50,6 +50,26 @@ ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+def parse_fit(value: Any) -> int | None:
+    """Coerce a stored fit cell to a bare int, or None when unparseable.
+
+    The Fit column holds a bare integer (the ratified contract). Readers stay
+    tolerant of legacy ``"7/10"`` cells by parsing the leading integer, so old
+    rows normalize on the next backfill rewrite.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        leading = value.strip().split("/", 1)[0].strip()
+        # isascii guard: bare .isdigit() accepts Unicode digits (e.g. superscript
+        # "⁷") that int() then rejects with ValueError.
+        if leading.isascii() and leading.isdigit():
+            return int(leading)
+    return None
+
+
 def _parse_k_salary(s: str) -> int | None:
     """Parse a salary amount that may use K/M shorthand into a plain integer.
 
@@ -227,10 +247,6 @@ class EnrichedJob(BaseModel):
             s = (s or "").strip()
             return dt.date.fromisoformat(s) if s else None
 
-        def _opt_int(s: str) -> int | None:
-            s = (s or "").strip()
-            return int(s) if s.isdigit() else None
-
         source = row.get("Source", "").strip() or "unknown"
         if source.startswith("Greenhouse (") and source.endswith(")"):
             canonical = "greenhouse"
@@ -244,7 +260,7 @@ class EnrichedJob(BaseModel):
             company=row.get("Company", ""),
             location=row.get("Location", ""),
             role=row.get("Role", "") or "(unknown)",
-            fit=_opt_int(row.get("Fit", "")),
+            fit=parse_fit(row.get("Fit", "")),
             comp=row.get("Comp", ""),
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011

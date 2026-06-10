@@ -11,6 +11,8 @@ from unittest.mock import patch
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.csv_io import (
     CANONICAL_HEADER,
+    _dict_to_enriched_updates,
+    _dict_to_row,
     backfill,
 )
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -84,7 +86,7 @@ def test_backfill_uses_config_budget_not_maxsize(tmp_path: Path) -> None:
             side_effect=_capture_fit,
         ),
     ):
-        backfill(_MINIMAL_CTX, csv_path)
+        backfill(_MINIMAL_CTX, csv_path, tmp_path)
 
     assert called_with, "enrichment functions were not called at all"
     for call in called_with:
@@ -107,7 +109,7 @@ def test_backfill_skips_enrichment_when_all_rows_filled(tmp_path: Path) -> None:
             "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_fit_and_notes"
         ) as mock_fit,
     ):
-        backfill(_MINIMAL_CTX, csv_path)
+        backfill(_MINIMAL_CTX, csv_path, tmp_path)
 
     mock_company.assert_not_called()
     mock_fit.assert_not_called()
@@ -119,6 +121,28 @@ def test_backfill_skips_enrichment_when_all_rows_filled(tmp_path: Path) -> None:
 def test_canonical_header_scan_friendly_order() -> None:
     """First five columns must be the scan-friendly identity + decision columns."""
     assert CANONICAL_HEADER[:5] == ["Status", "Company", "Role", "Fit", "Comp"]
+
+
+def test_dict_to_enriched_updates_parses_bare_int_fit() -> None:
+    """A bare int fit survives the working-dict -> EnrichedJob projection (W1.1)."""
+    assert _dict_to_enriched_updates({"fit": 7})["fit"] == 7
+
+
+def test_dict_to_enriched_updates_tolerates_legacy_fit_suffix() -> None:
+    """Legacy "7/10" cells must parse to the leading int, not None (W1.1)."""
+    assert _dict_to_enriched_updates({"fit": "7/10"})["fit"] == 7
+
+
+def test_dict_to_row_warns_on_unparseable_fit(caplog: Any) -> None:
+    """A non-empty unparseable Fit cell rewrites to "" but logs a warning (W1.1)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        row = _dict_to_row({"fit": "excellent", "company": "Acme"}, ["Fit"])
+    assert row["Fit"] == ""
+    assert any(
+        "dropping unparseable Fit cell" in r.getMessage() for r in caplog.records
+    )
 
 
 def test_make_backup_uses_utc_iso_stamp(tmp_path: Path) -> None:

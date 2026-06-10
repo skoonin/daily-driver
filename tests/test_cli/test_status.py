@@ -10,8 +10,32 @@ from pathlib import Path
 import pytest
 import yaml
 
-from daily_driver.cli.commands.status import run
+from daily_driver.cli.commands.status import _to_utc, run
 from daily_driver.core.workspace import Workspace
+
+
+def test_to_utc_interprets_naive_as_local() -> None:
+    """A naive updated_at is the app's local wall-clock time, not UTC.
+
+    core.clock.now writes local-aware timestamps; a hand-edited naive value
+    must be read in the same local zone, not silently relabelled UTC (which
+    would skew recent/stalled math by the local UTC offset).
+    """
+    naive = datetime.datetime(2026, 6, 10, 9, 0, 0)
+    result = _to_utc(naive)
+
+    assert result.tzinfo is not None
+    # Same absolute instant as interpreting the wall-clock time locally.
+    assert result == naive.astimezone()
+    # And the wall-clock fields are preserved under the local offset (i.e.
+    # it was NOT relabelled UTC unless the machine genuinely runs in UTC).
+    assert result.replace(tzinfo=None) == naive
+
+
+def test_to_utc_passes_through_aware() -> None:
+    aware = datetime.datetime(2026, 6, 10, 9, 0, 0, tzinfo=datetime.UTC)
+    assert _to_utc(aware) is aware
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

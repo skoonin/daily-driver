@@ -25,7 +25,10 @@ from daily_driver.core.logging import (
 from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
 from daily_driver.plugins.job_search.scraper.countries import country_names
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -674,6 +677,7 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 def run_backfill(
     plugin: JobSearchPlugin,
     csv_path: Path,
+    ephemeral_dir: Path,
     *,
     ai: AIConfig | None = None,
     context_text: str = "",
@@ -682,7 +686,7 @@ def run_backfill(
     from daily_driver.plugins.job_search.scraper.csv_io import backfill
 
     ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
-    backfill(ctx, csv_path)
+    backfill(ctx, csv_path, ephemeral_dir)
 
 
 def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
@@ -724,6 +728,7 @@ def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
 def run(
     plugin: JobSearchPlugin,
     output_dir: Path,
+    ephemeral_dir: Path,
     *,
     ai: AIConfig | None = None,
     context_text: str = "",
@@ -749,7 +754,8 @@ def run(
 
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
-    lock_path = jobs_lock_path(csv_path)
+    clear_stale_adjacent_lock(csv_path)
+    lock_path = jobs_lock_path(ephemeral_dir)
     ai_cfg = ai or AIConfig()
 
     if not plugin.scraper.enabled:

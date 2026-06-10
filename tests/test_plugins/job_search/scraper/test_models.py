@@ -13,6 +13,7 @@ from daily_driver.plugins.job_search.scraper.models import (
     NormalizedJob,
     RawScrapedJob,
     Source,
+    parse_fit,
 )
 
 # --------------------------------------------------------------------------- #
@@ -174,6 +175,16 @@ class TestEnrichedJob:
         assert j2.notes == j.notes
         assert j2.comp == j.comp
         assert j2.date_found == j.date_found
+
+    def test_parse_fit_rejects_unicode_digit(self) -> None:
+        """isascii guard: a Unicode digit must return None, not raise (W1.1)."""
+        assert parse_fit("⁷") is None  # superscript seven
+
+    def test_from_csv_row_tolerates_legacy_fit_suffix(self) -> None:
+        """Legacy rows wrote Fit as "7/10"; the reader parses the leading int."""
+        row = _enriched(fit=7).to_csv_row()
+        row["Fit"] = "7/10"
+        assert EnrichedJob.from_csv_row(row).fit == 7
 
     def test_csv_skip_reason_appended_when_skipped(self) -> None:
         j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")

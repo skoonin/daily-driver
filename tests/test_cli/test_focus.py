@@ -111,6 +111,45 @@ def test_focus_on_creates_lock_file(workspace: Workspace) -> None:
     assert "end_iso" in data
 
 
+def test_focus_on_write_is_atomic(
+    monkeypatch: pytest.MonkeyPatch, workspace: Workspace
+) -> None:
+    """L-3: the focus.lock payload write goes through a temp file + os.replace
+    so a crash mid-write can never leave a truncated/partial JSON payload."""
+    import daily_driver.cli.commands.focus as focus_mod
+
+    replaced: list[tuple[str, str]] = []
+    orig_replace = focus_mod.os.replace
+
+    def tracking_replace(src: Any, dst: Any) -> None:
+        replaced.append((str(src), str(dst)))
+        orig_replace(src, dst)
+
+    monkeypatch.setattr(focus_mod.os, "replace", tracking_replace)
+
+    frozen = datetime(2026, 4, 20, 9, 0, 0, tzinfo=timezone.utc)
+    clock_mod.FROZEN_TIME = frozen
+    try:
+        result = run(_on_args(workspace.root, duration=30, reason="atomic"))
+    finally:
+        clock_mod.FROZEN_TIME = None
+
+    assert result == 0
+    lock = workspace.ephemeral_dir / "focus.lock"
+    assert lock.exists()
+    # Payload landed via os.replace from a temp sibling, not a direct write.
+    assert len(replaced) == 1
+    src, dst = replaced[0]
+    assert dst == str(lock)
+    assert src != str(lock)
+    # No leftover temp file beside the lock.
+    leftovers = [p for p in workspace.ephemeral_dir.iterdir() if p.name != "focus.lock"]
+    assert leftovers == []
+    # Final payload is complete, valid JSON.
+    data = json.loads(lock.read_text())
+    assert data["reason"] == "atomic"
+
+
 # ---------------------------------------------------------------------------
 # 2. focus on with existing lock overwrites cleanly
 # ---------------------------------------------------------------------------
