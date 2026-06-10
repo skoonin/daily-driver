@@ -51,9 +51,11 @@ def add_parser(
     p_git.add_argument(
         "--since",
         default=None,
-        help="ISO date (default: 24h before now)",
+        help="ISO date (default: start of yesterday)",
     )
-    p_git.add_argument("--until", default=None, help="ISO date (default: now)")
+    p_git.add_argument(
+        "--until", default=None, help="ISO date (default: start of tomorrow)"
+    )
     p_git.add_argument("-j", "--json", action="store_true", help="Emit JSON")
     add_global_flags(p_git)
     p_git.set_defaults(func=_run_git)

@@ -166,7 +166,6 @@ def run(args: argparse.Namespace) -> int:
                 prompt,
                 ai=workspace.config.ai,
                 timeout=args.timeout,
-                format_json=False,
             )
     except AITimeoutError as exc:
         Console.error(f"{exc.provider} summary timed out after {exc.timeout_seconds}s")

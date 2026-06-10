@@ -33,15 +33,12 @@ def test_ollama_provider_routes_to_ollama_client() -> None:
         {"enrichment": {"provider": "ollama", "model": "qwen2.5:14b"}}
     )
     with patch.object(ollama_client, "generate", return_value="response text") as gen:
-        out = ai_provider.invoke_for(
-            "enrichment", "hi", ai=ai, timeout=42, format_json=True
-        )
+        out = ai_provider.invoke_for("enrichment", "hi", ai=ai, timeout=42)
     assert out == "response text"
     kwargs = gen.call_args.kwargs
     assert kwargs["model"] == "qwen2.5:14b"
     assert kwargs["endpoint"] == "http://localhost:11434"
     assert kwargs["timeout"] == 42
-    assert kwargs["format_json"] is True
 
 
 def test_ollama_uses_config_timeout_when_none_passed() -> None:
