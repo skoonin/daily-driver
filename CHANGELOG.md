@@ -39,14 +39,14 @@ log`. Versioned release history starts at 1.0.
   still shows the originating site. If one site fails mid-call, the run retries
   the enabled sites individually for that search so the healthy site's rows are
   not lost, and an enabled site that returns zero rows across the whole run logs
-  a warning.
+  a warning. (#87)
 - **Faster `jobs run`**: the Product and Fit/Notes enrichment phases now overlap
   under one shared concurrency cap (never more than `claude.max_parallel`
   provider calls in flight across both), detail-page fetches run on a small
   per-host-throttled pool instead of a single serial loop, the Apple scrape
   waits on the live search response instead of fixed multi-second sleeps, and
   the headless scrape pool default rose from 4 to 8 workers so all headless
-  sources run in one wave.
+  sources run in one wave. (#87)
 - **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
   default `hn_max_posts` cap was hitting on every run, so the same first 100
   relevance-ranked roles recurred and nothing past them was ever scraped.
