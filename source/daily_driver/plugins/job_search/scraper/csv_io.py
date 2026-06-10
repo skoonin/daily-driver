@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -44,6 +45,76 @@ def _make_backup(csv_path: Path) -> Path:
     backup = backups_dir / f"{csv_path.name}.bak.{stamp}"
     shutil.copy2(csv_path, backup)
     return backup
+
+
+def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Return (header_columns, row_dicts) for a jobs-shaped CSV.
+
+    Empty (header, rows) when the file is absent. Shared by archive prune and
+    any caller that needs the rows as dicts keyed by CSV column.
+    """
+    if not csv_path.exists():
+        return [], []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        rows = [dict(r) for r in reader]
+    return header, rows
+
+
+def atomic_write_rows(
+    csv_path: Path, header: list[str], rows: list[dict[str, str]]
+) -> None:
+    """Write rows via temp file + os.replace + fsync to avoid torn reads."""
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+        )
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, csv_path)
+
+
+def append_rows(csv_path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
+    """Append row dicts to a CSV, writing the header first if the file is new."""
+    if not rows:
+        return
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not csv_path.exists()
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+        )
+        if fresh:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def dedup_sets_from_rows(rows: list[dict[str, str]]) -> tuple[set[str], set[str]]:
+    """Extract (urls, dedup_keys) from row dicts keyed by CSV column.
+
+    Mirrors load_existing_jobs' extraction so jobs.csv and jobs.archive.csv
+    contribute dedup state through one code path.
+    """
+    from daily_driver.plugins.job_search.scraper.runner import dedup_key
+
+    urls: set[str] = set()
+    keys: set[str] = set()
+    for row in rows:
+        link = (row.get("Link") or "").strip()
+        if link:
+            urls.add(link)
+        company = (row.get("Company") or "").strip()
+        role = (row.get("Role") or "").strip()
+        if company or role:
+            keys.add(dedup_key(company, role))
+    return urls, keys
 
 
 def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
@@ -239,4 +310,8 @@ __all__ = [
     "load_existing_jobs",
     "append_jobs_typed",
     "backfill",
+    "read_rows",
+    "atomic_write_rows",
+    "append_rows",
+    "dedup_sets_from_rows",
 ]
