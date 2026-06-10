@@ -114,7 +114,7 @@ def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
 
     assert captured["task"] == "enrichment"
     assert captured["format_json"] is True
-    assert jobs[0]["fit"] == "7/10"
+    assert jobs[0]["fit"] == "7"
 
 
 def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
