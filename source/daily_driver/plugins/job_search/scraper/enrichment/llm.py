@@ -51,7 +51,7 @@ def _fetch_company_info(
         )
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=False
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout
         )
     except AITimeoutError as exc:
         log.warning(
@@ -467,7 +467,7 @@ def _fetch_fit_notes_for_job(
 
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=True
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout
         )
     except AITimeoutError as exc:
         log.warning(
