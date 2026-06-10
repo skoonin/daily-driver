@@ -50,9 +50,17 @@ def _config(roles: list[str] | None = None) -> ScrapeContext:
 
 
 def _make_fake_page(api_payload: dict[str, Any]) -> MagicMock:
-    """Return a mock Playwright page that fires the response listener once."""
+    """Return a mock Playwright page modeling the event-driven wait pattern.
+
+    The scraper now drives the search via ``page.expect_response(...)``: it
+    enters the context manager, runs the triggering action (Enter / scroll),
+    then the SPA fires a /api/v1/search response. This fake fires the captured
+    response listener when the action runs *inside* an active expect_response
+    block, matching the real ordering.
+    """
     page = MagicMock()
     captured_callbacks: list[Any] = []
+    fired = {"count": 0}
 
     def fake_on(event: str, callback: Any) -> None:
         if event == "response":
@@ -61,18 +69,26 @@ def _make_fake_page(api_payload: dict[str, Any]) -> MagicMock:
     def fake_remove_listener(event: str, callback: Any) -> None:
         pass
 
-    def fake_fill(value: str) -> None:
-        # Only fire on actual search terms; fill("") is a clear-before-type call.
-        if not value:
-            return
+    def _fire_response() -> None:
         mock_response = MagicMock()
         mock_response.url = "https://jobs.apple.com/api/v1/search"
         mock_response.json.return_value = api_payload
         for cb in captured_callbacks:
             cb(mock_response)
+        fired["count"] += 1
+
+    @contextmanager
+    def fake_expect_response(predicate: Any, **kwargs: Any) -> Any:
+        # The scraper runs the triggering action inside this block; a real
+        # /api/v1/search POST fires while we're waiting. Fire on first scroll/
+        # Enter pass only (one API "page" of results), so the result-count
+        # stall check ends pagination just like the live SPA.
+        if fired["count"] == 0:
+            _fire_response()
+        yield MagicMock()
 
     search_input = MagicMock()
-    search_input.fill = fake_fill
+    search_input.fill = MagicMock()
     page.query_selector.return_value = search_input
     page.on.side_effect = fake_on
     page.remove_listener.side_effect = fake_remove_listener
@@ -80,6 +96,7 @@ def _make_fake_page(api_payload: dict[str, Any]) -> MagicMock:
     page.wait_for_timeout = MagicMock()
     page.evaluate = MagicMock()
     page.press = MagicMock()
+    page.expect_response.side_effect = fake_expect_response
 
     return page
 
@@ -222,6 +239,28 @@ def test_location_falls_back_to_various_when_locations_empty(
     jobs = apple_module.scrape_apple(_config())
     assert len(jobs) == 1
     assert jobs[0]["location"] == "Various"
+
+
+def test_expect_response_timeout_degrades_gracefully(monkeypatch: Any) -> None:
+    """A timeout on expect_response (SPA never fired /api/v1/search) must not
+    raise — the scrape continues and returns whatever was captured (here none)."""
+    from playwright.sync_api import TimeoutError as PWTimeoutError
+
+    page = _make_fake_page({"res": {"searchResults": []}})
+
+    @contextmanager
+    def timing_out(predicate: Any, **kwargs: Any) -> Any:
+        raise PWTimeoutError("Timeout waiting for response")
+        yield  # unreachable
+
+    page.expect_response.side_effect = timing_out
+
+    monkeypatch.setattr(
+        apple_module, "_playwright_browser", lambda cfg: _fake_browser(page)
+    )
+
+    jobs = apple_module.scrape_apple(_config())
+    assert jobs == []
 
 
 def test_skips_items_without_position_id(monkeypatch: Any) -> None:
