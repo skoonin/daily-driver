@@ -26,7 +26,6 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     """
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
-    roles = list(ctx.plugin.roles)
     session = _http_session(ctx)
     jobs: list[dict] = []
     seen_ids: set[str] = set()
@@ -39,7 +38,7 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
         if "position" not in item:
             continue
         role = item["position"]
-        if not matches_roles(role, roles, ctx.plugin):
+        if not matches_roles(role, ctx.plugin):
             continue
         job_id = str(item.get("id", ""))
         if job_id in seen_ids:

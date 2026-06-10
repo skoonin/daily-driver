@@ -341,3 +341,60 @@ def test_prune_no_candidates_leaves_files_untouched(tmp_path: Path) -> None:
     assert candidates == []
     assert archived == 0
     assert not jobs_archive.archive_path_for(csv_path).exists()
+
+
+# ---------------------------------------------------------------------------
+# load_archive_dedup — silence-on-malformed-archive guard
+# ---------------------------------------------------------------------------
+
+
+def test_load_archive_dedup_extracts_urls_and_keys(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    archive = jobs_archive.archive_path_for(csv_path)
+    _write_csv(
+        archive,
+        [
+            _row(
+                company="OldCo",
+                link="https://x/old",
+                status="rejected",
+                last_seen="2026-04-01",
+            )
+        ],
+    )
+    urls, keys = jobs_archive.load_archive_dedup(csv_path)
+    assert "https://x/old" in urls
+    assert keys
+
+
+def test_load_archive_dedup_missing_archive_is_silent(
+    tmp_path: Path, caplog: Any
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        urls, keys = jobs_archive.load_archive_dedup(tmp_path / "jobs.csv")
+    assert urls == set() and keys == set()
+    assert not caplog.records
+
+
+def test_load_archive_dedup_warns_on_non_empty_archive_without_links(
+    tmp_path: Path, caplog: Any
+) -> None:
+    """A present archive whose rows yield no Link must warn, not silently no-op."""
+    import logging
+
+    csv_path = tmp_path / "jobs.csv"
+    archive = jobs_archive.archive_path_for(csv_path)
+    # Archive with a renamed/missing Link column — rows exist but no URLs.
+    with open(archive, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["Status", "Company", "Role"])
+        writer.writeheader()
+        writer.writerow({"Status": "rejected", "Company": "OldCo", "Role": "SRE"})
+
+    with caplog.at_level(logging.WARNING):
+        urls, _keys = jobs_archive.load_archive_dedup(csv_path)
+    assert urls == set()
+    assert any("no usable Link values" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]

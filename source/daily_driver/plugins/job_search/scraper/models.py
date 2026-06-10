@@ -29,8 +29,23 @@ from pydantic import (
     field_validator,
 )
 
+from daily_driver.core.logging import get_logger
+
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+log = get_logger(__name__)
+
+# Fit scores are bounded 1-10 at the model (EnrichedJob.fit). Out-of-range
+# values from a sloppy provider or a hand-edited cell are clamped here, never
+# raised, so one bad value cannot abort a whole backfill/run.
+FIT_MIN = 1
+FIT_MAX = 10
+
+
+def clamp_fit(score: int) -> int:
+    """Clamp a fit score into the model's 1-10 bound."""
+    return max(FIT_MIN, min(score, FIT_MAX))
 
 
 class JobStatus(str, Enum):
@@ -48,6 +63,11 @@ ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
 
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+# Product/Purpose default for un-enriched rows. Both fresh scraped jobs and
+# blank CSV cells carry this, so enrichment can tell "needs fill" from a real
+# value without a separate flag.
+_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
 
 
 def parse_fit(value: Any) -> int | None:
@@ -68,6 +88,32 @@ def parse_fit(value: Any) -> int | None:
         if leading.isascii() and leading.isdigit():
             return int(leading)
     return None
+
+
+def parse_fit_cell(value: Any, *, company: str = "unknown") -> int | None:
+    """Read a stored Fit cell into a bounded int, never raising.
+
+    Wraps ``parse_fit`` for the CSV read path: a non-empty cell that fails to
+    parse logs a warning and yields ``None`` (the W1.1 dropped-Fit warning,
+    re-homed from the deleted ``_dict_to_row``); an out-of-range value is
+    clamped to 1-10 with a warning so a legacy or hand-edited ``"15"`` cell can
+    never abort a backfill at construction time.
+    """
+    fit = parse_fit(value)
+    if fit is None:
+        raw = value if isinstance(value, str) else ""
+        if raw.strip():
+            log.warning("dropping unparseable Fit cell %r for %s", raw, company)
+        return None
+    clamped = clamp_fit(fit)
+    if clamped != fit:
+        log.warning(
+            "Fit %d out of range [1,10] for %s, clamped to %d",
+            fit,
+            company,
+            clamped,
+        )
+    return clamped
 
 
 def _parse_k_salary(s: str) -> int | None:
@@ -173,7 +219,7 @@ class EnrichedJob(BaseModel):
     comp: str = ""
     date_found: dt.date
 
-    product: str = "(auto-scraped -- needs fill)"
+    product: str = _PLACEHOLDER_PRODUCT
     gd_rating: str = ""
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
@@ -183,23 +229,44 @@ class EnrichedJob(BaseModel):
     status: JobStatus = JobStatus.FOUND
     skip_reason: str = ""
     date_applied: dt.date | None = None
+    # Drives `jobs prune --older-than`. Defaults to Date Found on write when
+    # unset (no upsert-on-rescan path yet), so prune ages from first-discovery.
+    date_last_seen: dt.date | None = None
 
+    # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
+    # derived from this map's key order and must stay byte-for-byte identical to
+    # existing jobs.csv files.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
-        "Notes": "notes",
         "Company": "company",
-        "Location": "location",
         "Role": "role",
         "Fit": "fit",
         "Comp": "comp",
-        "Date Found": "date_found",
-        "Date Applied": "date_applied",
-        "Link": "url",
+        "Location": "location",
         "Product/Purpose": "product",
         "GD Rating": "gd_rating",
+        "Notes": "notes",
+        "Date Found": "date_found",
+        "Date Applied": "date_applied",
+        "Date Last Seen": "date_last_seen",
+        "Link": "url",
         "Source": "source",
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
+
+    @property
+    def product_filled(self) -> bool:
+        """Whether Product/Purpose holds a real value (not the scrape placeholder).
+
+        Fresh scraped rows and blank CSV cells both surface as the placeholder
+        default, so company enrichment treats the placeholder as "still empty".
+        """
+        return bool(self.product) and self.product != _PLACEHOLDER_PRODUCT
+
+    @property
+    def product_or_blank(self) -> str:
+        """Product text for prompts, blanked when it is only the placeholder."""
+        return self.product if self.product_filled else ""
 
     @classmethod
     def from_normalized(cls, n: NormalizedJob) -> EnrichedJob:
@@ -215,6 +282,15 @@ class EnrichedJob(BaseModel):
             date_found=n.date_found,
         )
 
+    def with_updates(self, **updates: Any) -> EnrichedJob:
+        """Return a copy with ``updates`` applied through full pydantic validation.
+
+        ``model_copy(update=...)`` bypasses validators, so field constraints
+        (e.g. ``fit`` ``ge=1``) go unenforced — the W1.1 fit-bounds finding.
+        Routing every update through ``model_validate`` keeps constraints live.
+        """
+        return type(self).model_validate({**self.model_dump(), **updates})
+
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
         if self.status is JobStatus.SKIPPED and self.skip_reason:
@@ -225,19 +301,21 @@ class EnrichedJob(BaseModel):
             )
         return {
             "Status": self.status.value,
-            "Notes": notes,
             "Company": self.company,
-            "Location": self.location,
             "Role": self.role,
             "Fit": "" if self.fit is None else str(self.fit),
             "Comp": self.comp,
+            "Location": self.location,
+            "Product/Purpose": self.product,
+            "GD Rating": self.gd_rating,
+            "Notes": notes,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
             ),
+            # Seed from Date Found on insert so prune ages from first-discovery.
+            "Date Last Seen": (self.date_last_seen or self.date_found).isoformat(),
             "Link": self.url,
-            "Product/Purpose": self.product,
-            "GD Rating": self.gd_rating,
             "Source": self.source,
         }
 
@@ -260,13 +338,19 @@ class EnrichedJob(BaseModel):
             company=row.get("Company", ""),
             location=row.get("Location", ""),
             role=row.get("Role", "") or "(unknown)",
-            fit=parse_fit(row.get("Fit", "")),
+            fit=parse_fit_cell(
+                row.get("Fit", ""), company=row.get("Company", "") or "unknown"
+            ),
             comp=row.get("Comp", ""),
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
+            date_last_seen=_opt_date(row.get("Date Last Seen", "")),
             url=row.get("Link", ""),
-            product=(row.get("Product/Purpose", "") or "(auto-scraped -- needs fill)"),
+            # Preserve a blank Product cell as blank (do not substitute the
+            # placeholder) so a backfill rewrite is byte-identical for unenriched
+            # rows; product_filled treats blank and placeholder alike.
+            product=row.get("Product/Purpose", ""),
             gd_rating=row.get("GD Rating", ""),
             source=source,
             source_canonical=canonical,

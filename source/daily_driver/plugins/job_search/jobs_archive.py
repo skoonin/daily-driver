@@ -14,16 +14,25 @@ so a concurrent scrape cannot append rows between the read and the rewrite
 
 from __future__ import annotations
 
-import csv
-import os
 from datetime import date
 from pathlib import Path
 
 from daily_driver.core.locking import file_lock
+from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.jobs_lock import (
     clear_stale_adjacent_lock,
     jobs_lock_path,
 )
+from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    atomic_write_rows as _atomic_write_rows,
+)
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    dedup_sets_from_rows,
+)
+from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
+
+log = get_logger(__name__)
 
 # Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
 # row reaches and never leaves, so prune archives them by default.
@@ -32,49 +41,6 @@ DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
 
 def archive_path_for(jobs_csv: Path) -> Path:
     return jobs_csv.with_name("jobs.archive.csv")
-
-
-def _read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    if not csv_path.exists():
-        return [], []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        header = list(reader.fieldnames or [])
-        rows = [dict(r) for r in reader]
-    return header, rows
-
-
-def _atomic_write_rows(
-    csv_path: Path, header: list[str], rows: list[dict[str, str]]
-) -> None:
-    """Write rows via temp file + os.replace to avoid mid-write torn reads."""
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
-    with open(tmp, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-        )
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, csv_path)
-
-
-def _append_rows(csv_path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
-    if not rows:
-        return
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not csv_path.exists()
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-        )
-        if fresh:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def _parse_iso(s: str) -> date | None:
@@ -145,25 +111,22 @@ def prune(
 def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:
     """Return (urls, dedup_keys) from jobs.archive.csv.
 
-    Empty sets when archive is missing. ``dedup_key`` import is local to avoid
-    a circular dependency on the scraper package at module load time.
+    Empty sets when archive is missing. Reads and extracts dedup state through
+    the shared csv path so jobs.csv and jobs.archive.csv stay in lockstep.
+
+    Loud on a malformed-but-present archive: a non-empty file that yields no
+    URLs (missing/renamed Link column) would silently let archived/rejected
+    jobs be re-discovered, so warn naming the path — the live jobs.csv raises
+    for the same defect.
     """
     archive = archive_path_for(jobs_csv)
-    if not archive.exists():
-        return set(), set()
-
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key
-
-    urls: set[str] = set()
-    keys: set[str] = set()
-    with open(archive, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            link = (row.get("Link") or "").strip()
-            if link:
-                urls.add(link)
-            company = (row.get("Company") or "").strip()
-            role = (row.get("Role") or "").strip()
-            if company or role:
-                keys.add(dedup_key(company, role))
+    header, rows = _read_rows(archive)
+    urls, keys = dedup_sets_from_rows(rows)
+    if rows and not urls:
+        log.warning(
+            "%s has %d rows but no usable Link values (column missing or empty); "
+            "archived jobs may be re-discovered",
+            archive,
+            len(rows),
+        )
     return urls, keys

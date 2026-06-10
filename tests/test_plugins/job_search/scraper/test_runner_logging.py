@@ -513,7 +513,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "daily_driver.plugins.job_search.scraper.enrichment.enrich_job_details_typed",
+        "daily_driver.plugins.job_search.scraper.enrichment.enrich_job_details",
         interrupt,
     )
 

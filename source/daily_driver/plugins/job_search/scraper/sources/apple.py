@@ -40,7 +40,6 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.runner import countries_list
 
     cfg = ctx.plugin.scraper
-    roles = list(ctx.plugin.roles)
     terms = _search_terms(ctx.plugin)
     timeout_ms = cfg.timeout * 1000
     max_pages = cfg.max_pages
@@ -148,7 +147,7 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                     for item in api_results:
                         try:
                             title = item.get("postingTitle", "")
-                            if not title or not matches_roles(title, roles, ctx.plugin):
+                            if not title or not matches_roles(title, ctx.plugin):
                                 continue
                             position_id = item.get("positionId", "") or item.get(
                                 "id", ""

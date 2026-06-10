@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import csv
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
@@ -15,33 +16,19 @@ from daily_driver.plugins.job_search.jobs_lock import (
     clear_stale_adjacent_lock,
     jobs_lock_path,
 )
+from daily_driver.plugins.job_search.scraper.models import (
+    ENRICH_SKIP_STATUSES,
+    EnrichedJob,
+)
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
 
-CANONICAL_HEADER = [
-    "Status",
-    "Company",
-    "Role",
-    "Fit",
-    "Comp",
-    "Location",
-    "Product/Purpose",
-    "GD Rating",
-    "Notes",
-    "Date Found",
-    "Date Applied",
-    # Date Last Seen drives `jobs prune --older-than`. Today scraper
-    # only sets it on insert (defaults to Date Found); without an
-    # upsert-on-rescan path, prune ages from first-discovery.
-    "Date Last Seen",
-    "Link",
-    "Source",
-]
+# The single source of truth for jobs.csv column order, derived from the model.
+CANONICAL_HEADER = EnrichedJob.CANONICAL_HEADER
 
 
 def _make_backup(csv_path: Path) -> Path:
@@ -58,6 +45,85 @@ def _make_backup(csv_path: Path) -> Path:
     backup = backups_dir / f"{csv_path.name}.bak.{stamp}"
     shutil.copy2(csv_path, backup)
     return backup
+
+
+def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    """Return (header_columns, row_dicts) for a jobs-shaped CSV.
+
+    Empty (header, rows) when the file is absent. Shared by archive prune and
+    any caller that needs the rows as dicts keyed by CSV column.
+    """
+    if not csv_path.exists():
+        return [], []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        header = list(reader.fieldnames or [])
+        rows = [dict(r) for r in reader]
+    return header, rows
+
+
+def atomic_write_rows(
+    csv_path: Path, header: list[str], rows: list[dict[str, str]]
+) -> None:
+    """Rewrite a CSV atomically: temp file + flush/fsync + os.replace.
+
+    The single rewrite path for jobs.csv and jobs.archive.csv. On a mid-write
+    failure the partial temp file is unlinked before the error propagates, so a
+    crash never leaves a stray ``.tmp`` beside the data file.
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, csv_path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def append_rows(csv_path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
+    """Append row dicts to a CSV, writing the header first if the file is new."""
+    if not rows:
+        return
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fresh = not csv_path.exists()
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+        )
+        if fresh:
+            writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+
+
+def dedup_sets_from_rows(rows: list[dict[str, str]]) -> tuple[set[str], set[str]]:
+    """Extract (urls, dedup_keys) from row dicts keyed by CSV column.
+
+    Mirrors load_existing_jobs' extraction so jobs.csv and jobs.archive.csv
+    contribute dedup state through one code path.
+    """
+    from daily_driver.plugins.job_search.scraper.runner import dedup_key
+
+    urls: set[str] = set()
+    keys: set[str] = set()
+    for row in rows:
+        link = (row.get("Link") or "").strip()
+        if link:
+            urls.add(link)
+        company = (row.get("Company") or "").strip()
+        role = (row.get("Role") or "").strip()
+        if company or role:
+            keys.add(dedup_key(company, role))
+    return urls, keys
 
 
 def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
@@ -110,7 +176,7 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
 
 def append_jobs_typed(
     csv_path: Path,
-    jobs: list[EnrichedJob],  # noqa: F821
+    jobs: list[EnrichedJob],
     header: list[str],
 ) -> int:
     """Typed CSV writer: one row per ``EnrichedJob.to_csv_row()``.
@@ -120,8 +186,8 @@ def append_jobs_typed(
     Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
 
     Serializing concurrent mutations is the caller's contract: hold
-    ``file_lock(jobs_lock_path(...))`` around this call, as ``_rewrite_jobs_csv``
-    requires. This function does not lock.
+    ``file_lock(jobs_lock_path(...))`` around this call. This function does not
+    lock.
     """
     from daily_driver.plugins.job_search.scraper.runner import ScraperError
 
@@ -135,144 +201,15 @@ def append_jobs_typed(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
             for job in jobs:
-                row = job.to_csv_row()
-                # EnrichedJob does not model Date Last Seen; seed it from Date
-                # Found on insert so `jobs prune` ages from first-discovery
-                # (matching the legacy writer's behavior).
-                if "Date Last Seen" in header:
-                    row.setdefault("Date Last Seen", row.get("Date Found", ""))
-                writer.writerow(row)
+                writer.writerow(job.to_csv_row())
                 written += 1
     except OSError as exc:
         raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc
     return written
 
 
-def _enriched_to_dict(job: EnrichedJob) -> dict[str, Any]:  # noqa: F821
-    """Project an EnrichedJob into the legacy working-dict shape.
-
-    Used by typed enricher wrappers so existing dict-based enricher bodies
-    (which mutate in place) can run unchanged.
-    """
-    return {
-        "company": job.company,
-        "role": job.role,
-        "location": job.location,
-        "url": job.url,
-        "source": job.source,
-        "source_canonical": job.source_canonical,
-        "source_board": job.source_board,
-        "comp": job.comp,
-        "date_found": job.date_found.isoformat(),
-        "product": job.product,
-        "gd_rating": job.gd_rating,
-        "fit": "" if job.fit is None else job.fit,
-        "notes": job.notes,
-        "description_text": job.description_text,
-        "status": job.status.value,
-    }
-
-
-def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
-    """Pick the enricher-mutated fields out of the working dict.
-
-    Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
-    """
-    from daily_driver.plugins.job_search.scraper.models import JobStatus, parse_fit
-
-    updates: dict[str, Any] = {}
-    if "product" in d:
-        updates["product"] = d["product"]
-    if "gd_rating" in d:
-        updates["gd_rating"] = d["gd_rating"]
-    if "fit" in d:
-        updates["fit"] = parse_fit(d["fit"])
-    if "notes" in d:
-        updates["notes"] = d["notes"]
-    if "description_text" in d:
-        updates["description_text"] = d["description_text"]
-    if "status" in d and d["status"]:
-        updates["status"] = JobStatus(d["status"])
-    if "skip_reason" in d:
-        updates["skip_reason"] = d["skip_reason"]
-    if "comp" in d and d["comp"]:
-        updates["comp"] = d["comp"]
-    return updates
-
-
-# Column mapping: CSV header name -> internal dict key
-_CSV_TO_DICT = {
-    "Status": "status",
-    "Company": "company",
-    "Product/Purpose": "product",
-    "Role": "role",
-    "Comp": "comp",
-    "Location": "location",
-    "Fit": "fit",
-    "GD Rating": "gd_rating",
-    "Source": "source",
-    "Date Found": "date_found",
-    "Date Applied": "date_applied",
-    "Link": "url",
-    "Notes": "notes",
-}
-
-_DICT_TO_CSV = {v: k for k, v in _CSV_TO_DICT.items()}
-
-_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
-
-
-def _row_to_dict(row: dict[str, str]) -> dict[str, str]:
-    """Convert a CSV DictReader row to our internal job dict format."""
-    out: dict[str, str] = {}
-    for csv_col, dict_key in _CSV_TO_DICT.items():
-        val = (row.get(csv_col) or "").strip()
-        if dict_key == "product" and val == _PLACEHOLDER_PRODUCT:
-            val = ""
-        out[dict_key] = val
-    return out
-
-
-def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
-    """Convert an internal job dict back to a CSV row dict."""
-    from daily_driver.plugins.job_search.scraper.models import parse_fit
-
-    row = {col: "" for col in header}
-    for dict_key, csv_col in _DICT_TO_CSV.items():
-        if csv_col in row:
-            row[csv_col] = job.get(dict_key, "")
-    # Normalize fit to the bare-int contract so legacy "7/10" cells rewrite clean.
-    raw_fit = row.get("Fit", "")
-    fit = parse_fit(raw_fit)
-    if fit is None and raw_fit.strip():
-        log.warning(
-            "backfill: dropping unparseable Fit cell %r for %s",
-            raw_fit,
-            job.get("company", "unknown"),
-        )
-    row["Fit"] = "" if fit is None else str(fit)
-    return row
-
-
-def _rewrite_jobs_csv(
-    csv_path: Path,
-    header: list[str],
-    jobs: list[dict[str, str]],
-) -> None:
-    """Rewrite jobs.csv atomically (via .csv.tmp + rename) from in-memory rows."""
-    tmp_path = csv_path.with_suffix(".csv.tmp")
-    with open(tmp_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=header,
-            quoting=csv.QUOTE_MINIMAL,
-            extrasaction="ignore",
-        )
-        writer.writeheader()
-        for job in jobs:
-            writer.writerow(_dict_to_row(job, header))
-
-    tmp_path.rename(csv_path)
+def _active(job: EnrichedJob) -> bool:
+    return job.status.value not in ENRICH_SKIP_STATUSES
 
 
 def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
@@ -295,17 +232,13 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
             header = list(reader.fieldnames or CANONICAL_HEADER)
             rows = list(reader)
 
-        from daily_driver.plugins.job_search.scraper.models import (
-            ENRICH_SKIP_STATUSES,
-        )
+        jobs = [EnrichedJob.from_csv_row(r) for r in rows]
 
-        jobs = [_row_to_dict(r) for r in rows]
-
-        active = [j for j in jobs if j.get("status") not in ENRICH_SKIP_STATUSES]
-        needs_product = sum(1 for j in active if not j.get("product"))
-        needs_fit = sum(1 for j in active if not j.get("fit"))
-        needs_gd = sum(1 for j in active if not j.get("gd_rating"))
-        needs_notes = sum(1 for j in active if not j.get("notes"))
+        active = [j for j in jobs if _active(j)]
+        needs_product = sum(1 for j in active if not j.product_filled)
+        needs_fit = sum(1 for j in active if not j.fit)
+        needs_gd = sum(1 for j in active if not j.gd_rating)
+        needs_notes = sum(1 for j in active if not j.notes)
         skipped_count = len(jobs) - len(active)
 
         log.info(
@@ -329,11 +262,11 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
         log.info("[backfill] backed up to %s", backup.name)
 
         try:
-            enrich_company_descriptions(jobs, ctx, budget=0)
-            enrich_fit_and_notes(jobs, ctx, budget=0)
+            jobs, _ = enrich_company_descriptions(jobs, ctx, budget=0)
+            jobs, _ = enrich_fit_and_notes(jobs, ctx, budget=0)
         except KeyboardInterrupt:
             try:
-                _rewrite_jobs_csv(csv_path, header, jobs)
+                atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
                 save_status = (
                     f"partial progress saved to jobs.csv "
                     f"(original preserved at {backup.name})"
@@ -350,12 +283,13 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
             print(f"Backfill interrupted: {save_status}", file=sys.stderr)
             raise
 
-        _rewrite_jobs_csv(csv_path, header, jobs)
+        atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
 
-    filled_product = needs_product - sum(1 for j in active if not j.get("product"))
-    filled_fit = needs_fit - sum(1 for j in active if not j.get("fit"))
-    filled_gd = needs_gd - sum(1 for j in active if not j.get("gd_rating"))
-    filled_notes = needs_notes - sum(1 for j in active if not j.get("notes"))
+    active = [j for j in jobs if _active(j)]
+    filled_product = needs_product - sum(1 for j in active if not j.product_filled)
+    filled_fit = needs_fit - sum(1 for j in active if not j.fit)
+    filled_gd = needs_gd - sum(1 for j in active if not j.gd_rating)
+    filled_notes = needs_notes - sum(1 for j in active if not j.notes)
     print(
         f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
         f"+{filled_fit} Fit, +{filled_notes} Notes"
@@ -366,12 +300,9 @@ __all__ = [
     "CANONICAL_HEADER",
     "load_existing_jobs",
     "append_jobs_typed",
-    "_CSV_TO_DICT",
-    "_DICT_TO_CSV",
-    "_PLACEHOLDER_PRODUCT",
-    "_row_to_dict",
-    "_dict_to_row",
     "backfill",
-    "_enriched_to_dict",
-    "_dict_to_enriched_updates",
+    "read_rows",
+    "atomic_write_rows",
+    "append_rows",
+    "dedup_sets_from_rows",
 ]
