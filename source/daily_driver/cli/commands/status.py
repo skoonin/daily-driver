@@ -284,7 +284,9 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _to_utc(dt: datetime.datetime) -> datetime.datetime:
-    # Normalize naive datetimes (assumed UTC) to offset-aware for comparison.
+    # core.clock.now writes local-aware timestamps; a hand-edited naive value
+    # is local wall-clock time. Interpret it as local (.astimezone()), not UTC,
+    # so recent/stalled math isn't skewed by the local UTC offset.
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=datetime.UTC)
+        return dt.astimezone()
     return dt

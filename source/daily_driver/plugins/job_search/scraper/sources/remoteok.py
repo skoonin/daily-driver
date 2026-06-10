@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.scraper.comp import _to_int
 from daily_driver.plugins.job_search.scraper.sources._http import (
     _api_get,
     _http_session,
@@ -45,13 +46,13 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
             continue
         if job_id:
             seen_ids.add(job_id)
-        sal_min = item.get("salary_min")
-        sal_max = item.get("salary_max")
+        sal_min = _to_int(item.get("salary_min"))
+        sal_max = _to_int(item.get("salary_max"))
         currency = item.get("salary_currency") or "USD"
         prefix = "$" if currency == "USD" else f"{currency} "
         comp = (
-            f"{prefix}{int(sal_min):,}-{prefix}{int(sal_max):,}/yr"
-            if sal_min and sal_max
+            f"{prefix}{sal_min:,}-{prefix}{sal_max:,}/yr"
+            if sal_min is not None and sal_max is not None
             else ""
         )
         job: dict = {

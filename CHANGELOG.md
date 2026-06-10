@@ -93,6 +93,10 @@ log`. Versioned release history starts at 1.0.
 
 ### Fixed
 
+- **A malformed salary in a RemoteOK listing no longer fails the whole source
+  during `jobs run`**: a float or float-string pay value used to raise an error
+  that dropped every RemoteOK result; the value is now coerced tolerantly and
+  the listing is kept (with comp blank if it can't be parsed). (#83)
 - **Job fit scores now appear in jobs.csv**: scores were computed by the
   enricher but silently dropped, leaving the Fit column blank after `jobs run`.
   Legacy `7/10`-style cells are still readable and normalize to bare integers on
