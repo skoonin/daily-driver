@@ -91,6 +91,9 @@ log`. Versioned release history starts at 1.0.
 
 ### Fixed
 
+- `tracker update --extra` now merges keys into the existing extras instead of
+  replacing them; unmentioned keys are no longer dropped. (#77)
+
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
   country-name alias, so `location_matches` silently dropped every Apple job
