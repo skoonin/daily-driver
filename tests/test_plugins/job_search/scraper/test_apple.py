@@ -263,6 +263,48 @@ def test_expect_response_timeout_degrades_gracefully(monkeypatch: Any) -> None:
     assert jobs == []
 
 
+def test_search_response_fallback_emits_aggregate_warning(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """When search-response waits keep timing out (predicate never matches), a
+    single aggregate warning must fire so a site change isn't a silent 0-found."""
+    import logging
+
+    from playwright.sync_api import TimeoutError as PWTimeoutError
+
+    page = _make_fake_page({"res": {"searchResults": []}})
+
+    @contextmanager
+    def timing_out(predicate: Any, **kwargs: Any) -> Any:
+        raise PWTimeoutError("Timeout waiting for response")
+        yield  # unreachable
+
+    page.expect_response.side_effect = timing_out
+    monkeypatch.setattr(
+        apple_module, "_playwright_browser", lambda cfg: _fake_browser(page)
+    )
+
+    with caplog.at_level(
+        logging.WARNING, logger="daily_driver.plugins.job_search.scraper.sources.apple"
+    ):
+        apple_module.scrape_apple(_config())
+
+    # One aggregate warning per scrape (not one per attempt): the message names
+    # the fallback ratio across all attempts. (caplog can double-capture via
+    # logger+root propagation, so assert on distinct content, not record count.)
+    warnings = {
+        r.getMessage()
+        for r in caplog.records
+        if "search-response wait timed out" in r.getMessage()
+    }
+    assert (
+        len(warnings) == 1
+    ), f"expected one aggregate fallback message, got {warnings}"
+    msg = next(iter(warnings))
+    assert "site may have changed" in msg
+    assert "on 2/2 attempts" in msg  # both Enter waits fell back, counted once
+
+
 def test_skips_items_without_position_id(monkeypatch: Any) -> None:
     """Items missing positionId must not be returned."""
     payload: dict[str, Any] = {

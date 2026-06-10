@@ -15,6 +15,7 @@ silently stored.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 from collections.abc import Callable, Sequence
@@ -292,29 +293,38 @@ def enrich_company_descriptions(
 
     pool_size = _enrich_pool_size(ctx)
     if pool_size > 1:
-        pool = ThreadPoolExecutor(max_workers=pool_size)
-        # Populate `futures` incrementally so the SIGINT handler always sees a
-        # mapping that reflects what's actually been submitted. A bulk replace
-        # would leave a window where the handler reads {} and reports "0".
-        futures: dict[Any, str] = {}
-        previous_handler = _install_interrupt_notifier(
-            futures, plan.timeout, "companies"
-        )
-        for c in plan.companies:
-            futures[pool.submit(plan.fetch, c)] = c
-        try:
-            for fut in as_completed(futures):
-                plan.consume(fut, futures[fut])
-            pool.shutdown(wait=True)
-        except KeyboardInterrupt:
-            pool.shutdown(wait=False, cancel_futures=True)
-            for fut in futures:
-                if fut.done() and not fut.cancelled():
-                    plan.consume(fut, futures[fut])
-            plan.stitch()
-            raise
-        finally:
-            _restore_interrupt_handler(previous_handler)
+        # `with` guarantees the pool is joined even on the exception path so a
+        # crash can't hang at atexit; the KI branch still cancels pending work
+        # before the with-exit (a harmless second shutdown).
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            # Populate `futures` incrementally so the SIGINT handler always sees a
+            # mapping that reflects what's been submitted. A bulk replace would
+            # leave a window where the handler reads {} and reports "0".
+            futures: dict[Any, str] = {}
+            previous_handler = _install_interrupt_notifier(
+                futures, plan.timeout, "companies"
+            )
+            for c in plan.companies:
+                futures[pool.submit(plan.fetch, c)] = c
+            try:
+                for fut in as_completed(futures):
+                    _guarded_consume(
+                        plan.consume, fut, futures[fut], "company", plan.stats
+                    )
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                for fut in futures:
+                    if fut.done() and not fut.cancelled():
+                        # Drain must never replace the KeyboardInterrupt with a
+                        # result-application error: swallow + continue so KI
+                        # always re-raises.
+                        _guarded_consume(
+                            plan.consume, fut, futures[fut], "company", plan.stats
+                        )
+                plan.stitch()
+                raise
+            finally:
+                _restore_interrupt_handler(previous_handler)
         plan.stitch()
         return plan.out, plan.stats
 
@@ -478,12 +488,48 @@ def _build_fit_notes_prompt(
     return prompt
 
 
+def _guarded_consume(
+    consume: Callable[[Future[Any], Any], None],
+    fut: Future[Any],
+    key: Any,
+    kind: str,
+    stats: dict[str, int],
+) -> None:
+    """Run a plan's ``consume`` for one future, isolating non-interrupt errors.
+
+    A worker exception surfaces at ``fut.result()`` and any error applying the
+    result (e.g. a malformed value reaching ``int()``) would otherwise escape the
+    ``as_completed`` loop, skip the company stitch, and crash run() with the whole
+    scraped batch lost. Catching here turns it into one counted failure so the
+    rest of the batch still enriches. ``KeyboardInterrupt`` always propagates.
+    """
+    try:
+        consume(fut, key)
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        stats["failed"] += 1
+        log.warning(
+            "%s %s=%r: dropping enrichment result (%s)",
+            _enrich_tag("enrich"),
+            kind,
+            key,
+            exc,
+        )
+
+
 def _clamp_fit(raw: float, company: str, role: str) -> int:
     """Clamp an LLM fit score to the model's 1-10 bound, logging any clamp.
 
     Out-of-range LLM scores are clamped rather than rejected so a usable signal
     survives a sloppy provider response; the raw value stays visible at -v.
+
+    Raises ValueError on a non-finite ``raw`` (NaN/Infinity): ``int()`` of those
+    raises anyway, so reject explicitly. Callers gate on ``math.isfinite`` before
+    this, so a raise here is the defense-in-depth backstop, not the normal path.
     """
+    if not math.isfinite(raw):
+        raise ValueError(f"non-finite fit score: {raw!r}")
     score = int(raw)
     clamped = clamp_fit(score)
     if clamped != score:
@@ -577,7 +623,14 @@ def _fetch_fit_notes_for_job(
 
     fit_val = parsed.get("fit")
     notes_val = parsed.get("notes", "")
-    if not isinstance(fit_val, (int, float)):
+    # bool is an int subclass; treat True/False as missing. NaN/Infinity slip
+    # through json.loads and the isinstance check but explode in int() — reject
+    # them here as a counted failure so one bad response never crashes the batch.
+    if (
+        not isinstance(fit_val, (int, float))
+        or isinstance(fit_val, bool)
+        or not math.isfinite(fit_val)
+    ):
         log.warning(
             "%s company=%s role=%s: JSON missing valid fit field: %r",
             _enrich_tag("enrich-fit-notes"),
@@ -828,24 +881,29 @@ def enrich_fit_and_notes(
 
     pool_size = _enrich_pool_size(ctx)
     if pool_size > 1:
-        pool = ThreadPoolExecutor(max_workers=pool_size)
-        # See enrich_company_descriptions for why this is incremental.
-        futures: dict[Any, int] = {}
-        previous_handler = _install_interrupt_notifier(futures, plan.timeout, "jobs")
-        for idx in plan.target_idx:
-            futures[pool.submit(plan.fetch, idx)] = idx
-        try:
-            for fut in as_completed(futures):
-                plan.consume(fut, futures[fut])
-            pool.shutdown(wait=True)
-        except KeyboardInterrupt:
-            pool.shutdown(wait=False, cancel_futures=True)
-            for fut in futures:
-                if fut.done() and not fut.cancelled():
-                    plan.consume(fut, futures[fut])
-            raise
-        finally:
-            _restore_interrupt_handler(previous_handler)
+        # `with` joins the pool on every exit path (see company enricher).
+        with ThreadPoolExecutor(max_workers=pool_size) as pool:
+            # See enrich_company_descriptions for why this is incremental.
+            futures: dict[Any, int] = {}
+            previous_handler = _install_interrupt_notifier(
+                futures, plan.timeout, "jobs"
+            )
+            for idx in plan.target_idx:
+                futures[pool.submit(plan.fetch, idx)] = idx
+            try:
+                for fut in as_completed(futures):
+                    _guarded_consume(plan.consume, fut, futures[fut], "job", plan.stats)
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                for fut in futures:
+                    if fut.done() and not fut.cancelled():
+                        # Swallow drain errors so KI always re-raises.
+                        _guarded_consume(
+                            plan.consume, fut, futures[fut], "job", plan.stats
+                        )
+                raise
+            finally:
+                _restore_interrupt_handler(previous_handler)
         log.info(
             "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
             plan.stats["enriched"],
@@ -931,9 +989,6 @@ def enrich_product_and_fit_concurrently(
     if company_plan is None and fit_plan is None:
         return jobs, product_stats, fit_stats
 
-    # One shared executor caps total concurrency across both enrichers at
-    # pool_size; both submit into it rather than spinning up a pool each.
-    pool = ThreadPoolExecutor(max_workers=pool_size)
     # tag is ("company", company_str) or ("fit", idx); populated incrementally so
     # the SIGINT handler always sees what's actually been submitted.
     futures: dict[Future[Any], tuple[str, Any]] = {}
@@ -946,51 +1001,62 @@ def enrich_product_and_fit_concurrently(
             else ctx.plugin.enrichment.enrich_timeout
         )
     )
-    # ONE notifier for the whole overlapped section: nested per-enricher installs
-    # would fight over signal.signal. "items" since the drain spans both nouns.
-    previous_handler = _install_interrupt_notifier(futures, timeout, "items")
-    # Interleave submission so the executor's queue carries both kinds from the
-    # start — submitting all of one kind first would drain it before the other
-    # ever ran, defeating the overlap.
-    company_q = list(company_plan.companies) if company_plan is not None else []
-    fit_q = list(fit_plan.target_idx) if fit_plan is not None else []
-    ci = fi = 0
-    while ci < len(company_q) or fi < len(fit_q):
-        if ci < len(company_q):
-            assert company_plan is not None
-            futures[pool.submit(company_plan.fetch, company_q[ci])] = (
-                "company",
-                company_q[ci],
-            )
-            ci += 1
-        if fi < len(fit_q):
-            assert fit_plan is not None
-            futures[pool.submit(fit_plan.fetch, fit_q[fi])] = ("fit", fit_q[fi])
-            fi += 1
 
     def _dispatch(fut: Future[Any]) -> None:
+        # Route to the owning plan's consume, isolating non-interrupt errors so
+        # one bad result (worker raise, non-finite fit) never escapes the loop,
+        # skips the company stitch, and crashes run() with the batch lost.
         kind, key = futures[fut]
         if kind == "company":
             assert company_plan is not None
-            company_plan.consume(fut, key)
+            _guarded_consume(
+                company_plan.consume, fut, key, "company", company_plan.stats
+            )
         else:
             assert fit_plan is not None
-            fit_plan.consume(fut, key)
+            _guarded_consume(fit_plan.consume, fut, key, "job", fit_plan.stats)
 
-    try:
-        for fut in as_completed(futures):
-            _dispatch(fut)
-        pool.shutdown(wait=True)
-    except KeyboardInterrupt:
-        pool.shutdown(wait=False, cancel_futures=True)
-        for fut in futures:
-            if fut.done() and not fut.cancelled():
+    # One shared executor caps total concurrency across both enrichers at
+    # pool_size; both submit into it rather than spinning up a pool each. `with`
+    # joins it on every exit path so a crash can't hang at atexit.
+    with ThreadPoolExecutor(max_workers=pool_size) as pool:
+        # ONE notifier for the whole overlapped section: nested per-enricher
+        # installs would fight over signal.signal. "items" spans both nouns.
+        previous_handler = _install_interrupt_notifier(futures, timeout, "items")
+        # Interleave submission so the executor's queue carries both kinds from
+        # the start — submitting all of one kind first would drain it before the
+        # other ever ran, defeating the overlap.
+        company_q = list(company_plan.companies) if company_plan is not None else []
+        fit_q = list(fit_plan.target_idx) if fit_plan is not None else []
+        ci = fi = 0
+        while ci < len(company_q) or fi < len(fit_q):
+            if ci < len(company_q):
+                assert company_plan is not None
+                futures[pool.submit(company_plan.fetch, company_q[ci])] = (
+                    "company",
+                    company_q[ci],
+                )
+                ci += 1
+            if fi < len(fit_q):
+                assert fit_plan is not None
+                futures[pool.submit(fit_plan.fetch, fit_q[fi])] = ("fit", fit_q[fi])
+                fi += 1
+
+        try:
+            for fut in as_completed(futures):
                 _dispatch(fut)
-        if company_plan is not None:
-            company_plan.stitch()
-        raise
-    finally:
-        _restore_interrupt_handler(previous_handler)
+        except KeyboardInterrupt:
+            pool.shutdown(wait=False, cancel_futures=True)
+            for fut in futures:
+                if fut.done() and not fut.cancelled():
+                    # _dispatch already swallows non-interrupt errors, so KI
+                    # always survives the drain to re-raise below.
+                    _dispatch(fut)
+            if company_plan is not None:
+                company_plan.stitch()
+            raise
+        finally:
+            _restore_interrupt_handler(previous_handler)
 
     if company_plan is not None:
         company_plan.stitch()

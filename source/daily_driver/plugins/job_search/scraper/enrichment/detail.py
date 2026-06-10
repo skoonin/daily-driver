@@ -52,41 +52,58 @@ class _HostThrottle:
     """Per-host politeness gate: enforces >= ``delay`` seconds between requests
     to the SAME netloc while letting different hosts proceed concurrently.
 
-    A per-netloc lock + last-fetch timestamp serializes only same-host fetches;
-    distinct hosts never block each other. Thread-safe: the registry of
-    per-host locks is guarded by ``_registry_lock``.
+    The lock is held only to RESERVE a slot (advance the host's next-allowed
+    timestamp), never across the sleep. A worker then sleeps outside the lock
+    until its reserved time, so a dominant host's backlog spaces only its own
+    requests — it never parks workers that could be serving other hosts (no
+    head-of-line blocking). One registry lock guards the timestamp map.
     """
 
     def __init__(self, delay: float) -> None:
         self._delay = delay
-        self._registry_lock = threading.Lock()
-        self._host_locks: dict[str, threading.Lock] = {}
-        self._last_fetch: dict[str, float] = {}
-
-    def _host_lock(self, host: str) -> threading.Lock:
-        with self._registry_lock:
-            lock = self._host_locks.get(host)
-            if lock is None:
-                lock = threading.Lock()
-                self._host_locks[host] = lock
-            return lock
+        self._lock = threading.Lock()
+        # host -> monotonic time at which this host's next request may fire.
+        self._next_allowed: dict[str, float] = {}
 
     def wait(self, host: str) -> None:
-        """Block until ``delay`` has elapsed since this host's last fetch, then
-        record now as the new last-fetch time. Holds the host lock across the
-        sleep so concurrent same-host workers queue rather than all rush at once."""
+        """Reserve this request's slot for ``host`` (advancing the host's
+        next-allowed time by ``delay``), then sleep — outside the lock — until
+        that slot. Concurrent same-host callers serialize via their reservations;
+        different hosts never wait on each other."""
         if self._delay <= 0:
             return
-        lock = self._host_lock(host)
-        # Held across the sleep: a second same-host worker must wait out the full
-        # spacing rather than reading a stale timestamp and firing early.
-        with lock:
-            last = self._last_fetch.get(host)
-            if last is not None:
-                elapsed = time.monotonic() - last
-                if elapsed < self._delay:
-                    time.sleep(self._delay - elapsed)
-            self._last_fetch[host] = time.monotonic()
+        now = time.monotonic()
+        with self._lock:
+            # Reserve at the later of now / the host's next free slot, then push
+            # the slot forward for whoever reserves next. Released immediately so
+            # the sleep below blocks only this worker, not other hosts' workers.
+            start = max(now, self._next_allowed.get(host, now))
+            self._next_allowed[host] = start + self._delay
+        wait_s = start - now
+        if wait_s > 0:
+            time.sleep(wait_s)
+
+
+def _round_robin_by_host(
+    targets: list[tuple[int, str]],
+) -> list[tuple[int, str]]:
+    """Reorder (idx, url) targets round-robin across their hosts.
+
+    Groups by netloc (preserving each host's original order), then takes one
+    per host per pass. A dominant host's long run is spread out so its targets
+    don't monopolize the worker pool ahead of sparser hosts.
+    """
+    groups: dict[str, list[tuple[int, str]]] = {}
+    for idx, url in targets:
+        groups.setdefault(urlsplit(url).netloc, []).append((idx, url))
+    queues = list(groups.values())
+    ordered: list[tuple[int, str]] = []
+    longest = max((len(q) for q in queues), default=0)
+    for col in range(longest):
+        for q in queues:
+            if col < len(q):
+                ordered.append(q[col])
+    return ordered
 
 
 def enrich_job_details(
@@ -214,26 +231,42 @@ def enrich_job_details(
 
     n_hosts = len({urlsplit(url).netloc for _, url in fetch_targets})
     workers = max(1, min(_MAX_DETAIL_WORKERS, n_hosts)) if fetch_targets else 1
+    # Interleave submission round-robin by host so a dominant host's long run of
+    # targets can't fill every worker slot ahead of other hosts' work. Combined
+    # with the lock-free throttle (sleep outside the lock), other hosts' fetches
+    # reach a worker promptly instead of queueing behind the backlog.
+    submit_order = _round_robin_by_host(fetch_targets)
 
     if fetch_targets and workers > 1:
-        pool = ThreadPoolExecutor(max_workers=workers)
-        futures: dict[Future[Any], tuple[int, str]] = {}
-        for idx, url in fetch_targets:
-            futures[pool.submit(_fetch, url)] = (idx, url)
-        try:
-            # Slot replacement happens here on the calling thread (never in a
-            # worker), so out[] mutation is single-threaded like llm.py.
-            for fut in as_completed(futures):
-                idx, url = futures[fut]
-                _apply(idx, url, fut.result())
-            pool.shutdown(wait=True)
-        except KeyboardInterrupt:
-            pool.shutdown(wait=False, cancel_futures=True)
-            for fut in futures:
-                if fut.done() and not fut.cancelled():
+        # `with` joins the pool on every exit path so a crash can't hang at
+        # atexit; the KI branch still cancels pending work before the with-exit.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures: dict[Future[Any], tuple[int, str]] = {}
+            for idx, url in submit_order:
+                futures[pool.submit(_fetch, url)] = (idx, url)
+            try:
+                # Slot replacement happens here on the calling thread (never in a
+                # worker), so out[] mutation is single-threaded like llm.py.
+                for fut in as_completed(futures):
                     idx, url = futures[fut]
                     _apply(idx, url, fut.result())
-            raise
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                for fut in futures:
+                    if fut.done() and not fut.cancelled():
+                        idx, url = futures[fut]
+                        # A drain-time apply error must not replace the
+                        # KeyboardInterrupt: swallow + continue so KI re-raises.
+                        try:
+                            _apply(idx, url, fut.result())
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning(
+                                "[detail] %s: dropping result during interrupt "
+                                "drain (%s)",
+                                url,
+                                exc,
+                            )
+                raise
     else:
         for idx, url in fetch_targets:
             _apply(idx, url, _fetch(url))

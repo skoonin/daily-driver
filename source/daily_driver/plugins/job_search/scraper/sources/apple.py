@@ -28,7 +28,7 @@ def _is_search_response(response: Any) -> bool:
     return "jobs.apple.com/api/v1/search" in response.url
 
 
-def _await_search_response(page: Any, action: Any) -> None:
+def _await_search_response(page: Any, action: Any) -> bool:
     """Run ``action()`` then wait (event-driven, bounded) for the next
     /api/v1/search response the SPA fires in reaction to it.
 
@@ -37,6 +37,10 @@ def _await_search_response(page: Any, action: Any) -> None:
     is both faster (returns the instant data lands) and more reliable than a
     guessed duration. A timeout falls back to the prior behavior — proceed and
     let the result-count stall check decide — so a missing response can't hang.
+
+    Returns True when the wait timed out (fell back), so the caller can count
+    fallbacks and surface a single aggregate warning: a site redesign that breaks
+    the predicate would otherwise leave Apple a permanently silent "0 found".
     """
     from playwright.sync_api import TimeoutError as PWTimeoutError
 
@@ -47,6 +51,8 @@ def _await_search_response(page: Any, action: Any) -> None:
             action()
     except PWTimeoutError:
         log.debug("[apple] no /api/v1/search response within bound; continuing")
+        return True
+    return False
 
 
 def scrape_apple(ctx: ScrapeContext) -> list[dict]:
@@ -78,6 +84,11 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
     known_urls = ctx.known_urls
     skipped_known = 0
     base_url = "https://jobs.apple.com"
+    # Count search-response waits and how many fell back to the timeout bound. A
+    # site redesign that breaks the /api/v1/search predicate would otherwise make
+    # Apple a permanently silent "0 found"; a high fallback ratio surfaces it.
+    wait_attempts = 0
+    wait_fallbacks = 0
 
     try:
         with _playwright_browser(ctx) as page:
@@ -156,21 +167,25 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                         page.wait_for_timeout(500)
                         # Enter fires the search POST; wait on its response rather
                         # than a fixed 4s sleep.
-                        _await_search_response(
+                        wait_attempts += 1
+                        if _await_search_response(
                             page, lambda: search_input.press("Enter")
-                        )
+                        ):
+                            wait_fallbacks += 1
 
                         # Scroll to trigger additional API pages; each scroll
                         # fires another search POST, so wait on the response
                         # instead of a fixed 2s sleep.
                         for _ in range(max_pages - 1):
                             prev_count = len(api_results)
-                            _await_search_response(
+                            wait_attempts += 1
+                            if _await_search_response(
                                 page,
                                 lambda: page.evaluate(
                                     "window.scrollTo(0, document.body.scrollHeight)"
                                 ),
-                            )
+                            ):
+                                wait_fallbacks += 1
                             if len(api_results) == prev_count:
                                 break
                     except Exception as exc:
@@ -246,6 +261,18 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                 log.info("[apple] %s: %d roles matched so far", country, len(jobs))
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
+
+    # One aggregate warning when search-response waits fell back to the timeout
+    # bound: persistent fallbacks mean the SPA never fired the intercepted
+    # /api/v1/search POST (likely a site change), which would otherwise hide
+    # behind a silent "0 found" success.
+    if wait_fallbacks:
+        log.warning(
+            "[apple] search-response wait timed out on %d/%d attempts — "
+            "site may have changed (results may be incomplete)",
+            wait_fallbacks,
+            wait_attempts,
+        )
 
     log.info(
         "[apple] %d jobs matched (%d skipped as already-known)",

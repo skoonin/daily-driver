@@ -210,36 +210,70 @@ class TestMergedJobspyScraper:
         scrape_jobspy(self._config(), sites=["indeed"])
         assert calls["site_name"] == ["indeed"]
 
-    def test_partial_per_site_failure_keeps_other_sites_rows(
+    @staticmethod
+    def _row(site: str, url: str) -> dict[str, object]:
+        return {
+            "company": "Acme",
+            "title": "Software Engineer",
+            "location": "Remote",
+            "job_url": url,
+            "site": site,
+            "description": "infra",
+            "min_amount": None,
+            "max_amount": None,
+            "currency": None,
+            "interval": None,
+        }
+
+    def test_merged_call_raise_retries_each_site_and_keeps_good_rows(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """JobSpy returns one DataFrame for the merged call; if one site fails it
-        simply contributes no rows. Our wrapper must keep the surviving site's
-        rows (here: indeed rows present, linkedin absent)."""
+        """The installed jobspy has no per-site isolation: one site raising kills
+        the merged DataFrame. Our wrapper must retry each enabled site alone so
+        the healthy site's rows survive (here: linkedin raises, indeed recovers)."""
+        import jobspy as jobspy_pkg
         import pandas as pd
 
-        # Simulate a merged frame where only indeed returned rows (linkedin
-        # silently yielded nothing — a partial failure inside the one call).
-        frame = pd.DataFrame(
-            [
-                {
-                    "company": "Acme",
-                    "title": "Software Engineer",
-                    "location": "Remote",
-                    "job_url": "https://indeed.com/job/1",
-                    "site": "indeed",
-                    "description": "infra",
-                    "min_amount": None,
-                    "max_amount": None,
-                    "currency": None,
-                    "interval": None,
-                }
-            ]
-        )
-        self._install_mock(monkeypatch, frame=frame)
+        def fake(**kwargs: object) -> object:
+            site_name = kwargs["site_name"]
+            assert isinstance(site_name, list)
+            if site_name == ["linkedin", "indeed"]:
+                raise RuntimeError("linkedin blew up the merged call")
+            if site_name == ["linkedin"]:
+                raise RuntimeError("linkedin still down")
+            if site_name == ["indeed"]:
+                return pd.DataFrame([self._row("indeed", "https://indeed.com/job/1")])
+            return pd.DataFrame()
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
         out = scrape_jobspy(self._config())
         assert len(out) == 1
-        assert out[0]["source"] == "indeed"  # per-row attribution survives
+        assert out[0]["source"] == "indeed"  # healthy site's rows kept
+
+    def test_zero_row_enabled_site_warns(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An enabled site that contributes zero rows all run must warn (the merge
+        otherwise hides a single-board outage behind the other site's results)."""
+        import logging
+
+        import pandas as pd
+
+        # Merged frame carries only indeed rows; linkedin contributes nothing.
+        frame = pd.DataFrame([self._row("indeed", "https://indeed.com/job/1")])
+        self._install_mock(monkeypatch, frame=frame)
+        with caplog.at_level(
+            logging.WARNING,
+            logger="daily_driver.plugins.job_search.scraper.sources.jobspy",
+        ):
+            scrape_jobspy(self._config())
+        warns = {
+            r.getMessage()
+            for r in caplog.records
+            if "returned 0 rows across all searches" in r.getMessage()
+        }
+        assert any("linkedin" in m for m in warns), warns
+        assert not any("indeed" in m for m in warns), "indeed contributed, no warn"
 
     def test_reports_progress_per_term_country(
         self, monkeypatch: pytest.MonkeyPatch

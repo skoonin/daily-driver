@@ -189,3 +189,97 @@ def test_interrupt_restores_previous_sigint_handler(
     sentinel = signal.getsignal(signal.SIGINT)
     enrich_product_and_fit_concurrently(_jobs(4), _ctx(max_parallel=4))
     assert signal.getsignal(signal.SIGINT) is sentinel
+
+
+def test_nan_fit_is_one_counted_failure_others_enrich(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A NaN fit (parses through json.loads, finite check rejects it) must be a
+    single counted failure — not a crash that loses the whole batch. Products
+    still stitch and the other jobs still get fits."""
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        if "valid JSON" in prompt:
+            # The one bad job returns a non-finite fit; the rest are valid.
+            if "Co0 " in prompt or "Co0," in prompt or "at Co0" in prompt:
+                return '{"fit": NaN, "notes": "x"}'
+            return '{"fit": 7, "notes": "ok"}'
+        return "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = _jobs(5)
+    out, product_stats, fit_stats = enrich_product_and_fit_concurrently(
+        jobs, _ctx(max_parallel=4)
+    )
+
+    # Products stitched for everyone (company stitch ran — no crash).
+    assert all(j.product == "Some product" for j in out)
+    assert product_stats["enriched"] == 5
+    # The NaN job is a counted failure; the other 4 enrich.
+    assert fit_stats["failed"] >= 1
+    assert sum(1 for j in out if j.fit == 7) == 4
+
+
+def test_worker_exception_is_one_counted_failure_others_enrich(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An arbitrary worker exception surfacing at fut.result() must be isolated
+    to one counted failure; the rest of the batch still enriches and stitches."""
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        if "valid JSON" in prompt and "Co0" in prompt:
+            raise RuntimeError("worker blew up")
+        if "valid JSON" in prompt:
+            return '{"fit": 7, "notes": "ok"}'
+        return "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = _jobs(5)
+    out, product_stats, fit_stats = enrich_product_and_fit_concurrently(
+        jobs, _ctx(max_parallel=4)
+    )
+
+    assert all(j.product == "Some product" for j in out)  # stitch ran
+    assert fit_stats["failed"] >= 1
+    assert sum(1 for j in out if j.fit == 7) == 4
+
+
+def test_interrupt_with_failing_drain_still_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If applying a drained future raises during the interrupt drain, the
+    KeyboardInterrupt must still propagate (drain errors are swallowed)."""
+    count = [0]
+    count_lock = threading.Lock()
+    block = threading.Event()
+
+    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+        with count_lock:
+            count[0] += 1
+            n = count[0]
+        is_fit = "valid JSON" in prompt
+        if n <= 4:
+            # Some early-finished fit results carry a NaN so the drain's _apply
+            # path (which reaches int()) raises mid-drain.
+            if is_fit:
+                return '{"fit": NaN, "notes": "x"}'
+            return "Some product"
+        block.wait(timeout=5.0)
+        return '{"fit": 7, "notes": "ok"}' if is_fit else "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = _jobs(16)
+
+    def trip_sigint() -> None:
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with count_lock:
+                if count[0] >= 4:
+                    break
+            time.sleep(0.01)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    threading.Thread(target=trip_sigint, daemon=True).start()
+    with pytest.raises(KeyboardInterrupt):
+        enrich_product_and_fit_concurrently(jobs, _ctx(max_parallel=4))
+    block.set()

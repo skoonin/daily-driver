@@ -99,6 +99,45 @@ def test_different_hosts_overlap() -> None:
     )
 
 
+def test_dominant_host_does_not_block_other_hosts() -> None:
+    """A dominant host's same-host backlog must not park all workers on its
+    spacing: other-host fetches complete promptly, not after the backlog drains.
+
+    8 same-host + 2 other-host jobs, 4 workers, delay 0.3s. If the throttle held
+    a per-host lock across the sleep, 4 workers could all queue behind the
+    greenhouse host and the other-host fetches would wait out the backlog
+    (~0.6s+). With slot-reservation the other hosts fire immediately."""
+    delay = 0.3
+    finish: dict[str, float] = {}
+    finish_lock = threading.Lock()
+    start = time.monotonic()
+
+    def fake_api_get(session: Any, url: str, ctx: Any, **kwargs: Any) -> Any:
+        with finish_lock:
+            finish[url] = time.monotonic() - start
+        resp = MagicMock()
+        resp.text = "<html></html>"
+        return resp
+
+    jobs = [_job(f"https://dominant.example.com/{i}") for i in range(8)]
+    jobs += [
+        _job("https://other-a.example.com/x"),
+        _job("https://other-b.example.com/y"),
+    ]
+    with (
+        patch(f"{_DETAIL}._api_get", side_effect=fake_api_get),
+        patch(f"{_DETAIL}._parse_detail_page", return_value={}),
+    ):
+        enrich_job_details(jobs, _ctx(delay))
+
+    # The two distinct other hosts have no backlog, so each fires on its first
+    # (immediate) reservation — well before one full same-host spacing interval.
+    other_a = finish["https://other-a.example.com/x"]
+    other_b = finish["https://other-b.example.com/y"]
+    assert other_a < delay, f"other-host A waited {other_a:.3f}s (>= delay {delay})"
+    assert other_b < delay, f"other-host B waited {other_b:.3f}s (>= delay {delay})"
+
+
 def test_cache_hit_returns_without_fetch() -> None:
     """Two jobs sharing a detail URL must trigger only ONE HTTP fetch."""
     jobs = [
