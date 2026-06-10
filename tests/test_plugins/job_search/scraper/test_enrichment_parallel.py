@@ -185,7 +185,7 @@ def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> 
     ]
     enrichment.enrich_fit_and_notes(jobs, _ollama_config())
 
-    assert all(j["fit"] == "7/10" for j in jobs)
+    assert all(j["fit"] == "7" for j in jobs)
 
 
 def test_fit_notes_progress_callback_fires_per_job(

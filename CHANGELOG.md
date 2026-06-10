@@ -26,6 +26,8 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Faster CLI startup**: template-rendering dependencies now load only during
+  `init`, not on every command invocation. (#76)
 - **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
   use `linkedin` / `indeed` instead of `jobspy_linkedin` / `jobspy_indeed`. The
   `sources.jobspy.*` config block is unchanged.
@@ -90,6 +92,20 @@ log`. Versioned release history starts at 1.0.
   six-country ceiling — Apple now covers any country it posts in. (#70)
 
 ### Fixed
+
+- **Job fit scores now appear in jobs.csv**: scores were computed by the
+  enricher but silently dropped, leaving the Fit column blank after `jobs run`.
+  Legacy `7/10`-style cells are still readable and normalize to bare integers on
+  the next backfill. (#79)
+- **Custom edits to `.claude/hooks` scripts now survive `doctor --fix` and
+  version upgrades**: hook scripts previously were overwritten on every
+  regenerate, bypassing the SHA-256 manifest contract every other managed file
+  follows. They now join that contract — user-edited hooks are preserved (and
+  counted as preserved), and hooks dropped from the package are reaped. Note:
+  the first regenerate after this release refreshes hooks from the package once;
+  edits made after that are preserved. (#78)
+- `tracker update --extra` now merges keys into the existing extras instead of
+  replacing them; unmentioned keys are no longer dropped. (#77)
 
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
