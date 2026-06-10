@@ -223,14 +223,13 @@ _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
-# The three JobSpy aggregator sites share one config toggle (`sources.jobspy`),
-# so their source ids route there rather than to a per-id toggle.
-_JOBSPY_SITES: frozenset[str] = frozenset({"linkedin", "indeed"})
-
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "weworkremotely": "we work remotely",
     "hn_who_is_hiring": "hn who's hiring",
     "hn_jobs": "hn jobs",
+    # One merged JobSpy scraper requests LinkedIn + Indeed in a single call; the
+    # row reads as both so the funnel labels what it covers.
+    "jobspy": "linkedin + indeed (jobspy)",
 }
 
 
@@ -243,8 +242,7 @@ def _display_name(source_id: str) -> str:
 # timer) reassures the user the row isn't stuck. Unmapped sources show a plain
 # "running" marker.
 _SLOW_SOURCE_NOTES: dict[str, str] = {
-    "linkedin": "running -- can take several minutes",
-    "indeed": "running -- can take several minutes",
+    "jobspy": "running -- can take several minutes",
     # Apple runs headless while the live block is pinned (force_headless), so the
     # note describes the slow headless browser scrape, not a visible window.
     "apple": "running -- headless browser scrape, can take a minute",
@@ -536,11 +534,6 @@ def run_all_scrapers(
     else:
 
         def _is_enabled(sid: str) -> bool:
-            if sid in _JOBSPY_SITES:
-                toggle = source_cfg.get("jobspy")
-                if toggle is None or not toggle.enabled:
-                    return False
-                return getattr(toggle, sid, True)
             toggle = source_cfg.get(sid)
             return toggle.enabled if toggle is not None else False
 
@@ -563,8 +556,7 @@ def run_all_scrapers(
     # any JobSpy worker -- so their WARN+ lines count toward the run's
     # Warnings: N total and read in our format, and stay silent in normal mode.
     # (Live per-source progress comes from ctx.report, not JobSpy's logs.)
-    jobspy_enabled = [sid for sid in enabled if sid in _JOBSPY_SITES]
-    if jobspy_enabled:
+    if "jobspy" in enabled:
         try:
             import jobspy  # noqa: F401  -- create the import-time JobSpy:* loggers
         except ImportError:
@@ -576,14 +568,14 @@ def run_all_scrapers(
             # so isn't adopted yet. Force the runtime-named loggers to exist now
             # so adoption attaches our handler first; jobspy's create_logger then
             # won't add its own stderr handler (it only adds when none exist).
-            for sid in jobspy_enabled:
-                logging.getLogger(f"JobSpy:{sid.capitalize()}")
+            for site in ("Linkedin", "Indeed"):
+                logging.getLogger(f"JobSpy:{site}")
             adopt_third_party_loggers("JobSpy")
 
         # Explain the per-board query count once, here in the single-threaded
-        # setup -- not inside each JobSpy worker, which would duplicate the line
-        # (one per site) and race enlighten's cursor. Each JobSpy board searches
-        # every (search term x country) pair.
+        # setup -- not inside the JobSpy worker, which would race enlighten's
+        # cursor. The merged JobSpy call searches every (search term x country)
+        # pair across the enabled boards.
         if on_note is not None:
             from daily_driver.plugins.job_search.scraper.roles import _search_terms
 

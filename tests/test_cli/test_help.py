@@ -132,8 +132,9 @@ def test_help_sources_lists_known_scrapers(
     rc = app(["--workspace", str(tmp_path), "help", "sources", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
-    # SOURCE_REGISTRY ships at least these.
-    for src in ("remoteok", "weworkremotely", "greenhouse", "linkedin"):
+    # SOURCE_REGISTRY ships at least these (jobspy is the merged LinkedIn +
+    # Indeed scraper).
+    for src in ("remoteok", "weworkremotely", "greenhouse", "jobspy"):
         assert src in data["sources"]["sources"]
 
 

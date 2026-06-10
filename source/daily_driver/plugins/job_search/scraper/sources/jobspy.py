@@ -149,7 +149,16 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
-    """Headless multi-source scraper via JobSpy (LinkedIn, Indeed).
+    """Headless multi-source scraper via JobSpy (LinkedIn + Indeed in one call).
+
+    One ``scrape_jobs`` call per (search term x country) requests every enabled
+    site at once via ``site_name=[...]`` — collapsing the former per-site
+    scrapers into a single registered ``jobspy`` source. When ``sites`` is None
+    the enabled set is read from the ``jobspy`` toggle's ``linkedin`` / ``indeed``
+    sub-flags; an explicit ``sites`` list overrides (used by tests). Per-row
+    Source attribution survives because ``normalize_jobspy_row`` stamps each row
+    from JobSpy's own ``site`` field, so a merged call still yields rows labeled
+    "linkedin" / "indeed" individually.
 
     Imported lazily so the module still loads when python-jobspy is not yet
     installed — only this scraper fails in that case, not the whole pipeline.
@@ -174,10 +183,22 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
         )
         return []
 
-    jobspy_cfg = source_toggle(ctx.plugin, "jobspy", JobspyToggle).jobs
+    toggle = source_toggle(ctx.plugin, "jobspy", JobspyToggle)
+    jobspy_cfg = toggle.jobs
     results_wanted = jobspy_cfg.results_wanted_per_query
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed
+
+    # Resolve the enabled site set from the per-site sub-toggles. An explicit
+    # `sites` arg (tests) wins; otherwise honor linkedin/indeed flags. Glassdoor
+    # stays disabled: JobSpy's path returns HTTP 400 ("location not parsed").
+    if sites is None:
+        enabled_sites = [s for s in ("linkedin", "indeed") if getattr(toggle, s)]
+    else:
+        enabled_sites = list(sites)
+    if not enabled_sites:
+        log.debug("[jobspy] no sites enabled; skipping")
+        return []
 
     terms = _search_terms(ctx.plugin)
     countries = countries_list(ctx.plugin)
@@ -199,12 +220,9 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             country_indeed = jobspy_country(country_code, default_country_indeed)
             names = country_names(country_code)
             location_name = names[0] if names else country
-            # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
-            # ("location not parsed") on every request and retries for minutes.
-            run_sites = sites if sites is not None else ["linkedin", "indeed"]
             try:
                 df = jobspy_scrape(
-                    site_name=run_sites,
+                    site_name=enabled_sites,
                     search_term=term,
                     location=location_name,
                     results_wanted=results_wanted,
@@ -262,20 +280,10 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     return jobs
 
 
-def scrape_jobspy_linkedin(ctx: ScrapeContext) -> list[dict]:
-    return scrape_jobspy(ctx, sites=["linkedin"])
-
-
-def scrape_jobspy_indeed(ctx: ScrapeContext) -> list[dict]:
-    return scrape_jobspy(ctx, sites=["indeed"])
-
-
 __all__ = [
     "_jobspy_str",
     "_format_jobspy_comp",
     "jobspy_row_to_raw",
     "normalize_jobspy_row",
     "scrape_jobspy",
-    "scrape_jobspy_linkedin",
-    "scrape_jobspy_indeed",
 ]

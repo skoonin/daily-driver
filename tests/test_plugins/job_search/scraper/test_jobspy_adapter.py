@@ -14,8 +14,6 @@ from daily_driver.plugins.job_search.scraper.sources.jobspy import (
     jobspy_row_to_raw,
     normalize_jobspy_row,
     scrape_jobspy,
-    scrape_jobspy_indeed,
-    scrape_jobspy_linkedin,
 )
 
 
@@ -148,68 +146,102 @@ def test_url_stripped_at_boundary(bad_url: str) -> None:
     assert raw.url == "https://x"
 
 
-class TestPerSiteScrapers:
-    """The thin per-site wrappers forward the correct ``site_name`` list."""
+class TestMergedJobspyScraper:
+    """One merged ``jobspy`` scraper requests every enabled site in one call,
+    reading the per-site sub-toggles off the ``jobspy`` config toggle."""
 
     @staticmethod
-    def _config() -> ScrapeContext:
-        return ScrapeContext(
-            plugin=JobSearchPlugin.model_validate(
-                {
-                    "roles": ["software engineer"],
-                    "locations": {"countries": ["US"]},
-                    "scraper": {
-                        "enabled": True,
-                        "search_terms": ["software engineer"],
-                    },
-                }
-            )
-        )
+    def _config(**sources: object) -> ScrapeContext:
+        cfg: dict[str, object] = {
+            "roles": ["software engineer"],
+            "locations": {"countries": ["US"]},
+            "scraper": {
+                "enabled": True,
+                "search_terms": ["software engineer"],
+            },
+        }
+        if sources:
+            cfg["sources"] = sources
+        return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))
 
     @staticmethod
-    def _install_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    def _install_mock(
+        monkeypatch: pytest.MonkeyPatch, frame: object | None = None
+    ) -> dict[str, object]:
         import pandas as pd
 
         calls: dict[str, object] = {}
 
-        def fake(**kwargs: object) -> pd.DataFrame:
+        def fake(**kwargs: object) -> object:
             calls.update(kwargs)
-            return pd.DataFrame()
+            return frame if frame is not None else pd.DataFrame()
 
         import jobspy as jobspy_pkg
 
         monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
         return calls
 
-    def test_scrape_jobspy_linkedin_calls_correct_site(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy_linkedin(self._config())
-        assert calls["site_name"] == ["linkedin"]
-
-    def test_scrape_jobspy_indeed_calls_correct_site(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy_indeed(self._config())
-        assert calls["site_name"] == ["indeed"]
-
-    def test_scrape_jobspy_sites_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config(), sites=["indeed"])
-        assert calls["site_name"] == ["indeed"]
-
-    def test_scrape_jobspy_default_uses_both_sites(
+    def test_default_requests_both_sites_in_one_call(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = self._install_mock(monkeypatch)
         scrape_jobspy(self._config())
         assert calls["site_name"] == ["linkedin", "indeed"]
 
-    def test_scrape_jobspy_reports_progress_per_term_country(
+    def test_one_site_disabled_passes_only_the_other(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config(jobspy={"enabled": True, "linkedin": False}))
+        assert calls["site_name"] == ["indeed"]
+
+    def test_both_sites_disabled_skips_the_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        out = scrape_jobspy(
+            self._config(jobspy={"enabled": True, "linkedin": False, "indeed": False})
+        )
+        assert out == []
+        assert calls == {}  # scrape_jobs never invoked
+
+    def test_explicit_sites_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config(), sites=["indeed"])
+        assert calls["site_name"] == ["indeed"]
+
+    def test_partial_per_site_failure_keeps_other_sites_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """JobSpy returns one DataFrame for the merged call; if one site fails it
+        simply contributes no rows. Our wrapper must keep the surviving site's
+        rows (here: indeed rows present, linkedin absent)."""
+        import pandas as pd
+
+        # Simulate a merged frame where only indeed returned rows (linkedin
+        # silently yielded nothing — a partial failure inside the one call).
+        frame = pd.DataFrame(
+            [
+                {
+                    "company": "Acme",
+                    "title": "Software Engineer",
+                    "location": "Remote",
+                    "job_url": "https://indeed.com/job/1",
+                    "site": "indeed",
+                    "description": "infra",
+                    "min_amount": None,
+                    "max_amount": None,
+                    "currency": None,
+                    "interval": None,
+                }
+            ]
+        )
+        self._install_mock(monkeypatch, frame=frame)
+        out = scrape_jobspy(self._config())
+        assert len(out) == 1
+        assert out[0]["source"] == "indeed"  # per-row attribution survives
+
+    def test_reports_progress_per_term_country(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Each (term x country) pair advances the live progress reporter."""
@@ -220,7 +252,7 @@ class TestPerSiteScrapers:
         ctx = replace(
             self._config(), report=lambda done, total: reports.append((done, total))
         )
-        scrape_jobspy_linkedin(ctx)
+        scrape_jobspy(ctx)
         # One config term x one country -> reported once at (0, 1).
         assert reports and reports[0] == (0, 1)
         assert all(total == 1 for _done, total in reports)
