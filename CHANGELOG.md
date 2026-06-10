@@ -91,6 +91,14 @@ log`. Versioned release history starts at 1.0.
 
 ### Fixed
 
+- **Custom edits to `.claude/hooks` scripts now survive `doctor --fix` and
+  version upgrades**: hook scripts previously were overwritten on every
+  regenerate, bypassing the SHA-256 manifest contract every other managed file
+  follows. They now join that contract — user-edited hooks are preserved (and
+  counted as preserved), and hooks dropped from the package are reaped. Note:
+  the first regenerate after this release refreshes hooks from the package once;
+  edits made after that are preserved. (#78)
+
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
   country-name alias, so `location_matches` silently dropped every Apple job
