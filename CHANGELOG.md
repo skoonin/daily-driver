@@ -31,9 +31,22 @@ log`. Versioned release history starts at 1.0.
   `max_enrich_companies` (default 50) per run. (#86)
 - **Faster CLI startup**: template-rendering dependencies now load only during
   `init`, not on every command invocation. (#76)
-- **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
-  use `linkedin` / `indeed` instead of `jobspy_linkedin` / `jobspy_indeed`. The
-  `sources.jobspy.*` config block is unchanged.
+- **JobSpy is now one merged `jobspy` source**: LinkedIn and Indeed are
+  requested in a single `scrape_jobs` call per search rather than two separate
+  scrapers, so `jobs run -S` (and the source registry) take `jobspy` instead of
+  `linkedin` / `indeed`. Enable each site via the `sources.jobspy.linkedin` /
+  `sources.jobspy.indeed` sub-toggles (unchanged); per-row Source attribution
+  still shows the originating site. If one site fails mid-call, the run retries
+  the enabled sites individually for that search so the healthy site's rows are
+  not lost, and an enabled site that returns zero rows across the whole run logs
+  a warning. (#87)
+- **Faster `jobs run`**: the Product and Fit/Notes enrichment phases now overlap
+  under one shared concurrency cap (never more than `claude.max_parallel`
+  provider calls in flight across both), detail-page fetches run on a small
+  per-host-throttled pool instead of a single serial loop, the Apple scrape
+  waits on the live search response instead of fixed multi-second sleeps, and
+  the headless scrape pool default rose from 4 to 8 workers so all headless
+  sources run in one wave. (#87)
 - **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the
   default `hn_max_posts` cap was hitting on every run, so the same first 100
   relevance-ranked roles recurred and nothing past them was ever scraped.

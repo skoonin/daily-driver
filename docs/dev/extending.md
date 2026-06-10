@@ -113,7 +113,7 @@ This recipe applies to the `job_search` plugin. Each scraper lives in its own mo
 scrape_<name>(ctx: ScrapeContext) → list[dict]
     ↓
 run_all_scrapers:
-    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 4)
+    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 8)
     phase 2 — Playwright sources serial (memory + bot-detection)
     ↓
 merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/JSON-LD)
@@ -158,7 +158,7 @@ Monkeypatch the HTTP client or Playwright context to return fixture bytes; asser
 
 ### JobSpy vs native parser
 
-**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes — Google for Jobs is currently broken upstream (token/JS-gated; returns 0) and is *not* shipped. The shipped per-site JobSpy scrapers register under the bare ids `linkedin` and `indeed` in the `SCRAPERS` dict — these are also the `jobs run -S <id>` selectors. In `.dd-config.yaml` they remain sub-toggles under `jobspy:` (`jobspy.linkedin`, etc.).
+**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes — Google for Jobs is currently broken upstream (token/JS-gated; returns 0) and is *not* shipped. JobSpy registers as a single `jobspy` scraper in the `SCRAPERS` dict — also the `jobs run -S jobspy` selector — that requests LinkedIn + Indeed in one merged `scrape_jobs` call per search and reads the enabled site set from the `jobspy.linkedin` / `jobspy.indeed` sub-toggles. Per-row Source attribution survives because `normalize_jobspy_row` stamps each row from JobSpy's own `site` field. In `.dd-config.yaml` the sites remain sub-toggles under `jobspy:` (`jobspy.linkedin`, etc.).
 
 **Write a native scraper** when:
 

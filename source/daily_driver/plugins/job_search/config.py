@@ -144,7 +144,7 @@ class ScraperConfig(BaseModel):
         default=False, description="", json_schema_extra={"template_skip": True}
     )
     parallel_workers: int = Field(
-        default=4,
+        default=8,
         description="Worker threads for the parallel (headless) scrape phase.",
     )
     max_pages: int = Field(
@@ -336,9 +336,10 @@ class JobSearchPlugin(BaseModel):
                     " `playwright install`):"
                 ),
                 "jobspy": (
-                    "python-jobspy aggregator. Each site runs as a separate parallel\n"
-                    "scraper (requires `python-jobspy>=1.1.82`, fetched with\n"
-                    "linkedin_fetch_description=True). Glassdoor is intentionally\n"
+                    "python-jobspy aggregator. LinkedIn + Indeed are requested in\n"
+                    "one merged call per search (requires `python-jobspy>=1.1.82`,\n"
+                    "fetched with linkedin_fetch_description=True); toggle each site\n"
+                    "with the linkedin/indeed flags. Glassdoor is intentionally\n"
                     "excluded — JobSpy's Glassdoor path returns HTTP 400 (\"location\n"
                     'not parsed") on every request as of 2026-04.'
                 ),

@@ -214,7 +214,7 @@ def test_scraper_config_defaults():
     assert m.timeout == 30
     assert m.search_terms is None
     assert m.headless is False
-    assert m.parallel_workers == 4
+    assert m.parallel_workers == 8
     assert m.max_pages == 3
     assert m.browser == "firefox"
 

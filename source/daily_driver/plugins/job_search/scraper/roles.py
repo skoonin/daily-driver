@@ -8,6 +8,7 @@ runner<->roles edge a single arrow and avoids an import cycle.
 from __future__ import annotations
 
 import re
+import threading
 import weakref
 from dataclasses import dataclass
 
@@ -155,20 +156,24 @@ class RoleMatcher:
 # Cache the prepared matcher per plugin instance so each run compiles role
 # patterns once (the same ctx.plugin is threaded to every source). Keyed on
 # id(); a weakref finalizer evicts the entry when the plugin is collected so
-# the cache cannot leak or alias a recycled id within a live run.
+# the cache cannot leak or alias a recycled id within a live run. The lock makes
+# the get/build/set atomic: matches_roles runs on every parallel scrape worker,
+# so an unguarded check-then-set could build the matcher more than once.
 _MATCHER_CACHE: dict[int, RoleMatcher] = {}
+_MATCHER_CACHE_LOCK = threading.Lock()
 
 
 def _matcher_for(plugin: JobSearchPlugin | None) -> RoleMatcher:
     if plugin is None:
         return RoleMatcher.from_plugin(None)
     key = id(plugin)
-    cached = _MATCHER_CACHE.get(key)
-    if cached is None:
-        cached = RoleMatcher.from_plugin(plugin)
-        _MATCHER_CACHE[key] = cached
-        weakref.finalize(plugin, _MATCHER_CACHE.pop, key, None)
-    return cached
+    with _MATCHER_CACHE_LOCK:
+        cached = _MATCHER_CACHE.get(key)
+        if cached is None:
+            cached = RoleMatcher.from_plugin(plugin)
+            _MATCHER_CACHE[key] = cached
+            weakref.finalize(plugin, _MATCHER_CACHE.pop, key, None)
+        return cached
 
 
 def matches_roles(title: str, plugin: JobSearchPlugin | None = None) -> bool:

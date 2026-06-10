@@ -174,11 +174,11 @@ def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
     ddlog.configure("normal")
     our_handler = ddlog._handler
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"linkedin": lambda _ctx: []})
+    monkeypatch.setattr(runner, "SCRAPERS", {"jobspy": lambda _ctx: []})
     try:
         runner.run_all_scrapers(
-            _cfg_with_sources(["linkedin"], workers=1),
-            sources_override=["linkedin"],
+            _cfg_with_sources(["jobspy"], workers=1),
+            sources_override=["jobspy"],
         )
         # Both the import-time and the runtime-cased loggers route through us.
         assert module_logger.handlers == [our_handler]
@@ -219,12 +219,10 @@ def test_run_all_scrapers_notes_jobspy_query_count_once(monkeypatch) -> None:
     from daily_driver.plugins.job_search.scraper import runner
 
     notes: list[str] = []
-    monkeypatch.setattr(
-        runner, "SCRAPERS", {"linkedin": lambda _ctx: [], "indeed": lambda _ctx: []}
-    )
+    monkeypatch.setattr(runner, "SCRAPERS", {"jobspy": lambda _ctx: []})
     runner.run_all_scrapers(
-        _cfg_with_sources(["linkedin", "indeed"], workers=1),
-        sources_override=["linkedin", "indeed"],
+        _cfg_with_sources(["jobspy"], workers=1),
+        sources_override=["jobspy"],
         on_note=notes.append,
     )
     assert len(notes) == 1  # one line for both boards, not one per site

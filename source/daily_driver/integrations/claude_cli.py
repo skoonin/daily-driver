@@ -127,6 +127,10 @@ def invoke(
     )
 
     try:
+        # No start_new_session: the child intentionally shares our foreground
+        # process group so a terminal Ctrl-C (SIGINT) reaches the claude children
+        # immediately. Putting them in their own session/group would orphan them
+        # from the tty signal and leave them running after the user interrupts.
         proc = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,

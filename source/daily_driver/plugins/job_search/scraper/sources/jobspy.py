@@ -149,7 +149,16 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
-    """Headless multi-source scraper via JobSpy (LinkedIn, Indeed).
+    """Headless multi-source scraper via JobSpy (LinkedIn + Indeed in one call).
+
+    One ``scrape_jobs`` call per (search term x country) requests every enabled
+    site at once via ``site_name=[...]`` — collapsing the former per-site
+    scrapers into a single registered ``jobspy`` source. When ``sites`` is None
+    the enabled set is read from the ``jobspy`` toggle's ``linkedin`` / ``indeed``
+    sub-flags; an explicit ``sites`` list overrides (used by tests). Per-row
+    Source attribution survives because ``normalize_jobspy_row`` stamps each row
+    from JobSpy's own ``site`` field, so a merged call still yields rows labeled
+    "linkedin" / "indeed" individually.
 
     Imported lazily so the module still loads when python-jobspy is not yet
     installed — only this scraper fails in that case, not the whole pipeline.
@@ -174,20 +183,48 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
         )
         return []
 
-    jobspy_cfg = source_toggle(ctx.plugin, "jobspy", JobspyToggle).jobs
+    toggle = source_toggle(ctx.plugin, "jobspy", JobspyToggle)
+    jobspy_cfg = toggle.jobs
     results_wanted = jobspy_cfg.results_wanted_per_query
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed
+
+    # Resolve the enabled site set from the per-site sub-toggles. An explicit
+    # `sites` arg (tests) wins; otherwise honor linkedin/indeed flags. Glassdoor
+    # stays disabled: JobSpy's path returns HTTP 400 ("location not parsed").
+    if sites is None:
+        enabled_sites = [s for s in ("linkedin", "indeed") if getattr(toggle, s)]
+    else:
+        enabled_sites = list(sites)
+    if not enabled_sites:
+        log.debug("[jobspy] no sites enabled; skipping")
+        return []
 
     terms = _search_terms(ctx.plugin)
     countries = countries_list(ctx.plugin)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
+    # Per-site contribution tally so an enabled board that returns zero rows
+    # across the whole run surfaces as a warning — the merge would otherwise hide
+    # a single-site outage behind the other site's results.
+    rows_per_site: dict[str, int] = {s: 0 for s in enabled_sites}
+
+    def _call(site_list: list[str], term: str, location: str, country_indeed: str):  # type: ignore[no-untyped-def]
+        """One jobspy_scrape call. Raises TypeError (version bail) to the caller;
+        all other exceptions propagate so the caller can decide retry vs skip."""
+        return jobspy_scrape(
+            site_name=site_list,
+            search_term=term,
+            location=location,
+            results_wanted=results_wanted,
+            country_indeed=country_indeed,
+            hours_old=hours_old,
+            linkedin_fetch_description=True,
+        )
 
     # Live progress unit: one (search term x country) pair. Reported at the top
     # of each iteration so a skipped/failed pair (continue below) still advances.
-    # The per-board search count is announced once by the runner (on_note), not
-    # here -- each site runs as its own scraper and would otherwise duplicate it.
+    # The per-board search count is announced once by the runner (on_note).
     total = len(terms) * len(countries)
     done = 0
 
@@ -199,23 +236,20 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             country_indeed = jobspy_country(country_code, default_country_indeed)
             names = country_names(country_code)
             location_name = names[0] if names else country
-            # Glassdoor disabled: JobSpy's Glassdoor path returns HTTP 400
-            # ("location not parsed") on every request and retries for minutes.
-            run_sites = sites if sites is not None else ["linkedin", "indeed"]
+
+            # Happy path: one merged call for all enabled sites. The installed
+            # jobspy (1.1.82) has no per-site try/except, so one site RAISING
+            # kills the merged DataFrame and would drop the healthy site's rows
+            # for this pair too. On failure, retry each site alone so an outage
+            # on one board doesn't blank the other.
+            frames = []
             try:
-                df = jobspy_scrape(
-                    site_name=run_sites,
-                    search_term=term,
-                    location=location_name,
-                    results_wanted=results_wanted,
-                    country_indeed=country_indeed,
-                    hours_old=hours_old,
-                    linkedin_fetch_description=True,
-                )
+                merged = _call(enabled_sites, term, location_name, country_indeed)
+                if merged is not None and not merged.empty:
+                    frames.append(merged)
             except TypeError as exc:
                 # python-jobspy < 1.1.82 doesn't accept linkedin_fetch_description.
-                # Bail out of the entire run with an actionable hint rather than
-                # emitting a generic warning per (term, country) iteration.
+                # Bail the whole run with an actionable hint, not a per-pair warn.
                 log.error(
                     "[jobspy] python-jobspy is too old (%s); upgrade with "
                     "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
@@ -224,50 +258,79 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
                 return jobs
             except Exception as exc:
                 log.warning(
-                    "[jobspy] scrape failed for %r / %s: %s", term, country, exc
+                    "[jobspy] merged scrape failed for %r / %s (%s); retrying each "
+                    "site individually to isolate the failure",
+                    term,
+                    country,
+                    exc,
                 )
-                continue
+                for site in enabled_sites:
+                    try:
+                        one = _call([site], term, location_name, country_indeed)
+                    except TypeError as exc2:
+                        log.error(
+                            "[jobspy] python-jobspy is too old (%s); upgrade with "
+                            "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                            exc2,
+                        )
+                        return jobs
+                    except Exception as exc2:
+                        log.warning(
+                            "[jobspy] %s scrape failed for %r / %s: %s",
+                            site,
+                            term,
+                            country,
+                            exc2,
+                        )
+                        continue
+                    if one is not None and not one.empty:
+                        frames.append(one)
 
-            if df is None or df.empty:
+            if not frames:
                 log.debug("[jobspy] no results for %r / %s", term, country)
                 continue
 
-            records = df.to_dict("records")
-            for row in records:
-                normalized = normalize_jobspy_row(row)
-                if not normalized["role"] or not matches_roles(
-                    normalized["role"], ctx.plugin
-                ):
-                    continue
-                url = normalized["url"]
-                if url and url in seen_urls:
-                    continue
-                if url:
-                    seen_urls.add(url)
-                # Preserve description from JobSpy so detail-page enrichment
-                # is skipped (enrich_job_details already short-circuits on comp,
-                # and the enricher skips rows that already have description_text).
-                normalized["description_text"] = normalized.pop("description", "")
-                jobs.append(normalized)
+            matched_before = len(jobs)
+            for df in frames:
+                for row in df.to_dict("records"):
+                    normalized = normalize_jobspy_row(row)
+                    if not normalized["role"] or not matches_roles(
+                        normalized["role"], ctx.plugin
+                    ):
+                        continue
+                    url = normalized["url"]
+                    if url and url in seen_urls:
+                        continue
+                    if url:
+                        seen_urls.add(url)
+                    site = normalized["source"]
+                    if site in rows_per_site:
+                        rows_per_site[site] += 1
+                    # Preserve description from JobSpy so detail-page enrichment
+                    # is skipped (enrich_job_details short-circuits on comp, and
+                    # the enricher skips rows that already have description_text).
+                    normalized["description_text"] = normalized.pop("description", "")
+                    jobs.append(normalized)
 
             log.debug(
-                "[jobspy] %s / %s: %d records, %d matched after role filter",
+                "[jobspy] %s / %s: %d matched after role filter",
                 term,
                 country,
-                len(records),
-                sum(1 for j in jobs if j.get("date_found") == today().isoformat()),
+                len(jobs) - matched_before,
+            )
+
+    # An enabled site that contributed nothing all run is the per-board outage
+    # signal the merge would otherwise hide; surface it.
+    for site, count in rows_per_site.items():
+        if count == 0:
+            log.warning(
+                "[jobspy] enabled site %r returned 0 rows across all searches — "
+                "possible outage or block (other enabled sites unaffected)",
+                site,
             )
 
     log.info("[jobspy] %d jobs matched across all terms and countries", len(jobs))
     return jobs
-
-
-def scrape_jobspy_linkedin(ctx: ScrapeContext) -> list[dict]:
-    return scrape_jobspy(ctx, sites=["linkedin"])
-
-
-def scrape_jobspy_indeed(ctx: ScrapeContext) -> list[dict]:
-    return scrape_jobspy(ctx, sites=["indeed"])
 
 
 __all__ = [
@@ -276,6 +339,4 @@ __all__ = [
     "jobspy_row_to_raw",
     "normalize_jobspy_row",
     "scrape_jobspy",
-    "scrape_jobspy_linkedin",
-    "scrape_jobspy_indeed",
 ]
