@@ -144,24 +144,6 @@ def test_list_models_connection_error_raises_not_reachable() -> None:
             ollama_client.list_models("http://localhost:11434")
 
 
-def test_reachable_true_when_tags_ok() -> None:
-    with patch.object(ollama_client.requests, "get") as get:
-        get.return_value = _fake_response(200, {"models": []})
-        assert ollama_client.reachable("http://localhost:11434") is True
-
-
-def test_reachable_false_when_connection_error() -> None:
-    with patch.object(ollama_client.requests, "get") as get:
-        get.side_effect = requests.ConnectionError("refused")
-        assert ollama_client.reachable("http://localhost:11434") is False
-
-
-def test_reachable_false_on_http_error() -> None:
-    with patch.object(ollama_client.requests, "get") as get:
-        get.return_value = _fake_response(500)
-        assert ollama_client.reachable("http://localhost:11434") is False
-
-
 def test_generate_raises_on_200_with_error_field() -> None:
     """Ollama can return 200 OK with `error` in body on mid-stream failures."""
     from daily_driver.integrations.ollama_client import OllamaResponseError

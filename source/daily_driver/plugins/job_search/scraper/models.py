@@ -158,13 +158,6 @@ class NormalizedJob(BaseModel):
         )
 
 
-class JobDetails(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    comp: str = ""
-    posted_date: dt.date | None = None
-    description_text: str = ""
-
-
 class EnrichedJob(BaseModel):
     """``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
 
@@ -221,19 +214,6 @@ class EnrichedJob(BaseModel):
             comp=n.comp,
             date_found=n.date_found,
         )
-
-    def with_details(self, details: JobDetails) -> EnrichedJob:
-        updates: dict[str, Any] = {}
-        if details.comp and not self.comp:
-            updates["comp"] = details.comp
-        if details.posted_date and self.posted_date is None:
-            updates["posted_date"] = details.posted_date
-        if details.description_text and not self.description_text:
-            updates["description_text"] = details.description_text
-        return self.model_copy(update=updates)
-
-    def with_fit(self, score: int, notes: str) -> EnrichedJob:
-        return self.model_copy(update={"fit": score, "notes": notes})
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
@@ -313,7 +293,6 @@ class Source(Protocol):
 
 __all__ = [
     "EnrichedJob",
-    "JobDetails",
     "JobStatus",
     "NonEmptyStr",
     "NormalizedJob",

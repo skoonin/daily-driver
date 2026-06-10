@@ -82,14 +82,3 @@ def remove(label: str) -> bool:
         return False
     path.unlink()
     return True
-
-
-def is_loaded(label: str) -> bool:
-    require_macos()
-    result = subprocess.run(
-        ["launchctl", "list", label],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0

@@ -14,8 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-import yaml
-
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
@@ -39,10 +37,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.models import (
-        EnrichedJob,
-        NormalizedJob,
-    )
+    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 log = get_logger(__name__)
 
@@ -78,15 +73,6 @@ class ScraperError(RuntimeError):
     Library code raises this instead of calling sys.exit() so the CLI layer
     can decide how to report and exit.
     """
-
-
-# ── Config ────────────────────────────────────────────────────────────────────
-
-
-def load_config(config_path: Path) -> dict[str, Any]:
-    with open(config_path, encoding="utf-8") as f:
-        loaded: dict[str, Any] = yaml.safe_load(f) or {}
-        return loaded
 
 
 # ── Source-toggle helper ─────────────────────────────────────────────────────
@@ -161,20 +147,8 @@ def dedup_key(company: str, role: str) -> str:
 
     Lowercases and collapses whitespace in both fields so the same job posted
     on RemoteOK and LinkedIn produces an identical key.
-
-    For typed callers, prefer ``dedup_key_for(job: NormalizedJob)``.
     """
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
-
-
-def dedup_key_for(job: NormalizedJob) -> str:  # noqa: F821
-    """Typed dedup key: operates directly on NormalizedJob.
-
-    Equivalent to ``dedup_key(job.company, job.role)`` but skips the dict-key
-    plumbing in the orchestrator. Both forms must produce identical keys —
-    test_dedup_typed_matches_legacy guards that invariant.
-    """
-    return f"{_dedup_norm(job.company)}::{_dedup_norm(job.role)}"
 
 
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
@@ -698,15 +672,6 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
-
-
-def load_config_file(config_path: Path) -> dict[str, Any]:
-    """Load a YAML config file into the raw-dict shape the scraper expects.
-
-    Scraper settings live under ``plugins.job_search`` in ``.dd-config.yaml``.
-    See docs/configuration.md for the current schema.
-    """
-    return load_config(config_path)
 
 
 def run_backfill(
