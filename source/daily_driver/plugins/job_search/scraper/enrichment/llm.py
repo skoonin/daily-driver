@@ -18,8 +18,9 @@ import json
 import re
 import shutil
 import signal
-from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
@@ -117,24 +118,38 @@ def _fetch_company_info(
     return product, gd_rating, False
 
 
-def enrich_company_descriptions(
+@dataclass
+class _CompanyPlan:
+    """Resolved work for the company-description enricher.
+
+    Bundles the mutable state (``out`` slot list, ``stats``, per-company
+    ``cache``) and the per-company fetch/consume/stitch closures so the same
+    plan can be driven by the standalone pool, the serial path, or the shared
+    coordinator that overlaps this enricher with fit/notes (F1). All state
+    mutation happens on whichever single thread drives the consume/stitch
+    closures.
+    """
+
+    out: list[EnrichedJob]
+    stats: dict[str, int]
+    companies: list[str]
+    cache: dict[str, dict[str, str]]
+    timeout: int
+    fetch: Callable[[str], tuple[str, str, bool]]
+    consume: Callable[[Future[Any], str], None]
+    stitch: Callable[[], None]
+
+
+def _build_company_plan(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
-    *,
-    budget: int = 0,
-    progress: ProgressCallback | None = None,
-) -> tuple[list[EnrichedJob], dict[str, int]]:
-    """Populate Product/Purpose and GD Rating using the configured AI provider.
+    budget: int,
+    progress: ProgressCallback | None,
+) -> _CompanyPlan | None:
+    """Resolve the company enricher's work, or ``None`` to skip the pass.
 
-    One provider call per unique company name; results cached within the run.
-    Logs a warning if the ``claude`` CLI is the provider and not on PATH.
-
-    Budget limits total provider calls to avoid silent stalls on slow networks —
-    each call blocks for up to enrich_timeout seconds (default 30s). Fans out
-    through ``ThreadPoolExecutor`` when the provider's ``max_parallel > 1``;
-    ``pool_size == 1`` runs serially on the main thread.
-
-    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
+    Returns ``None`` (and logs) when the claude provider is configured but its
+    CLI is not on PATH — the caller then returns the untouched jobs.
     """
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
@@ -143,7 +158,7 @@ def enrich_company_descriptions(
     out = jobs
     if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
-        return out, stats
+        return None
 
     cfg = ctx.plugin.enrichment
     if budget <= 0:
@@ -175,6 +190,35 @@ def enrich_company_descriptions(
     # company -> (product, gd_rating); only fetched companies appear, so the
     # stitch below leaves un-fetched (budget-dropped) companies untouched.
     cache: dict[str, dict[str, str]] = {}
+    applied: set[int] = set()
+    done_count = [0]
+    heartbeat = max(1, len(companies) // 5)
+
+    def _fetch(company: str) -> tuple[str, str, bool]:
+        return _fetch_company_info(company, ctx, include_gd, timeout)
+
+    def _consume(fut: Future[Any], company: str) -> None:
+        # `applied` makes re-consume (interrupt drain after the main loop already
+        # consumed a future) idempotent: no double cache-write or done_count bump.
+        if id(fut) in applied:
+            return
+        applied.add(id(fut))
+        product, gd_rating, failed = fut.result()
+        if company not in cache:
+            cache[company] = {"product": product, "gd_rating": gd_rating}
+            if failed:
+                stats["failed"] += 1
+            if progress is not None:
+                progress(1, company)
+        done_count[0] += 1
+        if done_count[0] % heartbeat == 0 or done_count[0] == len(companies):
+            log.info(
+                "%s %d/%d companies done (%d failed)",
+                _enrich_tag("enrich"),
+                done_count[0],
+                len(companies),
+                stats["failed"],
+            )
 
     def _stitch() -> None:
         for i, job in enumerate(out):
@@ -211,66 +255,80 @@ def enrich_company_descriptions(
             if "product" in updates:
                 stats["enriched"] += 1
 
+    return _CompanyPlan(
+        out=out,
+        stats=stats,
+        companies=companies,
+        cache=cache,
+        timeout=timeout,
+        fetch=_fetch,
+        consume=_consume,
+        stitch=_stitch,
+    )
+
+
+def enrich_company_descriptions(
+    jobs: list[EnrichedJob],
+    ctx: ScrapeContext,
+    *,
+    budget: int = 0,
+    progress: ProgressCallback | None = None,
+) -> tuple[list[EnrichedJob], dict[str, int]]:
+    """Populate Product/Purpose and GD Rating using the configured AI provider.
+
+    One provider call per unique company name; results cached within the run.
+    Logs a warning if the ``claude`` CLI is the provider and not on PATH.
+
+    Budget limits total provider calls to avoid silent stalls on slow networks —
+    each call blocks for up to enrich_timeout seconds (default 30s). Fans out
+    through ``ThreadPoolExecutor`` when the provider's ``max_parallel > 1``;
+    ``pool_size == 1`` runs serially on the main thread.
+
+    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
+    """
+    plan = _build_company_plan(jobs, ctx, budget, progress)
+    if plan is None:
+        return jobs, {"enriched": 0, "skipped_cached": 0, "failed": 0}
+
+    pool_size = _enrich_pool_size(ctx)
     if pool_size > 1:
         pool = ThreadPoolExecutor(max_workers=pool_size)
         # Populate `futures` incrementally so the SIGINT handler always sees a
         # mapping that reflects what's actually been submitted. A bulk replace
         # would leave a window where the handler reads {} and reports "0".
         futures: dict[Any, str] = {}
-        previous_handler = _install_interrupt_notifier(futures, timeout, "companies")
-        for c in companies:
-            futures[pool.submit(_fetch_company_info, c, ctx, include_gd, timeout)] = c
-        done_count = 0
-        heartbeat = max(1, len(companies) // 5)
+        previous_handler = _install_interrupt_notifier(
+            futures, plan.timeout, "companies"
+        )
+        for c in plan.companies:
+            futures[pool.submit(plan.fetch, c)] = c
         try:
             for fut in as_completed(futures):
-                company = futures[fut]
-                product, gd_rating, failed = fut.result()
-                cache[company] = {"product": product, "gd_rating": gd_rating}
-                if failed:
-                    stats["failed"] += 1
-                if progress is not None:
-                    progress(1, company)
-                done_count += 1
-                if done_count % heartbeat == 0 or done_count == len(companies):
-                    log.info(
-                        "%s %d/%d companies done (%d failed)",
-                        _enrich_tag("enrich"),
-                        done_count,
-                        len(companies),
-                        stats["failed"],
-                    )
+                plan.consume(fut, futures[fut])
             pool.shutdown(wait=True)
         except KeyboardInterrupt:
             pool.shutdown(wait=False, cancel_futures=True)
             for fut in futures:
                 if fut.done() and not fut.cancelled():
-                    company = futures[fut]
-                    if company not in cache:
-                        product, gd_rating, failed = fut.result()
-                        cache[company] = {"product": product, "gd_rating": gd_rating}
-                        if failed:
-                            stats["failed"] += 1
-                        if progress is not None:
-                            progress(1, company)
-            _stitch()
+                    plan.consume(fut, futures[fut])
+            plan.stitch()
             raise
         finally:
             signal.signal(signal.SIGINT, previous_handler)
-        _stitch()
-        return out, stats
+        plan.stitch()
+        return plan.out, plan.stats
 
-    for company in companies:
-        product, gd_rating, failed = _fetch_company_info(
-            company, ctx, include_gd, timeout
-        )
-        cache[company] = {"product": product, "gd_rating": gd_rating}
-        if failed:
-            stats["failed"] += 1
-        if progress is not None:
-            progress(1, company)
-    _stitch()
-    return out, stats
+    # Keep every settled Future referenced for the loop's lifetime: consume()
+    # de-dupes on id(fut), and a GC'd-then-recycled id would make a later result
+    # look already-consumed and silently drop it.
+    settled: list[Future[Any]] = []
+    for company in plan.companies:
+        settled_fut: Future[Any] = Future()
+        settled_fut.set_result(plan.fetch(company))
+        settled.append(settled_fut)
+        plan.consume(settled_fut, company)
+    plan.stitch()
+    return plan.out, plan.stats
 
 
 def _location_summary(ctx: ScrapeContext) -> str:
@@ -551,24 +609,33 @@ def _fit_notes_eligible(job: EnrichedJob) -> bool:
     return job.status.value not in ENRICH_SKIP_STATUSES and not (job.fit and job.notes)
 
 
-def enrich_fit_and_notes(
+@dataclass
+class _FitPlan:
+    """Resolved work for the fit/notes enricher (mirrors :class:`_CompanyPlan`).
+
+    ``target_idx`` are the eligible job slots to enrich; ``fetch`` runs one
+    provider call for a slot and ``consume`` applies its result. All state
+    mutation happens on whichever single thread drives ``consume``.
+    """
+
+    out: list[EnrichedJob]
+    stats: dict[str, int]
+    target_idx: list[int]
+    timeout: int
+    fetch: Callable[[int], tuple[int | None, str, bool]]
+    consume: Callable[[Future[Any], int], None]
+
+
+def _build_fit_plan(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
-    *,
-    budget: int = 0,
-    progress: ProgressCallback | None = None,
-) -> tuple[list[EnrichedJob], dict[str, int]]:
-    """Populate Fit score and Notes for new jobs via one provider call per job.
+    budget: int,
+    progress: ProgressCallback | None,
+) -> _FitPlan | None:
+    """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
-    One call per job returns strict JSON ``{"fit": <int 1-10>, "notes": "..."}``.
-    Budget caps the combined call count (uses ``max_enrich_fit`` as the limit).
-    Fit is scored from role/company/location alone, so description is optional;
-    when absent, notes is left empty (not confabulated). Fans out through
-    ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
-    serially on the main thread.
-
-    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
-    skipped_no_desc (always 0; retained for shape compatibility), failed.
+    Returns ``None`` when the claude CLI is missing or fit/notes are disabled in
+    config — the caller then returns the untouched jobs with empty stats.
     """
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
@@ -579,12 +646,12 @@ def enrich_fit_and_notes(
     out = jobs
     if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
-        return out, stats
+        return None
 
     cfg = ctx.plugin.enrichment
     if not cfg.enrich_fit or not cfg.enrich_notes:
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
-        return out, stats
+        return None
 
     if budget <= 0:
         budget = cfg.max_enrich_fit
@@ -636,6 +703,10 @@ def enrich_fit_and_notes(
             eligible_count - budget,
         )
         stats["skipped_budget"] += eligible_count - budget
+
+    applied: set[int] = set()
+    done_count = [0]
+    heartbeat = max(1, len(target_idx) // 5)
 
     def _apply(idx: int, fit: int | None, notes_str: str, failed: bool) -> None:
         job = out[idx]
@@ -697,68 +768,236 @@ def enrich_fit_and_notes(
             context_text,
         )
 
+    def _consume(fut: Future[Any], idx: int) -> None:
+        # `applied` guards against the interrupt drain re-applying a slot the
+        # main consume loop already wrote.
+        if id(fut) in applied:
+            return
+        fit, notes_str, failed = fut.result()
+        _apply(idx, fit, notes_str, failed)
+        applied.add(id(fut))
+        if progress is not None:
+            progress(1, out[idx].company)
+        done_count[0] += 1
+        if done_count[0] % heartbeat == 0 or done_count[0] == len(target_idx):
+            log.info(
+                "%s %d/%d jobs done (%d failed)",
+                _enrich_tag("enrich-fit-notes"),
+                done_count[0],
+                len(target_idx),
+                stats["failed"],
+            )
+
+    return _FitPlan(
+        out=out,
+        stats=stats,
+        target_idx=target_idx,
+        timeout=timeout,
+        fetch=_fetch,
+        consume=_consume,
+    )
+
+
+def enrich_fit_and_notes(
+    jobs: list[EnrichedJob],
+    ctx: ScrapeContext,
+    *,
+    budget: int = 0,
+    progress: ProgressCallback | None = None,
+) -> tuple[list[EnrichedJob], dict[str, int]]:
+    """Populate Fit score and Notes for new jobs via one provider call per job.
+
+    One call per job returns strict JSON ``{"fit": <int 1-10>, "notes": "..."}``.
+    Budget caps the combined call count (uses ``max_enrich_fit`` as the limit).
+    Fit is scored from role/company/location alone, so description is optional;
+    when absent, notes is left empty (not confabulated). Fans out through
+    ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
+    serially on the main thread.
+
+    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
+    skipped_no_desc (always 0; retained for shape compatibility), failed.
+    """
+    plan = _build_fit_plan(jobs, ctx, budget, progress)
+    if plan is None:
+        return jobs, {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "skipped_no_desc": 0,
+            "failed": 0,
+        }
+
+    pool_size = _enrich_pool_size(ctx)
     if pool_size > 1:
         pool = ThreadPoolExecutor(max_workers=pool_size)
         # See enrich_company_descriptions for why this is incremental.
         futures: dict[Any, int] = {}
-        previous_handler = _install_interrupt_notifier(futures, timeout, "jobs")
-        for idx in target_idx:
-            futures[pool.submit(_fetch, idx)] = idx
-        # `applied` tracks futures already written so the interrupt drain doesn't
-        # double-count.
-        applied: set[int] = set()
-        done_count = 0
-        heartbeat = max(1, len(target_idx) // 5)
+        previous_handler = _install_interrupt_notifier(futures, plan.timeout, "jobs")
+        for idx in plan.target_idx:
+            futures[pool.submit(plan.fetch, idx)] = idx
         try:
             for fut in as_completed(futures):
-                idx = futures[fut]
-                fit, notes_str, failed = fut.result()
-                _apply(idx, fit, notes_str, failed)
-                applied.add(id(fut))
-                if progress is not None:
-                    progress(1, out[idx].company)
-                done_count += 1
-                if done_count % heartbeat == 0 or done_count == len(target_idx):
-                    log.info(
-                        "%s %d/%d jobs done (%d failed)",
-                        _enrich_tag("enrich-fit-notes"),
-                        done_count,
-                        len(target_idx),
-                        stats["failed"],
-                    )
+                plan.consume(fut, futures[fut])
             pool.shutdown(wait=True)
         except KeyboardInterrupt:
             pool.shutdown(wait=False, cancel_futures=True)
             for fut in futures:
-                if id(fut) in applied:
-                    continue
                 if fut.done() and not fut.cancelled():
-                    idx = futures[fut]
-                    fit, notes_str, failed = fut.result()
-                    _apply(idx, fit, notes_str, failed)
-                    if progress is not None:
-                        progress(1, out[idx].company)
+                    plan.consume(fut, futures[fut])
             raise
         finally:
             signal.signal(signal.SIGINT, previous_handler)
         log.info(
             "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
-            stats["enriched"],
-            stats["failed"],
-            stats["skipped_budget"],
+            plan.stats["enriched"],
+            plan.stats["failed"],
+            plan.stats["skipped_budget"],
         )
-        return out, stats
+        return plan.out, plan.stats
 
-    for idx in target_idx:
-        fit, notes_str, failed = _fetch(idx)
-        if progress is not None:
-            progress(1, out[idx].company)
-        _apply(idx, fit, notes_str, failed)
+    # See enrich_company_descriptions: hold settled Futures so recycled ids can't
+    # make consume() drop a later result.
+    settled: list[Future[Any]] = []
+    for idx in plan.target_idx:
+        settled_fut: Future[Any] = Future()
+        settled_fut.set_result(plan.fetch(idx))
+        settled.append(settled_fut)
+        plan.consume(settled_fut, idx)
 
     log.info(
         "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
-        stats["enriched"],
-        stats["failed"],
-        stats["skipped_budget"],
+        plan.stats["enriched"],
+        plan.stats["failed"],
+        plan.stats["skipped_budget"],
     )
-    return out, stats
+    return plan.out, plan.stats
+
+
+def _empty_company_stats() -> dict[str, int]:
+    return {"enriched": 0, "skipped_cached": 0, "failed": 0}
+
+
+def _empty_fit_stats() -> dict[str, int]:
+    return {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
+
+
+def enrich_product_and_fit_concurrently(
+    jobs: list[EnrichedJob],
+    ctx: ScrapeContext,
+    *,
+    product_budget: int = 0,
+    fit_budget: int = 0,
+    product_progress: ProgressCallback | None = None,
+    fit_progress: ProgressCallback | None = None,
+) -> tuple[list[EnrichedJob], dict[str, int], dict[str, int]]:
+    """Run the product and fit/notes enrichers overlapped under one shared cap.
+
+    Both enrichers fan their provider calls out through ONE shared executor
+    (``max_workers == _enrich_pool_size``), so total concurrent claude/ollama
+    subprocesses never exceed the provider's ``max_parallel`` — they share that
+    budget rather than each claiming a full pool. The per-enricher budgets
+    (``max_enrich_companies`` / ``max_enrich_fit``) stay independent.
+
+    Fit's prompt reads each job's product, which the company enricher only
+    stitches in after the merged loop completes; with overlap, fit therefore
+    sees a pre-stitch blank product (best-effort context, tolerated by the
+    prompt builder). One SIGINT notifier covers the whole overlapped section;
+    on interrupt both enrichers drain their finished futures before re-raising.
+
+    All result-application runs on this single coordinator thread, so the two
+    per-enricher stats dicts and the shared ``jobs`` slot list are mutated
+    without cross-thread races. Returns ``(jobs, product_stats, fit_stats)``.
+
+    Falls back to running the two enrichers serially when the provider is
+    serial (``pool_size == 1``) — there is no concurrency to overlap.
+    """
+    pool_size = _enrich_pool_size(ctx)
+    if pool_size <= 1:
+        # Serial provider: nothing to overlap. Run sequentially so behavior
+        # (and the per-phase progress bars) matches the non-overlapped path.
+        out, product_stats = enrich_company_descriptions(
+            jobs, ctx, budget=product_budget, progress=product_progress
+        )
+        out, fit_stats = enrich_fit_and_notes(
+            out, ctx, budget=fit_budget, progress=fit_progress
+        )
+        return out, product_stats, fit_stats
+
+    company_plan = _build_company_plan(jobs, ctx, product_budget, product_progress)
+    fit_plan = _build_fit_plan(jobs, ctx, fit_budget, fit_progress)
+
+    product_stats = company_plan.stats if company_plan else _empty_company_stats()
+    fit_stats = fit_plan.stats if fit_plan else _empty_fit_stats()
+
+    if company_plan is None and fit_plan is None:
+        return jobs, product_stats, fit_stats
+
+    # One shared executor caps total concurrency across both enrichers at
+    # pool_size; both submit into it rather than spinning up a pool each.
+    pool = ThreadPoolExecutor(max_workers=pool_size)
+    # tag is ("company", company_str) or ("fit", idx); populated incrementally so
+    # the SIGINT handler always sees what's actually been submitted.
+    futures: dict[Future[Any], tuple[str, Any]] = {}
+    timeout = (
+        company_plan.timeout
+        if company_plan is not None
+        else (
+            fit_plan.timeout
+            if fit_plan is not None
+            else ctx.plugin.enrichment.enrich_timeout
+        )
+    )
+    # ONE notifier for the whole overlapped section: nested per-enricher installs
+    # would fight over signal.signal. "items" since the drain spans both nouns.
+    previous_handler = _install_interrupt_notifier(futures, timeout, "items")
+    # Interleave submission so the executor's queue carries both kinds from the
+    # start — submitting all of one kind first would drain it before the other
+    # ever ran, defeating the overlap.
+    company_q = list(company_plan.companies) if company_plan is not None else []
+    fit_q = list(fit_plan.target_idx) if fit_plan is not None else []
+    ci = fi = 0
+    while ci < len(company_q) or fi < len(fit_q):
+        if ci < len(company_q):
+            assert company_plan is not None
+            futures[pool.submit(company_plan.fetch, company_q[ci])] = (
+                "company",
+                company_q[ci],
+            )
+            ci += 1
+        if fi < len(fit_q):
+            assert fit_plan is not None
+            futures[pool.submit(fit_plan.fetch, fit_q[fi])] = ("fit", fit_q[fi])
+            fi += 1
+
+    def _dispatch(fut: Future[Any]) -> None:
+        kind, key = futures[fut]
+        if kind == "company":
+            assert company_plan is not None
+            company_plan.consume(fut, key)
+        else:
+            assert fit_plan is not None
+            fit_plan.consume(fut, key)
+
+    try:
+        for fut in as_completed(futures):
+            _dispatch(fut)
+        pool.shutdown(wait=True)
+    except KeyboardInterrupt:
+        pool.shutdown(wait=False, cancel_futures=True)
+        for fut in futures:
+            if fut.done() and not fut.cancelled():
+                _dispatch(fut)
+        if company_plan is not None:
+            company_plan.stitch()
+        raise
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+
+    if company_plan is not None:
+        company_plan.stitch()
+    log.info(
+        "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
+        fit_stats["enriched"],
+        fit_stats["failed"],
+        fit_stats["skipped_budget"],
+    )
+    return jobs, product_stats, fit_stats

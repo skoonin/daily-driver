@@ -747,9 +747,8 @@ def run(
         load_existing_jobs,
     )
     from daily_driver.plugins.job_search.scraper.enrichment import (
-        enrich_company_descriptions,
-        enrich_fit_and_notes,
         enrich_job_details,
+        enrich_product_and_fit_concurrently,
     )
 
     started_at = datetime.now(timezone.utc)
@@ -931,19 +930,22 @@ def run(
                 f"{detail_stats['skipped']} skipped ({detail_stats['total']} total)"
             )
 
+            # Product and fit/notes overlap under one shared concurrency cap
+            # (F1): both fan out through a single executor bounded by the
+            # provider's max_parallel, so total claude/ollama subprocesses never
+            # exceed it. Both Phase rows advance concurrently as results land.
             product_phase.start()
-            typed_jobs, product_stats = enrich_company_descriptions(
-                typed_jobs, ctx, progress=product_phase.advance
+            fit_phase.start()
+            typed_jobs, product_stats, fn_stats = enrich_product_and_fit_concurrently(
+                typed_jobs,
+                ctx,
+                product_progress=product_phase.advance,
+                fit_progress=fit_phase.advance,
             )
             product_phase.done(
                 f"{product_stats['enriched']} enriched, "
                 f"{product_stats['skipped_cached']} cached, "
                 f"{product_stats['failed']} failed"
-            )
-
-            fit_phase.start()
-            typed_jobs, fn_stats = enrich_fit_and_notes(
-                typed_jobs, ctx, progress=fit_phase.advance
             )
             fit_phase.done(
                 f"{fn_stats['enriched']} enriched, "
