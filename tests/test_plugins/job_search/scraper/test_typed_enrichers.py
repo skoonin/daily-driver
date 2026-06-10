@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from daily_driver.core.config_models import AIConfig
+from daily_driver.integrations import ai_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
     enrich_company_descriptions_typed,
@@ -80,6 +82,27 @@ def test_typed_fit_enrich_passes_through_with_zero_budget(
     # enriched, no claude call.
     assert len(out) == 1
     assert out[0].fit == j.fit  # unchanged
+
+
+def test_typed_fit_enrich_score_survives_round_trip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scored fit must reach the returned EnrichedJob as a bare int (W1.1)."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"max_enrich_fit": 5, "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "qwen2.5:14b"}}
+        ),
+    )
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "k8s"}'
+    )
+    j = _enriched(description_text="Kubernetes-heavy SRE role")
+    out, _stats = enrich_fit_and_notes_typed([j], ctx, budget=5)
+    assert out[0].fit == 7
+    assert out[0].notes == "k8s"
 
 
 def test_typed_job_details_short_circuits_when_description_present(

@@ -547,3 +547,48 @@ tracker:
     with caplog.at_level(logging.WARNING, logger="daily_driver.tracker"):
         tracker.add(category="task", title="quiet", status="weird")
     assert not _tracker_warnings(caplog)
+
+
+# ---------------------------------------------------------------------------
+# update() merges --extra keys into existing extras (does not replace)
+# ---------------------------------------------------------------------------
+
+
+def test_update_extras_merges_new_key(workspace: Workspace) -> None:
+    """A newly supplied extras key is added alongside existing ones."""
+    tracker = Tracker(workspace)
+    entry = tracker.add(
+        category="task", title="merge test", extras={"alpha": "1", "beta": "2"}
+    )
+
+    updated = tracker.update(entry.id, extras={"gamma": "3"})
+
+    assert updated.extras == {"alpha": "1", "beta": "2", "gamma": "3"}
+
+
+def test_update_extras_overwrites_same_key_keeps_siblings(
+    workspace: Workspace,
+) -> None:
+    """Supplying an existing key updates it; unmentioned keys persist."""
+    tracker = Tracker(workspace)
+    entry = tracker.add(
+        category="task", title="overwrite test", extras={"alpha": "1", "beta": "2"}
+    )
+
+    updated = tracker.update(entry.id, extras={"alpha": "99"})
+
+    assert updated.extras == {"alpha": "99", "beta": "2"}
+
+
+def test_update_without_extras_leaves_existing_untouched(
+    workspace: Workspace,
+) -> None:
+    """An update that supplies no extras must not disturb the existing dict."""
+    tracker = Tracker(workspace)
+    entry = tracker.add(
+        category="task", title="untouched test", extras={"alpha": "1", "beta": "2"}
+    )
+
+    updated = tracker.update(entry.id, status="done")
+
+    assert updated.extras == {"alpha": "1", "beta": "2"}
