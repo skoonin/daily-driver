@@ -255,7 +255,16 @@ class Tracker:
             for i, entry in enumerate(data.entries):
                 if entry.id == entry_id:
                     current = entry.model_dump()
+                    # Merge extras over the freshly-loaded entry inside the lock
+                    # so supplied keys overwrite same-name keys while unmentioned
+                    # keys persist — a plain update() would replace the whole dict.
+                    supplied_extras = changes.pop("extras", None)
                     current.update(changes)
+                    if supplied_extras is not None:
+                        current["extras"] = {
+                            **(current.get("extras") or {}),
+                            **supplied_extras,
+                        }
                     # Append note from the freshly-loaded entry inside the lock —
                     # building the joined string in the caller would lose a
                     # concurrent append (the stale read-modify-write window).
