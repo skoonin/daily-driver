@@ -5,7 +5,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import jinja2
 from rich.console import Console
 
 import daily_driver
@@ -34,6 +33,8 @@ tracker:
 
 def _render_initial_config() -> str:
     """Render the initial .dd-config.yaml from the bundled Jinja2 template."""
+    import jinja2
+
     try:
         tmpl_traversable = importlib.resources.files(
             "daily_driver.resources.templates"

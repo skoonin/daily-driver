@@ -537,3 +537,29 @@ def test_tracker_list_short_flags(
     parsed = json.loads(capsys.readouterr().out)
     titles = {e["title"] for e in parsed["data"]["entries"]}
     assert "shorty" in titles
+
+
+# ---------------------------------------------------------------------------
+# tracker update --extra merges into existing extras (does not replace)
+# ---------------------------------------------------------------------------
+
+
+def test_update_extra_merges_not_replaces(workspace: Workspace) -> None:
+    """A third --extra must join the two added at create time, not replace them."""
+    from daily_driver.core.tracker import Tracker
+
+    add_args = _add_args(
+        workspace.root,
+        title="Extra merge",
+        category="task",
+        extra=["alpha=1", "beta=2"],
+    )
+    assert run(add_args) == 0
+
+    entry_id = Tracker(workspace).list(category="task")[0].id
+
+    upd = _update_args(workspace.root, entry_id, extra=["gamma=3"])
+    assert run(upd) == 0
+
+    updated = Tracker(workspace).list(category="task")[0]
+    assert updated.extras == {"alpha": "1", "beta": "2", "gamma": "3"}

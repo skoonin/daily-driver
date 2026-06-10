@@ -26,6 +26,8 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Faster CLI startup**: template-rendering dependencies now load only during
+  `init`, not on every command invocation. (#76)
 - **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
   use `linkedin` / `indeed` instead of `jobspy_linkedin` / `jobspy_indeed`. The
   `sources.jobspy.*` config block is unchanged.
@@ -98,6 +100,8 @@ log`. Versioned release history starts at 1.0.
   counted as preserved), and hooks dropped from the package are reaped. Note:
   the first regenerate after this release refreshes hooks from the package once;
   edits made after that are preserved. (#78)
+- `tracker update --extra` now merges keys into the existing extras instead of
+  replacing them; unmentioned keys are no longer dropped. (#77)
 
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
