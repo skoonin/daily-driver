@@ -10,10 +10,13 @@ import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from daily_driver.core import version_stamp
 from daily_driver.core.workspace import Workspace
+
+if TYPE_CHECKING:
+    from daily_driver.core.config_models import Config
 
 Status = Literal["OK", "WARNING", "ERROR"]
 
@@ -187,7 +190,7 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
     return results
 
 
-def _load_workspace_config(workspace: Workspace):  # type: ignore[no-untyped-def]
+def _load_workspace_config(workspace: Workspace) -> Config | str | Exception:
     """Load `.dd-config.yaml` for a workspace.
 
     Returns the parsed Config on success, the literal string "missing" when
@@ -215,7 +218,7 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
     drift / contract checks added in PR #30.
     """
     cfg = _load_workspace_config(workspace)
-    if cfg == "missing":
+    if isinstance(cfg, str):  # "missing" sentinel: no config file present
         return None
     if isinstance(cfg, Exception):
         # User has a broken .dd-config.yaml. Don't silently skip the AI

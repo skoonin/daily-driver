@@ -26,6 +26,8 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **Faster CLI startup**: template-rendering dependencies now load only during
+  `init`, not on every command invocation. (#76)
 - **JobSpy source ids shortened**: `jobs run -S` (and the source registry) now
   use `linkedin` / `indeed` instead of `jobspy_linkedin` / `jobspy_indeed`. The
   `sources.jobspy.*` config block is unchanged.
