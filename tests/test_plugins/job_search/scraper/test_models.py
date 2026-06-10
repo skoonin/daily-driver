@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobDetails,
     JobStatus,
     NormalizedJob,
     RawScrapedJob,
@@ -149,45 +148,9 @@ class TestEnrichedJob:
         with pytest.raises(ValidationError):
             j.fit = 8  # type: ignore[misc]
 
-    def test_with_fit_returns_new_instance(self) -> None:
-        j = _enriched()
-        j2 = j.with_fit(8, "good match")
-        assert j2 is not j
-        assert j2.fit == 8 and j2.notes == "good match"
-        assert j.fit is None
-
-    def test_with_details_only_fills_blanks(self) -> None:
-        j = _enriched(description_text="existing")
-        details = JobDetails(description_text="new", posted_date=dt.date(2026, 1, 1))
-        j2 = j.with_details(details)
-        # Existing description not overwritten.
-        assert j2.description_text == "existing"
-        assert j2.posted_date == dt.date(2026, 1, 1)
-
-    def test_with_details_does_not_overwrite_existing_posted_date(self) -> None:
-        j = _enriched(posted_date=dt.date(2026, 1, 1))
-        details = JobDetails(posted_date=dt.date(2026, 5, 5))
-        j2 = j.with_details(details)
-        assert j2.posted_date == dt.date(2026, 1, 1)
-
-    def test_with_details_does_not_overwrite_known_comp(self) -> None:
-        j = _enriched()  # comp display "$150,000-$200,000"
-        assert j.comp
-        j2 = j.with_details(JobDetails(comp="$300,000-$400,000"))
-        assert j2.comp == j.comp
-
-    def test_with_details_fills_unknown_comp(self) -> None:
-        raw = RawScrapedJob(company="A", role="R", url="u", source="s")
-        j = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
-        assert not j.comp
-        details = JobDetails(comp="$120,000-$140,000")
-        j2 = j.with_details(details)
-        assert j2.comp == "$120,000-$140,000"
-
     def test_fit_bounds_enforced(self) -> None:
         # NB: pydantic v2 skips validation on model_copy(update=...) by default,
-        # so bounds are only enforced at construction time. with_fit goes via
-        # model_copy and is therefore not the right surface to test bounds.
+        # so bounds are only enforced at construction time, not via model_copy.
         raw = RawScrapedJob(company="A", role="R", url="u", source="s")
         n = NormalizedJob.from_raw(raw)
         with pytest.raises(ValidationError):

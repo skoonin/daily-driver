@@ -7,7 +7,6 @@ deterministic results without monkey-patching.
 
 from __future__ import annotations
 
-import calendar
 from datetime import date, datetime
 
 # Not thread-safe: tests that set this must not run in parallel (pytest -n auto / xdist).
@@ -24,17 +23,3 @@ def now() -> datetime:
 def today() -> date:
     """Return today's date (or the date component of FROZEN_TIME if set)."""
     return now().date()
-
-
-def iso_week(d: date) -> tuple[int, int]:
-    """Return (ISO year, ISO week number) for the given date."""
-    cal = d.isocalendar()
-    return (cal[0], cal[1])
-
-
-def month_bounds(d: date) -> tuple[date, date]:
-    """Return (first day, last day) of the month containing d."""
-    first = d.replace(day=1)
-    _, last_day = calendar.monthrange(d.year, d.month)
-    last = d.replace(day=last_day)
-    return (first, last)

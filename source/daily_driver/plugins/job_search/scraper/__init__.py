@@ -11,9 +11,8 @@ from .parsing import _fix_mojibake  # noqa: F401  (re-export for tests)
 from .runner import (  # noqa: F401  (public API + test re-exports)
     ScraperError,
     _print_dry_run_table,
-    load_config_file,
     run,
     run_backfill,
 )
 
-__all__ = ["ScraperError", "load_config_file", "run", "run_backfill"]
+__all__ = ["ScraperError", "run", "run_backfill"]

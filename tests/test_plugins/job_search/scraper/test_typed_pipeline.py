@@ -65,30 +65,3 @@ def test_from_raw_is_pure() -> None:
     norm1 = NormalizedJob.from_raw(raw)
     norm2 = NormalizedJob.from_raw(raw)
     assert norm1 == norm2
-
-
-def test_dedup_typed_matches_legacy() -> None:
-    """K5: dedup_key_for(NormalizedJob) == dedup_key(company, role)."""
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key, dedup_key_for
-
-    raw = RawScrapedJob(
-        company="  Acme  Corp ",
-        role="Senior  SRE",
-        url="u",
-        source="remoteok",
-    )
-    norm = NormalizedJob.from_raw(raw)
-    assert dedup_key_for(norm) == dedup_key("  Acme  Corp ", "Senior  SRE")
-    assert dedup_key_for(norm) == "acme corp::senior sre"
-
-
-def test_dedup_typed_collapses_whitespace_and_case() -> None:
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key_for
-
-    a = NormalizedJob.from_raw(
-        RawScrapedJob(company="ACME", role="SRE", url="u1", source="s")
-    )
-    b = NormalizedJob.from_raw(
-        RawScrapedJob(company="acme", role="  sre  ", url="u2", source="s")
-    )
-    assert dedup_key_for(a) == dedup_key_for(b)

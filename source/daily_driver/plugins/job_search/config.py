@@ -258,11 +258,6 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={"template_example": "Senior SRE / Platform Engineer"},
     )
-    home_city: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "Vancouver, BC"},
-    )
     roles: list[str] = Field(
         default=[],
         description="",

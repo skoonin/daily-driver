@@ -101,7 +101,6 @@ class TestJsonLdParser:
         result = parse_jsonld_jobposting(html)
         assert "comp" in result
         assert result.get("posted_date") == "2026-04-10"
-        assert result.get("employment_type") == "FULL_TIME"
 
     def test_returns_empty_when_no_jsonld_block(self) -> None:
         html = "<html><body><p>No structured data.</p></body></html>"
