@@ -92,7 +92,6 @@ def scrape_hn_jobs(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
     max_posts = source_toggle(ctx.plugin, "hn_jobs", HackerNewsToggle).hn_max_posts
-    roles = list(ctx.plugin.roles)
     session = _http_session(ctx)
 
     age_filter = ""
@@ -123,7 +122,7 @@ def scrape_hn_jobs(ctx: ScrapeContext) -> list[dict]:
         if not company:
             continue
 
-        if not matches_roles(title, roles, ctx.plugin):
+        if not matches_roles(title, ctx.plugin):
             continue
 
         url = (hit.get("url") or "").strip()

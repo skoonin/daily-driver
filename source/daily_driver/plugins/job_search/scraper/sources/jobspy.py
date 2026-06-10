@@ -179,7 +179,6 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     hours_old = jobspy_cfg.hours_old
     default_country_indeed = jobspy_cfg.country_indeed
 
-    roles = list(ctx.plugin.roles)
     terms = _search_terms(ctx.plugin)
     countries = countries_list(ctx.plugin)
     jobs: list[dict] = []
@@ -237,7 +236,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             for row in records:
                 normalized = normalize_jobspy_row(row)
                 if not normalized["role"] or not matches_roles(
-                    normalized["role"], roles, ctx.plugin
+                    normalized["role"], ctx.plugin
                 ):
                     continue
                 url = normalized["url"]
