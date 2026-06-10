@@ -12,36 +12,19 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 if sys.platform != "win32":
     import fcntl
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
 
-CANONICAL_HEADER = [
-    "Status",
-    "Company",
-    "Role",
-    "Fit",
-    "Comp",
-    "Location",
-    "Product/Purpose",
-    "GD Rating",
-    "Notes",
-    "Date Found",
-    "Date Applied",
-    # Date Last Seen drives `jobs prune --older-than`. Today scraper
-    # only sets it on insert (defaults to Date Found); without an
-    # upsert-on-rescan path, prune ages from first-discovery.
-    "Date Last Seen",
-    "Link",
-    "Source",
-]
+# The single source of truth for jobs.csv column order, derived from the model.
+CANONICAL_HEADER = EnrichedJob.CANONICAL_HEADER
 
 
 def _make_backup(csv_path: Path) -> Path:
@@ -110,7 +93,7 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
 
 def append_jobs_typed(
     csv_path: Path,
-    jobs: list[EnrichedJob],  # noqa: F821
+    jobs: list[EnrichedJob],
     header: list[str],
 ) -> int:
     """Typed CSV writer: one row per ``EnrichedJob.to_csv_row()``.
@@ -133,13 +116,7 @@ def append_jobs_typed(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
             for job in jobs:
-                row = job.to_csv_row()
-                # EnrichedJob does not model Date Last Seen; seed it from Date
-                # Found on insert so `jobs prune` ages from first-discovery
-                # (matching the legacy writer's behavior).
-                if "Date Last Seen" in header:
-                    row.setdefault("Date Last Seen", row.get("Date Found", ""))
-                writer.writerow(row)
+                writer.writerow(job.to_csv_row())
                 written += 1
     except OSError as exc:
         raise ScraperError(f"Cannot open {csv_path} for writing: {exc}") from exc

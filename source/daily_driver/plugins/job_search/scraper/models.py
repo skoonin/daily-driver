@@ -170,20 +170,27 @@ class EnrichedJob(BaseModel):
     status: JobStatus = JobStatus.FOUND
     skip_reason: str = ""
     date_applied: dt.date | None = None
+    # Drives `jobs prune --older-than`. Defaults to Date Found on write when
+    # unset (no upsert-on-rescan path yet), so prune ages from first-discovery.
+    date_last_seen: dt.date | None = None
 
+    # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
+    # derived from this map's key order and must stay byte-for-byte identical to
+    # existing jobs.csv files.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
-        "Notes": "notes",
         "Company": "company",
-        "Location": "location",
         "Role": "role",
         "Fit": "fit",
         "Comp": "comp",
-        "Date Found": "date_found",
-        "Date Applied": "date_applied",
-        "Link": "url",
+        "Location": "location",
         "Product/Purpose": "product",
         "GD Rating": "gd_rating",
+        "Notes": "notes",
+        "Date Found": "date_found",
+        "Date Applied": "date_applied",
+        "Date Last Seen": "date_last_seen",
+        "Link": "url",
         "Source": "source",
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
@@ -225,19 +232,21 @@ class EnrichedJob(BaseModel):
             )
         return {
             "Status": self.status.value,
-            "Notes": notes,
             "Company": self.company,
-            "Location": self.location,
             "Role": self.role,
             "Fit": "" if self.fit is None else str(self.fit),
             "Comp": self.comp,
+            "Location": self.location,
+            "Product/Purpose": self.product,
+            "GD Rating": self.gd_rating,
+            "Notes": notes,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
             ),
+            # Seed from Date Found on insert so prune ages from first-discovery.
+            "Date Last Seen": (self.date_last_seen or self.date_found).isoformat(),
             "Link": self.url,
-            "Product/Purpose": self.product,
-            "GD Rating": self.gd_rating,
             "Source": self.source,
         }
 
@@ -269,6 +278,7 @@ class EnrichedJob(BaseModel):
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
+            date_last_seen=_opt_date(row.get("Date Last Seen", "")),
             url=row.get("Link", ""),
             product=(row.get("Product/Purpose", "") or "(auto-scraped -- needs fill)"),
             gd_rating=row.get("GD Rating", ""),
