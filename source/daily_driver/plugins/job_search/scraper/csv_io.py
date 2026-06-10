@@ -176,7 +176,7 @@ def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
 
     Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
     """
-    from daily_driver.plugins.job_search.scraper.models import JobStatus
+    from daily_driver.plugins.job_search.scraper.models import JobStatus, parse_fit
 
     updates: dict[str, Any] = {}
     if "product" in d:
@@ -184,12 +184,7 @@ def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
     if "gd_rating" in d:
         updates["gd_rating"] = d["gd_rating"]
     if "fit" in d:
-        f = d["fit"]
-        updates["fit"] = (
-            int(f)
-            if isinstance(f, int) or (isinstance(f, str) and f.isdigit())
-            else None
-        )
+        updates["fit"] = parse_fit(d["fit"])
     if "notes" in d:
         updates["notes"] = d["notes"]
     if "description_text" in d:
@@ -238,10 +233,22 @@ def _row_to_dict(row: dict[str, str]) -> dict[str, str]:
 
 def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
     """Convert an internal job dict back to a CSV row dict."""
+    from daily_driver.plugins.job_search.scraper.models import parse_fit
+
     row = {col: "" for col in header}
     for dict_key, csv_col in _DICT_TO_CSV.items():
         if csv_col in row:
             row[csv_col] = job.get(dict_key, "")
+    # Normalize fit to the bare-int contract so legacy "7/10" cells rewrite clean.
+    raw_fit = row.get("Fit", "")
+    fit = parse_fit(raw_fit)
+    if fit is None and raw_fit.strip():
+        log.warning(
+            "backfill: dropping unparseable Fit cell %r for %s",
+            raw_fit,
+            job.get("company", "unknown"),
+        )
+    row["Fit"] = "" if fit is None else str(fit)
     return row
 
 

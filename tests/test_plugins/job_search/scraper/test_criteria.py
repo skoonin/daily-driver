@@ -224,7 +224,7 @@ def test_worker_folds_criteria_into_notes() -> None:
             _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
         )
     assert not failed
-    assert fit == "8/10"
+    assert fit == "8"
     assert notes == "k8s shop | Sponsorship: Yes, H-1B"
 
 
