@@ -91,6 +91,11 @@ log`. Versioned release history starts at 1.0.
 
 ### Fixed
 
+- **Job fit scores now appear in jobs.csv**: scores were computed by the
+  enricher but silently dropped, leaving the Fit column blank after `jobs run`.
+  Legacy `7/10`-style cells are still readable and normalize to bare integers on
+  the next backfill. (#79)
+
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
   country-name alias, so `location_matches` silently dropped every Apple job
