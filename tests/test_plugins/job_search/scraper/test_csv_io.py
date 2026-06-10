@@ -66,13 +66,13 @@ def test_backfill_uses_config_budget_not_maxsize(tmp_path: Path) -> None:
 
     called_with: list[dict] = []
 
-    def _capture_company(*args: Any, **kwargs: Any) -> dict:
+    def _capture_company(jobs: Any, *args: Any, **kwargs: Any) -> Any:
         called_with.append({"fn": "enrich_company_descriptions", **kwargs})
-        return {}
+        return jobs, {}
 
-    def _capture_fit(*args: Any, **kwargs: Any) -> dict:
+    def _capture_fit(jobs: Any, *args: Any, **kwargs: Any) -> Any:
         called_with.append({"fn": "enrich_fit_and_notes", **kwargs})
-        return {}
+        return jobs, {}
 
     with (
         patch(

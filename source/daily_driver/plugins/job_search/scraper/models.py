@@ -49,6 +49,11 @@ ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
+# Product/Purpose default for un-enriched rows. Both fresh scraped jobs and
+# blank CSV cells carry this, so enrichment can tell "needs fill" from a real
+# value without a separate flag.
+_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
+
 
 def _parse_k_salary(s: str) -> int | None:
     """Parse a salary amount that may use K/M shorthand into a plain integer.
@@ -160,7 +165,7 @@ class EnrichedJob(BaseModel):
     comp: str = ""
     date_found: dt.date
 
-    product: str = "(auto-scraped -- needs fill)"
+    product: str = _PLACEHOLDER_PRODUCT
     gd_rating: str = ""
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
@@ -195,6 +200,20 @@ class EnrichedJob(BaseModel):
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
 
+    @property
+    def product_filled(self) -> bool:
+        """Whether Product/Purpose holds a real value (not the scrape placeholder).
+
+        Fresh scraped rows and blank CSV cells both surface as the placeholder
+        default, so company enrichment treats the placeholder as "still empty".
+        """
+        return bool(self.product) and self.product != _PLACEHOLDER_PRODUCT
+
+    @property
+    def product_or_blank(self) -> str:
+        """Product text for prompts, blanked when it is only the placeholder."""
+        return self.product if self.product_filled else ""
+
     @classmethod
     def from_normalized(cls, n: NormalizedJob) -> EnrichedJob:
         return cls(
@@ -209,6 +228,15 @@ class EnrichedJob(BaseModel):
             date_found=n.date_found,
         )
 
+    def with_updates(self, **updates: Any) -> EnrichedJob:
+        """Return a copy with ``updates`` applied through full pydantic validation.
+
+        ``model_copy(update=...)`` bypasses validators, so field constraints
+        (e.g. ``fit`` ``ge=1``) go unenforced — the W1.1 fit-bounds finding.
+        Routing every update through ``model_validate`` keeps constraints live.
+        """
+        return type(self).model_validate({**self.model_dump(), **updates})
+
     def with_details(self, details: JobDetails) -> EnrichedJob:
         updates: dict[str, Any] = {}
         if details.comp and not self.comp:
@@ -217,10 +245,10 @@ class EnrichedJob(BaseModel):
             updates["posted_date"] = details.posted_date
         if details.description_text and not self.description_text:
             updates["description_text"] = details.description_text
-        return self.model_copy(update=updates)
+        return self.with_updates(**updates)
 
     def with_fit(self, score: int, notes: str) -> EnrichedJob:
-        return self.model_copy(update={"fit": score, "notes": notes})
+        return self.with_updates(fit=score, notes=notes)
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
@@ -280,7 +308,10 @@ class EnrichedJob(BaseModel):
             date_applied=_opt_date(row.get("Date Applied", "")),
             date_last_seen=_opt_date(row.get("Date Last Seen", "")),
             url=row.get("Link", ""),
-            product=(row.get("Product/Purpose", "") or "(auto-scraped -- needs fill)"),
+            # Preserve a blank Product cell as blank (do not substitute the
+            # placeholder) so a backfill rewrite is byte-identical for unenriched
+            # rows; product_filled treats blank and placeholder alike.
+            product=row.get("Product/Purpose", ""),
             gd_rating=row.get("GD Rating", ""),
             source=source,
             source_canonical=canonical,

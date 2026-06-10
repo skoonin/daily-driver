@@ -19,7 +19,9 @@ from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import enrichment
+from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import make_enriched
 
 
 def _enrichment_plugin(budget: int) -> JobSearchPlugin:
@@ -59,8 +61,16 @@ def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
     )
 
 
-def _job(company: str, idx: int = 0) -> dict[str, Any]:
-    return {"company": company, "role": "SRE", "location": "Remote", "product": ""}
+def _job(company: str, idx: int = 0) -> EnrichedJob:
+    # url unique per company so cross-job identity stays distinct; product "" so
+    # the company enricher treats it as needing a lookup.
+    return make_enriched(
+        company=company, url=f"https://example.com/{company}", product=""
+    )
+
+
+def _fit_job(company: str) -> EnrichedJob:
+    return make_enriched(company=company, url=f"https://example.com/{company}")
 
 
 def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,9 +83,11 @@ def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job(f"Co{i}") for i in range(4)]
-    enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
+    out, _ = enrichment.enrich_company_descriptions(
+        jobs, _ollama_config(max_parallel=4)
+    )
 
-    assert all(j["product"] == "Some product" for j in jobs)
+    assert all(j.product == "Some product" for j in out)
 
 
 def test_claude_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,9 +100,11 @@ def test_claude_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job(f"Co{i}") for i in range(4)]
-    enrichment.enrich_company_descriptions(jobs, _claude_config(max_parallel=4))
+    out, _ = enrichment.enrich_company_descriptions(
+        jobs, _claude_config(max_parallel=4)
+    )
 
-    assert all(j["product"] == "Some product" for j in jobs)
+    assert all(j.product == "Some product" for j in out)
 
 
 def test_claude_path_serial_when_max_parallel_one(
@@ -173,19 +187,10 @@ def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> 
         return '{"fit": 7, "notes": "ok"}'
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(4)
-    ]
-    enrichment.enrich_fit_and_notes(jobs, _ollama_config())
+    jobs = [_fit_job(f"Co{i}") for i in range(4)]
+    out, _ = enrichment.enrich_fit_and_notes(jobs, _ollama_config())
 
-    assert all(j["fit"] == "7/10" for j in jobs)
+    assert all(j.fit == 7 for j in out)
 
 
 def test_fit_notes_progress_callback_fires_per_job(
@@ -195,16 +200,7 @@ def test_fit_notes_progress_callback_fires_per_job(
     monkeypatch.setattr(
         ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
     )
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(4)
-    ]
+    jobs = [_fit_job(f"Co{i}") for i in range(4)]
     advances: list[tuple[int, str | None]] = []
     enrichment.enrich_fit_and_notes(
         jobs,
@@ -221,16 +217,7 @@ def test_fit_notes_emits_progress_heartbeat_at_info(
     monkeypatch.setattr(
         ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
     )
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(10)
-    ]
+    jobs = [_fit_job(f"Co{i}") for i in range(10)]
     with caplog.at_level(
         "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
     ):
@@ -299,7 +286,7 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
     with pytest.raises(KeyboardInterrupt):
         enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
 
-    enriched = [j for j in jobs if j["product"].startswith("Product")]
+    enriched = [j for j in jobs if j.product.startswith("Product")]
     assert len(enriched) >= 1, f"expected partial results stitched, got: {jobs}"
 
 
@@ -351,8 +338,8 @@ def test_ollama_partial_failure_doesnt_kill_others(
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job("GoodA"), _job("BadCo"), _job("GoodB"), _job("GoodC")]
-    stats = enrichment.enrich_company_descriptions(jobs, _ollama_config())
+    out, stats = enrichment.enrich_company_descriptions(jobs, _ollama_config())
 
-    enriched = [j for j in jobs if j["product"] == "Some product"]
+    enriched = [j for j in out if j.product == "Some product"]
     assert len(enriched) == 3, f"expected 3 enriched, got {len(enriched)}: {jobs}"
     assert stats["failed"] >= 1

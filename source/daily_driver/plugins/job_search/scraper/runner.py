@@ -777,9 +777,9 @@ def run(
         load_existing_jobs,
     )
     from daily_driver.plugins.job_search.scraper.enrichment import (
-        enrich_company_descriptions_typed,
-        enrich_fit_and_notes_typed,
-        enrich_job_details_typed,
+        enrich_company_descriptions,
+        enrich_fit_and_notes,
+        enrich_job_details,
     )
 
     started_at = datetime.now(timezone.utc)
@@ -952,7 +952,7 @@ def run(
             fit_phase = enrich_group.phase("Fit and notes", total=enrich_total)
 
             detail_phase.start()
-            typed_jobs, detail_stats = enrich_job_details_typed(
+            typed_jobs, detail_stats = enrich_job_details(
                 typed_jobs, ctx, progress=detail_phase.advance
             )
             detail_phase.done(
@@ -961,7 +961,7 @@ def run(
             )
 
             product_phase.start()
-            typed_jobs, product_stats = enrich_company_descriptions_typed(
+            typed_jobs, product_stats = enrich_company_descriptions(
                 typed_jobs, ctx, progress=product_phase.advance
             )
             product_phase.done(
@@ -971,7 +971,7 @@ def run(
             )
 
             fit_phase.start()
-            typed_jobs, fn_stats = enrich_fit_and_notes_typed(
+            typed_jobs, fn_stats = enrich_fit_and_notes(
                 typed_jobs, ctx, progress=fit_phase.advance
             )
             fit_phase.done(

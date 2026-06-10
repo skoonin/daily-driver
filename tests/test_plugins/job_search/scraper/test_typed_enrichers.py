@@ -1,4 +1,9 @@
-"""Tests for the typed enricher wrappers (K8)."""
+"""Tests for the EnrichedJob enrichers (single representation, post-collapse).
+
+The enrichers take and return ``list[EnrichedJob]``; the former dict-based
+bodies + typed wrappers were folded into these. These pin the model-level
+contract: new frozen instances out, immutable inputs, skipped-status handling.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +13,9 @@ import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
-    enrich_company_descriptions_typed,
-    enrich_fit_and_notes_typed,
-    enrich_job_details_typed,
+    enrich_company_descriptions,
+    enrich_fit_and_notes,
+    enrich_job_details,
 )
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
@@ -37,10 +42,10 @@ def _enriched(**overrides: object) -> EnrichedJob:
 @pytest.fixture
 def fake_config() -> ScrapeContext:
     # Both enrichment budgets are zeroed: enrich_fit_and_notes / company
-    # treat budget<=0 as "unset, use config default" (llm.py:719,218), so a
-    # caller passing budget=0 still enriches at the config default unless the
-    # config itself is 0. Without max_enrich_fit=0 the fit enricher makes real
-    # claude CLI calls on dev machines where `claude` is on PATH.
+    # treat budget<=0 as "unset, use config default", so a caller passing
+    # budget=0 still enriches at the config default unless the config itself is
+    # 0. Without max_enrich_fit=0 the fit enricher makes real claude CLI calls
+    # on dev machines where `claude` is on PATH.
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
@@ -51,58 +56,59 @@ def fake_config() -> ScrapeContext:
     )
 
 
-def test_typed_enrichers_return_new_instances(fake_config: ScrapeContext) -> None:
-    """Frozen-model invariant: enrichers must return new instances."""
+def test_enrichers_return_enriched_job_list(fake_config: ScrapeContext) -> None:
+    """Company enrich returns a list of EnrichedJob (frozen-model invariant)."""
     j = _enriched()
-    # company description path short-circuits when claude CLI absent — that's fine.
-    out, _stats = enrich_company_descriptions_typed([j], fake_config)
+    out, _stats = enrich_company_descriptions([j], fake_config)
     assert len(out) == 1
     assert isinstance(out[0], EnrichedJob)
 
 
-def test_typed_company_enrich_passes_through_when_no_claude(
+def test_company_enrich_passes_through_when_no_claude(
     fake_config: ScrapeContext,
 ) -> None:
     j = _enriched()
     with patch("shutil.which", return_value=None):
-        out, stats = enrich_company_descriptions_typed([j], fake_config)
+        out, stats = enrich_company_descriptions([j], fake_config)
     assert stats == {"enriched": 0, "skipped_cached": 0, "failed": 0}
     # No mutation to product when claude is absent.
     assert out[0].product == j.product
 
 
-def test_typed_fit_enrich_passes_through_with_zero_budget(
+def test_fit_enrich_passes_through_with_zero_budget(
     fake_config: ScrapeContext,
 ) -> None:
     j = _enriched()
-    out, stats = enrich_fit_and_notes_typed([j], fake_config, budget=0)
+    out, stats = enrich_fit_and_notes([j], fake_config, budget=0)
     # Effective budget 0 (param 0 + config max_enrich_fit 0) => no jobs
     # enriched, no claude call.
     assert len(out) == 1
     assert out[0].fit == j.fit  # unchanged
 
 
-def test_typed_job_details_short_circuits_when_description_present(
+def test_job_details_short_circuits_when_description_present(
     fake_config: ScrapeContext,
 ) -> None:
     j = _enriched(description_text="already populated")
-    out, stats = enrich_job_details_typed([j], fake_config)
+    out, stats = enrich_job_details([j], fake_config)
     assert len(out) == 1
     # description_text preserved from input.
     assert out[0].description_text == "already populated"
     assert stats["total"] == 1
 
 
-def test_typed_enrichers_preserve_immutability(fake_config: ScrapeContext) -> None:
-    """Input EnrichedJob instances must not be mutated (Q14: frozen=True)."""
+def test_enrichers_preserve_individual_immutability(
+    fake_config: ScrapeContext,
+) -> None:
+    """The original frozen instances must not be mutated (only list slots)."""
     j = _enriched(notes="original")
-    enrich_fit_and_notes_typed([j], fake_config, budget=0)
-    # Original instance unchanged regardless of what wrapper does internally.
+    enrich_fit_and_notes([j], fake_config, budget=0)
+    # Original instance unchanged regardless of what the enricher does.
     assert j.notes == "original"
     assert j.fit is None
 
 
-def test_typed_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
+def test_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
     j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
-    out, _stats = enrich_job_details_typed([j], fake_config)
+    out, _stats = enrich_job_details([j], fake_config)
     assert out[0].status is JobStatus.SKIPPED

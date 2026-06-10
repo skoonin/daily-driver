@@ -19,6 +19,7 @@ from daily_driver.integrations.ai_provider import AIInvocationError
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import make_enriched
 
 
 def _config() -> ScrapeContext:
@@ -39,7 +40,7 @@ def test_company_descriptions_warning_includes_stdout(caplog) -> None:
         stdout="Not logged in - Please run /login",
         stderr="",
     )
-    jobs = [{"company": "Acme", "role": "SRE"}]
+    jobs = [make_enriched(company="Acme")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -62,7 +63,7 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
         stdout="Credit balance is too low",
         stderr="",
     )
-    jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/jobs/1"}]
+    jobs = [make_enriched(company="Acme", url="https://example.com/jobs/1")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -81,7 +82,7 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
 
 def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> None:
     """Site 1 (free-text product description) must request format_json=False."""
-    jobs = [{"company": "Acme", "role": "SRE"}]
+    jobs = [make_enriched(company="Acme")]
     captured: dict = {}
 
     def fake_invoke(task, prompt, *, ai, timeout, format_json):
@@ -91,16 +92,16 @@ def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> No
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            enrichment.enrich_company_descriptions(jobs, _config())
+            out, _ = enrichment.enrich_company_descriptions(jobs, _config())
 
     assert captured["task"] == "enrichment"
     assert captured["format_json"] is False
-    assert jobs[0]["product"] == "Acme makes widgets"
+    assert out[0].product == "Acme makes widgets"
 
 
 def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
     """Site 2 (fit/notes JSON) must request format_json=True."""
-    jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/j/1"}]
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
     captured: dict = {}
 
     def fake_invoke(task, prompt, *, ai, timeout, format_json):
@@ -110,11 +111,11 @@ def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            enrichment.enrich_fit_and_notes(jobs, _config())
+            out, _ = enrichment.enrich_fit_and_notes(jobs, _config())
 
     assert captured["task"] == "enrichment"
     assert captured["format_json"] is True
-    assert jobs[0]["fit"] == "7/10"
+    assert out[0].fit == 7
 
 
 def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
@@ -126,7 +127,7 @@ def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
         stderr="",
         returncode=500,
     )
-    jobs = [{"company": "Acme", "role": "SRE"}]
+    jobs = [make_enriched(company="Acme")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=err):

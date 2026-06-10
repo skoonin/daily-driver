@@ -26,21 +26,31 @@ from daily_driver.plugins.job_search.scraper.enrichment.llm import (
     _fetch_fit_notes_for_job,
     _fold_criteria_values,
 )
+from daily_driver.plugins.job_search.scraper.models import (
+    EnrichedJob,
+    NormalizedJob,
+    RawScrapedJob,
+)
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 _CTX = ScrapeContext(plugin=JobSearchPlugin())
 
 
-def _job(**overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "company": "Acme",
-        "role": "SRE",
-        "location": "Remote",
-        "product": "",
-        "description_text": "We run Kubernetes at scale and sponsor visas.",
-    }
-    base.update(overrides)
-    return base
+def _job(**overrides: Any) -> EnrichedJob:
+    raw = RawScrapedJob(
+        company="Acme",
+        role="SRE",
+        url="https://example.com/j",
+        source="remoteok",
+        location="Remote",
+    )
+    base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw)).model_copy(
+        update={
+            "product": "",
+            "description_text": "We run Kubernetes at scale and sponsor visas.",
+        }
+    )
+    return base.model_copy(update=dict(overrides))
 
 
 # --- Config model -----------------------------------------------------------
@@ -224,7 +234,7 @@ def test_worker_folds_criteria_into_notes() -> None:
             _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
         )
     assert not failed
-    assert fit == "8/10"
+    assert fit == 8
     assert notes == "k8s shop | Sponsorship: Yes, H-1B"
 
 

@@ -69,13 +69,16 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
     from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 
     def interrupting_enrich_company(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["product"] = "Saved before interrupt"
-        jobs[0]["gd_rating"] = "4.2"
+        jobs: list[Any], ctx: Any = None, *, budget: int = 0, progress: Any = None
+    ) -> Any:
+        # Replace slot 0 in place (mirrors the real enricher) before raising so
+        # backfill's interrupt handler can persist the partial result.
+        jobs[0] = jobs[0].with_updates(
+            product="Saved before interrupt", gd_rating="4.2"
+        )
         raise KeyboardInterrupt
 
-    def should_not_run(*_a: Any, **_kw: Any) -> dict[str, int]:
+    def should_not_run(*_a: Any, **_kw: Any) -> Any:
         raise AssertionError("fit+notes enricher must not run after interrupt")
 
     monkeypatch.setattr(
@@ -121,18 +124,21 @@ def test_backfill_uses_shared_jobs_lock_path(
     from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 
     def enrich_company(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["product"] = "Acme product"
-        jobs[0]["gd_rating"] = "unknown"
-        return {"enriched": 1, "skipped_cached": 0, "failed": 0}
+        jobs: list[Any], ctx: Any = None, *, budget: int = 0, progress: Any = None
+    ) -> Any:
+        jobs[0] = jobs[0].with_updates(product="Acme product", gd_rating="unknown")
+        return jobs, {"enriched": 1, "skipped_cached": 0, "failed": 0}
 
     def enrich_fit_notes(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["fit"] = "7"
-        jobs[0]["notes"] = "Saved"
-        return {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
+        jobs: list[Any], ctx: Any = None, *, budget: int = 0, progress: Any = None
+    ) -> Any:
+        jobs[0] = jobs[0].with_updates(fit=7, notes="Saved")
+        return jobs, {
+            "enriched": 1,
+            "skipped_budget": 0,
+            "skipped_no_desc": 0,
+            "failed": 0,
+        }
 
     monkeypatch.setattr(csv_io, "file_lock", fake_file_lock)
     monkeypatch.setattr(enrichment, "enrich_company_descriptions", enrich_company)

@@ -7,12 +7,15 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
-from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+from daily_driver.plugins.job_search.scraper.models import (
+    ENRICH_SKIP_STATUSES,
+    EnrichedJob,
+)
 
 if sys.platform != "win32":
     import fcntl
@@ -123,111 +126,12 @@ def append_jobs_typed(
     return written
 
 
-def _enriched_to_dict(job: EnrichedJob) -> dict[str, Any]:  # noqa: F821
-    """Project an EnrichedJob into the legacy working-dict shape.
-
-    Used by typed enricher wrappers so existing dict-based enricher bodies
-    (which mutate in place) can run unchanged.
-    """
-    return {
-        "company": job.company,
-        "role": job.role,
-        "location": job.location,
-        "url": job.url,
-        "source": job.source,
-        "source_canonical": job.source_canonical,
-        "source_board": job.source_board,
-        "comp": job.comp,
-        "date_found": job.date_found.isoformat(),
-        "product": job.product,
-        "gd_rating": job.gd_rating,
-        "fit": "" if job.fit is None else job.fit,
-        "notes": job.notes,
-        "description_text": job.description_text,
-        "status": job.status.value,
-    }
-
-
-def _dict_to_enriched_updates(d: dict[str, Any]) -> dict[str, Any]:
-    """Pick the enricher-mutated fields out of the working dict.
-
-    Returned dict is suitable for ``EnrichedJob.model_copy(update=...)``.
-    """
-    from daily_driver.plugins.job_search.scraper.models import JobStatus
-
-    updates: dict[str, Any] = {}
-    if "product" in d:
-        updates["product"] = d["product"]
-    if "gd_rating" in d:
-        updates["gd_rating"] = d["gd_rating"]
-    if "fit" in d:
-        f = d["fit"]
-        updates["fit"] = (
-            int(f)
-            if isinstance(f, int) or (isinstance(f, str) and f.isdigit())
-            else None
-        )
-    if "notes" in d:
-        updates["notes"] = d["notes"]
-    if "description_text" in d:
-        updates["description_text"] = d["description_text"]
-    if "status" in d and d["status"]:
-        updates["status"] = JobStatus(d["status"])
-    if "skip_reason" in d:
-        updates["skip_reason"] = d["skip_reason"]
-    if "comp" in d and d["comp"]:
-        updates["comp"] = d["comp"]
-    return updates
-
-
-# Column mapping: CSV header name -> internal dict key
-_CSV_TO_DICT = {
-    "Status": "status",
-    "Company": "company",
-    "Product/Purpose": "product",
-    "Role": "role",
-    "Comp": "comp",
-    "Location": "location",
-    "Fit": "fit",
-    "GD Rating": "gd_rating",
-    "Source": "source",
-    "Date Found": "date_found",
-    "Date Applied": "date_applied",
-    "Link": "url",
-    "Notes": "notes",
-}
-
-_DICT_TO_CSV = {v: k for k, v in _CSV_TO_DICT.items()}
-
-_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
-
-
-def _row_to_dict(row: dict[str, str]) -> dict[str, str]:
-    """Convert a CSV DictReader row to our internal job dict format."""
-    out: dict[str, str] = {}
-    for csv_col, dict_key in _CSV_TO_DICT.items():
-        val = (row.get(csv_col) or "").strip()
-        if dict_key == "product" and val == _PLACEHOLDER_PRODUCT:
-            val = ""
-        out[dict_key] = val
-    return out
-
-
-def _dict_to_row(job: dict[str, str], header: list[str]) -> dict[str, str]:
-    """Convert an internal job dict back to a CSV row dict."""
-    row = {col: "" for col in header}
-    for dict_key, csv_col in _DICT_TO_CSV.items():
-        if csv_col in row:
-            row[csv_col] = job.get(dict_key, "")
-    return row
-
-
 def _rewrite_jobs_csv(
     csv_path: Path,
     header: list[str],
-    jobs: list[dict[str, str]],
+    jobs: list[EnrichedJob],
 ) -> None:
-    """Rewrite jobs.csv atomically (via .csv.tmp + rename) from in-memory rows."""
+    """Rewrite jobs.csv atomically (via .csv.tmp + rename) from typed jobs."""
     tmp_path = csv_path.with_suffix(".csv.tmp")
     with open(tmp_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -238,9 +142,13 @@ def _rewrite_jobs_csv(
         )
         writer.writeheader()
         for job in jobs:
-            writer.writerow(_dict_to_row(job, header))
+            writer.writerow(job.to_csv_row())
 
     tmp_path.rename(csv_path)
+
+
+def _active(job: EnrichedJob) -> bool:
+    return job.status.value not in ENRICH_SKIP_STATUSES
 
 
 def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
@@ -262,17 +170,13 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
             header = list(reader.fieldnames or CANONICAL_HEADER)
             rows = list(reader)
 
-        from daily_driver.plugins.job_search.scraper.models import (
-            ENRICH_SKIP_STATUSES,
-        )
+        jobs = [EnrichedJob.from_csv_row(r) for r in rows]
 
-        jobs = [_row_to_dict(r) for r in rows]
-
-        active = [j for j in jobs if j.get("status") not in ENRICH_SKIP_STATUSES]
-        needs_product = sum(1 for j in active if not j.get("product"))
-        needs_fit = sum(1 for j in active if not j.get("fit"))
-        needs_gd = sum(1 for j in active if not j.get("gd_rating"))
-        needs_notes = sum(1 for j in active if not j.get("notes"))
+        active = [j for j in jobs if _active(j)]
+        needs_product = sum(1 for j in active if not j.product_filled)
+        needs_fit = sum(1 for j in active if not j.fit)
+        needs_gd = sum(1 for j in active if not j.gd_rating)
+        needs_notes = sum(1 for j in active if not j.notes)
         skipped_count = len(jobs) - len(active)
 
         log.info(
@@ -296,8 +200,8 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
         log.info("[backfill] backed up to %s", backup.name)
 
         try:
-            enrich_company_descriptions(jobs, ctx, budget=0)
-            enrich_fit_and_notes(jobs, ctx, budget=0)
+            jobs, _ = enrich_company_descriptions(jobs, ctx, budget=0)
+            jobs, _ = enrich_fit_and_notes(jobs, ctx, budget=0)
         except KeyboardInterrupt:
             try:
                 _rewrite_jobs_csv(csv_path, header, jobs)
@@ -319,10 +223,11 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
 
         _rewrite_jobs_csv(csv_path, header, jobs)
 
-    filled_product = needs_product - sum(1 for j in active if not j.get("product"))
-    filled_fit = needs_fit - sum(1 for j in active if not j.get("fit"))
-    filled_gd = needs_gd - sum(1 for j in active if not j.get("gd_rating"))
-    filled_notes = needs_notes - sum(1 for j in active if not j.get("notes"))
+    active = [j for j in jobs if _active(j)]
+    filled_product = needs_product - sum(1 for j in active if not j.product_filled)
+    filled_fit = needs_fit - sum(1 for j in active if not j.fit)
+    filled_gd = needs_gd - sum(1 for j in active if not j.gd_rating)
+    filled_notes = needs_notes - sum(1 for j in active if not j.notes)
     print(
         f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
         f"+{filled_fit} Fit, +{filled_notes} Notes"
@@ -333,12 +238,5 @@ __all__ = [
     "CANONICAL_HEADER",
     "load_existing_jobs",
     "append_jobs_typed",
-    "_CSV_TO_DICT",
-    "_DICT_TO_CSV",
-    "_PLACEHOLDER_PRODUCT",
-    "_row_to_dict",
-    "_dict_to_row",
     "backfill",
-    "_enriched_to_dict",
-    "_dict_to_enriched_updates",
 ]

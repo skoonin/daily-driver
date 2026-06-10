@@ -16,8 +16,6 @@ from __future__ import annotations
 import csv
 import datetime as dt
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.csv_io import (
@@ -119,12 +117,15 @@ def test_golden_round_trip_is_byte_stable(tmp_path: Path) -> None:
 
 
 def _backfill_ctx() -> ScrapeContext:
+    # Zero budgets make the enrichers no-op (no provider calls) while backfill
+    # still runs its read -> (enrich) -> rewrite cycle through the CSV path.
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
                 "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
                 "enrichment": {
-                    "max_enrich_companies": 10,
+                    "max_enrich_companies": 0,
+                    "max_enrich_fit": 0,
                     "detail_delay_seconds": 0,
                 },
             }
@@ -163,24 +164,7 @@ def test_backfill_round_trip_preserves_rows_and_order(tmp_path: Path) -> None:
         for r in csv.DictReader(csv_path.read_text(encoding="utf-8").splitlines())
     }
 
-    # Stub the LLM enrichers so the backfill performs no network work but still
-    # runs the read -> (enrich) -> rewrite cycle through the CSV path.
-    def _noop(jobs: Any, *args: Any, **kwargs: Any) -> Any:
-        return {}
-
-    with (
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm."
-            "enrich_company_descriptions",
-            side_effect=_noop,
-        ),
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm."
-            "enrich_fit_and_notes",
-            side_effect=_noop,
-        ),
-    ):
-        backfill(_backfill_ctx(), csv_path)
+    backfill(_backfill_ctx(), csv_path)
 
     text_after = csv_path.read_text(encoding="utf-8")
     header_after = text_after.splitlines()[0]
