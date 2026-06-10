@@ -149,15 +149,19 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         context_text = context_path.read_text(encoding="utf-8").strip()
     output_dir = workspace.output_dir
     csv_path = output_dir / "jobs.csv"
+    ephemeral_dir = workspace.ephemeral_dir
 
     try:
         if args.backfill:
-            run_backfill(plugin, csv_path, ai=ai, context_text=context_text)
+            run_backfill(
+                plugin, csv_path, ephemeral_dir, ai=ai, context_text=context_text
+            )
             return 0
 
         return run_scrape(
             plugin,
             output_dir,
+            ephemeral_dir,
             ai=ai,
             context_text=context_text,
             dry_run=args.dry_run,
@@ -204,7 +208,11 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     csv_path = output_dir / "jobs.csv"
 
     candidates, archived = prune(
-        csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run
+        csv_path,
+        workspace.ephemeral_dir,
+        cutoff=cutoff,
+        statuses=statuses,
+        dry_run=args.dry_run,
     )
 
     console = RichConsole(stderr=False)

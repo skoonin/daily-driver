@@ -20,7 +20,10 @@ from datetime import date
 from pathlib import Path
 
 from daily_driver.core.locking import file_lock
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
 
 # Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
 # row reaches and never leaves, so prune archives them by default.
@@ -103,6 +106,7 @@ def _is_stale(
 
 def prune(
     jobs_csv: Path,
+    ephemeral_dir: Path,
     *,
     cutoff: date,
     statuses: tuple[str, ...] | frozenset[str] = DEFAULT_PRUNE_STATUSES,
@@ -111,11 +115,12 @@ def prune(
     """Move stale rows from ``jobs_csv`` to ``jobs.archive.csv``.
 
     Returns (candidates, archived_count). ``archived_count`` is 0 in dry-run.
-    Holds an exclusive flock on ``jobs_csv`` for the read, classification,
-    archive, and rewrite so a concurrent scrape can't append rows between the
-    read and the rewrite (which would silently delete them).
+    Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
+    classification, archive, and rewrite so a concurrent scrape can't append
+    rows between the read and the rewrite (which would silently delete them).
     """
-    with file_lock(jobs_lock_path(jobs_csv)):
+    clear_stale_adjacent_lock(jobs_csv)
+    with file_lock(jobs_lock_path(ephemeral_dir)):
         header, rows = _read_rows(jobs_csv)
         if not header:
             return [], 0

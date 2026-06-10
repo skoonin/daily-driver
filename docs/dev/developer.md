@@ -148,7 +148,9 @@ The split exists so `daily-driver tracker list --json | jq …` and `daily-drive
 
 ## Flock model
 
-All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock` and `generate.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock`, `generate.lock`, and the jobs sentinel `jobs.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+
+**Exception — `focus.lock` is lock-as-data by design.** It is intentionally both the flock and its own JSON payload (focus start/end/reason), so it does sit in `ephemeral_dir` next to nothing it guards but itself. Payload writes are atomic (temp file + `os.replace`) so a crash mid-write never leaves a truncated body; `focus status` reads it locklessly by design, keeping the launchd check-in hook's read path cheap.
 
 ## Extensibility
 
