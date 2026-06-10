@@ -91,6 +91,11 @@ log`. Versioned release history starts at 1.0.
 
 ### Fixed
 
+- **A malformed salary in a RemoteOK listing no longer fails the whole source
+  during `jobs run`**: a float or float-string pay value used to raise an error
+  that dropped every RemoteOK result; the value is now coerced tolerantly and
+  the listing is kept (with comp blank if it can't be parsed). (#83)
+
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper
   emitted a bare city (`"Seattle"`) as the job location, which matches no
   country-name alias, so `location_matches` silently dropped every Apple job
