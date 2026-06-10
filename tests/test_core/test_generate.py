@@ -310,8 +310,9 @@ def test_concurrent_invocations_only_one_wipe(tmp_path: Path) -> None:
 
     Both processes see a stale stamp before entering the lock. After the
     first process generates and writes the stamp, the second re-checks drift
-    inside the lock and short-circuits. _wipe_and_recreate must be called
-    exactly twice total (commands + agents from one process, not four).
+    inside the lock and short-circuits. On the force_overwrite path
+    _wipe_and_recreate must be called exactly three times total (commands +
+    agents + hooks from one process, not six).
     """
     state_dir = tmp_path / ".daily-driver"
     state_dir.mkdir()
@@ -335,11 +336,11 @@ def test_concurrent_invocations_only_one_wipe(tmp_path: Path) -> None:
     outcomes = [results.get_nowait() for _ in range(2)]
     assert outcomes == ["ok", "ok"], f"unexpected outcomes: {outcomes}"
 
-    # _wipe_and_recreate is called once for commands/ and once for agents/.
-    # If the double-check fails, both processes would wipe (total 4 calls).
+    # _wipe_and_recreate runs once each for commands/, agents/, and hooks/.
+    # If the double-check fails, both processes would wipe (total 6 calls).
     total_wipes = len(wipe_calls)
-    assert total_wipes == 2, (
-        f"expected 2 wipe calls (one process), got {total_wipes} — "
+    assert total_wipes == 3, (
+        f"expected 3 wipe calls (one process), got {total_wipes} — "
         "double-checked locking may be missing or broken"
     )
 
@@ -764,6 +765,203 @@ def test_synthetic_plugin_package_data_copied_and_recorded(
     stored = _manifest.load(ws.state_dir)
     rel = ".claude/commands/fake-plugin/plugin-cmd.md"
     assert rel in stored, "plugin .md must be recorded in the SHA-256 manifest"
+
+
+# ---------------------------------------------------------------------------
+# Hook scripts join the SHA-256 manifest contract (W1.2)
+# ---------------------------------------------------------------------------
+
+
+def _point_hooks_pkg_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *files: tuple[str, str]
+) -> Path:
+    """Make generate read its hook scripts from a fake package dir, not the wheel.
+
+    _copy_hooks resolves importlib.resources.files("...templates").joinpath("hooks");
+    redirect only that joinpath so the real templates package (settings, contract
+    templates) keeps working.
+    """
+    fake_hooks = tmp_path / "fake-hooks"
+    fake_hooks.mkdir(exist_ok=True)
+    for name, content in files:
+        (fake_hooks / name).write_text(content, encoding="utf-8")
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):  # type: ignore[return]
+        if anchor == "daily_driver.resources.templates":
+            real = real_files(anchor)
+
+            class _Stub:
+                def joinpath(self, name: str) -> object:
+                    if name == "hooks":
+                        return fake_hooks
+                    return real.joinpath(name)
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+    return fake_hooks
+
+
+def test_user_edited_hook_survives_drift_regenerate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user edit to a managed hook script must survive a drift-triggered generate."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    _point_hooks_pkg_at(tmp_path, monkeypatch, ("hook-x.sh", "#!/bin/sh\noriginal\n"))
+
+    generate.generate(ws)
+
+    hook = tmp_path / ".claude" / "hooks" / "hook-x.sh"
+    assert hook.read_text(encoding="utf-8") == "#!/bin/sh\noriginal\n"
+
+    # Simulate a user edit, then force drift.
+    hook.write_text("#!/bin/sh\noriginal\n# USER MARKER\n", encoding="utf-8")
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    generate.generate(ws, ignore_drift=False, force_overwrite=False)
+
+    assert "# USER MARKER" in hook.read_text(
+        encoding="utf-8"
+    ), "user edit to hook script must be preserved across a drift regenerate"
+
+
+def test_pristine_hook_updated_on_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unedited hook must be refreshed when the package ships new content."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    fake_hooks = _point_hooks_pkg_at(
+        tmp_path, monkeypatch, ("hook-x.sh", "#!/bin/sh\nv1\n")
+    )
+
+    generate.generate(ws)
+
+    hook = tmp_path / ".claude" / "hooks" / "hook-x.sh"
+    assert hook.read_text(encoding="utf-8") == "#!/bin/sh\nv1\n"
+
+    # New package content, no user edit, drift the stamp.
+    (fake_hooks / "hook-x.sh").write_text("#!/bin/sh\nv2\n", encoding="utf-8")
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    generate.generate(ws, ignore_drift=False, force_overwrite=False)
+
+    assert (
+        hook.read_text(encoding="utf-8") == "#!/bin/sh\nv2\n"
+    ), "pristine hook must be updated from the new package snapshot"
+
+
+def test_hook_recorded_in_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hook scripts must be recorded in the SHA-256 manifest after generate."""
+    from daily_driver.core import manifest as _manifest
+
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    _point_hooks_pkg_at(tmp_path, monkeypatch, ("hook-x.sh", "#!/bin/sh\nbody\n"))
+
+    generate.generate(ws)
+
+    stored = _manifest.load(ws.state_dir)
+    rel = ".claude/hooks/hook-x.sh"
+    assert rel in stored, "hook script must be recorded in the SHA-256 manifest"
+
+
+def test_force_overwrite_replaces_user_edited_hook(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """force_overwrite=True (doctor --reset) must overwrite a user-edited hook."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    _point_hooks_pkg_at(tmp_path, monkeypatch, ("hook-x.sh", "#!/bin/sh\noriginal\n"))
+
+    generate.generate(ws)
+
+    hook = tmp_path / ".claude" / "hooks" / "hook-x.sh"
+    hook.write_text("#!/bin/sh\nuser edit\n", encoding="utf-8")
+
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+
+    assert (
+        hook.read_text(encoding="utf-8") == "#!/bin/sh\noriginal\n"
+    ), "force_overwrite must reset a user-edited hook to package content"
+
+
+def test_preserved_hook_counted_in_generation_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user-edited hook skipped on drift must increment GenerationResult.n_preserved."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    _point_hooks_pkg_at(tmp_path, monkeypatch, ("hook-x.sh", "#!/bin/sh\noriginal\n"))
+
+    generate.generate(ws)
+
+    hook = tmp_path / ".claude" / "hooks" / "hook-x.sh"
+    hook.write_text("#!/bin/sh\nuser edit\n", encoding="utf-8")
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    result = generate.generate(ws, ignore_drift=False, force_overwrite=False)
+
+    assert result is not None
+    assert (
+        result.n_preserved >= 1
+    ), "preserved hook must be folded into n_preserved, not invisible"
+
+
+def test_stale_hook_removed_on_regenerate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hook dropped from package data must be reaped from .claude/hooks/ on regenerate."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    fake_hooks = _point_hooks_pkg_at(
+        tmp_path,
+        monkeypatch,
+        ("hook-keep.sh", "#!/bin/sh\nkeep\n"),
+        ("hook-drop.sh", "#!/bin/sh\ndrop\n"),
+    )
+
+    generate.generate(ws)
+
+    drop = tmp_path / ".claude" / "hooks" / "hook-drop.sh"
+    assert drop.is_file()
+
+    # New package snapshot no longer ships hook-drop.sh.
+    (fake_hooks / "hook-drop.sh").unlink()
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    generate.generate(ws, ignore_drift=False, force_overwrite=False)
+
+    assert (
+        not drop.exists()
+    ), "hook absent from new package snapshot must be removed, not left as a zombie"
+    assert (
+        tmp_path / ".claude" / "hooks" / "hook-keep.sh"
+    ).is_file(), "shipped hook must remain"
+
+
+def test_user_edited_stale_hook_preserved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user-edited hook dropped from package data must be preserved (matching .md)."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    fake_hooks = _point_hooks_pkg_at(
+        tmp_path, monkeypatch, ("hook-drop.sh", "#!/bin/sh\noriginal\n")
+    )
+
+    generate.generate(ws)
+
+    drop = tmp_path / ".claude" / "hooks" / "hook-drop.sh"
+    drop.write_text("#!/bin/sh\nuser edit\n", encoding="utf-8")
+
+    # Drop it from the package and regenerate on drift.
+    (fake_hooks / "hook-drop.sh").unlink()
+    version_stamp.write(ws.state_dir, "0.9.0")
+
+    generate.generate(ws, ignore_drift=False, force_overwrite=False)
+
+    assert drop.exists(), "user-edited hook absent from package must be preserved"
+    assert drop.read_text(encoding="utf-8") == "#!/bin/sh\nuser edit\n"
 
 
 def test_two_sources_sharing_a_dest_keep_both(

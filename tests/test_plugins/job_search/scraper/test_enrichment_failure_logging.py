@@ -110,7 +110,7 @@ def test_fit_and_notes_routes_to_enrichment_task(caplog) -> None:
             enrichment.enrich_fit_and_notes(jobs, _config())
 
     assert captured["task"] == "enrichment"
-    assert jobs[0]["fit"] == "7/10"
+    assert jobs[0]["fit"] == "7"
 
 
 def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:

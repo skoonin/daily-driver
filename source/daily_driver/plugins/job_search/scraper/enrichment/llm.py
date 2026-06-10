@@ -540,7 +540,7 @@ def _fetch_fit_notes_for_job(
         score,
         notes_str,
     )
-    return f"{score}/10", notes_str, False
+    return str(score), notes_str, False
 
 
 def _enrich_fit_and_notes_parallel(
