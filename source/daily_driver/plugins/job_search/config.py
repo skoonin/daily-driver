@@ -144,7 +144,7 @@ class ScraperConfig(BaseModel):
         default=False, description="", json_schema_extra={"template_skip": True}
     )
     parallel_workers: int = Field(
-        default=4,
+        default=8,
         description="Worker threads for the parallel (headless) scrape phase.",
     )
     max_pages: int = Field(

@@ -192,7 +192,7 @@ Transport / retry knobs shared by every source.
 | `user_agent` | string | Firefox/128 UA |
 | `timeout` | int | 30 |
 | `search_terms` | list[string] or null | null |
-| `parallel_workers` | int | 4 |
+| `parallel_workers` | int | 8 |
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
 

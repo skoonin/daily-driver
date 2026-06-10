@@ -113,7 +113,7 @@ This recipe applies to the `job_search` plugin. Each scraper lives in its own mo
 scrape_<name>(ctx: ScrapeContext) → list[dict]
     ↓
 run_all_scrapers:
-    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 4)
+    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 8)
     phase 2 — Playwright sources serial (memory + bot-detection)
     ↓
 merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/JSON-LD)
