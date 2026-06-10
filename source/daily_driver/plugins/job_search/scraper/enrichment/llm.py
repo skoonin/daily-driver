@@ -4,8 +4,10 @@ Both enrichers operate on ``EnrichedJob`` directly and fan out through one
 pooled implementation: ``ThreadPoolExecutor(max_workers=pool_size)`` where
 ``pool_size == 1`` runs the work on the main thread (serial). Each replaces
 slots in the passed list with new frozen instances and returns that list plus a
-stats dict; replacing in place (rather than copying) keeps partial results
-visible to the caller after a ``KeyboardInterrupt``. Out-of-range LLM fit
+stats dict; the slots are replaced in the caller's own list (not a copy) so a
+``KeyboardInterrupt`` mid-pass leaves enriched-so-far results in that list for
+a caller that persists them — backfill does (its interrupt handler rewrites
+jobs.csv); run() does not flush mid-run yet (Wave 3). Out-of-range LLM fit
 scores are clamped at the model boundary with a logged warning rather than
 silently stored.
 """
@@ -32,6 +34,7 @@ from daily_driver.plugins.job_search.scraper.enrichment._shared import (
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
     EnrichedJob,
+    clamp_fit,
 )
 
 if TYPE_CHECKING:
@@ -65,7 +68,7 @@ def _fetch_company_info(
         )
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=False
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout
         )
     except AITimeoutError as exc:
         log.warning(
@@ -134,8 +137,9 @@ def enrich_company_descriptions(
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
     """
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-    # Mutate the passed list in place (replace frozen instances by slot) so a
-    # KeyboardInterrupt leaves partial results visible to the caller (backfill).
+    # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
+    # mid-pass leaves enriched-so-far results for a caller that persists them
+    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
     out = jobs
     if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
@@ -184,11 +188,28 @@ def enrich_company_descriptions(
             updates: dict[str, Any] = {}
             if cached.get("product"):
                 updates["product"] = cached["product"]
-                stats["enriched"] += 1
             if cached.get("gd_rating") and not job.gd_rating:
                 updates["gd_rating"] = cached["gd_rating"]
-            if updates:
+            if not updates:
+                continue
+            # A validation failure (or any non-interrupt error) applying one
+            # result must fail only that job, never abort the whole run — run()
+            # has no incremental flush, so an escape would lose every job.
+            try:
                 out[i] = job.with_updates(**updates)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                stats["failed"] += 1
+                log.warning(
+                    "%s company=%s: dropping enrichment update (%s)",
+                    _enrich_tag("enrich"),
+                    company,
+                    exc,
+                )
+                continue
+            if "product" in updates:
+                stats["enriched"] += 1
 
     if pool_size > 1:
         pool = ThreadPoolExecutor(max_workers=pool_size)
@@ -399,16 +420,14 @@ def _build_fit_notes_prompt(
     return prompt
 
 
-# Out-of-range LLM fit scores are clamped to the model's 1-10 bound rather than
-# rejected, so a usable signal survives a sloppy provider response. Clamping is
-# logged so the raw value stays visible at -v.
-_FIT_MIN = 1
-_FIT_MAX = 10
-
-
 def _clamp_fit(raw: float, company: str, role: str) -> int:
+    """Clamp an LLM fit score to the model's 1-10 bound, logging any clamp.
+
+    Out-of-range LLM scores are clamped rather than rejected so a usable signal
+    survives a sloppy provider response; the raw value stays visible at -v.
+    """
     score = int(raw)
-    clamped = max(_FIT_MIN, min(score, _FIT_MAX))
+    clamped = clamp_fit(score)
     if clamped != score:
         log.warning(
             "%s company=%s role=%s: fit %d out of range [1,10], clamped to %d",
@@ -451,7 +470,7 @@ def _fetch_fit_notes_for_job(
 
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout, format_json=True
+            "enrichment", prompt, ai=ctx.ai, timeout=timeout
         )
     except AITimeoutError as exc:
         log.warning(
@@ -554,8 +573,9 @@ def enrich_fit_and_notes(
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
-    # Mutate the passed list in place (replace frozen instances by slot) so a
-    # KeyboardInterrupt leaves partial results visible to the caller (backfill).
+    # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
+    # mid-pass leaves enriched-so-far results for a caller that persists them
+    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
     out = jobs
     if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
@@ -637,7 +657,21 @@ def enrich_fit_and_notes(
         if wrote_notes:
             updates["notes"] = notes_str
         if updates:
-            out[idx] = job.with_updates(**updates)
+            # Validation (or any non-interrupt error) applying one result must
+            # fail only this job, never abort the run — run() has no incremental
+            # flush, so an escape would lose every scraped+enriched job.
+            try:
+                out[idx] = job.with_updates(**updates)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                stats["failed"] += 1
+                log.warning(
+                    "[enrich-fit-notes] %s: dropping enrichment update (%s)",
+                    company,
+                    exc,
+                )
+                return
         stats["enriched"] += 1
         log.debug(
             "[enrich-fit-notes] %s: pre fit=%r notes=%r -> got fit=%r notes=%r "

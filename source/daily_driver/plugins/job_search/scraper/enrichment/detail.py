@@ -12,7 +12,6 @@ from daily_driver.core.progress import ProgressCallback
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
     EnrichedJob,
-    JobDetails,
 )
 from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -44,8 +43,9 @@ def enrich_job_details(
     Returns ``(jobs, stats)``; replaces slots in the passed list with new frozen
     instances (the individual models are never mutated).
     """
-    # Mutate the passed list in place (replace frozen instances by slot) so a
-    # KeyboardInterrupt leaves partial results visible to the caller (backfill).
+    # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
+    # mid-pass leaves enriched-so-far results for a caller that persists them
+    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
     out = jobs
     cache: dict[str, dict[str, Any]] = {}
     cfg = ctx.plugin.enrichment
@@ -123,21 +123,25 @@ def enrich_job_details(
                     details = {}
             cache[url] = details
 
+        # Fill only blanks (comp was already confirmed blank by the skip above).
+        updates: dict[str, Any] = {}
+        comp = details.get("comp", "") or ""
+        if comp:
+            updates["comp"] = comp
+            enriched_count += 1
         posted = details.get("posted_date")
         if isinstance(posted, str):
             try:
                 posted = dt.date.fromisoformat(posted)
             except ValueError:
                 posted = None
-        job_details = JobDetails(
-            comp=details.get("comp", "") or "",
-            posted_date=posted if isinstance(posted, dt.date) else None,
-            description_text=details.get("description_text", "") or "",
-        )
-        # with_details fills only blanks; comp was already confirmed blank above.
-        if job_details.comp:
-            enriched_count += 1
-        out[i] = job.with_details(job_details)
+        if isinstance(posted, dt.date) and job.posted_date is None:
+            updates["posted_date"] = posted
+        desc = details.get("description_text", "") or ""
+        if desc and not job.description_text:
+            updates["description_text"] = desc
+        if updates:
+            out[i] = job.with_updates(**updates)
 
         if progress is not None:
             progress(1, urlsplit(url).netloc or None)

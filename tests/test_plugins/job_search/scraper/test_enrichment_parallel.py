@@ -343,3 +343,34 @@ def test_ollama_partial_failure_doesnt_kill_others(
     enriched = [j for j in out if j.product == "Some product"]
     assert len(enriched) == 3, f"expected 3 enriched, got {len(enriched)}: {jobs}"
     assert stats["failed"] >= 1
+
+
+def test_apply_validation_error_fails_one_job_not_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A with_updates failure on one job must not abort the whole company pass.
+
+    Guards the critical finding: run() has no incremental flush, so a
+    ValidationError escaping the result-application loop would lose every job.
+    The bad job increments the failed counter; the others still enrich.
+    """
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Some product")
+
+    real_with_updates = EnrichedJob.with_updates
+
+    def flaky_with_updates(self: EnrichedJob, **updates: Any) -> EnrichedJob:
+        if self.company == "BadCo":
+            raise ValueError("simulated validation failure")
+        return real_with_updates(self, **updates)
+
+    monkeypatch.setattr(EnrichedJob, "with_updates", flaky_with_updates)
+    jobs = [_job("GoodA"), _job("BadCo"), _job("GoodC")]
+    out, stats = enrichment.enrich_company_descriptions(
+        jobs, _claude_config(max_parallel=1)
+    )
+
+    enriched = [j for j in out if j.product == "Some product"]
+    assert len(enriched) == 2, f"expected 2 enriched, got {len(enriched)}"
+    assert stats["failed"] >= 1
+    bad = next(j for j in out if j.company == "BadCo")
+    assert bad.product != "Some product"  # update was dropped, not applied

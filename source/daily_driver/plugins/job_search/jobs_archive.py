@@ -18,7 +18,11 @@ from datetime import date
 from pathlib import Path
 
 from daily_driver.core.locking import file_lock
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
 from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
 from daily_driver.plugins.job_search.scraper.csv_io import (
     atomic_write_rows as _atomic_write_rows,
@@ -27,6 +31,8 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     dedup_sets_from_rows,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
+
+log = get_logger(__name__)
 
 # Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
 # row reaches and never leaves, so prune archives them by default.
@@ -66,6 +72,7 @@ def _is_stale(
 
 def prune(
     jobs_csv: Path,
+    ephemeral_dir: Path,
     *,
     cutoff: date,
     statuses: tuple[str, ...] | frozenset[str] = DEFAULT_PRUNE_STATUSES,
@@ -74,11 +81,12 @@ def prune(
     """Move stale rows from ``jobs_csv`` to ``jobs.archive.csv``.
 
     Returns (candidates, archived_count). ``archived_count`` is 0 in dry-run.
-    Holds an exclusive flock on ``jobs_csv`` for the read, classification,
-    archive, and rewrite so a concurrent scrape can't append rows between the
-    read and the rewrite (which would silently delete them).
+    Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
+    classification, archive, and rewrite so a concurrent scrape can't append
+    rows between the read and the rewrite (which would silently delete them).
     """
-    with file_lock(jobs_lock_path(jobs_csv)):
+    clear_stale_adjacent_lock(jobs_csv)
+    with file_lock(jobs_lock_path(ephemeral_dir)):
         header, rows = _read_rows(jobs_csv)
         if not header:
             return [], 0
@@ -105,6 +113,20 @@ def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:
 
     Empty sets when archive is missing. Reads and extracts dedup state through
     the shared csv path so jobs.csv and jobs.archive.csv stay in lockstep.
+
+    Loud on a malformed-but-present archive: a non-empty file that yields no
+    URLs (missing/renamed Link column) would silently let archived/rejected
+    jobs be re-discovered, so warn naming the path — the live jobs.csv raises
+    for the same defect.
     """
-    _header, rows = _read_rows(archive_path_for(jobs_csv))
-    return dedup_sets_from_rows(rows)
+    archive = archive_path_for(jobs_csv)
+    header, rows = _read_rows(archive)
+    urls, keys = dedup_sets_from_rows(rows)
+    if rows and not urls:
+        log.warning(
+            "%s has %d rows but no usable Link values (column missing or empty); "
+            "archived jobs may be re-discovered",
+            archive,
+            len(rows),
+        )
+    return urls, keys

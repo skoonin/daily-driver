@@ -89,7 +89,7 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
     monkeypatch.setattr(enrichment, "enrich_fit_and_notes", should_not_run)
 
     with pytest.raises(KeyboardInterrupt):
-        csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
+        csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path, tmp_path)
 
     rows = _read_jobs_csv(csv_path)
     assert rows[0]["Product/Purpose"] == "Saved before interrupt"
@@ -144,9 +144,9 @@ def test_backfill_uses_shared_jobs_lock_path(
     monkeypatch.setattr(enrichment, "enrich_company_descriptions", enrich_company)
     monkeypatch.setattr(enrichment, "enrich_fit_and_notes", enrich_fit_notes)
 
-    csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
+    csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path, tmp_path)
 
-    assert lock_calls == [jobs_lock_path(csv_path)]
+    assert lock_calls == [jobs_lock_path(tmp_path)]
     # Exactly one .bak per backfill run (taken at the start, before mutations).
     backups_dir = tmp_path / "backups"
     backups = [p for p in backups_dir.iterdir() if p.name.startswith("jobs.csv.bak.")]
@@ -173,11 +173,12 @@ def test_run_uses_shared_jobs_lock_path(
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
         tmp_path,
+        tmp_path,
         dry_run=True,
     )
 
     assert rc == 0
-    assert lock_calls == [jobs_lock_path(tmp_path / "jobs.csv")]
+    assert lock_calls == [jobs_lock_path(tmp_path)]
 
 
 def test_prune_uses_shared_jobs_lock_path(
@@ -204,6 +205,6 @@ def test_prune_uses_shared_jobs_lock_path(
 
     monkeypatch.setattr(jobs_archive, "file_lock", fake_file_lock)
 
-    jobs_archive.prune(csv_path, cutoff=date(2026, 5, 1), dry_run=False)
+    jobs_archive.prune(csv_path, tmp_path, cutoff=date(2026, 5, 1), dry_run=False)
 
-    assert lock_calls == [jobs_lock_path(csv_path)]
+    assert lock_calls == [jobs_lock_path(tmp_path)]

@@ -115,13 +115,6 @@ class Console:
     # ------------------------------------------------------------------ #
 
     @classmethod
-    def print(cls, message: object, style: str | None = None) -> None:
-        """Print to stdout. Suppressed in quiet mode."""
-        if cls.quiet_mode:
-            return
-        cls.get_user_console().print(message, style=style)
-
-    @classmethod
     def info(cls, message: str) -> None:
         """Print an informational status line to stderr. Suppressed in quiet mode."""
         if cls.quiet_mode:
@@ -144,10 +137,3 @@ class Console:
     def error(cls, message: str) -> None:
         """Print an error to stderr. Always visible."""
         cls.get_log_console().print(f"Error: {message}", style="error")
-
-    @classmethod
-    def debug(cls, message: str) -> None:
-        """Print a debug line to stderr. Only shown when verbose_mode is True."""
-        if not cls.verbose_mode:
-            return
-        cls.get_log_console().print(f"DEBUG: {message}", style="debug")

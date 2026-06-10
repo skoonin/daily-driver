@@ -92,12 +92,3 @@ def list_models(endpoint: str, timeout: int = 5) -> list[str]:
     resp.raise_for_status()
     data = resp.json() or {}
     return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-
-
-def reachable(endpoint: str, timeout: int = 5) -> bool:
-    """True if `GET /api/tags` returns 2xx; False on any connection failure."""
-    try:
-        list_models(endpoint, timeout=timeout)
-    except (OllamaNotReachableError, requests.RequestException):
-        return False
-    return True

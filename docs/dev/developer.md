@@ -21,7 +21,7 @@ daily_driver/
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
-├── gathers/                 # read-only readers: calendar, git, sessions, notes
+├── gathers/                 # read-only readers: calendar, git
 ├── integrations/            # subprocess + external-service boundary: claude_cli,
 │                            #   ai_provider, ollama_client, clipboard, launchd,
 │                            #   git, icalbuddy, notify
@@ -73,12 +73,19 @@ Scheduled invocations go through the same entry point. `scheduler install` rende
 
 ## Generate lifecycle
 
-`generate(workspace, force=False)` copies the bundled `resources/slash_commands/` and `resources/agents/` `.md` files into the workspace as `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/`, plus a rendered `settings.local.json`. Only those three workspace paths are ever touched. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus every registered plugin's `package_data_dirs`.
+`generate(workspace, force=False)` writes the full package-managed set into the workspace:
+
+- `.claude/commands/daily-driver/*.md` and `.claude/agents/daily-driver/*.md` from `resources/slash_commands/` and `resources/agents/` (manifest-guarded)
+- `.claude/settings.local.json`, rendered from the template and merged (not manifest-guarded — see below)
+- the rendered contract root templates (`ENTRIES`, e.g. `README.md`) (manifest-guarded)
+- `.claude/hooks/*.sh` from `resources/templates/hooks/` (manifest-guarded)
+
+Those are the only workspace paths generate touches; all other user files are sacred. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus every registered plugin's `package_data_dirs`.
 
 Key invariants:
 
 - **Version stamp written last.** A crash mid-generate leaves the stamp stale; the next invocation re-runs. Idempotent by construction.
-- **SHA-256 manifest guards user edits.** `_copy_package_md` checks the manifest before overwriting any managed `.md` file. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` is the nuclear option that overwrites.
+- **SHA-256 manifest guards user edits.** `_copy_package_md` (the `.md` files), `_render_contract_entries` (root templates), and `_copy_hooks` (the `.sh` hooks) all check the manifest before overwriting and record each written file's hash. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` (`force_overwrite=True`) is the nuclear option that overwrites. `settings.local.json` is the exception — it merges rather than being manifest-guarded.
 - **`settings.local.json` merges instead of overwriting.** Package-managed top-level keys are refreshed from the template; user-added top-level keys are preserved.
 - **Concurrency.** Generate acquires an exclusive `generate.lock` under `ephemeral_dir` and re-checks drift inside the lock (double-checked locking).
 
@@ -142,7 +149,9 @@ The split exists so `daily-driver tracker list --json | jq …` and `daily-drive
 
 ## Flock model
 
-All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock` and `generate.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock`, `generate.lock`, and the jobs sentinel `jobs.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+
+**Exception — `focus.lock` is lock-as-data by design.** It is intentionally both the flock and its own JSON payload (focus start/end/reason), so it does sit in `ephemeral_dir` next to nothing it guards but itself. Payload writes are atomic (temp file + `os.replace`) so a crash mid-write never leaves a truncated body; `focus status` reads it locklessly by design, keeping the launchd check-in hook's read path cheap.
 
 ## Extensibility
 

@@ -164,7 +164,7 @@ def test_backfill_round_trip_preserves_rows_and_order(tmp_path: Path) -> None:
         for r in csv.DictReader(csv_path.read_text(encoding="utf-8").splitlines())
     }
 
-    backfill(_backfill_ctx(), csv_path)
+    backfill(_backfill_ctx(), csv_path, tmp_path)
 
     text_after = csv_path.read_text(encoding="utf-8")
     header_after = text_after.splitlines()[0]

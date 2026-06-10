@@ -394,6 +394,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
         tmp_path,
+        tmp_path,
         dry_run=True,
     )
 
@@ -452,6 +453,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
 
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
         tmp_path,
         dry_run=True,
     )
@@ -518,6 +520,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     with pytest.raises(KeyboardInterrupt):
         runner.run(
             JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            tmp_path,
             tmp_path,
             dry_run=False,
         )

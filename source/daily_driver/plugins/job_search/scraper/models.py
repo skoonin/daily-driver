@@ -29,8 +29,23 @@ from pydantic import (
     field_validator,
 )
 
+from daily_driver.core.logging import get_logger
+
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+log = get_logger(__name__)
+
+# Fit scores are bounded 1-10 at the model (EnrichedJob.fit). Out-of-range
+# values from a sloppy provider or a hand-edited cell are clamped here, never
+# raised, so one bad value cannot abort a whole backfill/run.
+FIT_MIN = 1
+FIT_MAX = 10
+
+
+def clamp_fit(score: int) -> int:
+    """Clamp a fit score into the model's 1-10 bound."""
+    return max(FIT_MIN, min(score, FIT_MAX))
 
 
 class JobStatus(str, Enum):
@@ -53,6 +68,52 @@ NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 # blank CSV cells carry this, so enrichment can tell "needs fill" from a real
 # value without a separate flag.
 _PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
+
+
+def parse_fit(value: Any) -> int | None:
+    """Coerce a stored fit cell to a bare int, or None when unparseable.
+
+    The Fit column holds a bare integer (the ratified contract). Readers stay
+    tolerant of legacy ``"7/10"`` cells by parsing the leading integer, so old
+    rows normalize on the next backfill rewrite.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        leading = value.strip().split("/", 1)[0].strip()
+        # isascii guard: bare .isdigit() accepts Unicode digits (e.g. superscript
+        # "⁷") that int() then rejects with ValueError.
+        if leading.isascii() and leading.isdigit():
+            return int(leading)
+    return None
+
+
+def parse_fit_cell(value: Any, *, company: str = "unknown") -> int | None:
+    """Read a stored Fit cell into a bounded int, never raising.
+
+    Wraps ``parse_fit`` for the CSV read path: a non-empty cell that fails to
+    parse logs a warning and yields ``None`` (the W1.1 dropped-Fit warning,
+    re-homed from the deleted ``_dict_to_row``); an out-of-range value is
+    clamped to 1-10 with a warning so a legacy or hand-edited ``"15"`` cell can
+    never abort a backfill at construction time.
+    """
+    fit = parse_fit(value)
+    if fit is None:
+        raw = value if isinstance(value, str) else ""
+        if raw.strip():
+            log.warning("dropping unparseable Fit cell %r for %s", raw, company)
+        return None
+    clamped = clamp_fit(fit)
+    if clamped != fit:
+        log.warning(
+            "Fit %d out of range [1,10] for %s, clamped to %d",
+            fit,
+            company,
+            clamped,
+        )
+    return clamped
 
 
 def _parse_k_salary(s: str) -> int | None:
@@ -143,13 +204,6 @@ class NormalizedJob(BaseModel):
         )
 
 
-class JobDetails(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    comp: str = ""
-    posted_date: dt.date | None = None
-    description_text: str = ""
-
-
 class EnrichedJob(BaseModel):
     """``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
 
@@ -237,19 +291,6 @@ class EnrichedJob(BaseModel):
         """
         return type(self).model_validate({**self.model_dump(), **updates})
 
-    def with_details(self, details: JobDetails) -> EnrichedJob:
-        updates: dict[str, Any] = {}
-        if details.comp and not self.comp:
-            updates["comp"] = details.comp
-        if details.posted_date and self.posted_date is None:
-            updates["posted_date"] = details.posted_date
-        if details.description_text and not self.description_text:
-            updates["description_text"] = details.description_text
-        return self.with_updates(**updates)
-
-    def with_fit(self, score: int, notes: str) -> EnrichedJob:
-        return self.with_updates(fit=score, notes=notes)
-
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
         if self.status is JobStatus.SKIPPED and self.skip_reason:
@@ -284,10 +325,6 @@ class EnrichedJob(BaseModel):
             s = (s or "").strip()
             return dt.date.fromisoformat(s) if s else None
 
-        def _opt_int(s: str) -> int | None:
-            s = (s or "").strip()
-            return int(s) if s.isdigit() else None
-
         source = row.get("Source", "").strip() or "unknown"
         if source.startswith("Greenhouse (") and source.endswith(")"):
             canonical = "greenhouse"
@@ -301,7 +338,9 @@ class EnrichedJob(BaseModel):
             company=row.get("Company", ""),
             location=row.get("Location", ""),
             role=row.get("Role", "") or "(unknown)",
-            fit=_opt_int(row.get("Fit", "")),
+            fit=parse_fit_cell(
+                row.get("Fit", ""), company=row.get("Company", "") or "unknown"
+            ),
             comp=row.get("Comp", ""),
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
@@ -338,7 +377,6 @@ class Source(Protocol):
 
 __all__ = [
     "EnrichedJob",
-    "JobDetails",
     "JobStatus",
     "NonEmptyStr",
     "NormalizedJob",

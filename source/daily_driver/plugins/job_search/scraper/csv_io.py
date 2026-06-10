@@ -12,14 +12,14 @@ from typing import TYPE_CHECKING
 
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
     EnrichedJob,
 )
-
-if sys.platform != "win32":
-    import fcntl
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -65,19 +65,28 @@ def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
 def atomic_write_rows(
     csv_path: Path, header: list[str], rows: list[dict[str, str]]
 ) -> None:
-    """Write rows via temp file + os.replace + fsync to avoid torn reads."""
+    """Rewrite a CSV atomically: temp file + flush/fsync + os.replace.
+
+    The single rewrite path for jobs.csv and jobs.archive.csv. On a mid-write
+    failure the partial temp file is unlinked before the error propagates, so a
+    crash never leaves a stray ``.tmp`` beside the data file.
+    """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
-    with open(tmp, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-        )
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, csv_path)
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, csv_path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def append_rows(csv_path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
@@ -175,6 +184,10 @@ def append_jobs_typed(
     Header is still passed in so callers can pin the column order to whatever
     is in ``jobs.csv`` today (legacy migrations may have re-ordered columns).
     Extra keys produced by ``to_csv_row`` are dropped via ``extrasaction='ignore'``.
+
+    Serializing concurrent mutations is the caller's contract: hold
+    ``file_lock(jobs_lock_path(...))`` around this call. This function does not
+    lock.
     """
     from daily_driver.plugins.job_search.scraper.runner import ScraperError
 
@@ -184,8 +197,6 @@ def append_jobs_typed(
     written = 0
     try:
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            if sys.platform != "win32":
-                fcntl.flock(f, fcntl.LOCK_EX)
             writer = csv.DictWriter(
                 f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
             )
@@ -197,32 +208,11 @@ def append_jobs_typed(
     return written
 
 
-def _rewrite_jobs_csv(
-    csv_path: Path,
-    header: list[str],
-    jobs: list[EnrichedJob],
-) -> None:
-    """Rewrite jobs.csv atomically (via .csv.tmp + rename) from typed jobs."""
-    tmp_path = csv_path.with_suffix(".csv.tmp")
-    with open(tmp_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=header,
-            quoting=csv.QUOTE_MINIMAL,
-            extrasaction="ignore",
-        )
-        writer.writeheader()
-        for job in jobs:
-            writer.writerow(job.to_csv_row())
-
-    tmp_path.rename(csv_path)
-
-
 def _active(job: EnrichedJob) -> bool:
     return job.status.value not in ENRICH_SKIP_STATUSES
 
 
-def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
+def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
     """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
     from daily_driver.plugins.job_search.scraper.enrichment.llm import (
         enrich_company_descriptions,
@@ -233,9 +223,10 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
     if not csv_path.exists():
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
+    clear_stale_adjacent_lock(csv_path)
     # Hold one shared sentinel lock for the entire backfill lifecycle so run/
     # prune cannot interleave while we enrich in memory then rewrite.
-    with file_lock(jobs_lock_path(csv_path)):
+    with file_lock(jobs_lock_path(ephemeral_dir)):
         with open(csv_path, newline="", encoding="utf-8") as lock_fh:
             reader = csv.DictReader(lock_fh)
             header = list(reader.fieldnames or CANONICAL_HEADER)
@@ -275,7 +266,7 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
             jobs, _ = enrich_fit_and_notes(jobs, ctx, budget=0)
         except KeyboardInterrupt:
             try:
-                _rewrite_jobs_csv(csv_path, header, jobs)
+                atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
                 save_status = (
                     f"partial progress saved to jobs.csv "
                     f"(original preserved at {backup.name})"
@@ -292,7 +283,7 @@ def backfill(ctx: ScrapeContext, csv_path: Path) -> None:
             print(f"Backfill interrupted: {save_status}", file=sys.stderr)
             raise
 
-        _rewrite_jobs_csv(csv_path, header, jobs)
+        atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
 
     active = [j for j in jobs if _active(j)]
     filled_product = needs_product - sum(1 for j in active if not j.product_filled)

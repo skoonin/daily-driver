@@ -48,11 +48,11 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 
 # Module-level so multiprocessing spawn can pickle it. Acquires the shared jobs
 # lock and appends a fresh (non-stale) row — modelling a concurrent scrape.
-def _appender_worker(csv_path: str, ready: Any, go: Any) -> None:
+def _appender_worker(csv_path: str, ephemeral_dir: str, ready: Any, go: Any) -> None:
     path = Path(csv_path)
     ready.set()
     go.wait(timeout=10)
-    with file_lock(jobs_lock_path(path)):
+    with file_lock(jobs_lock_path(Path(ephemeral_dir))):
         with open(path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=HEADER, extrasaction="ignore")
             writer.writerow(
@@ -95,7 +95,7 @@ def test_concurrent_prune_and_append_keeps_new_row(tmp_path: Path) -> None:
     ready = multiprocessing.Event()
     go = multiprocessing.Event()
     proc = multiprocessing.Process(
-        target=_appender_worker, args=(str(csv_path), ready, go)
+        target=_appender_worker, args=(str(csv_path), str(tmp_path), ready, go)
     )
     proc.start()
     assert ready.wait(timeout=5)
@@ -103,7 +103,9 @@ def test_concurrent_prune_and_append_keeps_new_row(tmp_path: Path) -> None:
     go.set()
     # Run prune in the parent while the worker contends for the same lock.
     # Whichever wins, the appended row must end up in jobs.csv.
-    candidates, archived = jobs_archive.prune(csv_path, cutoff=date(2026, 5, 1))
+    candidates, archived = jobs_archive.prune(
+        csv_path, tmp_path, cutoff=date(2026, 5, 1)
+    )
     proc.join(timeout=10)
     assert proc.exitcode == 0
 
@@ -134,7 +136,7 @@ def test_prune_dry_run_does_not_mutate(tmp_path: Path) -> None:
     before = csv_path.read_text(encoding="utf-8")
 
     candidates, archived = jobs_archive.prune(
-        csv_path, cutoff=date(2026, 5, 1), dry_run=True
+        csv_path, tmp_path, cutoff=date(2026, 5, 1), dry_run=True
     )
 
     assert archived == 0
@@ -178,7 +180,7 @@ def test_prune_holds_lock_across_read(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(jobs_archive, "file_lock", tracking_lock)
     monkeypatch.setattr(jobs_archive, "_read_rows", tracking_read)
 
-    jobs_archive.prune(csv_path, cutoff=date(2026, 5, 1))
+    jobs_archive.prune(csv_path, tmp_path, cutoff=date(2026, 5, 1))
 
     assert events[0] == "lock-enter"
     assert events.index("read") > events.index("lock-enter")
@@ -308,7 +310,7 @@ def test_prune_partitions_stale_and_kept_rows(tmp_path: Path) -> None:
         ],
     )
 
-    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+    candidates, archived = jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
 
     assert archived == 1
     assert {r["Link"] for r in candidates} == {"old"}
@@ -321,7 +323,7 @@ def test_prune_partitions_stale_and_kept_rows(tmp_path: Path) -> None:
 def test_prune_missing_csv_returns_empty(tmp_path: Path) -> None:
     csv_path = tmp_path / "absent.csv"
 
-    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+    candidates, archived = jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
 
     assert candidates == []
     assert archived == 0
@@ -334,8 +336,65 @@ def test_prune_no_candidates_leaves_files_untouched(tmp_path: Path) -> None:
         [_row(company="Active", link="act", status="found", last_seen="2026-04-01")],
     )
 
-    candidates, archived = jobs_archive.prune(csv_path, cutoff=_CUTOFF)
+    candidates, archived = jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
 
     assert candidates == []
     assert archived == 0
     assert not jobs_archive.archive_path_for(csv_path).exists()
+
+
+# ---------------------------------------------------------------------------
+# load_archive_dedup — silence-on-malformed-archive guard
+# ---------------------------------------------------------------------------
+
+
+def test_load_archive_dedup_extracts_urls_and_keys(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    archive = jobs_archive.archive_path_for(csv_path)
+    _write_csv(
+        archive,
+        [
+            _row(
+                company="OldCo",
+                link="https://x/old",
+                status="rejected",
+                last_seen="2026-04-01",
+            )
+        ],
+    )
+    urls, keys = jobs_archive.load_archive_dedup(csv_path)
+    assert "https://x/old" in urls
+    assert keys
+
+
+def test_load_archive_dedup_missing_archive_is_silent(
+    tmp_path: Path, caplog: Any
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        urls, keys = jobs_archive.load_archive_dedup(tmp_path / "jobs.csv")
+    assert urls == set() and keys == set()
+    assert not caplog.records
+
+
+def test_load_archive_dedup_warns_on_non_empty_archive_without_links(
+    tmp_path: Path, caplog: Any
+) -> None:
+    """A present archive whose rows yield no Link must warn, not silently no-op."""
+    import logging
+
+    csv_path = tmp_path / "jobs.csv"
+    archive = jobs_archive.archive_path_for(csv_path)
+    # Archive with a renamed/missing Link column — rows exist but no URLs.
+    with open(archive, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["Status", "Company", "Role"])
+        writer.writeheader()
+        writer.writerow({"Status": "rejected", "Company": "OldCo", "Role": "SRE"})
+
+    with caplog.at_level(logging.WARNING):
+        urls, _keys = jobs_archive.load_archive_dedup(csv_path)
+    assert urls == set()
+    assert any("no usable Link values" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]

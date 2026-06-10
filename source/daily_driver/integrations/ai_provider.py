@@ -66,7 +66,6 @@ def invoke_for(
     *,
     ai: AIConfig,
     timeout: int | None = None,
-    format_json: bool = False,
 ) -> str:
     """Dispatch a headless prompt to the provider configured for `task`.
 
@@ -122,7 +121,6 @@ def invoke_for(
             model=model,
             endpoint=ai_cfg.ollama.endpoint,
             timeout=effective_timeout,
-            format_json=format_json,
         )
     except (
         ollama_client.OllamaNotReachableError,
