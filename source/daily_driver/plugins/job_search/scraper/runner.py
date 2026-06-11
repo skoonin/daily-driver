@@ -1140,6 +1140,7 @@ def _enrich_wave(
     run_preflight: bool,
     product_budget: int,
     fit_budget: int,
+    set_phase: Callable[[str], None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1147,9 +1148,9 @@ def _enrich_wave(
     " (wave 2)" for the post-Apple wave) so the live display shows each wave's
     own phase rows -- the honest two-wave UI. ``product_budget`` / ``fit_budget``
     are this wave's remaining slice of the shared running totals (0 = config
-    cap). Flushes per phase and on the periodic hook; the caller's try/except
-    flushes once more on interrupt. Returns ``(detail_stats, product_stats,
-    fn_stats)``.
+    cap). ``set_phase`` records the coarse run phase for the manifest. Flushes
+    per phase and on the periodic hook; the caller's try/except flushes once more
+    on interrupt. Returns ``(detail_stats, product_stats, fn_stats)``.
     """
     from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
@@ -1161,10 +1162,14 @@ def _enrich_wave(
     product_phase = enrich_group.phase(f"Company products{wave_label}", total=total)
     fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
 
+    if set_phase is not None:
+        set_phase("detail")
     detail_phase.start()
     _, detail_stats = enrich_job_details(jobs, ctx, progress=detail_phase.advance)
     detail_phase.done(render_detail_summary(detail_stats))
     sink.flush()  # persist detail comp/posted_date before the LLM phases
+    if set_phase is not None:
+        set_phase("enrichment")
 
     product_stats, fn_stats = _run_llm_enrichment(
         plugin,
@@ -1211,6 +1216,51 @@ def _accumulate_enrich_stats(
         _add_stats(product_stats, wave_result["product"])
     if "fit" in wave_result:
         _add_stats(fn_stats, wave_result["fit"])
+
+
+def _write_run_manifest(
+    output_dir: Path,
+    *,
+    started_at: datetime,
+    all_jobs: list[dict[str, Any]],
+    failed_sources: list[str],
+    written: int,
+    fn_enriched: int,
+    product_enriched: int,
+    phase_reached: str,
+    interrupted: bool,
+) -> None:
+    """Write jobs-last-run.json. Written on BOTH the happy and interrupt paths.
+
+    ``phase_reached`` (scraping|detail|enrichment|complete) and ``interrupted``
+    let ``jobs status`` surface a recovery line when a run was cut short, so the
+    user knows to finish enrichment with ``jobs run --backfill``.
+    """
+    run_manifest = {
+        "started_at": started_at.isoformat(),
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "sources_ok": sorted(
+            {
+                j.get("source", "")
+                for j in all_jobs
+                if j.get("source") and j.get("source") not in failed_sources
+            }
+        ),
+        "sources_failed": failed_sources,
+        "new_jobs": written,
+        "enriched_fit_notes": fn_enriched,
+        "enriched_product": product_enriched,
+        "phase_reached": phase_reached,
+        "interrupted": interrupted,
+    }
+    last_run_path = output_dir / "jobs-last-run.json"
+    try:
+        last_run_path.write_text(
+            json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
+        )
+        log.debug("Run manifest written to %s", last_run_path)
+    except OSError as exc:
+        log.warning("Could not write run manifest: %s", exc)
 
 
 def run(
@@ -1289,6 +1339,12 @@ def run(
         known_urls=frozenset(known_urls),
     )
 
+    # Coarse run phase for the manifest (scraping -> detail -> enrichment ->
+    # complete). On a graceful stop the partially-reached phase tells
+    # `jobs status` what to recover. A list so closures (incl. the wave-1
+    # thread) can update it.
+    phase_reached = ["scraping"]
+
     title = "Job search run (dry-run)" if dry_run else "Job search run"
     # The live block renders on any TTY; verbosity controls only how much scrolls
     # above it. enlighten pins the bars in a terminal scroll region and the
@@ -1354,6 +1410,10 @@ def run(
         # thread only) -- the run-level signal handler covers interrupts instead.
         enrich_cfg = plugin.enrichment
         do_enrich = not (dry_run or no_enrich)
+
+        def _set_phase(p: str) -> None:
+            phase_reached[0] = p
+
         enrich_group: Group | None = None
         wave1_thread: threading.Thread | None = None
         wave1_result: dict[str, dict[str, Any]] = {}
@@ -1374,6 +1434,7 @@ def run(
                     run_preflight=True,
                     product_budget=0,  # wave 1 gets the full config budget
                     fit_budget=0,
+                    set_phase=_set_phase,
                 )
                 wave1_result.update({"detail": d, "product": p, "fit": f})
             except BaseException as exc:  # noqa: BLE001 -- relayed to main thread
@@ -1506,6 +1567,7 @@ def run(
                                 1, enrich_cfg.max_enrich_companies - prod_used
                             ),
                             fit_budget=max(1, enrich_cfg.max_enrich_fit - fit_used),
+                            set_phase=_set_phase,
                         )
                         _add_stats(product_stats, p2)
                         _add_stats(fn_stats, f2)
@@ -1524,13 +1586,26 @@ def run(
                         run_preflight=True,
                         product_budget=0,
                         fit_budget=0,
+                        set_phase=_set_phase,
                     )
                     _add_stats(product_stats, p1)
                     _add_stats(fn_stats, f1)
             except KeyboardInterrupt:
                 # Persist whatever enrichment landed before the interrupt so a
-                # ^C/SIGTERM never discards a partial enrichment pass.
+                # ^C/SIGTERM never discards a partial enrichment pass, then
+                # record the interruption in the manifest for the recovery line.
                 sink.flush()
+                _write_run_manifest(
+                    output_dir,
+                    started_at=started_at,
+                    all_jobs=all_jobs,
+                    failed_sources=failed_sources,
+                    written=len(sink.rows),
+                    fn_enriched=fn_stats["enriched"],
+                    product_enriched=product_stats["enriched"],
+                    phase_reached=phase_reached[0],
+                    interrupted=True,
+                )
                 raise
             if enrich_group is not None:
                 enrich_group.done()
@@ -1598,29 +1673,18 @@ def run(
         f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note}"
     )
 
-    run_manifest = {
-        "started_at": started_at.isoformat(),
-        "finished_at": datetime.now(timezone.utc).isoformat(),
-        "sources_ok": sorted(
-            {
-                j.get("source", "")
-                for j in all_jobs
-                if j.get("source") and j.get("source") not in failed_sources
-            }
-        ),
-        "sources_failed": failed_sources,
-        "new_jobs": written,
-        "enriched_fit_notes": fn_stats["enriched"],
-        "enriched_product": product_stats["enriched"],
-    }
-    last_run_path = output_dir / "jobs-last-run.json"
-    try:
-        last_run_path.write_text(
-            json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
-        )
-        log.debug("Run manifest written to %s", last_run_path)
-    except OSError as exc:
-        log.warning("Could not write run manifest: %s", exc)
+    phase_reached[0] = "complete"
+    _write_run_manifest(
+        output_dir,
+        started_at=started_at,
+        all_jobs=all_jobs,
+        failed_sources=failed_sources,
+        written=written,
+        fn_enriched=fn_stats["enriched"],
+        product_enriched=product_stats["enriched"],
+        phase_reached=phase_reached[0],
+        interrupted=False,
+    )
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))

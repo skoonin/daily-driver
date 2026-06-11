@@ -117,6 +117,11 @@ def add_parser(
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.plugins.job_search.scraper import run as run_scrape
     from daily_driver.plugins.job_search.scraper import run_backfill
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
     from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 
     if getattr(args, "list_sources", False):
@@ -159,6 +164,11 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     csv_path = output_dir / "jobs.csv"
     ephemeral_dir = workspace.ephemeral_dir
 
+    # A scheduled run is stopped with SIGTERM; install a run-scoped handler that
+    # routes it through the same graceful drain/flush path as Ctrl-C (it raises
+    # KeyboardInterrupt). Restored in finally so the handler never leaks past the
+    # command.
+    sigterm_prev = install_sigterm_handler()
     try:
         if args.backfill:
             run_backfill(
@@ -177,19 +187,24 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             sources_override=sources_override,
         )
     except KeyboardInterrupt:
+        # SIGTERM and SIGINT both unwind here; pick the conventional exit code
+        # (143 = 128 + SIGTERM, 130 = 128 + SIGINT).
+        sigterm = interrupted_by_sigterm()
         if args.backfill:
             # csv_io.backfill already printed the interrupt + backup-path message.
-            return 130
+            return 143 if sigterm else 130
 
-        # SIGINT during a parallel run: pending sources were cancelled by the
-        # orchestrator, but in-flight HTTP requests run to their `timeout`
-        # before their worker threads exit. Exit 130 is the conventional
-        # SIGINT status (128 + signal number).
+        # Pending sources were cancelled by the orchestrator, but in-flight HTTP
+        # requests run to their `timeout` before their worker threads exit.
+        signal_name = "terminated" if sigterm else "interrupted"
         Console.warning(
-            "\ninterrupted; cancelling pending sources "
-            "(in-flight HTTP requests will finish first)."
+            f"\n{signal_name}; cancelling pending sources "
+            "(in-flight HTTP requests will finish first). "
+            "Run jobs run --backfill to finish enrichment."
         )
-        return 130
+        return 143 if sigterm else 130
+    finally:
+        restore_sigterm_handler(sigterm_prev)
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
@@ -279,6 +294,14 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         console.print(f"  Sources OK:     {', '.join(sources_ok) or 'none'}")
         if sources_failed:
             console.print(f"  [red]Sources failed:[/red] {', '.join(sources_failed)}")
+        if last_run.get("interrupted"):
+            # The last run was cut short (Ctrl-C / SIGTERM / crash); point the
+            # user at the resume path so the half-enriched rows get finished.
+            phase = last_run.get("phase_reached", "enrichment")
+            console.print(
+                f"  [yellow]Last run interrupted during {phase} -- "
+                "run jobs run --backfill to finish enrichment.[/yellow]"
+            )
 
     counts = status["job_counts"]
     if counts:

@@ -789,3 +789,78 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
     plugin = mock_run.call_args.args[0]
     assert plugin.enrichment.provider == "ollama"
     assert plugin.enrichment.model == "qwen2.5:32b"
+
+
+# ---------------------------------------------------------------------------
+# Interrupt exit codes (130 SIGINT / 143 SIGTERM) and status recovery line
+# ---------------------------------------------------------------------------
+
+
+def test_jobs_run_sigint_exits_130(tmp_path: Path) -> None:
+    """A Ctrl-C (KeyboardInterrupt, no SIGTERM recorded) exits 130."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    def boom(*_a: object, **_kw: object) -> int:
+        raise KeyboardInterrupt
+
+    with patch("daily_driver.plugins.job_search.scraper.run", side_effect=boom):
+        rc = app(["--workspace", str(ws), "jobs", "run"])
+
+    assert rc == 130
+
+
+def test_jobs_run_sigterm_exits_143(tmp_path: Path) -> None:
+    """SIGTERM routes through the graceful path and exits 143 (128 + 15).
+
+    The run stub fires the installed SIGTERM handler (which records the signal
+    and raises KeyboardInterrupt), so the CLI sees a SIGTERM-flavored interrupt.
+    """
+    import os
+    import signal
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    def deliver_sigterm(*_a: object, **_kw: object) -> int:
+        # The CLI installed the run-scoped SIGTERM handler before calling run();
+        # delivering the signal here exercises that handler on the main thread.
+        os.kill(os.getpid(), signal.SIGTERM)
+        return 0  # unreachable: the handler raises KeyboardInterrupt
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", side_effect=deliver_sigterm
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "run"])
+
+    assert rc == 143
+
+
+def test_jobs_status_shows_recovery_line_when_interrupted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """jobs status prints the backfill recovery line for an interrupted run."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    (ws / "jobs-last-run.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-06-10T00:00:00+00:00",
+                "new_jobs": 12,
+                "sources_ok": ["remoteok"],
+                "sources_failed": [],
+                "interrupted": True,
+                "phase_reached": "enrichment",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "status"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "interrupted during enrichment" in out
+    assert "jobs run --backfill" in out

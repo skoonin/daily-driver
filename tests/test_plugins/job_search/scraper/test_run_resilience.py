@@ -442,3 +442,113 @@ def test_overlap_two_waves_share_fit_budget(
     # at the remaining 3.
     assert waves[0]["fit_budget"] in (0, 10)  # wave 1 gets the full config budget
     assert waves[1]["fit_budget"] == 3
+
+
+# ── Stage 4: SIGTERM, manifest fields, status recovery line ──────────────────
+
+
+def test_manifest_records_phase_reached_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean run records phase_reached=complete and interrupted=false."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    jobs = [_scraped("https://x/1", "Acme", comp="$x")]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 5, "notes": "ok"}'
+    )
+
+    runner.run(_enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["phase_reached"] == "complete"
+    assert manifest["interrupted"] is False
+
+
+def test_manifest_records_interrupted_on_keyboard_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupted run writes the manifest with interrupted=true and the
+    phase it had reached, so jobs status can surface a recovery line."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {
+                "provider": "claude",
+                "max_enrich_fit": 50,
+                "enrich_product": False,
+                "enrich_gd_rating": False,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    calls = [0]
+
+    def fake_invoke(prompt: str, **kw: Any) -> str:
+        calls[0] += 1
+        if calls[0] >= 2:
+            raise KeyboardInterrupt
+        return '{"fit": 7, "notes": "first"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai)
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+    assert manifest["phase_reached"] in ("detail", "enrichment")
+
+
+def test_status_prints_recovery_line_when_interrupted(tmp_path: Path) -> None:
+    """jobs status surfaces a recovery line for an interrupted last run."""
+    import json
+
+    from daily_driver.plugins.job_search.scraper_status import build_status
+
+    (tmp_path / "jobs-last-run.json").write_text(
+        json.dumps(
+            {
+                "started_at": "2026-06-10T00:00:00+00:00",
+                "interrupted": True,
+                "phase_reached": "enrichment",
+                "new_jobs": 12,
+            }
+        ),
+        encoding="utf-8",
+    )
+    status = build_status(tmp_path)
+    assert status["last_run"]["interrupted"] is True
+    assert status["last_run"]["phase_reached"] == "enrichment"

@@ -96,3 +96,49 @@ def _restore_interrupt_handler(previous: Any) -> None:
     if threading.current_thread() is not threading.main_thread():
         return
     signal.signal(signal.SIGINT, previous)
+
+
+# Records the signal that triggered a graceful stop so the CLI can pick the
+# conventional exit code (130 for SIGINT, 143 for SIGTERM). A list so the SIGTERM
+# handler (which must not rebind module globals from a signal context) can write
+# it; reset on each run install.
+_received_signal: list[int] = []
+
+
+def install_sigterm_handler() -> Any:
+    """Install a run-scoped SIGTERM handler that joins the SIGINT graceful path.
+
+    A scheduled `jobs run` (launchd) is stopped with SIGTERM, not Ctrl-C; without
+    a handler the default action kills the process immediately and the durable
+    record loses any in-flight work. This handler raises ``KeyboardInterrupt`` so
+    SIGTERM unwinds through the exact same drain/flush machinery as Ctrl-C, and
+    records ``signal.SIGTERM`` so the CLI can exit 143 (128 + 15) rather than 130.
+
+    ``signal.signal`` is main-thread-only, so an off-main-thread caller gets no
+    handler (returns ``None``); pair the return with
+    :func:`restore_sigterm_handler`, also a main-thread-only no-op. Returns the
+    previous handler for restoration.
+    """
+    _received_signal.clear()
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def handler(_signum: int, _frame: Any) -> None:
+        _received_signal.append(signal.SIGTERM)
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, handler)
+    return previous
+
+
+def restore_sigterm_handler(previous: Any) -> None:
+    """Restore the SIGTERM handler returned by :func:`install_sigterm_handler`."""
+    if threading.current_thread() is not threading.main_thread():
+        return
+    signal.signal(signal.SIGTERM, previous)
+
+
+def interrupted_by_sigterm() -> bool:
+    """Whether the last graceful stop was triggered by SIGTERM (vs SIGINT)."""
+    return bool(_received_signal) and _received_signal[-1] == signal.SIGTERM
