@@ -658,16 +658,29 @@ def _clamp_fit(raw: float, company: str, role: str) -> int:
 _REMOTE_VALUES: frozenset[str] = frozenset({"remote", "hybrid", "onsite"})
 
 
-def _parse_remote(value: object) -> str:
+def _parse_remote(value: object, *, company: str = "", role: str = "") -> str:
     """Coerce a parsed JSON ``remote`` value to a canonical value, or "" if none.
 
     Tolerant: a non-string, blank, or unrecognized answer yields "" so the
-    caller leaves any existing value (hand-entered or heuristic) in place.
+    caller leaves any existing value (hand-entered or heuristic) in place. A
+    non-empty string that fails the enum is logged at debug with company/role and
+    the raw value, so a model that never emits canonical values is greppable
+    (a blank answer is the normal "not judged" path and is not logged).
     """
     if not isinstance(value, str):
         return ""
     v = value.strip().lower()
-    return v if v in _REMOTE_VALUES else ""
+    if v in _REMOTE_VALUES:
+        return v
+    if v:
+        log.debug(
+            "%s company=%s role=%s: non-canonical remote value %r ignored",
+            _enrich_tag("enrich-fit-notes"),
+            company or "unknown",
+            role or "unknown",
+            value,
+        )
+    return ""
 
 
 def _fetch_fit_notes_for_job(
@@ -775,7 +788,11 @@ def _fetch_fit_notes_for_job(
 
     score = _clamp_fit(fit_val, company, role)
     notes_str = notes_val if isinstance(notes_val, str) else ""
-    remote = _parse_remote(parsed.get("remote")) if include_remote else ""
+    remote = (
+        _parse_remote(parsed.get("remote"), company=company, role=role)
+        if include_remote
+        else ""
+    )
     if criteria:
         criteria_obj = parsed.get("criteria")
         if isinstance(criteria_obj, dict):

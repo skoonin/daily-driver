@@ -127,3 +127,34 @@ class TestRemoteHandEnteredPreserved:
         j = _enriched(remote="remote", description_text="desc")
         out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
         assert out[0].remote == "hybrid"
+
+
+class TestParseRemoteLogging:
+    """A non-canonical, non-empty remote value is greppable (review fix 3)."""
+
+    def test_noncanonical_value_logged_with_company_role(self, caplog) -> None:
+        import logging
+
+        from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+            _parse_remote,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="daily_driver"):
+            result = _parse_remote("work-from-home-ish", company="Acme", role="SRE")
+        assert result == ""  # unrecognized -> blank (tolerant)
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any(
+            "work-from-home-ish" in m and "Acme" in m and "SRE" in m for m in msgs
+        ), caplog.records
+
+    def test_empty_value_not_logged(self, caplog) -> None:
+        import logging
+
+        from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+            _parse_remote,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="daily_driver"):
+            _parse_remote("", company="Acme", role="SRE")
+        # A blank answer is the normal "not judged" path, not a model misbehavior.
+        assert not any("remote" in r.getMessage().lower() for r in caplog.records)
