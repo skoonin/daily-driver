@@ -147,21 +147,23 @@ def test_url_stripped_at_boundary(bad_url: str) -> None:
 
 
 class TestMergedJobspyScraper:
-    """One merged ``jobspy`` scraper requests every enabled site in one call,
-    reading the per-site sub-toggles off the ``jobspy`` config toggle."""
+    """``scrape_jobspy(ctx, sites=[...])`` requests the given sites in one
+    ``scrape_jobs`` call, reading per-site query knobs off the top-level
+    ``linkedin`` / ``indeed`` source toggles. The merge-vs-split decision lives
+    in the runner; this layer just executes the site list it is handed."""
 
     @staticmethod
-    def _config(**sources: object) -> ScrapeContext:
+    def _config(countries: list[str] | None = None, **sources: object) -> ScrapeContext:
         cfg: dict[str, object] = {
             "roles": ["software engineer"],
-            "locations": {"countries": ["US"]},
+            "locations": {"countries": countries or ["US"]},
             "scraper": {
                 "enabled": True,
                 "search_terms": ["software engineer"],
             },
         }
-        if sources:
-            cfg["sources"] = sources
+        # Default both sites enabled when the test does not specify otherwise.
+        cfg["sources"] = sources or {"linkedin": True, "indeed": True}
         return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))
 
     @staticmethod
@@ -185,30 +187,36 @@ class TestMergedJobspyScraper:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config())
+        scrape_jobspy(self._config(), sites=["linkedin", "indeed"])
         assert calls["site_name"] == ["linkedin", "indeed"]
 
-    def test_one_site_disabled_passes_only_the_other(
+    def test_indeed_country_knob_used_as_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # The indeed `country` knob is the fallback for ISO codes JobSpy's enum
+        # lacks; "XX" is not a JobSpy country, so the configured value is sent.
         calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config(jobspy={"enabled": True, "linkedin": False}))
-        assert calls["site_name"] == ["indeed"]
-
-    def test_both_sites_disabled_skips_the_call(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        out = scrape_jobspy(
-            self._config(jobspy={"enabled": True, "linkedin": False, "indeed": False})
+        scrape_jobspy(
+            self._config(
+                countries=["XX"], indeed={"enabled": True, "country": "Canada"}
+            ),
+            sites=["indeed"],
         )
+        assert calls["site_name"] == ["indeed"]
+        assert calls["country_indeed"] == "Canada"
+
+    def test_single_site_passes_only_that_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config(), sites=["linkedin"])
+        assert calls["site_name"] == ["linkedin"]
+
+    def test_empty_sites_skips_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = self._install_mock(monkeypatch)
+        out = scrape_jobspy(self._config(), sites=[])
         assert out == []
         assert calls == {}  # scrape_jobs never invoked
-
-    def test_explicit_sites_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config(), sites=["indeed"])
-        assert calls["site_name"] == ["indeed"]
 
     @staticmethod
     def _row(site: str, url: str) -> dict[str, object]:

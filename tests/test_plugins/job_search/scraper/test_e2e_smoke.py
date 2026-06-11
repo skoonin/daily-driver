@@ -54,8 +54,11 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
     real call path end-to-end. Asserts shape only — empty results are fine
     (LinkedIn rate-limits, search may not match anything in `hours_old`).
     """
-    config = {
-        "job_search": {
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+    plugin = JobSearchPlugin.model_validate(
+        {
             "roles": ["software engineer"],
             "locations": {"countries": ["US"]},
             "scraper": {
@@ -63,11 +66,10 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
                 "search_terms": ["software engineer"],
             },
             "sources": {
-                "jobspy": {
-                    "jobs": {"results_wanted_per_query": 3, "hours_old": 168},
-                },
+                "linkedin": {"enabled": True, "results_wanted_per_query": 3},
+                "indeed": {"enabled": True, "results_wanted_per_query": 3},
             },
         }
-    }
-    jobs = scrape_jobspy(config)
+    )
+    jobs = scrape_jobspy(ScrapeContext(plugin=plugin))
     assert isinstance(jobs, list)

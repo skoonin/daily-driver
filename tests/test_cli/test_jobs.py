@@ -180,8 +180,12 @@ def test_jobs_run_list_sources_prints_registry(
 
     assert rc == 0
     out = capsys.readouterr().out
-    # SCRAPERS keys at time of writing — at least one known source in output.
+    # Site-named selectors: linkedin/indeed are listed; the retired `jobspy`
+    # aggregator id must not appear in the user surface.
     assert "remoteok" in out
+    assert "linkedin" in out
+    assert "indeed" in out
+    assert "jobspy" not in out
 
 
 def test_jobs_run_empty_sources_exits_2(
@@ -237,6 +241,36 @@ def test_jobs_run_sources_override_passes_to_scrape(tmp_path: Path) -> None:
     _, kwargs = mock_run.call_args
     assert kwargs.get("sources_override") == ["remoteok", "greenhouse"]
     assert kwargs.get("dry_run") is True
+
+
+def test_jobs_run_site_named_selector_accepted(tmp_path: Path) -> None:
+    """`-S linkedin` is a valid selector and propagates as sources_override."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "-S", "linkedin", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("sources_override") == ["linkedin"]
+
+
+def test_jobs_run_retired_jobspy_selector_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The retired `jobspy` aggregator id is no longer a valid selector."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), "jobs", "run", "--sources", "jobspy"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown source" in err
 
 
 # ---------------------------------------------------------------------------

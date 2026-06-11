@@ -122,7 +122,7 @@ def test_quiet_mode_suppresses_plain_output(monkeypatch):
     monkeypatch.setattr(Console, "quiet_mode", True)
     console, buf = _line_console()
     with RunProgress(console, tty=False, title="Job search run") as rp:
-        rp.note("12 searches per JobSpy board")
+        rp.note("12 searches per site")
         g = rp.group("Scraping sources")
         g.item("apple").finish(ok=True, detail="5 jobs")
         g.done("5 found, 5 new")

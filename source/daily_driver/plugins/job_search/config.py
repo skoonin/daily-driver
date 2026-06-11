@@ -39,14 +39,6 @@ class Locations(BaseModel):
     )
 
 
-class JobsConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    results_wanted_per_query: int = Field(default=50, description="")
-    hours_old: int = Field(default=168, description="")
-    country_indeed: str = Field(default="USA", description="")
-
-
 class SourceToggle(BaseModel):
     """Per-source enable/disable plus optional source-specific options."""
 
@@ -79,12 +71,30 @@ class HackerNewsToggle(SourceToggle):
     hn_max_posts: int = Field(default=500, description="")
 
 
-class JobspyToggle(SourceToggle):
-    """Per-site enable flags for the JobSpy aggregator plus its query knobs."""
+class LinkedInToggle(SourceToggle):
+    """LinkedIn source toggle plus its query knobs.
 
-    linkedin: bool = Field(default=True, description="")
-    indeed: bool = Field(default=True, description="")
-    jobs: JobsConfig = Field(default=JobsConfig(), description="")
+    LinkedIn and Indeed are fetched via python-jobspy (an implementation
+    detail); the user surface is the site name. ``scrape_jobs`` has no LinkedIn
+    country parameter, so — unlike :class:`IndeedToggle` — there is no
+    ``country`` knob here.
+    """
+
+    results_wanted_per_query: int = Field(default=50, description="")
+    hours_old: int = Field(default=168, description="")
+
+
+class IndeedToggle(SourceToggle):
+    """Indeed source toggle plus its query knobs.
+
+    ``country`` maps to python-jobspy's ``country_indeed`` parameter and lives
+    only here because that is the one ``scrape_jobs`` site it affects. It is the
+    fallback used when a configured ISO country code is not in JobSpy's enum.
+    """
+
+    results_wanted_per_query: int = Field(default=50, description="")
+    hours_old: int = Field(default=168, description="")
+    country: str = Field(default="USA", description="")
 
 
 # Maps a source key to the SourceToggle subclass that carries its per-source
@@ -94,7 +104,8 @@ _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
     "greenhouse": GreenhouseToggle,
     "hn_who_is_hiring": HackerNewsToggle,
     "hn_jobs": HackerNewsToggle,
-    "jobspy": JobspyToggle,
+    "linkedin": LinkedInToggle,
+    "indeed": IndeedToggle,
 }
 
 
@@ -301,15 +312,16 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
                 "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
                 "apple": False,
-                "jobspy": {
+                "linkedin": {
                     "enabled": True,
-                    "linkedin": True,
-                    "indeed": True,
-                    "jobs": {
-                        "results_wanted_per_query": 50,
-                        "hours_old": 168,
-                        "country_indeed": "USA",
-                    },
+                    "results_wanted_per_query": 50,
+                    "hours_old": 168,
+                },
+                "indeed": {
+                    "enabled": True,
+                    "results_wanted_per_query": 50,
+                    "hours_old": 168,
+                    "country": "USA",
                 },
             },
             "template_example_field_comments": {
@@ -323,6 +335,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": "HN curated jobs (YC-funded company posts)",
                 "greenhouse": "Greenhouse boards (configurable list)",
                 "apple": "jobs.apple.com (API intercept)",
+                "indeed": "indeed.com (country sets the regional host)",
             },
             "template_example_block_comments": {
                 "remoteok": (
@@ -335,13 +348,13 @@ class JobSearchPlugin(BaseModel):
                     "Scrapers shipped in this repo (Playwright, needs"
                     " `playwright install`):"
                 ),
-                "jobspy": (
-                    "python-jobspy aggregator. LinkedIn + Indeed are requested in\n"
-                    "one merged call per search (requires `python-jobspy>=1.1.82`,\n"
-                    "fetched with linkedin_fetch_description=True); toggle each site\n"
-                    "with the linkedin/indeed flags. Glassdoor is intentionally\n"
-                    "excluded — JobSpy's Glassdoor path returns HTTP 400 (\"location\n"
-                    'not parsed") on every request as of 2026-04.'
+                "linkedin": (
+                    "LinkedIn + Indeed (each its own source). When both are\n"
+                    "enabled with equal results_wanted_per_query and hours_old\n"
+                    "they are fetched in one merged request; if the knobs differ\n"
+                    "they are fetched separately. country (Indeed only) sets the\n"
+                    "regional host and is the fallback for countries the scraper\n"
+                    "does not recognize. Requires `python-jobspy>=1.1.82`."
                 ),
             },
         },

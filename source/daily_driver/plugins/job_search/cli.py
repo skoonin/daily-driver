@@ -44,7 +44,6 @@ def add_parser(
         metavar="LIST",
         help=(
             "Comma-separated job-board names to search (overrides .dd-config.yaml). "
-            "'jobspy' runs LinkedIn + Indeed in one call. "
             "Use 'jobs run --list-sources' to see options."
         ),
     )
