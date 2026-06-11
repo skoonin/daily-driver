@@ -10,7 +10,7 @@ In a terminal, `jobs run` pins a live progress display at the bottom ("Scraping 
 
 ```bash
 daily-driver jobs run -v               # INFO: per-source progress, enrichment counts
-daily-driver jobs run --backfill -vv   # DEBUG: per-job prompts, AI responses, write decisions
+daily-driver jobs backfill -vv         # DEBUG: per-job prompts, AI responses, write decisions
 daily-driver gather calendar -vv       # DEBUG: resolved since/until window
 ```
 

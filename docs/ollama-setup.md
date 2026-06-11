@@ -1,6 +1,6 @@
 # Ollama setup
 
-Route headless AI tasks (job_search enrichment, summary) to a local [Ollama](https://ollama.com) server instead of the `claude` CLI. Local models are free, have no rate limits, and run entirely on your machine — a good fit for high-volume tasks like `jobs --backfill`.
+Route headless AI tasks (job_search enrichment, summary) to a local [Ollama](https://ollama.com) server instead of the `claude` CLI. Local models are free, have no rate limits, and run entirely on your machine — a good fit for high-volume tasks like `jobs backfill`.
 
 Interactive launchers (`day-start`, `check-in`, `day-end`) always use `claude`. They depend on session resume, agents, and workspace context Ollama does not provide.
 
@@ -23,7 +23,7 @@ All three listen on `http://localhost:11434`.
 | 3 | Verify | `ollama list` | The model should appear in the output |
 | 4 | Edit `.dd-config.yaml` | See [config block](#config-block) | Sets `plugins.job_search.enrichment.provider: ollama` |
 | 5 | Confirm | `daily-driver doctor` | The `Enrichment provider` row should report `OK` |
-| 6 | Smoke test | `daily-driver jobs run --backfill` | Populates product / fit / notes via ollama |
+| 6 | Smoke test | `daily-driver jobs backfill` | Populates product / fit / notes via ollama |
 
 ## Test the model
 
@@ -105,7 +105,7 @@ Enrichment routing (`provider` / `model`) lives under `plugins.job_search.enrich
 | `llama3.2:3b` | ~2 GB | Faster iteration; lower quality |
 | `qwen2.5:32b` | ~20 GB | Higher quality if RAM permits |
 
-Expect ~10–15 tokens/sec on a 14B model. A 50-job `--backfill` finishes
+Expect ~10–15 tokens/sec on a 14B model. A 50-job `jobs backfill` finishes
 in a few minutes.
 
 > **RAM caveat for `max_parallel > 1`.** Each parallel call holds its own KV cache, which scales with model size and context length. Default `max_parallel: 4` with a 14 GB model can drive ~50 GB peak RAM under load. On a 32 GB Mac drop to `max_parallel: 2`, set `OLLAMA_KV_CACHE_TYPE=q8_0` (see [Tuning](#tuning)), or pick `llama3.2:3b`. `daily-driver doctor` shows the configured value; tune in `.dd-config.yaml`.
@@ -137,7 +137,7 @@ OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_C
 - `OLLAMA_KV_CACHE_TYPE=q8_0` — roughly halves KV-cache memory with minimal quality cost; the lever that makes `NUM_PARALLEL > 1` fit on one machine.
 - `OLLAMA_MAX_LOADED_MODELS=1` — single-model use; avoid evicting the enrichment model.
 
-If the server is down during a scheduled run, enrichment calls fail and are counted, the scrape itself still completes and appends its rows, and a later `jobs run --backfill` fills the gaps.
+If the server is down during a scheduled run, enrichment calls fail and are counted, the scrape itself still completes and appends its rows, and a later `jobs backfill` fills the gaps.
 
 ## Doctor output reference
 
@@ -154,7 +154,7 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
 - **Start with `-vv`.** Per-job enrichment traces (prompt sent, raw response, parsed fit/notes, whether each field was actually written) are at DEBUG level. Re-run with `-vv` when a backfill "succeeds" but cells stay empty:
 
   ```bash
-  daily-driver jobs run --backfill -vv 2>&1 | tee /tmp/backfill.log
+  daily-driver jobs backfill -vv 2>&1 | tee /tmp/backfill.log
   ```
 
   Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or where the model returned an empty string. `-v` alone gives the startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
@@ -164,7 +164,7 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
   not pulled, it skips the product / fit / notes passes (one warning naming the
   endpoint or model) instead of burning a per-call timeout on every job. Detail
   pages still run. Start the server (or `ollama pull <model>`), then
-  `jobs run --backfill` to fill the empty rows.
+  `jobs backfill` to fill the empty rows.
 - **First request is slow** — Ollama loads the model into RAM on demand.
   Subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep the model
   warm between sessions.
@@ -176,7 +176,7 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
   command finishes the in-flight model calls (up to `ai.ollama.timeout`
   each), saves partial progress, and exits. Press Ctrl-C again to
   force-quit immediately and lose what's in progress.
-- **Old `jobs.csv.bak.*` files piling up** — each `--backfill` run drops
+- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` run drops
   a timestamped backup before mutating `jobs.csv`. `daily-driver doctor`
   warns once you have more than 5; keep the 2–3 most recent and delete
   the rest with `rm <output_dir>/jobs.csv.bak.*` (then re-create one

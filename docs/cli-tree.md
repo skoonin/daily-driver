@@ -84,9 +84,12 @@ daily-driver/
 ├── jobs
 │   ├── run
 │   │   ├── -n, --dry-run
-│   │   ├── --backfill
+│   │   ├── --no-enrich
 │   │   ├── -S, --sources LIST
 │   │   └── --list-sources
+│   ├── backfill
+│   │   ├── -n, --dry-run
+│   │   └── --limit N
 │   ├── status
 │   │   └── -j, --json
 │   └── prune

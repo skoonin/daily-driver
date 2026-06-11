@@ -9,6 +9,22 @@ from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
+def _positive_limit(value: str) -> int:
+    """Parse ``--limit`` as an integer >= 1.
+
+    A 0 or negative limit would otherwise collapse into the budget<=0 config-cap
+    sentinel (full spend) -- the opposite of the user's intent -- so reject it at
+    the parser. argparse turns the ArgumentTypeError into a clean exit 2.
+    """
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--limit must be >= 1 (got {n})")
+    return n
+
+
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
     parents: list[argparse.ArgumentParser],
@@ -33,16 +49,11 @@ def add_parser(
         help="Print results without writing to jobs.csv",
     )
     p_run.add_argument(
-        "--backfill",
-        action="store_true",
-        help="Re-enrich empty fields in existing jobs.csv rows",
-    )
-    p_run.add_argument(
         "--no-enrich",
         action="store_true",
         help=(
             "Scrape and append only; skip detail-page and LLM enrichment "
-            "(fill later with --backfill)"
+            "(fill later with 'jobs backfill')"
         ),
     )
     p_run.add_argument(
@@ -62,6 +73,33 @@ def add_parser(
     )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
+
+    p_backfill = nested.add_parser(
+        "backfill",
+        parents=parents,
+        help="Re-enrich empty fields in existing jobs.csv rows",
+    )
+    p_backfill.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Report what would be enriched (per-phase counts) without making "
+            "LLM calls or writing to jobs.csv"
+        ),
+    )
+    p_backfill.add_argument(
+        "--limit",
+        type=_positive_limit,
+        default=None,
+        metavar="N",
+        help=(
+            "Cap LLM spend this run: bound both the product and fit/notes "
+            "budgets at N (minimum 1; default: the configured per-phase caps)"
+        ),
+    )
+    add_global_flags(p_backfill)
+    p_backfill.set_defaults(func=_run_backfill)
 
     p_status = nested.add_parser(
         "status", parents=parents, help="Show last-run metadata and job counts"
@@ -114,9 +152,28 @@ def add_parser(
     return parser
 
 
+def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def]
+    """Resolve (plugin, ai, context_text) or return an int exit code on error.
+
+    context.md, when present, rides every fit/notes enrichment prompt so the fit
+    score reflects the candidate's real background (see enrich_fit_and_notes).
+    """
+    plugins = workspace.config.plugins
+    if plugins is None or plugins.job_search is None:
+        Console.error(
+            "no plugins.job_search found in .dd-config.yaml. "
+            "See docs/configuration.md."
+        )
+        return 1
+    context_text = ""
+    context_path = workspace.root / "context.md"
+    if context_path.is_file():
+        context_text = context_path.read_text(encoding="utf-8").strip()
+    return plugins.job_search, workspace.config.ai, context_text
+
+
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.plugins.job_search.scraper import run as run_scrape
-    from daily_driver.plugins.job_search.scraper import run_backfill
     from daily_driver.plugins.job_search.scraper.enrichment._shared import (
         install_sigterm_handler,
         interrupted_by_sigterm,
@@ -144,24 +201,11 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             )
             return 2
 
-    plugins = workspace.config.plugins
-    if plugins is None or plugins.job_search is None:
-        Console.error(
-            "no plugins.job_search found in .dd-config.yaml. "
-            "See docs/configuration.md."
-        )
-        return 1
-
-    plugin = plugins.job_search
-    ai = workspace.config.ai
-    # context.md, when present, rides every fit/notes enrichment prompt so the
-    # fit score reflects the candidate's real background (see enrich_fit_and_notes).
-    context_text = ""
-    context_path = workspace.root / "context.md"
-    if context_path.is_file():
-        context_text = context_path.read_text(encoding="utf-8").strip()
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, ai, context_text = resolved
     output_dir = workspace.output_dir
-    csv_path = output_dir / "jobs.csv"
     ephemeral_dir = workspace.ephemeral_dir
 
     # A scheduled run is stopped with SIGTERM; install a run-scoped handler that
@@ -170,12 +214,6 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     # command.
     sigterm_prev = install_sigterm_handler()
     try:
-        if args.backfill:
-            run_backfill(
-                plugin, csv_path, ephemeral_dir, ai=ai, context_text=context_text
-            )
-            return 0
-
         return run_scrape(
             plugin,
             output_dir,
@@ -190,18 +228,49 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         # SIGTERM and SIGINT both unwind here; pick the conventional exit code
         # (143 = 128 + SIGTERM, 130 = 128 + SIGINT).
         sigterm = interrupted_by_sigterm()
-        if args.backfill:
-            # csv_io.backfill already printed the interrupt + backup-path message.
-            return 143 if sigterm else 130
-
         # Pending sources were cancelled by the orchestrator, but in-flight HTTP
         # requests run to their `timeout` before their worker threads exit.
         signal_name = "terminated" if sigterm else "interrupted"
         Console.warning(
             f"\n{signal_name}; cancelling pending sources "
             "(in-flight HTTP requests will finish first). "
-            "Run jobs run --backfill to finish enrichment."
+            "Run jobs backfill to finish enrichment."
         )
+        return 143 if sigterm else 130
+    finally:
+        restore_sigterm_handler(sigterm_prev)
+
+
+def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from daily_driver.plugins.job_search.scraper import run_backfill
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
+
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, ai, context_text = resolved
+    csv_path = workspace.output_dir / "jobs.csv"
+    ephemeral_dir = workspace.ephemeral_dir
+
+    sigterm_prev = install_sigterm_handler()
+    try:
+        run_backfill(
+            plugin,
+            csv_path,
+            ephemeral_dir,
+            ai=ai,
+            context_text=context_text,
+            dry_run=args.dry_run,
+            limit=args.limit,
+        )
+        return 0
+    except KeyboardInterrupt:
+        # run_backfill already saved partial progress and printed the backup path.
+        sigterm = interrupted_by_sigterm()
         return 143 if sigterm else 130
     finally:
         restore_sigterm_handler(sigterm_prev)
@@ -300,7 +369,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             phase = last_run.get("phase_reached", "enrichment")
             console.print(
                 f"  [yellow]Last run interrupted during {phase} -- "
-                "run jobs run --backfill to finish enrichment.[/yellow]"
+                "run jobs backfill to finish enrichment.[/yellow]"
             )
 
     counts = status["job_counts"]
@@ -325,7 +394,7 @@ def run(args: argparse.Namespace) -> int:
 
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver jobs <action> ...")
-        Console.error("actions: run, status, prune")
+        Console.error("actions: run, backfill, status, prune")
         return 2
 
     try:
