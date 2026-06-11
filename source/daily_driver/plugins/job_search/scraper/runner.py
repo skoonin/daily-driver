@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -1666,12 +1667,22 @@ def _write_run_manifest(
         "interrupted": interrupted,
     }
     last_run_path = output_dir / "jobs-last-run.json"
+    # Atomic write (temp + fsync + os.replace, mirroring csv_io.atomic_write_rows):
+    # `jobs run --json` reads this file back and pipes it downstream, so a partial
+    # write must never leave malformed JSON that a consumer then parses. os.replace
+    # is atomic on POSIX, so a reader sees either the old file or the complete new
+    # one. A mid-write failure unlinks the temp file before propagating to the
+    # best-effort handler below.
+    tmp_path = last_run_path.with_suffix(last_run_path.suffix + ".tmp")
     try:
-        last_run_path.write_text(
-            json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
-        )
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(run_manifest, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, last_run_path)
         log.debug("Run manifest written to %s", last_run_path)
     except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
         log.warning("Could not write run manifest: %s", exc)
 
 
@@ -1685,12 +1696,17 @@ def run(
     dry_run: bool = False,
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
+    suppress_live: bool = False,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
     Returns the process-style exit code (0 success, 1 on failed sources /
-    I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
-    responsible for exit handling.
+    persistence degraded / I/O error). Performs no argparse or ``sys.exit()`` --
+    the CLI layer is responsible for exit handling.
+
+    ``suppress_live`` forces plain mode (no pinned live block) regardless of TTY;
+    the ``jobs run --json`` path sets it so stdout stays a clean JSON channel
+    while diagnostics still go to stderr.
 
     Thin wrapper around :func:`_run_impl` that owns the manifest-on-every-exit
     guarantee: a ``_RunState`` carries the manifest-relevant state, and ANY exit
@@ -1712,6 +1728,7 @@ def run(
             dry_run=dry_run,
             no_enrich=no_enrich,
             sources_override=sources_override,
+            suppress_live=suppress_live,
             started_at=started_at,
             state=state,
         )
@@ -1755,6 +1772,7 @@ def _run_impl(
     dry_run: bool = False,
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
+    suppress_live: bool = False,
     started_at: datetime,
     state: _RunState,
 ) -> int:
@@ -1864,7 +1882,8 @@ def _run_impl(
     # pinned. Non-TTY (cron/pipe) -- and an unresponsive TTY -- get plain line
     # mode, no block. Quiet mode ("errors only") suppresses the block entirely;
     # the plain-mode progress lines are dropped by RunProgress under quiet too.
-    tty = Console.is_tty() and not Console.quiet_mode
+    # --json (suppress_live) also forces plain mode so stdout stays clean JSON.
+    tty = Console.is_tty() and not Console.quiet_mode and not suppress_live
     with (
         live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
@@ -2246,6 +2265,13 @@ def _run_impl(
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))
+        return 1
+
+    # A run whose periodic saves degraded -- even when the final flush recovered
+    # the data on disk -- exits non-zero so a scripted/scheduled caller treats
+    # the run as not-fully-clean and can re-run or alert. The data is persisted;
+    # the exit code reports that the run did not proceed normally throughout.
+    if not no_enrich and sink.persistence_degraded:
         return 1
 
     if written > 0:

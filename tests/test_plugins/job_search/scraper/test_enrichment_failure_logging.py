@@ -104,6 +104,35 @@ def test_company_descriptions_routes_with_plugin_provider() -> None:
     assert out[0].product == "Acme makes widgets"
 
 
+def test_company_product_scaffolding_only_line_is_failed_not_cached() -> None:
+    """A response that is pure prompt scaffolding (e.g. exactly "Product:")
+    strips to empty; it must be counted as a failed lookup and NOT written as a
+    silent empty product cell, so `jobs backfill` can retry it."""
+    jobs = [make_enriched(company="Acme", product="")]
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "phi4",
+                    "enrich_timeout": 5,
+                    "enrich_product": True,
+                    "enrich_gd_rating": False,
+                }
+            }
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    with patch.object(
+        ai_provider, "invoke_for", side_effect=lambda *a, **k: "Product:"
+    ):
+        out, stats = enrichment.enrich_company_descriptions(jobs, ctx)
+
+    assert out[0].product == ""  # not stitched as a silent empty cell
+    assert stats["failed"] == 1  # counted as a failure, so it shows in summaries
+
+
 def test_fit_and_notes_routes_with_plugin_provider() -> None:
     """Site 2 (fit/notes JSON) resolves its route from the plugin config."""
     jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
@@ -149,6 +178,51 @@ def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
     assert matched, f"expected enrich warning, got: {msgs}"
     assert "stdout=" in matched[0]
     assert "server boom" in matched[0]
+
+
+def test_fit_notes_failed_job_logs_info_one_liner(caplog) -> None:
+    """A failed fit/notes call emits a per-job INFO one-liner (visible at -v),
+    so a single failure is identifiable without dropping to -vv."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_fit_and_notes(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "enrichment failed" in m for m in info_msgs
+    ), f"expected an INFO per-job failure line, got: {info_msgs}"
+
+
+def test_company_failed_lookup_logs_info_one_liner(caplog) -> None:
+    """A failed company-description lookup emits a per-company INFO one-liner."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_company_descriptions(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "lookup failed" in m for m in info_msgs
+    ), f"expected an INFO per-company failure line, got: {info_msgs}"
 
 
 # ---------------------------------------------------------------------------

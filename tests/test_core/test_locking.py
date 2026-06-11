@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import multiprocessing
-import time
 from pathlib import Path
 
 import pytest
@@ -10,9 +9,20 @@ from daily_driver.core.locking import file_lock
 
 
 # Module-level so multiprocessing spawn can pickle it
-def _hold_lock(p: Path, hold_seconds: float) -> None:
-    with file_lock(p):
-        time.sleep(hold_seconds)
+def _hold_until_signaled(
+    lock_path: Path,
+    ready_event: multiprocessing.Event,  # type: ignore[valid-type]
+    release_event: multiprocessing.Event,  # type: ignore[valid-type]
+) -> None:
+    """Acquire the lock, signal readiness, then hold until told to release.
+
+    Event-based handoff (not a fixed sleep) so the test never races the spawn:
+    the main process waits on ``ready_event`` before attempting its own acquire,
+    guaranteeing the lock is genuinely held when the timeout is exercised.
+    """
+    with file_lock(lock_path):
+        ready_event.set()
+        release_event.wait(timeout=10)
 
 
 def test_basic_lock_acquire_release(tmp_path: Path) -> None:
@@ -40,18 +50,26 @@ def test_exception_inside_block_releases_lock(tmp_path: Path) -> None:
 
 def test_timeout_raises(tmp_path: Path) -> None:
     lock_path = tmp_path / "timeout.lock"
-    proc = multiprocessing.Process(target=_hold_lock, args=(lock_path, 2.0))
+    ready = multiprocessing.Event()
+    release = multiprocessing.Event()
+    proc = multiprocessing.Process(
+        target=_hold_until_signaled, args=(lock_path, ready, release)
+    )
     proc.start()
-    # Give the subprocess time to acquire the lock before we try
-    time.sleep(0.2)
+    # Block until the subprocess actually holds the lock -- no fixed sleep to
+    # race the spawn, so a slow/loaded runner can't acquire before it is held.
+    assert ready.wait(timeout=10), "subprocess never acquired the lock"
 
     try:
         with pytest.raises(TimeoutError, match="Could not acquire lock"):
             with file_lock(lock_path, timeout=0.3):
                 pass
     finally:
-        proc.terminate()
-        proc.join(timeout=3)
+        release.set()
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=3)
 
 
 def test_sequential_locks_work(tmp_path: Path) -> None:

@@ -144,7 +144,16 @@ def _fetch_company_info(
         return "", "", True
 
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
-    product = lines[0] if (include_product and lines) else ""
+    product = ""
+    product_failed = False
+    if include_product and lines:
+        product = _clean_product_line(lines[0])
+        # A line that was non-empty but cleaned to nothing was pure prompt
+        # scaffolding (e.g. exactly "Product:" or a bare "- "). Treat it as a
+        # failed lookup rather than caching an empty product cell that is
+        # indistinguishable from "not requested" and would never be retried.
+        if not product:
+            product_failed = True
     gd_rating = ""
     if include_gd:
         # Both fields: rating is line 2. GD-only: rating is line 1 (no product
@@ -156,12 +165,31 @@ def _fetch_company_info(
         )
         gd_rating = _parse_gd_rating(gd_line, company)
 
-    # In GD-only mode the rating is the call's sole product; an unparseable
-    # answer means the call yielded nothing useful, so count it as a failure
-    # rather than caching an empty rating silently. (With product enabled the
-    # product line still carries value, so it is not a failure.)
-    failed = include_gd and not include_product and not gd_rating
+    # Mark the call failed when an enabled field yielded nothing useful: a GD-only
+    # rating that didn't parse, or a product line that was only scaffolding. The
+    # caller skips caching a fully-empty result so `jobs backfill` retries it.
+    gd_failed = include_gd and not include_product and not gd_rating
+    failed = product_failed or gd_failed
     return product, gd_rating, failed
+
+
+# Prompt scaffolding the model sometimes echoes into its answer: the prompt's own
+# "Line 1:" / "Line 2:" labels, an enumerated/bulleted list marker, or a
+# "Product:" / "Purpose:" field label. Stripped so none of it reaches a CSV cell.
+_PRODUCT_SCAFFOLD_RE = re.compile(
+    r"^\s*(?:line\s*\d+\s*[:.)-]|\d+\s*[.)]|[-*]|product\s*:|purpose\s*:)\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_product_line(line: str) -> str:
+    """Strip a single leading list/label prefix off a product/purpose answer.
+
+    One pass is deliberate: the model echoes at most one prefix in practice, and a
+    greedy loop risks eating a legitimate leading token that merely looks like a
+    marker.
+    """
+    return _PRODUCT_SCAFFOLD_RE.sub("", line, count=1).strip()
 
 
 def _parse_gd_rating(line: str, company: str) -> str:
@@ -302,9 +330,19 @@ def _build_company_plan(
         applied.add(id(fut))
         product, gd_rating, failed = fut.result()
         if company not in cache:
-            cache[company] = {"product": product, "gd_rating": gd_rating}
+            # Only cache a result that carries usable data. A fully-empty failed
+            # lookup (no product, no rating) is left uncached so `jobs backfill`
+            # retries it instead of stitching a silent empty cell that reads as
+            # "not requested". A partial result (e.g. valid rating but empty
+            # product) is still cached so its good field is written.
+            if product or gd_rating:
+                cache[company] = {"product": product, "gd_rating": gd_rating}
             if failed:
                 stats["failed"] += 1
+                # INFO (visible at -v): name the failed company so a single
+                # failure is identifiable without -vv; the provider-level cause
+                # was already logged at WARNING by the fetch worker.
+                log.info("%s %s: lookup failed", _enrich_tag("enrich"), company)
             if progress is not None:
                 progress(1, company)
         done_count[0] += 1
@@ -899,9 +937,14 @@ def _build_fit_plan(
         if _fit_notes_eligible(j) and j.url not in exclude_urls
     ]
     eligible_count = len(eligible_idx)
+    no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
     if context_text:
-        # context.md rides every per-job enrichment prompt; a large file
-        # multiplies token cost across the run, so surface the projection.
+        # context.md rides EVERY eligible job's prompt -- _build_fit_notes_prompt
+        # injects it whenever context is non-empty, regardless of whether the job
+        # has a description, and no-description jobs are still in eligible_idx and
+        # still make a full LLM call. So the projection counts every job that will
+        # be enriched this run (capped by budget); subtracting no-desc jobs would
+        # under-project the real token cost.
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
             jobs_to_enrich = min(budget, eligible_count)
@@ -913,7 +956,6 @@ def _build_fit_plan(
                 jobs_to_enrich,
                 ctx_tokens * jobs_to_enrich,
             )
-    no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
     log.info(
         "[enrich-fit-notes] enriching up to %d jobs (%d eligible%s)...",
         budget,
@@ -947,12 +989,10 @@ def _build_fit_plan(
         company = job.company or "unknown"
         if failed:
             stats["failed"] += 1
-            log.debug(
-                "[enrich-fit-notes] %s: call failed, no write (pre fit=%r notes=%r)",
-                company,
-                job.fit,
-                job.notes,
-            )
+            # INFO (visible at -v): a one-liner naming the failed job so a single
+            # failure is identifiable without dropping to -vv. The provider-level
+            # cause was already logged at WARNING by the fetch worker.
+            log.info("[enrich-fit-notes] %s: enrichment failed, no write", company)
             return
         updates: dict[str, Any] = {}
         wrote_fit = not job.fit and fit is not None
