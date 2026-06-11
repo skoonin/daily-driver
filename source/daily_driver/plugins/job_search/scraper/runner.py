@@ -618,11 +618,11 @@ class _JobSink:
         self._plugin = plugin
         # Rows that were already in jobs.csv before this run, as raw CSV dicts.
         # ``flush`` rewrites the WHOLE file, so it must write these back first
-        # (verbatim -- never lifted through EnrichedJob, so hand-edited cells
-        # round-trip untouched) or every pre-existing row would be wiped. The
-        # run path captures them under the same initial lock that seeds the
-        # dedup state; backfill leaves this empty (its ``rows`` holds the whole
-        # file).
+        # (field-for-field, re-serialized -- never lifted through EnrichedJob,
+        # so hand-edited cells round-trip untouched) or every pre-existing row
+        # would be wiped. The run path captures them under the same initial
+        # lock that seeds the dedup state; backfill leaves this empty (its
+        # ``rows`` holds the whole file).
         self.preexisting_rows: list[dict[str, str]] = list(preexisting_rows or [])
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
@@ -804,7 +804,7 @@ class _JobSink:
             snapshot = list(self.rows)
             extras_snapshot = list(self.row_extras)
             out_header = self.header + self.extra_columns
-            # Pre-existing file rows lead, byte-for-byte; this run's rows follow
+            # Pre-existing file rows lead, field-for-field; this run's rows follow
             # in append order, so the rewrite preserves the on-disk layout.
             out_rows: list[dict[str, str]] = list(self.preexisting_rows)
             for i, job in enumerate(snapshot):
@@ -1765,9 +1765,23 @@ def _run_impl(
     with file_lock(lock_path):
         known_urls, known_keys, header = load_existing_jobs(csv_path)
         # Captured under the same lock as the dedup seed: the sink's flush
-        # rewrites the WHOLE file, so it must carry these rows through verbatim
-        # or every pre-existing row would be wiped by the first flush.
+        # rewrites the WHOLE file, so it must carry these rows through
+        # field-for-field or every pre-existing row would be wiped by the
+        # first flush.
         _, preexisting_rows = read_rows(csv_path)
+        # A hand-edited row with MORE cells than the header parks the overflow
+        # under DictReader's None key, which the rewrite's DictWriter drops
+        # (extrasaction="ignore"). The old append-only path never rewrote
+        # those bytes; now that every enriching run does, surface the trim
+        # instead of letting it happen silently.
+        ragged = [r for r in preexisting_rows if None in r]
+        if ragged:
+            log.warning(
+                "jobs.csv has %d row(s) with more cells than the header; the "
+                "extra trailing cells will be dropped on the next save: %s",
+                len(ragged),
+                ", ".join(str(r.get("Link") or "(no link)") for r in ragged),
+            )
 
         # Union archive-table dedup state so triaged listings (pruned to
         # jobs.archive.csv) are never re-discovered.

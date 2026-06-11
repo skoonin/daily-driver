@@ -922,10 +922,56 @@ def test_run_enrichment_flush_preserves_preexisting_rows(
     assert rc == 0
     rows = _read_csv(csv_path)
     assert [r["Company"] for r in rows] == ["OldCo", "Acme"]
-    # The pre-existing row is byte-identical: status and fit untouched.
+    # The pre-existing row's cells are untouched: status and fit as written.
     assert rows[0]["Status"] == "applied"
     assert rows[0]["Fit"] == "9"
     assert rows[1]["Fit"] == "8"
+
+
+def test_run_warns_on_ragged_preexisting_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A pre-existing row with MORE cells than the header loses its overflow
+    on the whole-file rewrite (DictWriter extrasaction="ignore"); the run must
+    warn about the trim instead of dropping the cells silently."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(CANONICAL_HEADER)
+        ok_row = [""] * len(CANONICAL_HEADER)
+        ok_row[CANONICAL_HEADER.index("Company")] = "FineCo"
+        ok_row[CANONICAL_HEADER.index("Link")] = "https://fine/1"
+        w.writerow(ok_row)
+        ragged_row = [""] * len(CANONICAL_HEADER)
+        ragged_row[CANONICAL_HEADER.index("Company")] = "RaggedCo"
+        ragged_row[CANONICAL_HEADER.index("Link")] = "https://ragged/1"
+        w.writerow(ragged_row + ["OVERFLOW"])
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        return [], [], []
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    with caplog.at_level("WARNING"):
+        rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+    assert rc == 0
+    warning = next(
+        (r for r in caplog.records if "more cells than the header" in r.getMessage()),
+        None,
+    )
+    assert warning is not None
+    assert "https://ragged/1" in warning.getMessage()
+    assert "https://fine/1" not in warning.getMessage()
 
 
 def test_periodic_flush_failure_degrades_then_final_flush_retries(
