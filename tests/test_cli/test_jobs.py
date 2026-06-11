@@ -170,6 +170,82 @@ def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
     assert kwargs.get("dry_run") is True
 
 
+def test_jobs_run_no_enrich_passes_flag(tmp_path: Path) -> None:
+    """`--no-enrich` propagates as no_enrich=True to scraper.run."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--no-enrich"])
+
+    assert rc == 0
+    assert mock_run.called
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("no_enrich") is True
+
+
+def test_jobs_run_no_enrich_defaults_false(tmp_path: Path) -> None:
+    """Without the flag, no_enrich is False on the default path."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("no_enrich") is False
+
+
+def test_jobs_run_no_enrich_with_dry_run_composes(tmp_path: Path) -> None:
+    """`--no-enrich --dry-run` is accepted (redundant, not an error)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--no-enrich", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("no_enrich") is True
+    assert kwargs.get("dry_run") is True
+
+
+def test_jobs_prune_rejects_no_enrich(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--no-enrich` is a run-only flag; prune must reject it."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with pytest.raises(SystemExit) as exc:
+        app(
+            [
+                "--workspace",
+                str(ws),
+                "jobs",
+                "prune",
+                "--older-than",
+                "month",
+                "--no-enrich",
+            ]
+        )
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "no-enrich" in err
+
+
 def test_jobs_run_list_sources_prints_registry(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
