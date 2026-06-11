@@ -1614,7 +1614,7 @@ def _run_llm_enrichment(
     (its which-guard inside the enrichers already covers a missing CLI).
     ``sink.flush`` is the periodic resilience hook, invoked every ~25 results on
     the coordinator thread. ``product_budget`` / ``fit_budget`` are the SHARED
-    running totals' remaining allowance for this wave (0 = use the config cap).
+    running totals' remaining allowance for this wave (None = the config caps; an explicit 0 spends nothing).
     """
     from daily_driver.plugins.job_search.scraper.enrichment import (
         enrich_product_and_fit_concurrently,

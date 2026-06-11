@@ -173,9 +173,6 @@ def _fetch_company_info(
     return product, gd_rating, failed
 
 
-# Prompt scaffolding the model sometimes echoes into its answer: the prompt's own
-# "Line 1:" / "Line 2:" labels, an enumerated/bulleted list marker, or a
-# "Product:" / "Purpose:" field label. Stripped so none of it reaches a CSV cell.
 def _extract_json_payload(raw: str) -> str:
     """Peel LLM wrapping off a JSON response before parsing.
 
@@ -202,6 +199,9 @@ def _extract_json_payload(raw: str) -> str:
     return text or raw
 
 
+# Prompt scaffolding the model sometimes echoes into its answer: the prompt's own
+# "Line 1:" / "Line 2:" labels, an enumerated/bulleted list marker, or a
+# "Product:" / "Purpose:" field label. Stripped so none of it reaches a CSV cell.
 _PRODUCT_SCAFFOLD_RE = re.compile(
     r"^\s*(?:line\s*\d+\s*[:.)-]|\d+\s*[.)]|[-*]|product\s*:|purpose\s*:)\s*",
     re.IGNORECASE,

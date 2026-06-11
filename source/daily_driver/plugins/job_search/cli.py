@@ -12,9 +12,10 @@ from daily_driver.core.console import Console
 def _positive_limit(value: str) -> int:
     """Parse ``--limit`` as an integer >= 1.
 
-    A 0 or negative limit would otherwise collapse into the budget<=0 config-cap
-    sentinel (full spend) -- the opposite of the user's intent -- so reject it at
-    the parser. argparse turns the ArgumentTypeError into a clean exit 2.
+    A 0 limit would mean "spend nothing" (budget 0 = no calls) -- a pointless
+    backfill better expressed by not running it -- and a negative limit is
+    nonsense, so reject both at the parser. argparse turns the
+    ArgumentTypeError into a clean exit 2.
     """
     try:
         n = int(value)
