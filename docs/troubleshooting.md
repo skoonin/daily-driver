@@ -23,10 +23,7 @@ If a script that consumes Daily Driver output starts misbehaving, run it without
 
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`,
-restores managed files you may have deleted, and resolves most "missing file"
-errors. If the error row mentions a missing dependency (`dep:claude`,
-`dep:pbcopy`), install it and re-run.
+Run `doctor --fix` first — it regenerates drifted `.claude/daily-driver/`, restores managed files you may have deleted, and resolves most "missing file" errors. If the error row names a missing dependency (`dep:claude`, `dep:pbcopy`), install it and re-run.
 
 ```bash
 daily-driver doctor
@@ -38,16 +35,11 @@ daily-driver doctor --reset     # nuke and regenerate .claude/daily-driver/
 
 ## Workspace drift (WARNING, not ERROR)
 
-The workspace version stamp does not match the installed package version. Safe
-to ignore for minor version bumps; `doctor --fix` picks up new shipped commands
-and agents.
+The workspace version stamp does not match the installed package version. Safe to ignore for minor bumps; `doctor --fix` picks up new shipped commands and agents.
 
 ## `jobs` fails on Apple (or another Playwright source)
 
-The Apple careers scraper (and any user-added source with `type: playwright`)
-needs Playwright browsers. On macOS, `daily-driver doctor` flags the missing
-browser when a Playwright source is enabled, and `doctor --fix` installs it.
-Or install directly:
+The Apple careers scraper needs Playwright browsers. On macOS, `daily-driver doctor` flags the missing browser when a Playwright source is enabled, and `doctor --fix` installs it. Or install directly:
 
 ```bash
 playwright install firefox
@@ -65,12 +57,8 @@ daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring
 `launchctl load` failures usually mean one of the following:
 
 1. **XML malformed.** Run `plutil -lint ~/Library/LaunchAgents/com.daily-driver.<name>.plist`
-2. **Label collision** with a previously-loaded plist. Run
-   `launchctl list | grep daily-driver`, unload any stragglers with
-   `launchctl unload <path>`, then re-run `daily-driver scheduler install`.
-3. **Path to `daily-driver` not absolute.** The scheduler resolves `daily-driver`
-   via `shutil.which` at install time. If you moved your venv after installing,
-   re-run `daily-driver scheduler install`.
+2. **Label collision** with a previously-loaded plist. Run `launchctl list | grep daily-driver`, unload stragglers with `launchctl unload <path>`, then re-run `daily-driver scheduler install`.
+3. **Path to `daily-driver` not absolute.** The scheduler resolves `daily-driver` via `shutil.which` at install time. If you moved your venv after installing, re-run `daily-driver scheduler install`.
 4. **macOS blocked the job.** Check System Settings > Login Items and Extensions.
 
 View scheduler logs:
@@ -106,8 +94,7 @@ rm .daily-driver/state/focus.lock
 
 ## `daily-driver` not on PATH after install
 
-If you installed with `pip install --user`, confirm the user scripts directory
-is on PATH:
+If you installed with `pip install --user`, confirm the user scripts directory is on PATH:
 
 ```bash
 python3 -m site --user-base
@@ -120,8 +107,7 @@ python3 -m site --user-base
 ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
 ```
 
-This is caused by a version mismatch between `pydantic` and `pydantic-core`.
-Fix it with:
+A version mismatch between `pydantic` and `pydantic-core`. Fix it with:
 
 ```bash
 pip install --force-reinstall pydantic pydantic-core
