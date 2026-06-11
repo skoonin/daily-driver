@@ -106,6 +106,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **Disabled enrichment passes no longer render a phase bar**: with both `enrich_product` and `enrich_gd_rating` off (or fit/notes off), the pass's bar previously sat pinned at `0/<all rows>`, reading as a stuck or ignored toggle; a disabled pass now renders no row at all. (#TBD)
 - **Ollama enrichment responses wrapped in markdown fences now parse**: local models routinely fence their JSON (```json ... ```) or preface it with prose despite the strict-JSON prompt; those jobs failed with "non-JSON response" and were left unenriched. The parser now peels the wrapping before parsing; genuinely malformed responses still count as failures. (#103)
 - **Fit scoring no longer calls allowed countries a "location mismatch"**: the enrichment prompt now states explicitly that a job located in any configured country is acceptable — previously the bare country list read as candidate metadata and models scored every non-home-country role as a mismatch. (#103)
 - **Glassdoor-only company pass is labeled honestly**: with `enrich_product: false` (and `enrich_gd_rating` on), the live phase row now says "Glassdoor ratings" instead of "Company products", so the product toggle no longer looks ignored. (#103)
