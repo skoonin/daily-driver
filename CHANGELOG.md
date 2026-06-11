@@ -8,6 +8,10 @@ log`. Versioned release history starts at 1.0.
 
 ### Added
 
+- **`jobs run --no-enrich`**: scrape, dedup, location-filter, and append rows
+  without running any enrichment — skips detail pages, company products, and
+  fit/notes (no enrichment bars, no detail-page or LLM calls). For fast, cheap
+  runs; fill the empty fields later with `jobs run --backfill`. (#89)
 - **Selectable Playwright browser engine**: `plugins.job_search.scraper.browser` (`firefox` default, or `chromium`/`webkit`) chooses the engine for browser-driven sources (Apple). The launcher resolves it via `getattr(pw, engine).launch(...)`, the `Literal` field rejects unknown engines at config-load, and `doctor` / `doctor --fix` check and install whichever engine is configured rather than always Firefox. (#68)
 - **`enlighten` runtime dependency** (reverses the earlier "no enlighten"
   decision): the `jobs run` live display is now built on enlighten's terminal

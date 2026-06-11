@@ -254,6 +254,7 @@ help sources` does the same.
 ```bash
 daily-driver jobs run                           # full run, writes jobs.csv
 daily-driver jobs run -n                        # dry run (no writes)
+daily-driver jobs run --no-enrich               # append only, skip enrichment
 daily-driver jobs run --backfill                # re-enrich empty cells
 daily-driver jobs run -S remoteok,hn_jobs       # source override
 

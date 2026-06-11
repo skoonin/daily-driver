@@ -807,6 +807,7 @@ def run(
     ai: AIConfig | None = None,
     context_text: str = "",
     dry_run: bool = False,
+    no_enrich: bool = False,
     sources_override: list[str] | None = None,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
@@ -975,8 +976,14 @@ def run(
         # lifted to a frozen EnrichedJob. The rest operates on these.
         typed_jobs: list[EnrichedJob] = [_enriched_from_scraped(j) for j in new_jobs]
 
-        if dry_run:
-            log.info("[dry-run] skipping enrichment (claude calls)")
+        if dry_run or no_enrich:
+            # Both skip every enrichment phase: dry-run avoids writes entirely,
+            # --no-enrich appends the lifted rows unenriched for a later
+            # backfill. Render no enrichment bars and report zero counters.
+            log.info(
+                "[%s] skipping enrichment (no detail/LLM calls)",
+                "dry-run" if dry_run else "no-enrich",
+            )
             product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
             fn_stats = {
                 "enriched": 0,
@@ -1081,7 +1088,10 @@ def run(
     # enrichment above so slow LLM calls don't block concurrent prune/backfill.
     with file_lock(lock_path):
         written = append_jobs_typed(csv_path, typed_jobs, header)
-    Console.success(f"Scraper complete: {written} new jobs appended to {csv_path}.")
+    skip_note = " (enrichment skipped)" if no_enrich else ""
+    Console.success(
+        f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note}"
+    )
 
     run_manifest = {
         "started_at": started_at.isoformat(),

@@ -38,6 +38,14 @@ def add_parser(
         help="Re-enrich empty fields in existing jobs.csv rows",
     )
     p_run.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help=(
+            "Scrape and append only; skip detail-page and LLM enrichment "
+            "(fill later with --backfill)"
+        ),
+    )
+    p_run.add_argument(
         "-S",
         "--sources",
         default=None,
@@ -165,6 +173,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             ai=ai,
             context_text=context_text,
             dry_run=args.dry_run,
+            no_enrich=args.no_enrich,
             sources_override=sources_override,
         )
     except KeyboardInterrupt:
