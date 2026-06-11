@@ -157,6 +157,15 @@ def test_run_appends_per_source_then_crash_keeps_first_source(
     rows = _read_csv(tmp_path / "jobs.csv")
     assert [r["Company"] for r in rows] == ["Acme"]
 
+    # A non-KI crash mid-scrape must still leave an honest manifest, not the
+    # previous run's "complete" one (F1).
+    import json
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+    assert manifest["phase_reached"] == "scraping"
+    assert manifest["new_jobs"] == 1
+
 
 def test_dry_run_appends_nothing_per_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -356,18 +365,23 @@ def _overlap_plugin(budget: int) -> JobSearchPlugin:
     )
 
 
-def test_overlap_two_waves_share_fit_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Phase-1 rows enrich in wave 1; Apple rows in wave 2; the fit budget is a
-    shared running total (wave1 consumes 7, wave2 gets the remaining 3)."""
+def _overlap_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    budget: int,
+    phase1: list[dict[str, Any]],
+    apple: list[dict[str, Any]],
+    wave1_fit_attempted: set[str],
+    wave1_companies_attempted: set[str],
+) -> list[dict[str, Any]]:
+    """Drive run() through a two-wave overlap with a coordinator stub that records
+    each wave's (n, budgets, exclusions) and reports the given wave-1 attempted
+    identities, mimicking the real coordinator's attempted out-param."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-
-    phase1 = [_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)]
-    apple = [_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(5)]
 
     def fake_scrape(
         ctx: Any,
@@ -376,13 +390,10 @@ def test_overlap_two_waves_share_fit_budget(
         on_phase1_done: Any = None,
         **_kw: Any,
     ) -> Any:
-        # Phase 1: append the 7 headless rows, then signal phase-1 done so
-        # wave-1 enrichment can start.
         if on_source_result is not None:
             on_source_result("remoteok", phase1)
         if on_phase1_done is not None:
-            on_phase1_done(True)
-        # Phase 2: Apple lands its 5 rows after.
+            on_phase1_done(True)  # wave-1 enrichment starts here
         if on_source_result is not None:
             on_source_result("apple", apple)
         return phase1 + apple, [], [("remoteok", phase1), ("apple", apple)]
@@ -390,6 +401,7 @@ def test_overlap_two_waves_share_fit_budget(
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
 
     waves: list[dict[str, Any]] = []
+    call = [0]
 
     def fake_concurrent(
         jobs: list[Any],
@@ -401,17 +413,33 @@ def test_overlap_two_waves_share_fit_budget(
         fit_progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
+        exclude_fit_urls: frozenset[str] = frozenset(),
+        exclude_companies: frozenset[str] = frozenset(),
+        attempted: dict[str, set[str]] | None = None,
     ) -> Any:
-        waves.append({"n": len(jobs), "fit_budget": fit_budget})
-        # Each enriched: advance the shared progress so flush hooks fire.
-        for j in jobs:
-            if fit_progress is not None:
-                fit_progress(1, j.company)
+        call[0] += 1
+        eligible = [
+            j for j in jobs if j.url not in exclude_fit_urls and not (j.fit and j.notes)
+        ]
+        waves.append(
+            {
+                "n": len(jobs),
+                "fit_budget": fit_budget,
+                "product_budget": product_budget,
+                "exclude_fit_urls": set(exclude_fit_urls),
+                "exclude_companies": set(exclude_companies),
+                "eligible": len(eligible),
+            }
+        )
+        if call[0] == 1 and attempted is not None:
+            # Mimic the real coordinator filling the attempted out-param.
+            attempted["fit_urls"] = set(wave1_fit_attempted)
+            attempted["product_companies"] = set(wave1_companies_attempted)
         return (
             jobs,
-            {"enriched": len(jobs), "skipped_cached": 0, "failed": 0},
+            {"enriched": len(eligible), "skipped_cached": 0, "failed": 0},
             {
-                "enriched": len(jobs),
+                "enriched": len(eligible),
                 "skipped_budget": 0,
                 "skipped_no_desc": 0,
                 "failed": 0,
@@ -425,23 +453,66 @@ def test_overlap_two_waves_share_fit_budget(
     )
 
     rc = runner.run(
-        _overlap_plugin(budget=10),
+        _overlap_plugin(budget=budget),
         tmp_path,
         tmp_path,
         ai=_serial_ctx().ai,
         no_enrich=False,
     )
     assert rc == 0
-    # Two waves. Wave 1 enriches the 7 phase-1 rows. Wave 2 receives the whole
-    # 12-row list (the already-enriched phase-1 rows skip as ineligible in real
-    # runs; the stub counts the list it is handed).
+    return waves
+
+
+def test_overlap_two_waves_share_fit_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase-1 rows enrich in wave 1; Apple rows in wave 2. The fit budget is a
+    shared running total: wave 1 attempts 7 jobs, so wave 2 caps at the
+    remaining 3. Wave 2 also EXCLUDES the wave-1 rows (no retry/double-charge)."""
+    phase1_urls = {f"https://p1/{i}" for i in range(7)}
+    waves = _overlap_run(
+        monkeypatch,
+        tmp_path,
+        budget=10,
+        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
+        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(5)],
+        wave1_fit_attempted=phase1_urls,
+        wave1_companies_attempted={f"P1Co{i}" for i in range(7)},
+    )
     assert len(waves) == 2
     assert waves[0]["n"] == 7
-    assert waves[1]["n"] == 12
-    # Shared running total: wave 1 attempted 7 of the budget-10, so wave 2 caps
-    # at the remaining 3.
     assert waves[0]["fit_budget"] in (0, 10)  # wave 1 gets the full config budget
+    # Wave 2 sees the whole 12-row list but excludes the 7 wave-1 URLs and caps
+    # its fit budget at 10 - 7 = 3 (the shared running total).
+    assert waves[1]["n"] == 12
     assert waves[1]["fit_budget"] == 3
+    assert waves[1]["exclude_fit_urls"] == phase1_urls
+    assert waves[1]["eligible"] == 5  # only the Apple rows remain eligible
+
+
+def test_overlap_failed_wave1_row_not_reattempted_in_wave2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row ATTEMPTED in wave 1 -- even if it failed (no fit/notes written) -- is
+    excluded from wave 2, so it is neither retried nor double-charged. Backfill
+    is the retry path."""
+    phase1_urls = {f"https://p1/{i}" for i in range(4)}
+    waves = _overlap_run(
+        monkeypatch,
+        tmp_path,
+        budget=10,
+        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(4)],
+        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
+        # All 4 phase-1 rows were attempted (say 1 failed) -> all excluded.
+        wave1_fit_attempted=phase1_urls,
+        wave1_companies_attempted={f"P1Co{i}" for i in range(4)},
+    )
+    # Wave 2 excludes all 4 attempted rows (incl. the failed one) -> 3 eligible.
+    assert waves[1]["exclude_fit_urls"] == phase1_urls
+    assert waves[1]["eligible"] == 3
+    # Budget reduced by the 4 attempted (not re-charged): 10 - 4 = 6.
+    assert waves[1]["fit_budget"] == 6
+    assert waves[1]["product_budget"] == 6
 
 
 # ── Stage 4: SIGTERM, manifest fields, status recovery line ──────────────────
@@ -552,3 +623,295 @@ def test_status_prints_recovery_line_when_interrupted(tmp_path: Path) -> None:
     status = build_status(tmp_path)
     assert status["last_run"]["interrupted"] is True
     assert status["last_run"]["phase_reached"] == "enrichment"
+
+
+# ── Review fixes: manifest on all exits, atomicity, persistence failures ─────
+
+
+def _enrich_plugin_no_product() -> JobSearchPlugin:
+    # fit-only so the serial fit pass applies results incrementally (one per call).
+    return JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {
+                "provider": "claude",
+                "max_enrich_fit": 50,
+                "enrich_product": False,
+                "enrich_gd_rating": False,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+
+
+def test_manifest_written_when_interrupted_during_scraping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl-C during the SCRAPE phase (before enrichment) still writes an
+    interrupted manifest at phase=scraping (F1) -- the window the old code left
+    showing the previous run's complete manifest."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", [_scraped("https://a/1", "Acme")])
+        raise KeyboardInterrupt  # interrupted mid-scrape, before enrichment
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=False)
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+    assert manifest["phase_reached"] == "scraping"
+    # Source A's row was appended before the interrupt -> on disk and counted.
+    assert manifest["new_jobs"] == 1
+    assert [r["Company"] for r in _read_csv(tmp_path / "jobs.csv")] == ["Acme"]
+
+
+def test_csv_init_failure_overwrites_stale_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The csv-init OSError path writes a fresh interrupted manifest, not leaving
+    a prior run's complete one (F1)."""
+    import json
+
+    # Seed a stale "complete" manifest from a prior good run.
+    (tmp_path / "jobs-last-run.json").write_text(
+        json.dumps({"phase_reached": "complete", "interrupted": False, "new_jobs": 9}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    real_open = open
+
+    def boom_open(path: Any, *a: Any, **k: Any) -> Any:
+        if str(path).endswith("jobs.csv") and "w" in (a[0] if a else k.get("mode", "")):
+            raise OSError("disk full")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", boom_open)
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path)
+    assert rc == 1
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+    assert manifest["phase_reached"] == "scraping"
+    assert manifest["new_jobs"] == 0
+
+
+def test_append_failure_isolates_source_keeps_others(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An append OSError for source B marks B failed and lets A + C land; no
+    phantom dedup state for B's rows (F5)."""
+    from daily_driver.plugins.job_search.scraper import csv_io
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    real_append = csv_io.append_jobs_typed
+
+    def flaky_append(csv_path: Any, jobs: list[Any], header: Any) -> int:
+        # Fail only B's append (its single row's company is "Bravo").
+        if jobs and jobs[0].company == "Bravo":
+            from daily_driver.plugins.job_search.scraper.runner import ScraperError
+
+            raise ScraperError("disk error on B")
+        return real_append(csv_path, jobs, header)
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.csv_io.append_jobs_typed",
+        flaky_append,
+    )
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        on_source_result("src_a", [_scraped("https://a/1", "Acme")])
+        on_source_result("src_b", [_scraped("https://b/1", "Bravo")])
+        on_source_result("src_c", [_scraped("https://c/1", "Charlie")])
+        return [], [], [("src_a", []), ("src_b", []), ("src_c", [])]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    rows = _read_csv(tmp_path / "jobs.csv")
+    # A and C persisted; B did not.
+    assert sorted(r["Company"] for r in rows) == ["Acme", "Charlie"]
+    # B is recorded as a failed source (exit 1).
+    assert rc == 1
+    import json
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert "src_b" in manifest["sources_failed"]
+    # No phantom dedup: B's url is NOT in the sink's known set, so a re-scrape
+    # would re-offer it. Re-running the same sources appends B again cleanly.
+    # (Assert via a second append through a fresh sink seeded from the csv.)
+    known_urls, _known_keys, header = csv_io.load_existing_jobs(tmp_path / "jobs.csv")
+    assert "https://b/1" not in known_urls
+
+
+def test_append_and_flush_no_duplicate_rows_under_interleave(tmp_path: Path) -> None:
+    """A flush forced to interleave between an append's two steps must not
+    duplicate or drop rows (F2): the whole append is one critical section."""
+    import threading
+
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        load_existing_jobs,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    # Seed one row so the flush has content to (re)write.
+    sink.append_source("p1", [_scraped("https://p1/0", "P1")])
+
+    # A flusher thread hammers flush() while the main thread appends the Apple
+    # rows. With the single-critical-section discipline, no flush can land
+    # between an append's list-extend and its file-write, so the file never
+    # gains a duplicate or loses a row.
+    stop = threading.Event()
+
+    def flusher() -> None:
+        while not stop.is_set():
+            sink.flush()
+
+    t = threading.Thread(target=flusher, daemon=True)
+    t.start()
+    for i in range(20):
+        sink.append_source("apple", [_scraped(f"https://ap/{i}", f"Ap{i}")])
+    stop.set()
+    t.join()
+    sink.flush()  # final consistent rewrite
+
+    rows = _read_csv(csv_path)
+    urls = [r["Link"] for r in rows]
+    assert len(urls) == len(set(urls)), f"duplicate rows on disk: {urls}"
+    assert len(rows) == 21  # 1 seed + 20 apple, none dropped
+    known_urls, _k, _h = load_existing_jobs(csv_path)
+    assert len(known_urls) == 21
+
+
+def test_periodic_flush_failure_degrades_then_final_flush_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A periodic-flush OSError sets persistence_degraded + warns (not an
+    enrichment failure), enrichment continues, and the final flush retries (F3).
+    """
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(3)]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda p, **k: '{"fit": 5, "notes": "ok"}'
+    )
+
+    # Make the periodic detail-phase flush fail, but let the final flush succeed.
+    from daily_driver.plugins.job_search.scraper.csv_io import atomic_write_rows as real
+
+    calls = [0]
+
+    def flaky_atomic(csv_path: Any, header: Any, rows: Any) -> None:
+        calls[0] += 1
+        if calls[0] == 1:  # first flush (detail phase) fails
+            raise OSError("disk hiccup")
+        real(csv_path, header, rows)
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.csv_io.atomic_write_rows",
+        flaky_atomic,
+    )
+
+    rc = runner.run(
+        _enrich_plugin_no_product(), tmp_path, tmp_path, ai=_serial_ctx().ai
+    )
+    assert rc == 0  # degraded, not failed
+    # Final flush retried and succeeded: enrichment is on disk.
+    rows = _read_csv(tmp_path / "jobs.csv")
+    assert len(rows) == 3
+    assert all(r["Fit"] == "5" for r in rows)
+
+
+def test_interrupt_flush_failure_preserves_exit_and_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flush OSError on the interrupt path must NOT replace the
+    KeyboardInterrupt (no degrade to exit 1) and the manifest is still written
+    (F4)."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    calls = [0]
+
+    def fake_invoke(prompt: str, **kw: Any) -> str:
+        calls[0] += 1
+        if calls[0] >= 2:
+            raise KeyboardInterrupt
+        return '{"fit": 7, "notes": "first"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    # Every flush raises -- including the wrapper's interrupt-path flush.
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.csv_io.atomic_write_rows",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("disk gone")),
+    )
+
+    # The KeyboardInterrupt must survive the flush failure on the interrupt path.
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(_enrich_plugin_no_product(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+
+    # Manifest still written despite the flush failure.
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True

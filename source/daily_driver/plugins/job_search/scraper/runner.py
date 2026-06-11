@@ -607,12 +607,17 @@ class _JobSink:
         self._plugin = plugin
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
-        # Guards growth of ``rows`` vs. a flush snapshot: during scrape/enrich
-        # overlap the Apple wave's append_source extends the list on the
-        # coordinator thread while the wave-1 enrichment thread flushes it.
-        # Slot replacement (out[i] = ...) is GIL-atomic and only ever touches an
-        # index the wave already owns, so it needs no lock; only extend/snapshot
-        # race, and this serializes them.
+        # Serializes every disk-mutating section against every other one. An
+        # append (extend rows + write the rows to disk) and a flush (snapshot +
+        # rewrite the whole file) must each be atomic relative to the other:
+        # during scrape/enrich overlap the Apple wave appends on the coordinator
+        # thread while the wave-1 enrichment thread flushes. Held for the whole
+        # critical section, NOT just the in-memory step -- a flush interleaving
+        # between an append's list-extend and its file-write would otherwise
+        # duplicate or drop rows on disk. Order is always this lock then the
+        # cross-process ``file_lock``, everywhere. Slot replacement
+        # (out[i] = job) inside an enricher is GIL-atomic and only ever touches
+        # an index that wave already owns, so it needs no lock.
         self._rows_lock = threading.Lock()
         # Per-source funnel accumulated at append time (mirrors _per_source_funnel).
         self.funnel: dict[str, dict[str, int]] = {}
@@ -620,30 +625,48 @@ class _JobSink:
         self.raw_found = 0
         self.pre_filter = 0  # new (deduped, url-bearing, pre-location) survivors
         self.loc_filtered = 0
+        # Sticky: a periodic flush hit an OSError and the rows it would have
+        # persisted live only in memory. Enrichment keeps going (the in-memory
+        # state is intact and the final flush retries), but run() warns at the
+        # end so a silent disk problem can't masquerade as a healthy run.
+        self.persistence_degraded = False
+        self._degraded_reason = ""
 
     def append_source(
         self, source_id: str, jobs: list[dict[str, Any]]
     ) -> dict[str, int]:
         """Dedup/filter/lift one source's rows, append them, return its funnel.
 
-        Returns the per-source counts (found/new/known/loc_skip). Updates the
-        run's dedup state and totals so cross-source duplicates are caught and
-        the Completed line reconciles across sources.
+        Returns the per-source counts (found/new/known/loc_skip). The dedup-set
+        growth, the funnel/totals, and the master ``rows`` list are committed
+        ONLY after the file append succeeds, so the in-memory state never claims
+        rows that aren't on disk (no phantom dedup entries). A file-write failure
+        leaves all state untouched and raises ``ScraperError`` for the caller to
+        isolate as a failed source.
         """
         from daily_driver.plugins.job_search.scraper.csv_io import append_jobs_typed
 
         counts = self.funnel.setdefault(
             source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
         )
+        # Classify the source's rows into a deferred-commit plan WITHOUT mutating
+        # any shared state yet. ``found`` is the only counter touched here (it is
+        # the raw scrape tally and survives a write failure); every classified
+        # count and dedup-set growth is applied below, after the write lands.
+        counts["found"] += len(jobs)
+        self.raw_found += len(jobs)
         # Intra-source dedup: a single source's list may repeat a row (e.g.
         # Apple's locale loop). Those are the funnel's "other" -- found but not
         # classified -- so detect them here without counting them as "known".
         seen_urls: set[str] = set()
         seen_keys: set[str] = set()
         to_append: list[EnrichedJob] = []
+        commit_urls: list[str] = []
+        commit_keys: list[str] = []
+        known = 0
+        loc_skip = 0
+        new = 0
         for job in jobs:
-            counts["found"] += 1
-            self.raw_found += 1
             url = job.get("url", "")
             key = dedup_key(job.get("company", ""), job.get("role", ""))
             if (url and url in seen_urls) or (key and key in seen_keys):
@@ -653,7 +676,7 @@ class _JobSink:
             if key:
                 seen_keys.add(key)
             if (url and url in self._known_urls) or (key and key in self._known_keys):
-                counts["known"] += 1
+                known += 1
                 continue
             if not url:
                 # url-less new jobs cannot be deduped on future runs; drop them.
@@ -663,43 +686,55 @@ class _JobSink:
                 )
                 continue
             if not location_matches(job, self._plugin):
-                counts["loc_skip"] += 1
-                self.loc_filtered += 1
+                loc_skip += 1
                 continue
-            counts["new"] += 1
-            self.pre_filter += 1
-            # Grow the known set immediately so the next source (and the Apple
-            # wave) dedups against this just-accepted row.
-            self._known_urls.add(url)
+            new += 1
+            commit_urls.append(url)
             if key:
-                self._known_keys.add(key)
+                commit_keys.append(key)
             to_append.append(_enriched_from_scraped(job))
 
         if to_append:
-            with self._rows_lock:
-                self.rows.extend(to_append)
-            with file_lock(self.lock_path):
+            # ONE critical section: write to disk first, then commit the
+            # in-memory state. Holding _rows_lock across the file write keeps a
+            # concurrent flush from interleaving between extend and write (which
+            # would duplicate/drop rows on disk). append_jobs_typed raises
+            # ScraperError on an OSError, which propagates here BEFORE the
+            # rows.extend and the dedup/funnel commit below -- so a write failure
+            # rolls back to nothing committed and the caller isolates the source.
+            with self._rows_lock, file_lock(self.lock_path):
                 append_jobs_typed(self.csv_path, to_append, self.header)
+                self.rows.extend(to_append)
+        # Commit dedup state + funnel/totals only now that the rows are durable.
+        self._known_urls.update(commit_urls)
+        self._known_keys.update(commit_keys)
+        counts["known"] += known
+        counts["loc_skip"] += loc_skip
+        counts["new"] += new
+        self.loc_filtered += loc_skip
+        self.pre_filter += new
         return counts
 
     def flush(self) -> None:
         """Rewrite jobs.csv from ``rows`` through the one backfill rewrite path.
 
-        Holds the sentinel lock only around the rewrite, never across the slow
-        LLM calls that produced the updates — matching run()'s append discipline
-        so a concurrent prune/backfill is serialized but not starved.
+        Snapshot AND rewrite happen under one held ``_rows_lock`` + ``file_lock``
+        so the whole flush is atomic relative to an append (no interleave between
+        reading the rows and writing them out). The locks are held only for the
+        rewrite, never across the slow LLM calls that produced the updates, so a
+        concurrent prune/backfill is serialized but not starved.
+
+        Raises ``OSError`` on a write failure -- the caller decides whether to
+        degrade (periodic flush) or propagate (final flush). See
+        :meth:`flush_periodic`.
         """
         from daily_driver.plugins.job_search.scraper.csv_io import (
             atomic_write_rows,
             read_rows,
         )
 
-        # Snapshot the row list under the rows lock so a concurrent append (the
-        # overlapping Apple wave) cannot mutate it mid-iteration. The slow csv
-        # write then runs against the immutable snapshot.
-        with self._rows_lock:
+        with self._rows_lock, file_lock(self.lock_path):
             snapshot = list(self.rows)
-        with file_lock(self.lock_path):
             # Carry through any unknown/hand-added columns verbatim, indexed by
             # Link, so a flush never drops a user's "Priority" column. The append
             # path only ever wrote canonical columns, so extras come from rows
@@ -722,6 +757,31 @@ class _JobSink:
                     csv_row.update(extras_by_link.get(job.url, {}))
                 out_rows.append(csv_row)
             atomic_write_rows(self.csv_path, out_header, out_rows)
+
+    def flush_periodic(self) -> None:
+        """Best-effort flush for the in-loop resilience hook.
+
+        A periodic flush that fails must NOT abort enrichment -- the in-memory
+        state is intact and the final flush will retry. Instead it sets the
+        sticky ``persistence_degraded`` flag (logged once at WARN as a
+        PERSISTENCE failure, distinct from an enrichment failure) so run() can
+        surface it at the end. Distinguishing this from an enrichment failure is
+        the whole point: repeated disk errors must not masquerade as a healthy
+        run while hours of enrichment live only in memory.
+        """
+        try:
+            self.flush()
+        except OSError as exc:
+            self._degraded_reason = str(exc)
+            if not self.persistence_degraded:
+                self.persistence_degraded = True
+                log.warning(
+                    "PERSISTENCE failure: periodic save of %s failed (%s); "
+                    "enrichment continues in memory and the final save will "
+                    "retry",
+                    self.csv_path,
+                    exc,
+                )
 
 
 def run_all_scrapers(
@@ -1075,6 +1135,9 @@ def _run_llm_enrichment(
     run_preflight: bool,
     product_budget: int = 0,
     fit_budget: int = 0,
+    exclude_fit_urls: frozenset[str] = frozenset(),
+    exclude_companies: frozenset[str] = frozenset(),
+    attempted: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, int], dict[str, int]]:
     """Run the overlapped product + fit/notes LLM pass, flushing as it goes.
 
@@ -1110,7 +1173,11 @@ def _run_llm_enrichment(
             fit_budget=fit_budget,
             product_progress=product_phase.advance,
             fit_progress=fit_phase.advance,
-            flush=sink.flush,
+            # Periodic in-loop flush degrades (not crashes) on a disk error.
+            flush=sink.flush_periodic,
+            exclude_fit_urls=exclude_fit_urls,
+            exclude_companies=exclude_companies,
+            attempted=attempted,
         )
     else:
         product_stats = _empty_product_stats()
@@ -1141,6 +1208,9 @@ def _enrich_wave(
     product_budget: int,
     fit_budget: int,
     set_phase: Callable[[str], None] | None = None,
+    exclude_fit_urls: frozenset[str] = frozenset(),
+    exclude_companies: frozenset[str] = frozenset(),
+    attempted: dict[str, set[str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1167,7 +1237,9 @@ def _enrich_wave(
     detail_phase.start()
     _, detail_stats = enrich_job_details(jobs, ctx, progress=detail_phase.advance)
     detail_phase.done(render_detail_summary(detail_stats))
-    sink.flush()  # persist detail comp/posted_date before the LLM phases
+    # Persist detail comp/posted_date before the LLM phases; a disk error here
+    # degrades rather than aborting (the final flush retries and propagates).
+    sink.flush_periodic()
     if set_phase is not None:
         set_phase("enrichment")
 
@@ -1182,18 +1254,11 @@ def _enrich_wave(
         run_preflight=run_preflight,
         product_budget=product_budget,
         fit_budget=fit_budget,
+        exclude_fit_urls=exclude_fit_urls,
+        exclude_companies=exclude_companies,
+        attempted=attempted,
     )
     return detail_stats, product_stats, fn_stats
-
-
-def _wave_attempts(stats: dict[str, Any]) -> int:
-    """LLM-call attempts a wave consumed (for shared-budget accounting).
-
-    Every targeted job lands as either enriched or failed; budget-skipped jobs
-    were never attempted. So attempts = enriched + failed -- the count to deduct
-    from the next wave's remaining shared budget.
-    """
-    return int(stats.get("enriched", 0)) + int(stats.get("failed", 0))
 
 
 def _add_stats(into: dict[str, int], more: dict[str, int]) -> None:
@@ -1216,6 +1281,28 @@ def _accumulate_enrich_stats(
         _add_stats(product_stats, wave_result["product"])
     if "fit" in wave_result:
         _add_stats(fn_stats, wave_result["fit"])
+
+
+@dataclass
+class _RunState:
+    """Manifest-relevant state shared between run()'s body and its exit handler.
+
+    A single mutable object so the outer ``except`` can always write a coherent
+    interrupted/crashed manifest no matter how far the run got -- avoiding both
+    the unbound-local trap (an exception before a bare local is assigned) and a
+    250-line re-indent to wrap the live block in a try.
+    """
+
+    sink: _JobSink | None = None
+    all_jobs: list[dict[str, Any]] = field(default_factory=list)
+    failed_sources: list[str] = field(default_factory=list)
+    phase_reached: str = "scraping"
+    product_stats: dict[str, int] = field(default_factory=_empty_product_stats)
+    fn_stats: dict[str, int] = field(default_factory=_empty_fit_stats)
+
+    @property
+    def written(self) -> int:
+        return len(self.sink.rows) if self.sink is not None else 0
 
 
 def _write_run_manifest(
@@ -1279,13 +1366,80 @@ def run(
     Returns the process-style exit code (0 success, 1 on failed sources /
     I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
     responsible for exit handling.
+
+    Thin wrapper around :func:`_run_impl` that owns the manifest-on-every-exit
+    guarantee: a ``_RunState`` carries the manifest-relevant state, and ANY exit
+    that escapes ``_run_impl`` -- a Ctrl-C/SIGTERM during scraping or the
+    scrape/enrich overlap window (the longest state, the launchd-SIGTERM case),
+    or any crash -- writes an ``interrupted=True`` manifest at the phase reached
+    before re-raising. Clean completion writes ``interrupted=False`` inside
+    ``_run_impl``. dry-run writes no manifest (it returns before the write).
     """
+    started_at = datetime.now(timezone.utc)
+    state = _RunState()
+    try:
+        return _run_impl(
+            plugin,
+            output_dir,
+            ephemeral_dir,
+            ai=ai,
+            context_text=context_text,
+            dry_run=dry_run,
+            no_enrich=no_enrich,
+            sources_override=sources_override,
+            started_at=started_at,
+            state=state,
+        )
+    except BaseException:
+        # Manifest on every exit. Best-effort guarded flush so a disk error here
+        # never masks the original exception (e.g. degrading a SIGINT to exit 1).
+        # dry-run has no sink, so there is nothing to persist and no manifest to
+        # write (a dry-run leaves the previous run's manifest untouched).
+        if not dry_run:
+            sink = state.sink
+            if sink is not None:
+                try:
+                    sink.flush()
+                except OSError as exc:
+                    log.warning(
+                        "PERSISTENCE failure on interrupt: could not save %s (%s)",
+                        sink.csv_path,
+                        exc,
+                    )
+            _write_run_manifest(
+                output_dir,
+                started_at=started_at,
+                all_jobs=state.all_jobs,
+                failed_sources=state.failed_sources,
+                written=state.written,
+                fn_enriched=state.fn_stats["enriched"],
+                product_enriched=state.product_stats["enriched"],
+                phase_reached=state.phase_reached,
+                interrupted=True,
+            )
+        raise
+
+
+def _run_impl(
+    plugin: JobSearchPlugin,
+    output_dir: Path,
+    ephemeral_dir: Path,
+    *,
+    ai: AIConfig | None = None,
+    context_text: str = "",
+    dry_run: bool = False,
+    no_enrich: bool = False,
+    sources_override: list[str] | None = None,
+    started_at: datetime,
+    state: _RunState,
+) -> int:
+    """The run pipeline. Mutates ``state`` so the :func:`run` wrapper can write a
+    coherent manifest on any abrupt exit. See :func:`run`."""
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
     )
 
-    started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
     clear_stale_adjacent_lock(csv_path)
     lock_path = jobs_lock_path(ephemeral_dir)
@@ -1320,6 +1474,19 @@ def run(
                         csv.writer(f).writerow(header)
                 except OSError as exc:
                     log.error("Cannot initialize %s: %s", csv_path, exc)
+                    # Overwrite any stale "complete" manifest from a prior run so
+                    # `jobs status` reflects this failed run, not the last good one.
+                    _write_run_manifest(
+                        output_dir,
+                        started_at=started_at,
+                        all_jobs=[],
+                        failed_sources=[],
+                        written=0,
+                        fn_enriched=0,
+                        product_enriched=0,
+                        phase_reached="scraping",
+                        interrupted=True,
+                    )
                     return 1
 
     log.info(
@@ -1340,10 +1507,10 @@ def run(
     )
 
     # Coarse run phase for the manifest (scraping -> detail -> enrichment ->
-    # complete). On a graceful stop the partially-reached phase tells
-    # `jobs status` what to recover. A list so closures (incl. the wave-1
-    # thread) can update it.
-    phase_reached = ["scraping"]
+    # complete), held on ``state`` so the run() wrapper's exit handler reads the
+    # phase actually reached. Closures (incl. the wave-1 thread) update it.
+    def _set_phase(p: str) -> None:
+        state.phase_reached = p
 
     title = "Job search run (dry-run)" if dry_run else "Job search run"
     # The live block renders on any TTY; verbosity controls only how much scrolls
@@ -1400,7 +1567,27 @@ def run(
                 known_keys=known_keys,
                 plugin=plugin,
             )
-            on_source_result = sink.append_source
+            state.sink = sink
+
+            def _on_source_result(source_id: str, jobs: list[dict[str, Any]]) -> None:
+                # Per-source isolation: an append OSError (raised as ScraperError
+                # by the sink) must mark just this source failed and let the
+                # remaining sources finish -- not kill the whole run with later
+                # sources lost. The sink already rolled back its state on failure
+                # (no phantom dedup/rows), so the source is cleanly absent.
+                try:
+                    sink.append_source(source_id, jobs)
+                except ScraperError as exc:
+                    log.error(
+                        "[%s] could not persist scraped rows, marking source "
+                        "failed: %s",
+                        source_id,
+                        exc,
+                    )
+                    if source_id not in state.failed_sources:
+                        state.failed_sources.append(source_id)
+
+            on_source_result = _on_source_result
 
         # Overlap state (Stage 3). When a phase 2 (Apple) follows phase 1, the
         # phase-1 rows are enriched in a background WAVE while Apple still
@@ -1411,18 +1598,19 @@ def run(
         enrich_cfg = plugin.enrichment
         do_enrich = not (dry_run or no_enrich)
 
-        def _set_phase(p: str) -> None:
-            phase_reached[0] = p
-
         enrich_group: Group | None = None
         wave1_thread: threading.Thread | None = None
-        wave1_result: dict[str, dict[str, Any]] = {}
+        # Holds wave-1's per-phase stats plus the attempted-identity sets
+        # (fit_attempted_urls / product_attempted_companies) so wave 2 can exclude
+        # them and size the shared budget by what wave 1 actually attempted.
+        wave1_result: dict[str, Any] = {}
         wave1_error: list[BaseException] = []
         wave1_count = [0]  # phase-1 rows handed to wave 1
 
         def _run_wave1(phase1_jobs: list[EnrichedJob]) -> None:
             assert sink is not None and enrich_group is not None
             try:
+                attempted: dict[str, set[str]] = {}
                 d, p, f = _enrich_wave(
                     plugin,
                     ai_cfg,
@@ -1435,8 +1623,19 @@ def run(
                     product_budget=0,  # wave 1 gets the full config budget
                     fit_budget=0,
                     set_phase=_set_phase,
+                    attempted=attempted,
                 )
-                wave1_result.update({"detail": d, "product": p, "fit": f})
+                wave1_result.update(
+                    {
+                        "detail": d,
+                        "product": p,
+                        "fit": f,
+                        "fit_attempted_urls": attempted.get("fit_urls", set()),
+                        "product_attempted_companies": attempted.get(
+                            "product_companies", set()
+                        ),
+                    }
+                )
             except BaseException as exc:  # noqa: BLE001 -- relayed to main thread
                 wave1_error.append(exc)
 
@@ -1456,7 +1655,7 @@ def run(
             )
             wave1_thread.start()
 
-        all_jobs, failed_sources, source_results = run_all_scrapers(
+        all_jobs, scrape_failed, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
             on_sources_enabled=_on_enabled,
@@ -1469,6 +1668,13 @@ def run(
             # Force Apple headless while the live block owns the terminal.
             force_headless=tty,
         )
+        state.all_jobs = all_jobs
+        # Merge scraper-level failures with any append-persistence failures the
+        # source-result callback recorded; preserve order, no duplicates.
+        for sid in scrape_failed:
+            if sid not in state.failed_sources:
+                state.failed_sources.append(sid)
+        failed_sources = state.failed_sources
 
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
@@ -1521,8 +1727,10 @@ def run(
             if row is not None:
                 row.show_breakdown(_source_breakdown_segments(counts))
 
-        product_stats = _empty_product_stats()
-        fn_stats = _empty_fit_stats()
+        # Accumulate enrichment counters straight into state so the run()
+        # wrapper's manifest reflects partial progress on an interrupt.
+        product_stats = state.product_stats
+        fn_stats = state.fn_stats
         if not do_enrich:
             # dry-run avoids writes entirely; --no-enrich appends the lifted rows
             # unenriched for a later backfill. Render no enrichment bars and
@@ -1533,80 +1741,74 @@ def run(
             )
         else:
             # The sink is the durable checkpoint: each wave mutates its rows in
-            # place and flushes jobs.csv per completed phase, every ~25 LLM
-            # results, and once more on interrupt. A crash mid-enrichment loses
-            # at most one flush window; jobs run --backfill resumes the rest.
+            # place and flushes jobs.csv per completed phase and every ~25 LLM
+            # results. An interrupt/crash is caught by the run() wrapper, which
+            # flushes the partial pass and writes the interrupted manifest; a
+            # mid-enrichment loss is at most one flush window (--backfill resumes).
             assert sink is not None  # not dry_run -> sink exists
-            try:
-                # Wave 1 (phase-1 rows) may already be running in a background
-                # thread (started at on_phase1_done). Join it, then enrich the
-                # remaining (Apple) rows as wave 2 with the budget wave 1 left.
-                if wave1_thread is not None:
-                    wave1_thread.join()
-                    if wave1_error:
-                        raise wave1_error[0]
-                    assert enrich_group is not None
-                    _accumulate_enrich_stats(product_stats, fn_stats, wave1_result)
-                    # Wave 2 receives the WHOLE row list (so its slot mutations
-                    # and the periodic flush both target sink.rows directly); the
-                    # already-enriched phase-1 rows are skipped as ineligible, so
-                    # only the newly-landed Apple rows are actually enriched.
-                    if len(typed_jobs) > wave1_count[0]:
-                        fit_used = _wave_attempts(wave1_result.get("fit", {}))
-                        prod_used = _wave_attempts(wave1_result.get("product", {}))
-                        _, p2, f2 = _enrich_wave(
-                            plugin,
-                            ai_cfg,
-                            typed_jobs,
-                            ctx,
-                            sink,
-                            enrich_group,
-                            wave_label=" (wave 2)",
-                            run_preflight=False,  # wave 1 already probed
-                            product_budget=max(
-                                1, enrich_cfg.max_enrich_companies - prod_used
-                            ),
-                            fit_budget=max(1, enrich_cfg.max_enrich_fit - fit_used),
-                            set_phase=_set_phase,
-                        )
-                        _add_stats(product_stats, p2)
-                        _add_stats(fn_stats, f2)
-                else:
-                    # No overlap (no Apple phase, or it landed nothing): one wave
-                    # over every row on the main thread, same as the classic path.
-                    enrich_group = rp.group("Enriching jobs")
-                    _, p1, f1 = _enrich_wave(
+            # Wave 1 (phase-1 rows) may already be running in a background thread
+            # (started at on_phase1_done). Join it, then enrich the remaining
+            # (Apple) rows as wave 2 with the budget wave 1 left.
+            if wave1_thread is not None:
+                wave1_thread.join()
+                if wave1_error:
+                    raise wave1_error[0]
+                assert enrich_group is not None
+                _accumulate_enrich_stats(product_stats, fn_stats, wave1_result)
+                # Wave 2 receives the WHOLE row list (so its slot mutations and
+                # the periodic flush both target sink.rows directly). Rows ALREADY
+                # ATTEMPTED in wave 1 -- enriched or failed -- are excluded so a
+                # failed wave-1 row is not retried (and double-charged) in wave 2;
+                # backfill is the retry path. Budgets are shared running totals:
+                # product by UNIQUE COMPANIES attempted (the company cap counts
+                # companies, not jobs), fit by jobs attempted.
+                if len(typed_jobs) > wave1_count[0]:
+                    fit_attempted = frozenset(
+                        wave1_result.get("fit_attempted_urls", set())
+                    )
+                    company_attempted = frozenset(
+                        wave1_result.get("product_attempted_companies", set())
+                    )
+                    _, p2, f2 = _enrich_wave(
                         plugin,
                         ai_cfg,
                         typed_jobs,
                         ctx,
                         sink,
                         enrich_group,
-                        wave_label="",
-                        run_preflight=True,
-                        product_budget=0,
-                        fit_budget=0,
+                        wave_label=" (wave 2)",
+                        run_preflight=False,  # wave 1 already probed
+                        product_budget=max(
+                            1, enrich_cfg.max_enrich_companies - len(company_attempted)
+                        ),
+                        fit_budget=max(
+                            1, enrich_cfg.max_enrich_fit - len(fit_attempted)
+                        ),
                         set_phase=_set_phase,
+                        exclude_fit_urls=fit_attempted,
+                        exclude_companies=company_attempted,
                     )
-                    _add_stats(product_stats, p1)
-                    _add_stats(fn_stats, f1)
-            except KeyboardInterrupt:
-                # Persist whatever enrichment landed before the interrupt so a
-                # ^C/SIGTERM never discards a partial enrichment pass, then
-                # record the interruption in the manifest for the recovery line.
-                sink.flush()
-                _write_run_manifest(
-                    output_dir,
-                    started_at=started_at,
-                    all_jobs=all_jobs,
-                    failed_sources=failed_sources,
-                    written=len(sink.rows),
-                    fn_enriched=fn_stats["enriched"],
-                    product_enriched=product_stats["enriched"],
-                    phase_reached=phase_reached[0],
-                    interrupted=True,
+                    _add_stats(product_stats, p2)
+                    _add_stats(fn_stats, f2)
+            else:
+                # No overlap (no Apple phase, or it landed nothing): one wave
+                # over every row on the main thread, same as the classic path.
+                enrich_group = rp.group("Enriching jobs")
+                _, p1, f1 = _enrich_wave(
+                    plugin,
+                    ai_cfg,
+                    typed_jobs,
+                    ctx,
+                    sink,
+                    enrich_group,
+                    wave_label="",
+                    run_preflight=True,
+                    product_budget=0,
+                    fit_budget=0,
+                    set_phase=_set_phase,
                 )
-                raise
+                _add_stats(product_stats, p1)
+                _add_stats(fn_stats, f1)
             if enrich_group is not None:
                 enrich_group.done()
 
@@ -1660,20 +1862,17 @@ def run(
         return 1 if failed_sources else 0
 
     # Rows were already appended per-source during scraping (the durable-record
-    # checkpoint). Persist the in-place enrichment with one final rewrite through
-    # the backfill rewrite path; the lock is taken only for the rewrite, never
-    # across the LLM calls, so a concurrent prune/backfill is serialized but not
-    # starved. --no-enrich leaves the rows as appended (no rewrite needed).
+    # checkpoint). --no-enrich leaves the rows as appended (no rewrite needed).
     assert sink is not None  # dry_run returned above; non-dry-run always has a sink
     written = len(sink.rows)
-    if not no_enrich:
-        sink.flush()
     skip_note = " (enrichment skipped)" if no_enrich else ""
     Console.success(
         f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note}"
     )
 
-    phase_reached[0] = "complete"
+    # Write the completion manifest BEFORE the final flush, so a final-flush
+    # failure (raised loudly below) still leaves an honest manifest behind.
+    state.phase_reached = "complete"
     _write_run_manifest(
         output_dir,
         started_at=started_at,
@@ -1682,9 +1881,23 @@ def run(
         written=written,
         fn_enriched=fn_stats["enriched"],
         product_enriched=product_stats["enriched"],
-        phase_reached=phase_reached[0],
+        phase_reached=state.phase_reached,
         interrupted=False,
     )
+
+    if not no_enrich:
+        # The final rewrite through the backfill rewrite path persists the
+        # in-place enrichment; the lock is taken only for the rewrite, never
+        # across LLM calls, so a concurrent prune/backfill is serialized but not
+        # starved. If periodic saves degraded mid-run, say so once; then let any
+        # final-flush OSError propagate loudly -- a silent disk failure must not
+        # look like a healthy run when hours of enrichment live only in memory.
+        if sink.persistence_degraded:
+            Console.warning(
+                f"periodic saves failed during the run "
+                f"({sink._degraded_reason}); retrying the final save now"
+            )
+        sink.flush()
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))

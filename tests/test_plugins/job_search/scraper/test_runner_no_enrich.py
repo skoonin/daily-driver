@@ -182,6 +182,7 @@ def test_default_path_still_enriches(
         fit_progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
+        **_kw: Any,
     ) -> Any:
         return (
             jobs,

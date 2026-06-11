@@ -149,7 +149,8 @@ def enrich_job_details(
     """
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
     # mid-pass leaves enriched-so-far results for a caller that persists them
-    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
+    # (backfill rewrites on interrupt; run() flushes the sink per phase and
+    # periodically, so partial results survive).
     out = jobs
     cfg = ctx.plugin.enrichment
     delay = cfg.detail_delay_seconds

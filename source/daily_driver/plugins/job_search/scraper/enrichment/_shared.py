@@ -101,7 +101,9 @@ def _restore_interrupt_handler(previous: Any) -> None:
 # Records the signal that triggered a graceful stop so the CLI can pick the
 # conventional exit code (130 for SIGINT, 143 for SIGTERM). A list so the SIGTERM
 # handler (which must not rebind module globals from a signal context) can write
-# it; reset on each run install.
+# it. Process-scoped, single-run state: the process runs at most one jobs run, and
+# install_sigterm_handler() resets it at the start of each run, so there is no
+# cross-run leakage.
 _received_signal: list[int] = []
 
 

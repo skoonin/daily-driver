@@ -221,6 +221,7 @@ def test_preflight_reachable_runs_enrichment_no_warning(
         fit_progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
+        **_kw: Any,
     ) -> Any:
         concurrent_calls.append(len(jobs))
         return (
