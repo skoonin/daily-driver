@@ -226,6 +226,7 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `enrich_gd_rating` | bool | true | Fill the Glassdoor rating per company |
 | `enrich_fit` | bool | true | |
 | `enrich_notes` | bool | true | |
+| `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
 | `detail_delay_seconds` | float | 0.5 | |
 | `criteria` | list of `{label, assess}` | `[]` | |

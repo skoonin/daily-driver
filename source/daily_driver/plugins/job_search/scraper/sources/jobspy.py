@@ -335,6 +335,9 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
                     # is skipped (enrich_job_details short-circuits on comp, and
                     # the enricher skips rows that already have description_text).
                     normalized["description_text"] = normalized.pop("description", "")
+                    # The per-search ISO country is the origin-country hint the
+                    # row lift uses when the location text names no country.
+                    normalized["origin_country"] = country_code
                     jobs.append(normalized)
 
             log.debug(

@@ -501,6 +501,7 @@ def _build_fit_notes_prompt(
     hc: str,
     criteria: Sequence[Criterion] = (),
     context: str = "",
+    include_remote: bool = False,
 ) -> str:
     role = job.role or "unknown"
     company = job.company or "unknown"
@@ -535,13 +536,14 @@ def _build_fit_notes_prompt(
     if product:
         prompt += f"Company: {product}\n"
 
-    # The JSON shape gains a "criteria" object only when criteria are configured.
+    # The JSON shape gains a "remote" field (when enabled) and a "criteria"
+    # object (when criteria are configured), each only when asked for.
     shape = '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"'
-    shape += (
-        ', "criteria": {<one entry per criterion below, keyed by its label>}}'
-        if criteria
-        else "}"
-    )
+    if include_remote:
+        shape += ', "remote": "remote" | "hybrid" | "onsite"'
+    if criteria:
+        shape += ', "criteria": {<one entry per criterion below, keyed by its label>}'
+    shape += "}"
 
     if context:
         fit_instr = (
@@ -570,6 +572,13 @@ def _build_fit_notes_prompt(
         "description is absent, return notes as an empty string. Do not guess or "
         "hallucinate notes when you have no description.\n"
     )
+
+    if include_remote:
+        prompt += (
+            'remote: one of "remote" (fully remote), "hybrid" (some office days), '
+            'or "onsite" (in-office), judged from the description. Omit the field '
+            "if the description is too thin to tell.\n"
+        )
 
     if criteria:
         criteria_lines = "\n".join(f"- {c.label}: {c.assess}" for c in criteria)
@@ -644,6 +653,23 @@ def _clamp_fit(raw: float, company: str, role: str) -> int:
     return clamped
 
 
+# Canonical remote values the LLM tier may write; any other answer (or blank)
+# leaves the existing cell untouched (tolerant passthrough preserves hand-entry).
+_REMOTE_VALUES: frozenset[str] = frozenset({"remote", "hybrid", "onsite"})
+
+
+def _parse_remote(value: object) -> str:
+    """Coerce a parsed JSON ``remote`` value to a canonical value, or "" if none.
+
+    Tolerant: a non-string, blank, or unrecognized answer yields "" so the
+    caller leaves any existing value (hand-entered or heuristic) in place.
+    """
+    if not isinstance(value, str):
+        return ""
+    v = value.strip().lower()
+    return v if v in _REMOTE_VALUES else ""
+
+
 def _fetch_fit_notes_for_job(
     job: EnrichedJob,
     role_persona: str,
@@ -653,16 +679,18 @@ def _fetch_fit_notes_for_job(
     timeout: int,
     criteria: Sequence[Criterion] = (),
     context: str = "",
-) -> tuple[int | None, str, bool]:
-    """Worker: fetch fit/notes for one job. Returns (fit, notes, failed).
+    include_remote: bool = False,
+) -> tuple[int | None, str, str, bool]:
+    """Worker: fetch fit/notes (and remote) for one job.
 
-    ``fit`` is a validated 1-10 integer (clamped from out-of-range values) or
-    ``None`` when the call failed.
+    Returns ``(fit, notes, remote, failed)``. ``fit`` is a validated 1-10 integer
+    (clamped from out-of-range values) or ``None`` when the call failed; ``remote``
+    is a canonical value ("remote"/"hybrid"/"onsite") or "" when not judged.
     """
     company = job.company or "unknown"
     role = job.role or "unknown"
     prompt = _build_fit_notes_prompt(
-        job, role_persona, loc_summary, hc, criteria, context
+        job, role_persona, loc_summary, hc, criteria, context, include_remote
     )
     log.debug(
         "%s company=%s role=%s prompt=%r",
@@ -688,7 +716,7 @@ def _fetch_fit_notes_for_job(
             exc.provider,
             exc.timeout_seconds or timeout,
         )
-        return None, "", True
+        return None, "", "", True
     except AIInvocationError as exc:
         stdout_tail = (exc.stdout or "").strip()[-200:]
         stderr_tail = (exc.stderr or "").strip()[-200:]
@@ -701,10 +729,10 @@ def _fetch_fit_notes_for_job(
             stdout_tail,
             stderr_tail,
         )
-        return None, "", True
+        return None, "", "", True
     except (FileNotFoundError, PermissionError, claude_cli.ClaudeNotFoundError) as exc:
         log.warning("%s %s failed: %s", _enrich_tag("enrich-fit-notes"), company, exc)
-        return None, "", True
+        return None, "", "", True
 
     raw = stdout.strip()
     log.debug(
@@ -724,7 +752,7 @@ def _fetch_fit_notes_for_job(
             role,
             raw[:200],
         )
-        return None, "", True
+        return None, "", "", True
 
     fit_val = parsed.get("fit")
     notes_val = parsed.get("notes", "")
@@ -743,10 +771,11 @@ def _fetch_fit_notes_for_job(
             role,
             raw[:200],
         )
-        return None, "", True
+        return None, "", "", True
 
     score = _clamp_fit(fit_val, company, role)
     notes_str = notes_val if isinstance(notes_val, str) else ""
+    remote = _parse_remote(parsed.get("remote")) if include_remote else ""
     if criteria:
         criteria_obj = parsed.get("criteria")
         if isinstance(criteria_obj, dict):
@@ -759,7 +788,7 @@ def _fetch_fit_notes_for_job(
         score,
         notes_str,
     )
-    return score, notes_str, False
+    return score, notes_str, remote, False
 
 
 def _fit_notes_eligible(job: EnrichedJob) -> bool:
@@ -780,7 +809,7 @@ class _FitPlan:
     stats: dict[str, int]
     target_idx: list[int]
     timeout: int
-    fetch: Callable[[int], tuple[int | None, str, bool]]
+    fetch: Callable[[int], tuple[int | None, str, str, bool]]
     consume: Callable[[Future[Any], int], None]
 
 
@@ -819,6 +848,7 @@ def _build_fit_plan(
     crit_list = list(cfg.criteria)
     context_text = ctx.context_text
     timeout = cfg.enrich_timeout
+    include_remote = cfg.enrich_is_remote
 
     pool_size = _enrich_pool_size(ctx)
     # Eligible indices preserve input order so budget truncation matches the
@@ -866,7 +896,9 @@ def _build_fit_plan(
     done_count = [0]
     heartbeat = max(1, len(target_idx) // 5)
 
-    def _apply(idx: int, fit: int | None, notes_str: str, failed: bool) -> None:
+    def _apply(
+        idx: int, fit: int | None, notes_str: str, remote: str, failed: bool
+    ) -> None:
         job = out[idx]
         company = job.company or "unknown"
         if failed:
@@ -881,10 +913,16 @@ def _build_fit_plan(
         updates: dict[str, Any] = {}
         wrote_fit = not job.fit and fit is not None
         wrote_notes = not job.notes and bool(notes_str)
+        # Remote: the LLM fills a blank cell and may refine the heuristic's coarse
+        # "remote" to a definite value; a hand-entered value (anything else) wins
+        # and a blank/unknown LLM answer never clobbers an existing value.
+        wrote_remote = bool(remote) and job.remote in ("", "remote")
         if wrote_fit:
             updates["fit"] = fit
         if wrote_notes:
             updates["notes"] = notes_str
+        if wrote_remote:
+            updates["remote"] = remote
         if updates:
             # Validation (or any non-interrupt error) applying one result must
             # fail only this job, never abort the run — run() has no incremental
@@ -914,7 +952,7 @@ def _build_fit_plan(
             wrote_notes,
         )
 
-    def _fetch(idx: int) -> tuple[int | None, str, bool]:
+    def _fetch(idx: int) -> tuple[int | None, str, str, bool]:
         return _fetch_fit_notes_for_job(
             out[idx],
             role_persona,
@@ -924,6 +962,7 @@ def _build_fit_plan(
             timeout,
             crit_list,
             context_text,
+            include_remote,
         )
 
     def _consume(fut: Future[Any], idx: int) -> None:
@@ -931,8 +970,8 @@ def _build_fit_plan(
         # main consume loop already wrote.
         if id(fut) in applied:
             return
-        fit, notes_str, failed = fut.result()
-        _apply(idx, fit, notes_str, failed)
+        fit, notes_str, remote, failed = fut.result()
+        _apply(idx, fit, notes_str, remote, failed)
         applied.add(id(fut))
         if progress is not None:
             progress(1, out[idx].company)

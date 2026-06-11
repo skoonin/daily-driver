@@ -212,6 +212,10 @@ class EnrichedJob(BaseModel):
     company: str
     role: NonEmptyStr
     location: str
+    # "remote" | "hybrid" | "onsite" | "". Free-text on purpose: hand-entered
+    # cells (any string) are preserved verbatim on read; the heuristic and LLM
+    # tiers only ever write the four canonical values.
+    remote: str = ""
     url: str
     source: NonEmptyStr
     source_canonical: NonEmptyStr
@@ -243,9 +247,10 @@ class EnrichedJob(BaseModel):
         "Fit": "fit",
         "Comp": "comp",
         "Location": "location",
-        "Product/Purpose": "product",
+        "Remote": "remote",
         "GD Rating": "gd_rating",
         "Notes": "notes",
+        "Product/Purpose": "product",
         "Date Found": "date_found",
         "Date Applied": "date_applied",
         "Date Last Seen": "date_last_seen",
@@ -306,9 +311,10 @@ class EnrichedJob(BaseModel):
             "Fit": "" if self.fit is None else str(self.fit),
             "Comp": self.comp,
             "Location": self.location,
-            "Product/Purpose": self.product,
+            "Remote": self.remote,
             "GD Rating": self.gd_rating,
             "Notes": notes,
+            "Product/Purpose": self.product,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
@@ -337,6 +343,9 @@ class EnrichedJob(BaseModel):
             notes=row.get("Notes", ""),
             company=row.get("Company", ""),
             location=row.get("Location", ""),
+            # Old 14-column files lack a Remote column; .get default keeps the
+            # read tolerant (blank). Hand-entered strings pass through verbatim.
+            remote=row.get("Remote", ""),
             role=row.get("Role", "") or "(unknown)",
             fit=parse_fit_cell(
                 row.get("Fit", ""), company=row.get("Company", "") or "unknown"

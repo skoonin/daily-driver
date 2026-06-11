@@ -234,8 +234,13 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
     with file_lock(jobs_lock_path(ephemeral_dir)):
         with open(csv_path, newline="", encoding="utf-8") as lock_fh:
             reader = csv.DictReader(lock_fh)
-            header = list(reader.fieldnames or CANONICAL_HEADER)
             rows = list(reader)
+
+        # Reads are header-name-based, so a legacy column order (or a missing
+        # Remote column) loads fine. The rewrite emits CANONICAL_HEADER, so an
+        # old-layout file adopts the canonical column order; stored Location text
+        # is read faithfully and left as-is (no auto-migration).
+        header = CANONICAL_HEADER
 
         jobs = [EnrichedJob.from_csv_row(r) for r in rows]
 

@@ -8,6 +8,7 @@ log`. Versioned release history starts at 1.0.
 
 ### Added
 
+- **`Remote` column in `jobs.csv`** (immediately after `Location`): records whether a job is `remote`, `hybrid`, `onsite`, or blank. A free heuristic fills `remote` at scrape time when the raw location or title carries a remote token (so `--no-enrich` runs still get it); the fit/notes LLM pass refines it to a definite `remote`/`hybrid`/`onsite` from the description at no extra cost, gated by the new `plugins.job_search.enrichment.enrich_is_remote` toggle (default `true`). Hand-entered values are preserved verbatim and never overwritten by a blank or unrecognized answer. Older `jobs.csv` files without a `Remote` column read with a blank `Remote`; the column is added on the next rewrite. (#PR)
 - **Per-request `num_ctx` for ollama enrichment**: each ollama call now sends an `options.num_ctx` sized to the prompt (estimated tokens + output headroom, floored at 4096, capped at 16384). Ollama's effective context default is machine-dependent and silently truncates longer prompts; sizing it per request keeps enrichment prompts from being cut off. (#90)
 - **`plugins.job_search.enrichment.enrich_product` toggle** (default `true`): gates the company Product/Purpose lookup independently of the Glassdoor rating. The two share one LLM call per company; with both `enrich_product` and `enrich_gd_rating` off the company pass is skipped entirely, and with only one on the prompt asks for and writes only that field. (#90)
 - **Detail-phase skip breakdown**: the `jobs run` detail phase summary now itemizes why pages were skipped, e.g. `0 enriched, 7 skipped (5 already complete, 2 blocked host)`, instead of a bare skip count. (#90)
@@ -33,6 +34,8 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **`jobs.csv` `Location` is now geography-only, country-first for newly scraped rows.** Each value is normalized to a canonical full country name first, then the city/region remainder in original order (e.g. `Amsterdam, North Holland, Netherlands` becomes `Netherlands, Amsterdam, North Holland`). Remote tokens are stripped from `Location` (remote-ness now lives in the `Remote` column), so a remote-only posting has a blank `Location` instead of the literal `Remote`. When the scraped text names no country, the per-search country a source knows (LinkedIn/Indeed, Apple) supplies it. Only new rows are normalized — stored `Location` values in an existing `jobs.csv` are read faithfully and left as-is (no auto-migration). The location allow-list filter is unaffected — it still runs on the raw scraped text. (#PR)
+- **`jobs.csv` column order changed**: `Remote` is inserted immediately after `Location`, and `Product/Purpose` moves to immediately after `Notes`. Reads are header-name-based, so files written in the old order still load; they adopt the new order on the next rewrite. Stored cell values are not otherwise changed. (#PR)
 - **BREAKING: AI enrichment routing moved off `ai:` onto the job_search plugin.** The core `ai:` block keeps `summary` routing and the shared `claude:` / `ollama:` provider-connection blocks; the enrichment `provider` / `model` now live under `plugins.job_search.enrichment` (where enrichment is actually used). `ai.enrichment` is rejected — there is no compat shim. Move the routing (#90):
 
   ```yaml

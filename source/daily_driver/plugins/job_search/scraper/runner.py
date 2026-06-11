@@ -192,6 +192,10 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
         NormalizedJob,
         RawScrapedJob,
     )
+    from daily_driver.plugins.job_search.scraper.normalize_location import (
+        detect_remote,
+        normalize_location,
+    )
 
     date_found = job.get("date_found")
     if isinstance(date_found, str) and date_found:
@@ -216,10 +220,21 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
         }
     )
     enriched = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
+
+    # Location becomes geography-only, country-first; remote-ness moves to the
+    # Remote column. Both read the RAW scraped location/role (the location filter
+    # already ran on that raw text upstream), with the per-search origin-country
+    # ISO code as the country fallback when the text names none.
+    raw_location = job.get("location", "") or ""
+    origin_country = job.get("origin_country") or None
+    location = normalize_location(raw_location, origin_country)
+    remote = detect_remote(raw_location, job.get("role", "") or "")
+
+    updates: dict[str, Any] = {"location": location, "remote": remote}
     desc = job.get("description_text", "")
     if desc:
-        enriched = enriched.model_copy(update={"description_text": desc})
-    return enriched
+        updates["description_text"] = desc
+    return enriched.model_copy(update=updates)
 
 
 # Sources that require a full (non-headless) browser. SourceToggle has

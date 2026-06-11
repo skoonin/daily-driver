@@ -4,7 +4,8 @@ These tests fix the externally-observable contract of the scraper's CSV path
 BEFORE the dual-representation collapse, and must survive the refactor
 unchanged:
 
-- The exact 14-column ``jobs.csv`` header, byte-for-byte.
+- The exact 15-column ``jobs.csv`` header, byte-for-byte (Remote added after
+  Location in task #6).
 - A full-coverage EnrichedJob round-trip: write -> read -> rewrite is stable,
   including unicode, commas, quotes, and newlines in free-text fields.
 - A backfill round-trip on a fixture CSV: rows survive a no-op backfill
@@ -31,9 +32,10 @@ from daily_driver.plugins.job_search.scraper.models import (
 )
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
-# The frozen 14-column jobs.csv layout. Existing on-disk jobs.csv files use
-# exactly this order; the collapse must keep it byte-for-byte (the single
-# derived CANONICAL_HEADER must equal this list).
+# The frozen 15-column jobs.csv layout. The single derived CANONICAL_HEADER must
+# equal this list. Remote sits immediately after Location; Product/Purpose moved
+# to after Notes (task #6). Reads are header-name-based, so files stored in an
+# older column order still load and adopt this order on the next rewrite.
 _EXPECTED_HEADER = [
     "Status",
     "Company",
@@ -41,9 +43,10 @@ _EXPECTED_HEADER = [
     "Fit",
     "Comp",
     "Location",
-    "Product/Purpose",
+    "Remote",
     "GD Rating",
     "Notes",
+    "Product/Purpose",
     "Date Found",
     "Date Applied",
     "Date Last Seen",
@@ -52,7 +55,7 @@ _EXPECTED_HEADER = [
 ]
 
 
-def test_canonical_header_is_exactly_the_frozen_14_columns() -> None:
+def test_canonical_header_is_exactly_the_frozen_15_columns() -> None:
     assert CANONICAL_HEADER == _EXPECTED_HEADER
 
 

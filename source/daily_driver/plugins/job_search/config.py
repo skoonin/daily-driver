@@ -246,6 +246,13 @@ class EnrichmentConfig(BaseModel):
             "Generate a one-line Notes summary (tech stack, remote policy, red flags)."
         ),
     )
+    enrich_is_remote: bool = Field(
+        default=True,
+        description=(
+            "Judge each job remote/hybrid/onsite during the fit/notes pass "
+            "(no extra LLM call)."
+        ),
+    )
     max_enrich_fit: int = Field(
         default=50,
         description="Cap on fit/notes LLM calls per run (bounds API cost).",

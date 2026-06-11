@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import re
 from collections.abc import Callable, Iterable
 from typing import Any
 from urllib.parse import quote
@@ -51,6 +52,54 @@ def country_names(code: str) -> list[str]:
     """Location-text aliases for an ISO alpha-2 code ([] if JobSpy lacks it)."""
     entry = _country_table().get(code.upper())
     return entry[0] if entry else []
+
+
+def canonical_country_name(code: str) -> str | None:
+    """Canonical full country name for an ISO alpha-2 code (None if unknown).
+
+    The longest alias is the spelled-out name (not the "usa"/"uk" abbreviation);
+    title-cased for display. Mirrors the trick ``_location_summary`` already uses
+    in the fit prompt.
+    """
+    names = country_names(code)
+    return max(names, key=len).title() if names else None
+
+
+@functools.lru_cache(maxsize=1)
+def _alias_index() -> list[tuple[str, str]]:
+    """Every country alias paired with its canonical full name, longest-first.
+
+    Longest-first so a multi-word alias ("united states") is matched before a
+    shorter substring of another country could, and so an alias is found before
+    a bare token. Built once from the JobSpy-derived table.
+    """
+    pairs: list[tuple[str, str]] = []
+    for aliases, _primary in _country_table().values():
+        if not aliases:
+            continue
+        canonical = max(aliases, key=len).title()
+        for alias in aliases:
+            pairs.append((alias.lower(), canonical))
+    pairs.sort(key=lambda p: len(p[0]), reverse=True)
+    return pairs
+
+
+def detect_country(text: str) -> tuple[str, str] | None:
+    """Find a country named in ``text`` -> (matched_alias, canonical_full_name).
+
+    Matches whole-word, case-insensitively, against the JobSpy-derived alias
+    table (longest alias first). Returns None when no country is named. The bare
+    2-char ISO codes are excluded from the table's aliases, so "us" cannot
+    false-match "Austin".
+    """
+    lowered = text.lower()
+    for alias, canonical in _alias_index():
+        # Whole-word match: alias bounded by non-alphanumerics or string edges,
+        # so "canada" matches "Toronto, Canada" but not a substring of a word.
+        pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
+        if re.search(pattern, lowered):
+            return alias, canonical
+    return None
 
 
 def jobspy_country(code: str, default: str) -> str:
