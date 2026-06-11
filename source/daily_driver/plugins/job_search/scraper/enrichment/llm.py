@@ -6,8 +6,8 @@ pooled implementation: ``ThreadPoolExecutor(max_workers=pool_size)`` where
 slots in the passed list with new frozen instances and returns that list plus a
 stats dict; the slots are replaced in the caller's own list (not a copy) so a
 ``KeyboardInterrupt`` mid-pass leaves enriched-so-far results in that list for
-a caller that persists them — backfill does (its interrupt handler rewrites
-jobs.csv); run() does not flush mid-run yet (Wave 3). Out-of-range LLM fit
+a caller that persists them — backfill rewrites on interrupt, and run() flushes
+the sink per phase, every ~25 results, and on interrupt. Out-of-range LLM fit
 scores are clamped at the model boundary with a logged warning rather than
 silently stored.
 """
@@ -223,6 +223,7 @@ def _build_company_plan(
     ctx: ScrapeContext,
     budget: int,
     progress: ProgressCallback | None,
+    exclude_companies: frozenset[str] = frozenset(),
 ) -> _CompanyPlan | None:
     """Resolve the company enricher's work, or ``None`` to skip the pass.
 
@@ -230,11 +231,16 @@ def _build_company_plan(
     disabled (nothing to fetch), or (and logs) when the claude provider is
     configured but its CLI is not on PATH — the caller then returns the
     untouched jobs.
+
+    ``exclude_companies`` are companies a prior wave already attempted; they are
+    not re-fetched here (the company budget caps unique company calls, so a
+    wave-1 company must not be re-charged in wave 2).
     """
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
     # mid-pass leaves enriched-so-far results for a caller that persists them
-    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
+    # (backfill rewrites on interrupt; run() flushes the sink per phase and
+    # periodically, so partial results survive).
     out = jobs
     cfg = ctx.plugin.enrichment
     include_product = cfg.enrich_product
@@ -250,11 +256,13 @@ def _build_company_plan(
         budget = cfg.max_enrich_companies
     timeout = cfg.enrich_timeout
 
-    # A company needs a call when an enabled field is still missing on its row.
+    # A company needs a call when an enabled field is still missing on its row
+    # AND no prior wave already attempted it.
     unique_companies = {
         job.company.strip()
         for job in out
         if job.company.strip()
+        and job.company.strip() not in exclude_companies
         and (
             (include_product and not job.product_filled)
             or (include_gd and not job.gd_rating)
@@ -368,6 +376,8 @@ def enrich_company_descriptions(
     budget: int = 0,
     progress: ProgressCallback | None = None,
     _reset_hint: bool = True,
+    exclude_companies: frozenset[str] = frozenset(),
+    attempted: dict[str, set[str]] | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Product/Purpose and GD Rating using the configured AI provider.
 
@@ -383,11 +393,17 @@ def enrich_company_descriptions(
     coordinator already arms it once for both phases and passes False so a serial
     run can't emit the hint twice.
 
+    ``exclude_companies`` are companies a prior wave attempted (not re-fetched);
+    ``attempted`` (out-param) records this pass's attempted companies under
+    ``"product_companies"`` for cross-wave budget accounting.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
     """
     if _reset_hint:
         _reset_ollama_hint()
-    plan = _build_company_plan(jobs, ctx, budget, progress)
+    plan = _build_company_plan(jobs, ctx, budget, progress, exclude_companies)
+    if attempted is not None:
+        attempted["product_companies"] = set(plan.companies) if plan else set()
     if plan is None:
         return jobs, {"enriched": 0, "skipped_cached": 0, "failed": 0}
 
@@ -835,18 +851,24 @@ def _build_fit_plan(
     ctx: ScrapeContext,
     budget: int,
     progress: ProgressCallback | None,
+    exclude_urls: frozenset[str] = frozenset(),
 ) -> _FitPlan | None:
     """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
     Returns ``None`` when the claude CLI is missing or fit/notes are disabled in
     config — the caller then returns the untouched jobs with empty stats.
+
+    ``exclude_urls`` are rows a prior wave already ATTEMPTED (enriched or failed);
+    they are not retried here so a wave-1 failure is not re-charged against the
+    shared budget in wave 2. Backfill is the retry path for those rows.
     """
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
     stats = {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
     # mid-pass leaves enriched-so-far results for a caller that persists them
-    # (backfill rewrites on interrupt; run() does not flush mid-run yet).
+    # (backfill rewrites on interrupt; run() flushes the sink per phase and
+    # periodically, so partial results survive).
     out = jobs
     cfg = ctx.plugin.enrichment
     if cfg.provider == "claude" and shutil.which("claude") is None:
@@ -869,8 +891,13 @@ def _build_fit_plan(
 
     pool_size = _enrich_pool_size(ctx)
     # Eligible indices preserve input order so budget truncation matches the
-    # former first-N-by-position behavior.
-    eligible_idx = [i for i, j in enumerate(out) if _fit_notes_eligible(j)]
+    # former first-N-by-position behavior. Rows a prior wave already attempted
+    # are excluded by URL so they are neither retried nor re-charged.
+    eligible_idx = [
+        i
+        for i, j in enumerate(out)
+        if _fit_notes_eligible(j) and j.url not in exclude_urls
+    ]
     eligible_count = len(eligible_idx)
     if context_text:
         # context.md rides every per-job enrichment prompt; a large file
@@ -1019,6 +1046,8 @@ def enrich_fit_and_notes(
     budget: int = 0,
     progress: ProgressCallback | None = None,
     _reset_hint: bool = True,
+    exclude_urls: frozenset[str] = frozenset(),
+    attempted: dict[str, set[str]] | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -1033,12 +1062,20 @@ def enrich_fit_and_notes(
     coordinator passes False (it arms once for both phases) so a serial run
     can't emit the hint twice.
 
+    ``exclude_urls`` are rows a prior wave attempted (not retried); ``attempted``
+    (out-param) records this pass's attempted row URLs under ``"fit_urls"`` for
+    cross-wave budget accounting.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
     skipped_no_desc (always 0; retained for shape compatibility), failed.
     """
     if _reset_hint:
         _reset_ollama_hint()
-    plan = _build_fit_plan(jobs, ctx, budget, progress)
+    plan = _build_fit_plan(jobs, ctx, budget, progress, exclude_urls)
+    if attempted is not None:
+        attempted["fit_urls"] = (
+            {jobs[i].url for i in plan.target_idx} if plan else set()
+        )
     if plan is None:
         return jobs, {
             "enriched": 0,
@@ -1106,6 +1143,33 @@ def _empty_fit_stats() -> dict[str, int]:
     return {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
 
 
+def _wrap_progress_with_flush(
+    progress: ProgressCallback | None,
+    flush: Callable[[], None] | None,
+    flush_every: int,
+    applied: list[int],
+) -> ProgressCallback | None:
+    """Compose a periodic flush onto a per-enricher progress callback.
+
+    Every applied result (the existing ``progress(1, name)`` signal) bumps the
+    shared ``applied`` counter; once it crosses a ``flush_every`` boundary the
+    flush fires. Wrapping the progress callback keeps the flush on the single
+    coordinator thread that already applies results -- the rewrite never races a
+    worker. Returns the original callback unchanged when no flush is configured.
+    """
+    if flush is None or flush_every <= 0:
+        return progress
+
+    def _wrapped(n: int = 1, detail: str | None = None) -> None:
+        if progress is not None:
+            progress(n, detail)
+        applied[0] += n
+        if applied[0] % flush_every == 0:
+            flush()
+
+    return _wrapped
+
+
 def enrich_product_and_fit_concurrently(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
@@ -1114,6 +1178,11 @@ def enrich_product_and_fit_concurrently(
     fit_budget: int = 0,
     product_progress: ProgressCallback | None = None,
     fit_progress: ProgressCallback | None = None,
+    flush: Callable[[], None] | None = None,
+    flush_every: int = 25,
+    exclude_fit_urls: frozenset[str] = frozenset(),
+    exclude_companies: frozenset[str] = frozenset(),
+    attempted: dict[str, set[str]] | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int], dict[str, int]]:
     """Run the product and fit/notes enrichers overlapped under one shared cap.
 
@@ -1135,8 +1204,30 @@ def enrich_product_and_fit_concurrently(
 
     Falls back to running the two enrichers serially when the provider is
     serial (``pool_size == 1``) — there is no concurrency to overlap.
+
+    ``flush`` (with ``flush_every``) is the resilience hook: it runs on this
+    coordinator thread every ``flush_every`` applied results across both
+    enrichers, so a crash mid-enrichment loses at most one flush window. The
+    flush is composed onto the progress callbacks (the per-result signal already
+    on the coordinator thread), so it never races a worker. The caller flushes
+    again per completed phase and on interrupt.
+
+    ``exclude_fit_urls`` / ``exclude_companies`` are rows/companies a prior wave
+    already attempted; this wave neither retries nor re-charges them. ``attempted``
+    (out-param) is filled with this wave's attempted identities --
+    ``{"fit_urls": {...}, "product_companies": {...}}`` -- so the caller can
+    exclude them from the next wave and size the shared budget by what was
+    actually attempted (unique companies for product, jobs for fit).
     """
     _reset_ollama_hint()
+    # Compose the periodic flush onto each progress callback; a single shared
+    # counter spans both enrichers so the flush cadence is per total result, not
+    # per enricher.
+    applied = [0]
+    product_progress = _wrap_progress_with_flush(
+        product_progress, flush, flush_every, applied
+    )
+    fit_progress = _wrap_progress_with_flush(fit_progress, flush, flush_every, applied)
     pool_size = _enrich_pool_size(ctx)
     if pool_size <= 1:
         # Serial provider: nothing to overlap. Run sequentially so behavior
@@ -1150,14 +1241,33 @@ def enrich_product_and_fit_concurrently(
             budget=product_budget,
             progress=product_progress,
             _reset_hint=False,
+            exclude_companies=exclude_companies,
+            attempted=attempted,
         )
         out, fit_stats = enrich_fit_and_notes(
-            out, ctx, budget=fit_budget, progress=fit_progress, _reset_hint=False
+            out,
+            ctx,
+            budget=fit_budget,
+            progress=fit_progress,
+            _reset_hint=False,
+            exclude_urls=exclude_fit_urls,
+            attempted=attempted,
         )
         return out, product_stats, fit_stats
 
-    company_plan = _build_company_plan(jobs, ctx, product_budget, product_progress)
-    fit_plan = _build_fit_plan(jobs, ctx, fit_budget, fit_progress)
+    company_plan = _build_company_plan(
+        jobs, ctx, product_budget, product_progress, exclude_companies
+    )
+    fit_plan = _build_fit_plan(jobs, ctx, fit_budget, fit_progress, exclude_fit_urls)
+    if attempted is not None:
+        attempted["product_companies"] = (
+            set(company_plan.companies) if company_plan is not None else set()
+        )
+        attempted["fit_urls"] = (
+            {fit_plan.out[i].url for i in fit_plan.target_idx}
+            if fit_plan is not None
+            else set()
+        )
 
     product_stats = company_plan.stats if company_plan else _empty_company_stats()
     fit_stats = fit_plan.stats if fit_plan else _empty_fit_stats()

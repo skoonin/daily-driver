@@ -280,3 +280,84 @@ def test_interrupt_with_failing_drain_still_reraises(
     with pytest.raises(KeyboardInterrupt):
         enrich_product_and_fit_concurrently(jobs, _ctx(max_parallel=4))
     block.set()
+
+
+# ── Finding 6: cross-wave exclusion + attempted-identity out-param ───────────
+
+
+def test_exclude_fit_urls_skips_already_attempted_rows() -> None:
+    """A row whose URL is in exclude_fit_urls is not re-enriched (no retry)."""
+    jobs = _jobs(4)
+    # Pretend the first two were attempted in a prior wave.
+    excluded = frozenset({jobs[0].url, jobs[1].url})
+    attempted: dict[str, set[str]] = {}
+
+    captured: list[str] = []
+
+    def fake_invoke(prompt: str, **kw: Any) -> str:
+        # Tag the response so we can tell which row was processed by company.
+        captured.append(prompt)
+        return '{"fit": 6, "notes": "ok"}'
+
+    import pytest as _pytest  # local alias to keep top imports unchanged
+
+    with _pytest.MonkeyPatch().context() as mp:
+        mp.setattr(ai_provider, "invoke_for", fake_invoke)
+        out, _p, fn = enrich_product_and_fit_concurrently(
+            jobs,
+            _ctx(max_parallel=1),  # serial path
+            exclude_fit_urls=excluded,
+            attempted=attempted,
+        )
+
+    # Only the two non-excluded rows got a fit score.
+    assert out[0].fit is None and out[1].fit is None
+    assert out[2].fit == 6 and out[3].fit == 6
+    # attempted out-param reports exactly the two rows this wave attempted.
+    assert attempted["fit_urls"] == {jobs[2].url, jobs[3].url}
+
+
+def test_attempted_companies_are_unique_not_per_job() -> None:
+    """Product attempts are tracked by UNIQUE COMPANY, not per job -- so the
+    shared company budget is charged correctly across waves."""
+    # Three jobs, two of them at the same company.
+    jobs = [
+        make_enriched(company="Acme", url="https://x/1", product=""),
+        make_enriched(company="Acme", url="https://x/2", product=""),
+        make_enriched(company="Bravo", url="https://x/3", product=""),
+    ]
+    attempted: dict[str, set[str]] = {}
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch().context() as mp:
+        mp.setattr(ai_provider, "invoke_for", lambda p, **k: '{"fit": 5, "notes": "n"}')
+        enrich_product_and_fit_concurrently(
+            jobs, _ctx(max_parallel=1), attempted=attempted
+        )
+
+    # Two unique companies attempted (Acme once, Bravo once), not three jobs.
+    assert attempted["product_companies"] == {"Acme", "Bravo"}
+
+
+def test_exclude_companies_skips_already_attempted_company() -> None:
+    """A company in exclude_companies is not re-fetched in the later wave."""
+    jobs = [
+        make_enriched(company="Acme", url="https://x/1", product=""),
+        make_enriched(company="Bravo", url="https://x/2", product=""),
+    ]
+    attempted: dict[str, set[str]] = {}
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch().context() as mp:
+        mp.setattr(ai_provider, "invoke_for", lambda p, **k: '{"fit": 5, "notes": "n"}')
+        enrich_product_and_fit_concurrently(
+            jobs,
+            _ctx(max_parallel=1),
+            exclude_companies=frozenset({"Acme"}),
+            attempted=attempted,
+        )
+
+    # Acme excluded -> only Bravo attempted for product.
+    assert attempted["product_companies"] == {"Bravo"}
