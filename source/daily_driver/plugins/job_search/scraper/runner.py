@@ -748,6 +748,72 @@ def run_all_scrapers(
     return all_jobs, failed_sources, results
 
 
+# ── Ollama enrichment preflight ──────────────────────────────────────────────
+
+
+# Independent of the configured per-call enrich_timeout: this single reachability
+# probe should fail fast on a down server, not wait out a tuning value meant for
+# real generation calls.
+_OLLAMA_PREFLIGHT_TIMEOUT = 3
+
+
+def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
+    """Whether this run will make ollama LLM calls (detail pages don't count).
+
+    Detail-page enrichment is plain HTTP against the job board, so it needs no
+    provider. Only the product / gd-rating / fit / notes passes route to the
+    LLM, so the preflight is warranted only when at least one of those is on.
+    """
+    cfg = plugin.enrichment
+    return (
+        cfg.enrich_product or cfg.enrich_gd_rating or cfg.enrich_fit or cfg.enrich_notes
+    )
+
+
+def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
+    """Ping ollama once before LLM enrichment; return False (and warn) to skip.
+
+    Mirrors the claude which-guard intent — verify the provider is usable before
+    the per-job loop — but for ollama the check is a network probe, so it runs
+    here at run start rather than per enricher. One cheap ``list_models`` GET on
+    a short fixed timeout (:data:`_OLLAMA_PREFLIGHT_TIMEOUT`) stands in for N
+    per-call timeouts on a down server. Reuses the doctor reachability + pulled-
+    model logic. Returns True (proceed) for the claude provider untouched.
+    """
+    cfg = plugin.enrichment
+    if cfg.provider != "ollama":
+        return True
+
+    from daily_driver.integrations import ollama_client
+
+    endpoint = ai.ollama.endpoint
+    model = cfg.model or ollama_client.DEFAULT_MODEL
+    try:
+        pulled = ollama_client.list_models(endpoint, timeout=_OLLAMA_PREFLIGHT_TIMEOUT)
+    except ollama_client.OllamaNotReachableError:
+        Console.warning(
+            f"ollama not reachable at {endpoint} -- LLM enrichment skipped this "
+            "run; start the server (ollama serve) and run jobs run --backfill to "
+            "fill these rows"
+        )
+        return False
+    except Exception as exc:  # noqa: BLE001
+        Console.warning(
+            f"ollama at {endpoint} returned an error ({exc}) -- LLM enrichment "
+            "skipped this run; run jobs run --backfill once it is healthy"
+        )
+        return False
+
+    if model not in pulled:
+        Console.warning(
+            f"ollama model {model!r} not pulled at {endpoint} -- LLM enrichment "
+            f"skipped this run; pull it (ollama pull {model}) and run jobs run "
+            "--backfill to fill these rows"
+        )
+        return False
+    return True
+
+
 # ── Notification ─────────────────────────────────────────────────────────────
 
 
@@ -1026,18 +1092,47 @@ def run(
             )
             detail_phase.done(render_detail_summary(detail_stats))
 
-            # Product and fit/notes overlap under one shared concurrency cap
-            # (F1): both fan out through a single executor bounded by the
-            # provider's max_parallel, so total claude/ollama subprocesses never
-            # exceed it. Both Phase rows advance concurrently as results land.
-            product_phase.start()
-            fit_phase.start()
-            typed_jobs, product_stats, fn_stats = enrich_product_and_fit_concurrently(
-                typed_jobs,
-                ctx,
-                product_progress=product_phase.advance,
-                fit_progress=fit_phase.advance,
-            )
+            # When enrichment routes to ollama, ping the server once now rather
+            # than letting each LLM phase burn a per-call timeout against a down
+            # server. The probe runs only when an LLM toggle is actually on
+            # (detail pages above need no provider). On failure the LLM phases
+            # are skipped with zero counters -- the same shape --no-enrich
+            # records -- and the user fills the rows later with jobs run
+            # --backfill. The claude provider is untouched (its which-guard
+            # inside the enrichers already covers a missing CLI).
+            run_llm = True
+            if _llm_enrichment_requested(plugin):
+                run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
+
+            if run_llm:
+                # Product and fit/notes overlap under one shared concurrency cap
+                # (F1): both fan out through a single executor bounded by the
+                # provider's max_parallel, so total claude/ollama subprocesses
+                # never exceed it. Both Phase rows advance concurrently as
+                # results land.
+                product_phase.start()
+                fit_phase.start()
+                (
+                    typed_jobs,
+                    product_stats,
+                    fn_stats,
+                ) = enrich_product_and_fit_concurrently(
+                    typed_jobs,
+                    ctx,
+                    product_progress=product_phase.advance,
+                    fit_progress=fit_phase.advance,
+                )
+            else:
+                # Preflight already warned. Render the LLM phases as zero-count
+                # done bars (consistent with the detail phase) and report zero
+                # enrichment counters so the manifest stays honest.
+                product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
+                fn_stats = {
+                    "enriched": 0,
+                    "skipped_budget": 0,
+                    "skipped_no_desc": 0,
+                    "failed": 0,
+                }
             product_phase.done(
                 f"{product_stats['enriched']} enriched, "
                 f"{product_stats['skipped_cached']} cached, "
