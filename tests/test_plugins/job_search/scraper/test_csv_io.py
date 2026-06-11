@@ -139,3 +139,41 @@ def test_make_backup_uses_utc_iso_stamp(tmp_path: Path) -> None:
         r"^jobs\.csv\.bak\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{6}Z$",
         backup.name,
     ), backup.name
+
+
+def test_canonicalize_status_cells_returns_changed_pairs() -> None:
+    """canonicalize_status_cells mutates rows in place and reports real changes."""
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        canonicalize_status_cells,
+    )
+
+    rows = [
+        {"Status": "Ruled_Out"},
+        {"Status": "found"},  # already canonical: no change
+        {"Status": ""},  # blank stays blank: no change
+        {"Status": "In Progress"},
+    ]
+    changes = canonicalize_status_cells(rows)
+
+    assert rows[0]["Status"] == "ruled-out"
+    assert rows[1]["Status"] == "found"
+    assert rows[2]["Status"] == ""
+    assert rows[3]["Status"] == "in-progress"
+    assert changes == [("Ruled_Out", "ruled-out"), ("In Progress", "in-progress")]
+
+
+def test_format_canonicalized_notice() -> None:
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        format_canonicalized_notice,
+    )
+
+    assert format_canonicalized_notice([]) is None
+    one = format_canonicalized_notice([("Ruled_Out", "ruled-out")])
+    assert one is not None
+    assert "1 status spelling" in one
+    assert "Ruled_Out -> ruled-out" in one
+    many = format_canonicalized_notice(
+        [("Ruled_Out", "ruled-out"), ("In Progress", "in-progress")]
+    )
+    assert many is not None
+    assert "2 status spelling" in many

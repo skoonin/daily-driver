@@ -17,8 +17,10 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status
 from daily_driver.plugins.job_search.jobs_lock import (
     clear_stale_adjacent_lock,
     jobs_lock_path,
@@ -28,9 +30,14 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     atomic_write_rows as _atomic_write_rows,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import (
+    canonicalize_status_cells,
     dedup_sets_from_rows,
+    format_canonicalized_notice,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    warn_unknown_job_statuses,
+)
 
 log = get_logger(__name__)
 
@@ -61,8 +68,9 @@ def _is_stale(
     Falls back to ``Date Found`` when ``Date Last Seen`` is empty — without an
     on-rescan upsert path, existing rows often only have ``Date Found``.
     """
-    status = (row.get("Status") or "").strip().lower()
-    if status not in statuses:
+    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
+    status = normalize_status(row.get("Status") or "")
+    if status not in {normalize_status(s) for s in statuses}:
         return False
     seen = _parse_iso(row.get("Date Last Seen", "")) or _parse_iso(
         row.get("Date Found", "")
@@ -101,6 +109,20 @@ def prune(
 
         if dry_run or not candidates:
             return candidates, 0
+
+        # The whole file is being rewritten anyway, so canonicalize the Status
+        # spelling of every retained/archived row (ruled_out -> ruled-out).
+        # Meaning is never changed. A user did not ask to touch these rows, so
+        # surface the spelling fixes as one notice, and warn once over the union
+        # (not per slice) on any out-of-vocabulary value.
+        if "Status" in header:
+            changes = canonicalize_status_cells(keep) + canonicalize_status_cells(
+                candidates
+            )
+            notice = format_canonicalized_notice(changes)
+            if notice is not None:
+                Console.info(notice)
+            warn_unknown_job_statuses([r.get("Status", "") for r in keep + candidates])
 
         _append_rows(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)

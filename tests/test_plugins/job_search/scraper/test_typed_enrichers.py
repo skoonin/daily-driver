@@ -21,7 +21,6 @@ from daily_driver.plugins.job_search.scraper.enrichment import (
 )
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
 )
@@ -137,9 +136,9 @@ def test_enrichers_preserve_individual_immutability(
 
 
 def test_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
-    j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
+    j = _enriched(status="skipped", skip_reason="manually skipped")
     out, _stats = enrich_job_details([j], fake_config)
-    assert out[0].status is JobStatus.SKIPPED
+    assert out[0].status == "skipped"
 
 
 # ---------------------------------------------------------------------------

@@ -214,15 +214,13 @@ def test_slot_replacement_on_calling_thread() -> None:
 
 def test_skip_reason_breakdown_tallied() -> None:
     """stats['skip_reasons'] tallies per-reason; the counts sum to skipped."""
-    from daily_driver.plugins.job_search.scraper.models import JobStatus
-
     jobs = [
         _job("https://acme.com/job", comp="$200k"),  # already complete
         _job("https://acme.com/job2", comp="$150k"),  # already complete
         _job("https://www.linkedin.com/jobs/view/1"),  # blocked host
         _job("https://news.ycombinator.com/item?id=1"),  # blocked host
         _job(""),  # no url
-        _job("https://x.com/j", status=JobStatus.SKIPPED),  # inactive
+        _job("https://x.com/j", status="skipped"),  # inactive
         _job("https://boards.greenhouse.io/acme/jobs/9"),  # real fetch
     ]
     resp = MagicMock()

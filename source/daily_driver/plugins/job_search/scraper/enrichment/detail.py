@@ -41,7 +41,7 @@ def _skip_reason(job: EnrichedJob) -> str | None:
     """
     if job.comp:
         return "already complete"
-    if job.status.value in ENRICH_SKIP_STATUSES:
+    if job.status in ENRICH_SKIP_STATUSES:
         return "inactive"
     url = (job.url or "").strip()
     if not url:

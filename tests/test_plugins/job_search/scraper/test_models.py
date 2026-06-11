@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
     Source,
@@ -187,7 +186,7 @@ class TestEnrichedJob:
         assert EnrichedJob.from_csv_row(row).fit == 7
 
     def test_csv_skip_reason_appended_when_skipped(self) -> None:
-        j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
+        j = _enriched(status="skipped", skip_reason="manually skipped")
         row = j.to_csv_row()
         assert "manually skipped" in row["Notes"]
 
@@ -209,8 +208,46 @@ def test_source_protocol_runtime_checkable() -> None:
     assert isinstance(fake, Source)
 
 
-def test_jobstatus_dropped_replaces_archived() -> None:
-    """JobStatus.ARCHIVED was renamed to DROPPED; the old value is gone."""
-    assert JobStatus("dropped") is JobStatus.DROPPED
-    with pytest.raises(ValueError):
-        JobStatus("archived")
+def test_status_is_free_text_normalized() -> None:
+    """Status is a normalized free-text string, not a closed enum."""
+    raw = RawScrapedJob(
+        company="Acme", role="SRE", url="https://example.com/j", source="remoteok"
+    )
+    base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
+    # Newly scraped rows default to `found`; underscore/upper variants normalize.
+    assert base.status == "found"
+    assert base.with_updates(status="Ruled_Out").status == "ruled-out"
+    # Any string is accepted (convention, not enforcement) — no ValidationError.
+    assert base.with_updates(status="some-custom").status == "some-custom"
+
+
+def test_scraped_row_defaults_to_found() -> None:
+    """from_normalized is the scraped path; its status defaults to `found`."""
+    raw = RawScrapedJob(
+        company="Acme", role="SRE", url="https://example.com/j", source="remoteok"
+    )
+    assert EnrichedJob.from_normalized(NormalizedJob.from_raw(raw)).status == "found"
+
+
+def test_blank_status_round_trips_blank() -> None:
+    """A deliberately blank Status cell must stay blank on read+rewrite.
+
+    Coercing blank -> `found` would relabel rows the user emptied on purpose
+    when backfill/prune rewrites them. Only the scrape path defaults to found.
+    """
+    j = _enriched(fit=7).with_updates(status="")
+    assert j.status == ""
+    row = j.to_csv_row()
+    assert row["Status"] == ""
+    assert EnrichedJob.from_csv_row(row).status == ""
+    # Whitespace-only cells also normalize to blank, not `found`.
+    assert EnrichedJob.from_csv_row({**row, "Status": "   "}).status == ""
+
+
+def test_closed_is_a_recommended_job_status() -> None:
+    """`closed` is a shipped prune default, so it belongs in the recommended set."""
+    from daily_driver.plugins.job_search.scraper.models import (
+        JOBS_RECOMMENDED_STATUSES,
+    )
+
+    assert "closed" in JOBS_RECOMMENDED_STATUSES

@@ -99,7 +99,7 @@ Reference command — distinct from argparse `--help` (usage). Prints the subcom
 
 YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `required` field lists are defined in `.dd-config.yaml` under `tracker.categories`. Writes are flock-guarded.
 
-Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Set `tracker.warn_unknown_status: false` in `.dd-config.yaml` to silence.
+Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Status spelling is normalized (case-folded, underscores and spaces turned into hyphens), so `Ruled_Out` and `ruled-out` are the same status and neither warns. Extend the recommended set with `tracker.extra_statuses` in `.dd-config.yaml`; the `job` category instead uses the job-search lifecycle (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`). Set `tracker.warn_unknown_status: false` to silence the nudge.
 
 ### `tracker add --category CAT --title TEXT [flags]`
 
@@ -206,6 +206,8 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 ## Job search plugin
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
+
+The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job-search set is `found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`; a freshly scraped row is `found`, and a deliberately blank cell stays blank. Status spelling is normalized to canonical form (case-folded, underscores and spaces turned into hyphens, so `Ruled_Out` becomes `ruled-out`) — spelling only, never meaning. Reading `jobs.csv` never rewrites it: a row's Status is only canonicalized when that row is already being rewritten anyway. That happens in `jobs backfill` and `jobs prune` (which lift stored rows through the model), so those commands print a one-line notice when they fix any spellings (e.g. `Canonicalized 3 status spelling(s) (e.g. Ruled_Out -> ruled-out)`). A normal `jobs run` append carries pre-existing rows through untouched and writes `found` for every new row, so its writes never canonicalize old rows. A status outside the recommended set logs one WARNING naming the offending values — meaningful for hand-edited cells and `backfill`/`prune` over older data, since fresh appends are always `found`.
 
 ### `jobs run [-n|--dry-run] [--no-enrich] [--sources LIST | --list-sources]`
 

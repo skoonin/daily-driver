@@ -29,7 +29,6 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
 )
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
 )
@@ -93,7 +92,7 @@ def _coverage_jobs() -> list[EnrichedJob]:
     )
     j2 = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw2)).model_copy(
         update={
-            "status": JobStatus.SKIPPED,
+            "status": "skipped",
             "skip_reason": "manual skip, with comma",
         }
     )

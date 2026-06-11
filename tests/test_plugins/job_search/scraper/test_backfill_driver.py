@@ -773,3 +773,63 @@ def test_backfill_dry_run_respects_disabled_toggles(
     err = capsys.readouterr().err
     assert "0 need Product" in err
     assert "0 need GD" in err
+
+
+# --- Visible status canonicalization (review #1) -----------------------------
+
+
+def test_backfill_reports_status_canonicalization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewrite that fixes a Status spelling surfaces one Console.info notice.
+
+    Backfill lifts every row through from_csv_row (which normalizes spelling),
+    silently rewriting rows the user did not ask to touch — so the canonical-
+    ization must be visible.
+    """
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="C", link="https://example.com/c", status="Ruled_Out")],
+    )
+    _stub_detail(monkeypatch)
+    _stub_concurrent_noop(monkeypatch)
+
+    from daily_driver.core.console import Console
+
+    info_calls: list[str] = []
+    monkeypatch.setattr(
+        Console, "info", classmethod(lambda cls, msg: info_calls.append(msg))
+    )
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    notices = [m for m in info_calls if "Canonicalized" in m]
+    assert len(notices) == 1
+    assert "1 status spelling" in notices[0]
+    assert "Ruled_Out -> ruled-out" in notices[0]
+    # The spelling fix is persisted.
+    assert _read_jobs_csv(csv_path)[0]["Status"] == "ruled-out"
+
+
+def test_backfill_no_canonicalization_notice_when_already_canonical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No notice when every Status is already canonical."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path, [_row(company="C", link="https://example.com/c", status="found")]
+    )
+    _stub_detail(monkeypatch)
+    _stub_concurrent_noop(monkeypatch)
+
+    from daily_driver.core.console import Console
+
+    info_calls: list[str] = []
+    monkeypatch.setattr(
+        Console, "info", classmethod(lambda cls, msg: info_calls.append(msg))
+    )
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    assert not [m for m in info_calls if "Canonicalized" in m]

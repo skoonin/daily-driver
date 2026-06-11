@@ -1217,6 +1217,7 @@ def run_backfill(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         _make_backup,
+        format_canonicalized_notice,
         read_rows,
     )
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
@@ -1253,6 +1254,17 @@ def run_backfill(
         # an out-of-lock read and the rewrite would be lost.
         stored_header, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        # Backfill lifts every stored row through from_csv_row, which normalizes
+        # the Status spelling. That rewrites rows the user did not ask to touch,
+        # so collect the spelling changes (old -> canonical) for a visible
+        # notice once enrichment finishes. Meaning is never changed.
+        status_canonicalizations: list[tuple[str, str]] = [
+            (raw, job.status)
+            for raw, job in (
+                ((r.get("Status") or ""), j) for r, j in zip(stored_rows, jobs)
+            )
+            if raw and raw != job.status
+        ]
         # Unknown / hand-added columns (e.g. a user's "Priority") are not modelled
         # by EnrichedJob; carry them through POSITIONALLY (the sink merges
         # row_extras by index, lossless for empty/duplicate Links). The sink gets
@@ -1384,6 +1396,12 @@ def run_backfill(
         f"+{needs['gd'] - after['gd']} GD, "
         f"+{needs['fit_notes'] - after['fit_notes']} Fit/Notes"
     )
+    # The rewrite ran (this point is reached only past the no-enrichment early
+    # return), so any status spellings it canonicalized are now on disk. Make
+    # that visible, once, when something actually changed.
+    canon_notice = format_canonicalized_notice(status_canonicalizations)
+    if canon_notice is not None:
+        Console.info(canon_notice)
 
 
 def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
