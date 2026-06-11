@@ -22,7 +22,7 @@ from daily_driver.core.logging import (
     get_logger,
     live_log_window,
 )
-from daily_driver.core.progress import Item, RunProgress
+from daily_driver.core.progress import Item, Phase, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
     IndeedToggle,
@@ -1039,6 +1039,70 @@ def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
     )
 
 
+def _empty_product_stats() -> dict[str, int]:
+    return {"enriched": 0, "skipped_cached": 0, "failed": 0}
+
+
+def _empty_fit_stats() -> dict[str, int]:
+    return {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
+
+
+def _run_llm_enrichment(
+    plugin: JobSearchPlugin,
+    ai_cfg: AIConfig,
+    typed_jobs: list[EnrichedJob],  # noqa: F821
+    ctx: ScrapeContext,
+    sink: _JobSink,
+    product_phase: Phase,
+    fit_phase: Phase,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Run the overlapped product + fit/notes LLM pass, flushing as it goes.
+
+    Returns ``(product_stats, fn_stats)``. The ollama preflight gates the pass:
+    on a failed probe the LLM phases render as zero-count done bars and zero
+    counters (the same shape ``--no-enrich`` records), so the manifest stays
+    honest and the user fills the rows later with ``jobs run --backfill``. The
+    claude provider is untouched (its which-guard inside the enrichers already
+    covers a missing CLI). ``sink.flush`` is the periodic resilience hook,
+    invoked every ~25 results on the coordinator thread.
+    """
+    from daily_driver.plugins.job_search.scraper.enrichment import (
+        enrich_product_and_fit_concurrently,
+    )
+
+    run_llm = True
+    if _llm_enrichment_requested(plugin):
+        run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
+
+    if run_llm:
+        # Product and fit/notes overlap under one shared concurrency cap (F1):
+        # both fan out through a single executor bounded by the provider's
+        # max_parallel, so total claude/ollama subprocesses never exceed it.
+        product_phase.start()
+        fit_phase.start()
+        _, product_stats, fn_stats = enrich_product_and_fit_concurrently(
+            typed_jobs,
+            ctx,
+            product_progress=product_phase.advance,
+            fit_progress=fit_phase.advance,
+            flush=sink.flush,
+        )
+    else:
+        product_stats = _empty_product_stats()
+        fn_stats = _empty_fit_stats()
+    product_phase.done(
+        f"{product_stats['enriched']} enriched, "
+        f"{product_stats['skipped_cached']} cached, "
+        f"{product_stats['failed']} failed"
+    )
+    fit_phase.done(
+        f"{fn_stats['enriched']} enriched, "
+        f"{fn_stats['skipped_budget']} skipped (budget), "
+        f"{fn_stats['failed']} failed"
+    )
+    return product_stats, fn_stats
+
+
 def run(
     plugin: JobSearchPlugin,
     output_dir: Path,
@@ -1060,10 +1124,7 @@ def run(
         CANONICAL_HEADER,
         load_existing_jobs,
     )
-    from daily_driver.plugins.job_search.scraper.enrichment import (
-        enrich_job_details,
-        enrich_product_and_fit_concurrently,
-    )
+    from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
         render_detail_summary,
     )
@@ -1269,63 +1330,36 @@ def run(
             product_phase = enrich_group.phase("Company products", total=enrich_total)
             fit_phase = enrich_group.phase("Fit and notes", total=enrich_total)
 
-            detail_phase.start()
-            typed_jobs, detail_stats = enrich_job_details(
-                typed_jobs, ctx, progress=detail_phase.advance
-            )
-            detail_phase.done(render_detail_summary(detail_stats))
-
-            # When enrichment routes to ollama, ping the server once now rather
-            # than letting each LLM phase burn a per-call timeout against a down
-            # server. The probe runs only when an LLM toggle is actually on
-            # (detail pages above need no provider). On failure the LLM phases
-            # are skipped with zero counters -- the same shape --no-enrich
-            # records -- and the user fills the rows later with jobs run
-            # --backfill. The claude provider is untouched (its which-guard
-            # inside the enrichers already covers a missing CLI).
-            run_llm = True
-            if _llm_enrichment_requested(plugin):
-                run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
-
-            if run_llm:
-                # Product and fit/notes overlap under one shared concurrency cap
-                # (F1): both fan out through a single executor bounded by the
-                # provider's max_parallel, so total claude/ollama subprocesses
-                # never exceed it. Both Phase rows advance concurrently as
-                # results land.
-                product_phase.start()
-                fit_phase.start()
+            # The sink is the durable checkpoint: enrichment mutates its rows in
+            # place, flushes (rewrites jobs.csv) per completed phase plus every
+            # ~25 LLM results, and flushes once more on interrupt before
+            # re-raising. A crash mid-enrichment then loses at most one flush
+            # window; jobs run --backfill resumes the empty rows naturally.
+            assert sink is not None  # not dry_run -> sink exists
+            try:
+                detail_phase.start()
+                typed_jobs, detail_stats = enrich_job_details(
+                    typed_jobs, ctx, progress=detail_phase.advance
+                )
+                detail_phase.done(render_detail_summary(detail_stats))
+                sink.flush()  # persist detail comp/posted_date before the LLM phases
                 (
-                    typed_jobs,
                     product_stats,
                     fn_stats,
-                ) = enrich_product_and_fit_concurrently(
+                ) = _run_llm_enrichment(
+                    plugin,
+                    ai_cfg,
                     typed_jobs,
                     ctx,
-                    product_progress=product_phase.advance,
-                    fit_progress=fit_phase.advance,
+                    sink,
+                    product_phase,
+                    fit_phase,
                 )
-            else:
-                # Preflight already warned. Render the LLM phases as zero-count
-                # done bars (consistent with the detail phase) and report zero
-                # enrichment counters so the manifest stays honest.
-                product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-                fn_stats = {
-                    "enriched": 0,
-                    "skipped_budget": 0,
-                    "skipped_no_desc": 0,
-                    "failed": 0,
-                }
-            product_phase.done(
-                f"{product_stats['enriched']} enriched, "
-                f"{product_stats['skipped_cached']} cached, "
-                f"{product_stats['failed']} failed"
-            )
-            fit_phase.done(
-                f"{fn_stats['enriched']} enriched, "
-                f"{fn_stats['skipped_budget']} skipped (budget), "
-                f"{fn_stats['failed']} failed"
-            )
+            except KeyboardInterrupt:
+                # Persist whatever enrichment landed before the interrupt so a
+                # ^C/SIGTERM never discards a partial enrichment pass.
+                sink.flush()
+                raise
             enrich_group.done()
 
     n = len(typed_jobs)

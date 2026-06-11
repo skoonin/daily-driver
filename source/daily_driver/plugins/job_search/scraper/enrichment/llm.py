@@ -1106,6 +1106,33 @@ def _empty_fit_stats() -> dict[str, int]:
     return {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
 
 
+def _wrap_progress_with_flush(
+    progress: ProgressCallback | None,
+    flush: Callable[[], None] | None,
+    flush_every: int,
+    applied: list[int],
+) -> ProgressCallback | None:
+    """Compose a periodic flush onto a per-enricher progress callback.
+
+    Every applied result (the existing ``progress(1, name)`` signal) bumps the
+    shared ``applied`` counter; once it crosses a ``flush_every`` boundary the
+    flush fires. Wrapping the progress callback keeps the flush on the single
+    coordinator thread that already applies results -- the rewrite never races a
+    worker. Returns the original callback unchanged when no flush is configured.
+    """
+    if flush is None or flush_every <= 0:
+        return progress
+
+    def _wrapped(n: int = 1, detail: str | None = None) -> None:
+        if progress is not None:
+            progress(n, detail)
+        applied[0] += n
+        if applied[0] % flush_every == 0:
+            flush()
+
+    return _wrapped
+
+
 def enrich_product_and_fit_concurrently(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
@@ -1114,6 +1141,8 @@ def enrich_product_and_fit_concurrently(
     fit_budget: int = 0,
     product_progress: ProgressCallback | None = None,
     fit_progress: ProgressCallback | None = None,
+    flush: Callable[[], None] | None = None,
+    flush_every: int = 25,
 ) -> tuple[list[EnrichedJob], dict[str, int], dict[str, int]]:
     """Run the product and fit/notes enrichers overlapped under one shared cap.
 
@@ -1135,8 +1164,23 @@ def enrich_product_and_fit_concurrently(
 
     Falls back to running the two enrichers serially when the provider is
     serial (``pool_size == 1``) — there is no concurrency to overlap.
+
+    ``flush`` (with ``flush_every``) is the resilience hook: it runs on this
+    coordinator thread every ``flush_every`` applied results across both
+    enrichers, so a crash mid-enrichment loses at most one flush window. The
+    flush is composed onto the progress callbacks (the per-result signal already
+    on the coordinator thread), so it never races a worker. The caller flushes
+    again per completed phase and on interrupt.
     """
     _reset_ollama_hint()
+    # Compose the periodic flush onto each progress callback; a single shared
+    # counter spans both enrichers so the flush cadence is per total result, not
+    # per enricher.
+    applied = [0]
+    product_progress = _wrap_progress_with_flush(
+        product_progress, flush, flush_every, applied
+    )
+    fit_progress = _wrap_progress_with_flush(fit_progress, flush, flush_every, applied)
     pool_size = _enrich_pool_size(ctx)
     if pool_size <= 1:
         # Serial provider: nothing to overlap. Run sequentially so behavior

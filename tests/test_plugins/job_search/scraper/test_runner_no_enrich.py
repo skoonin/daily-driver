@@ -178,6 +178,8 @@ def test_default_path_still_enriches(
         *,
         product_progress: Any = None,
         fit_progress: Any = None,
+        flush: Any = None,
+        flush_every: int = 25,
     ) -> Any:
         return (
             jobs,
