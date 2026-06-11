@@ -9,7 +9,7 @@ macOS arm64 only in v0.1.0. Intel Mac likely works but is untested. Linux is on 
 | Python 3.11+ | 3.12 recommended |
 | `claude` CLI on `$PATH` | Required for `day-start`, `day-end`, `check-in`, `summary`, `voice-update`. See [Anthropic install docs](https://docs.anthropic.com/en/docs/claude-code/install). |
 | macOS CLI tools | `pbcopy`, `osascript`, `launchctl` — ship with macOS |
-| Playwright browser binaries | Optional; needed only for the Apple careers scraper (and any user-added `type: playwright` sources) |
+| Playwright browser binaries | Optional; needed only for the Apple careers scraper |
 
 Do not install into the system Python. Both Homebrew Python and pyenv work. Homebrew replaces Python on `brew upgrade`; if the minor version shifts, your venv breaks. pyenv pins the interpreter independently.
 
@@ -35,10 +35,7 @@ make test
 playwright install firefox
 ```
 
-When a Playwright source (Apple) is enabled in config, `daily-driver doctor`
-flags the missing browser as a WARNING on macOS, and `daily-driver doctor --fix`
-installs it for you. All other sources (Greenhouse, RemoteOK, WWR, HN Who's
-Hiring, HN YC-funded jobs, JobSpy) keep working without Playwright.
+When a Playwright source (Apple) is enabled, `daily-driver doctor` flags the missing browser as a WARNING on macOS, and `doctor --fix` installs it. All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, LinkedIn/Indeed via JobSpy) keep working without Playwright.
 
 ## Next
 
