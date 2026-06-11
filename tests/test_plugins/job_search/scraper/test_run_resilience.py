@@ -482,7 +482,10 @@ def test_overlap_two_waves_share_fit_budget(
         wave1_companies_attempted={f"P1Co{i}" for i in range(7)},
     )
     assert len(waves) == 2
-    assert waves[0]["n"] == 7
+    # Wave 1 enriches the LIVE sink.rows (not a copy) so its slot mutations reach
+    # disk; in this synchronous stub the Apple append has already landed, so wave
+    # 1 sees all 12 rows. wave1_count still pins the phase-1 boundary for budget.
+    assert waves[0]["n"] == 12
     assert waves[0]["fit_budget"] in (None, 10)  # wave 1 gets the full config budget
     # Wave 2 sees the whole 12-row list but excludes the 7 wave-1 URLs and caps
     # its fit budget at 10 - 7 = 3 (the shared running total).
@@ -490,6 +493,121 @@ def test_overlap_two_waves_share_fit_budget(
     assert waves[1]["fit_budget"] == 3
     assert waves[1]["exclude_fit_urls"] == phase1_urls
     assert waves[1]["eligible"] == 5  # only the Apple rows remain eligible
+
+
+def test_overlap_wave1_enrichment_reaches_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CRITICAL data-loss path: phase-1 rows enriched in the background wave-1
+    thread must land in jobs.csv. Drives the REAL coordinator through the overlap
+    (on_phase1_done -> background wave), unlike the budget-bookkeeping test that
+    stubs the coordinator. comp set -> detail enricher skips network."""
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    apple = [_scraped("https://ap/1", "ApCo", comp="$200k", source="apple")]
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_phase1_done: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", phase1)
+        if on_phase1_done is not None:
+            on_phase1_done(True)  # background wave-1 enrichment starts here
+        if on_source_result is not None:
+            on_source_result("apple", apple)
+        return phase1 + apple, [], [("remoteok", phase1), ("apple", apple)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 9, "notes": "match"}'
+    )
+
+    rc = runner.run(
+        _overlap_plugin(budget=10),
+        tmp_path,
+        tmp_path,
+        ai=_serial_ctx().ai,
+        no_enrich=False,
+    )
+    assert rc == 0
+    rows = {r["Company"]: r for r in _read_csv(tmp_path / "jobs.csv")}
+    # Both the phase-1 (wave-1) and Apple (wave-2) rows must carry their Fit.
+    assert rows["P1Co"]["Fit"] == "9"
+    assert rows["ApCo"]["Fit"] == "9"
+
+
+def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupt during the Apple (phase-2) scrape must JOIN the background
+    wave-1 thread before the final flush, so its in-flight enrichment reaches
+    jobs.csv instead of being abandoned. Without the join the phase-1 Fit is lost
+    on a launchd SIGTERM / Ctrl-C during overlap."""
+    import threading
+    import time
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    wave1_in_flight = threading.Event()
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_phase1_done: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", phase1)
+        if on_phase1_done is not None:
+            on_phase1_done(True)  # background wave-1 enrichment starts
+        # Apple phase: interrupt once wave 1 is mid-enrichment (still computing).
+        wave1_in_flight.wait(timeout=5)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    def fake_invoke(prompt: str, **kw: Any) -> str:
+        # Mark in-flight, then keep computing past the main thread's interrupt so
+        # the result is NOT yet in sink.rows when run()'s except flush fires. The
+        # buggy (no-join) path returns leaving P1Co blank; the join lets it land.
+        wave1_in_flight.set()
+        time.sleep(0.4)
+        return '{"fit": 6, "notes": "match"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(
+            _overlap_plugin(budget=10),
+            tmp_path,
+            tmp_path,
+            ai=_serial_ctx().ai,
+            no_enrich=False,
+        )
+
+    rows = {r["Company"]: r for r in _read_csv(tmp_path / "jobs.csv")}
+    assert rows["P1Co"]["Fit"] == "6"
+    # The interrupted manifest must account the wave-1 enrichment that landed,
+    # not undercount it as 0.
+    import json
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+    assert manifest["enriched_fit_notes"] >= 1
 
 
 def test_company_phase_labeled_glassdoor_when_product_disabled(

@@ -1179,6 +1179,12 @@ def run_all_scrapers(
 # real generation calls.
 _OLLAMA_PREFLIGHT_TIMEOUT = 3
 
+# Bound on the interrupt-path join of the overlap (wave-1) enrichment thread.
+# Long enough to let an in-flight LLM call settle and flush, short enough that a
+# second Ctrl-C is not swallowed; past it the daemon thread expires on its own
+# enrich_timeout and the final flush proceeds with what it applied.
+_WAVE1_INTERRUPT_JOIN_SECONDS = 30
+
 
 def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
     """Whether this run will make ollama LLM calls (detail pages don't count).
@@ -1793,6 +1799,15 @@ class _RunState:
     phase_reached: str = "scraping"
     product_stats: dict[str, int] = field(default_factory=_empty_product_stats)
     fn_stats: dict[str, int] = field(default_factory=_empty_fit_stats)
+    # The overlap (wave-1) background enrichment thread, exposed so run()'s exit
+    # handler can join its in-flight enrichment before the final flush/manifest.
+    wave1_thread: threading.Thread | None = None
+    # Wave-1's per-phase stats and whether the normal path already folded them, so
+    # the interrupt handler can account wave-1 enrichment in the manifest exactly
+    # once (the normal path folds via _accumulate_enrich_stats; the interrupt path
+    # folds here after the join, guarded by the flag against double-counting).
+    wave1_result: dict[str, Any] = field(default_factory=dict)
+    wave1_accumulated: bool = False
 
     @property
     def written(self) -> int:
@@ -1906,6 +1921,22 @@ def run(
         # dry-run has no sink, so there is nothing to persist and no manifest to
         # write (a dry-run leaves the previous run's manifest untouched).
         if not dry_run:
+            # Join the overlap (wave-1) background thread before the final flush so
+            # its in-flight enrichment lands on disk instead of being abandoned
+            # (the documented graceful-drain guarantee). The join is BOUNDED so a
+            # second Ctrl-C is never swallowed: if wave 1 does not settle within
+            # the bound, the daemon thread is left to expire on its own
+            # enrich_timeout and the flush proceeds with whatever it had applied.
+            wave1_thread = state.wave1_thread
+            if wave1_thread is not None and wave1_thread.is_alive():
+                wave1_thread.join(timeout=_WAVE1_INTERRUPT_JOIN_SECONDS)
+            # Fold wave-1's enrichment counts into the manifest unless the normal
+            # path already did (guards against double-counting).
+            if not state.wave1_accumulated and state.wave1_result:
+                _accumulate_enrich_stats(
+                    state.product_stats, state.fn_stats, state.wave1_result
+                )
+                state.wave1_accumulated = True
             sink = state.sink
             if sink is not None:
                 try:
@@ -2173,7 +2204,9 @@ def _run_impl(
         # Holds wave-1's per-phase stats plus the attempted-identity sets
         # (fit_attempted_urls / product_attempted_companies) so wave 2 can exclude
         # them and size the shared budget by what wave 1 actually attempted.
-        wave1_result: dict[str, Any] = {}
+        # Aliased to state so the run() interrupt handler can fold wave-1 stats
+        # into the manifest after its bounded join.
+        wave1_result: dict[str, Any] = state.wave1_result
         wave1_error: list[BaseException] = []
         wave1_count = [0]  # phase-1 rows handed to wave 1
 
@@ -2216,13 +2249,20 @@ def _run_impl(
             if not (do_enrich and has_phase2) or sink is None:
                 return
             nonlocal enrich_group, wave1_thread
+            # Hand the wave the REAL sink.rows, not a copy: the enrichers
+            # propagate results by replacing list slots (frozen EnrichedJob), and
+            # only the live sink.rows is what flush() reads. Apple's concurrent
+            # append only ever .extend()s sink.rows, never replacing indices
+            # 0..wave1_count, so wave-1's slot mutations are safe against the tail
+            # append. The lock is held only to read len and pin wave1_count.
             with sink._rows_lock:
-                phase1_jobs = list(sink.rows)
-            wave1_count[0] = len(phase1_jobs)
+                phase1_jobs = sink.rows
+                wave1_count[0] = len(phase1_jobs)
             enrich_group = rp.group("Enriching jobs")
             wave1_thread = threading.Thread(
                 target=_run_wave1, args=(phase1_jobs,), daemon=True
             )
+            state.wave1_thread = wave1_thread
             wave1_thread.start()
 
         all_jobs, scrape_failed, source_results = run_all_scrapers(
@@ -2331,6 +2371,7 @@ def _run_impl(
                     raise wave1_error[0]
                 assert enrich_group is not None
                 _accumulate_enrich_stats(product_stats, fn_stats, wave1_result)
+                state.wave1_accumulated = True
                 # Wave 2 receives the WHOLE row list (so its slot mutations and
                 # the periodic flush both target sink.rows directly). Rows ALREADY
                 # ATTEMPTED in wave 1 -- enriched or failed -- are excluded so a
