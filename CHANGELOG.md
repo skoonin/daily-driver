@@ -76,7 +76,7 @@ log`. Versioned release history starts at 1.0.
       hours_old: 168
       country: USA
   ```
-  (#PR)
+  (#88)
 - **Faster `jobs run`**: the Product and Fit/Notes enrichment phases now overlap
   under one shared concurrency cap (never more than `claude.max_parallel`
   provider calls in flight across both), detail-page fetches run on a small
