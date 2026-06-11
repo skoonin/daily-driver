@@ -234,16 +234,16 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             fix_hint="Fix the YAML / schema in .dd-config.yaml.",
         )
 
+    from daily_driver.integrations import ollama_client
+    from daily_driver.integrations.ollama_client import OllamaNotReachableError
+
     ai_cfg = cfg.ai
     ollama_tasks: list[tuple[str, str]] = []
     if ai_cfg.summary.provider == "ollama":
-        model = ai_cfg.summary.model or "qwen2.5:14b"
+        model = ai_cfg.summary.model or ollama_client.DEFAULT_MODEL
         ollama_tasks.append(("summary", model))
     if not ollama_tasks:
         return None
-
-    from daily_driver.integrations import ollama_client
-    from daily_driver.integrations.ollama_client import OllamaNotReachableError
 
     endpoint = ai_cfg.ollama.endpoint
     summary = ", ".join(f"{t}: ollama {m}" for t, m in ollama_tasks)

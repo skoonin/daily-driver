@@ -225,3 +225,50 @@ def test_fit_notes_timeout_uses_full_tag(caplog) -> None:
     msgs = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
     assert msgs
     assert all("[enrich-fit-notes]" in m for m in msgs)
+
+
+def test_serial_coordinator_arms_queue_hint_once_across_phases() -> None:
+    """A serial run through the coordinator must not re-arm the hint per phase.
+
+    The two sub-enrichers each used to re-arm the once-per-run flag, so a serial
+    run with a timeout in each phase could emit the hint twice. The coordinator
+    arms once and passes _reset_hint=False, so the flag stays latched after the
+    first phase logs it.
+    """
+    from daily_driver.integrations.ai_provider import AITimeoutError
+    from daily_driver.plugins.job_search.scraper.enrichment import llm
+
+    err = AITimeoutError(
+        "ollama timed out after 5s", provider="ollama", timeout_seconds=5
+    )
+    jobs = [
+        make_enriched(
+            company="Acme",
+            url="https://example.com/j/1",
+            product="",
+            description_text="infra",
+        )
+    ]
+    # max_parallel=1 -> the coordinator takes the serial fallback path.
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "phi4", "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    reset_calls = [0]
+    real_reset = llm._reset_ollama_hint
+
+    def counting_reset() -> None:
+        reset_calls[0] += 1
+        real_reset()
+
+    with patch.object(llm, "_reset_ollama_hint", counting_reset):
+        with patch.object(ai_provider, "invoke_for", side_effect=err):
+            enrichment.enrich_product_and_fit_concurrently(jobs, ctx)
+
+    # The coordinator arms exactly once; the two sub-enrichers must not re-arm.
+    assert reset_calls[0] == 1, f"expected one re-arm, got {reset_calls[0]}"
+    # And the hint stayed latched after the first timeout logged it.
+    assert llm._ollama_hint_logged is True

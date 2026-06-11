@@ -155,11 +155,21 @@ def _fetch_company_info(
             else (lines[0] if lines else "")
         )
         gd_rating = _parse_gd_rating(gd_line, company)
-    return product, gd_rating, False
+
+    # In GD-only mode the rating is the call's sole product; an unparseable
+    # answer means the call yielded nothing useful, so count it as a failure
+    # rather than caching an empty rating silently. (With product enabled the
+    # product line still carries value, so it is not a failure.)
+    failed = include_gd and not include_product and not gd_rating
+    return product, gd_rating, failed
 
 
 def _parse_gd_rating(line: str, company: str) -> str:
-    """Extract a Glassdoor rating from one response line ('' when none found)."""
+    """Extract a Glassdoor rating from one response line ('' when none found).
+
+    Logs a miss (info) when a non-empty, non-"unknown" line yields no rating via
+    either the float parse or the regex fallback — that's a silent gap otherwise.
+    """
     raw = line.strip().lower()
     if not raw:
         return ""
@@ -177,6 +187,12 @@ def _parse_gd_rating(line: str, company: str) -> str:
                 company,
             )
             return m.group(1)
+    log.info(
+        "%s GD rating not parseable for %s from line %r",
+        _enrich_tag("enrich"),
+        company,
+        line.strip()[:120],
+    )
     return ""
 
 
@@ -328,8 +344,10 @@ def _build_company_plan(
                     exc,
                 )
                 continue
-            if "product" in updates:
-                stats["enriched"] += 1
+            # Count any written field: a GD-only run writes only gd_rating, so
+            # gating on "product" alone would report "0 enriched" for a working
+            # run.
+            stats["enriched"] += 1
 
     return _CompanyPlan(
         out=out,
@@ -349,6 +367,7 @@ def enrich_company_descriptions(
     *,
     budget: int = 0,
     progress: ProgressCallback | None = None,
+    _reset_hint: bool = True,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Product/Purpose and GD Rating using the configured AI provider.
 
@@ -360,9 +379,14 @@ def enrich_company_descriptions(
     through ``ThreadPoolExecutor`` when the provider's ``max_parallel > 1``;
     ``pool_size == 1`` runs serially on the main thread.
 
+    ``_reset_hint`` re-arms the once-per-run ollama queue hint; the concurrent
+    coordinator already arms it once for both phases and passes False so a serial
+    run can't emit the hint twice.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
     """
-    _reset_ollama_hint()
+    if _reset_hint:
+        _reset_ollama_hint()
     plan = _build_company_plan(jobs, ctx, budget, progress)
     if plan is None:
         return jobs, {"enriched": 0, "skipped_cached": 0, "failed": 0}
@@ -938,6 +962,7 @@ def enrich_fit_and_notes(
     *,
     budget: int = 0,
     progress: ProgressCallback | None = None,
+    _reset_hint: bool = True,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -948,10 +973,15 @@ def enrich_fit_and_notes(
     ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
     serially on the main thread.
 
+    ``_reset_hint`` re-arms the once-per-run ollama queue hint; the concurrent
+    coordinator passes False (it arms once for both phases) so a serial run
+    can't emit the hint twice.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
     skipped_no_desc (always 0; retained for shape compatibility), failed.
     """
-    _reset_ollama_hint()
+    if _reset_hint:
+        _reset_ollama_hint()
     plan = _build_fit_plan(jobs, ctx, budget, progress)
     if plan is None:
         return jobs, {
@@ -1055,11 +1085,18 @@ def enrich_product_and_fit_concurrently(
     if pool_size <= 1:
         # Serial provider: nothing to overlap. Run sequentially so behavior
         # (and the per-phase progress bars) matches the non-overlapped path.
+        # _reset_hint=False: the coordinator already armed the once-per-run
+        # ollama queue hint above, so the sub-enrichers must not re-arm it (a
+        # re-arm between phases could emit the hint twice in one serial run).
         out, product_stats = enrich_company_descriptions(
-            jobs, ctx, budget=product_budget, progress=product_progress
+            jobs,
+            ctx,
+            budget=product_budget,
+            progress=product_progress,
+            _reset_hint=False,
         )
         out, fit_stats = enrich_fit_and_notes(
-            out, ctx, budget=fit_budget, progress=fit_progress
+            out, ctx, budget=fit_budget, progress=fit_progress, _reset_hint=False
         )
         return out, product_stats, fit_stats
 

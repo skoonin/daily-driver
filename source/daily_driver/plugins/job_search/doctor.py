@@ -147,11 +147,11 @@ def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
     if enrichment is None or enrichment.provider != "ollama":
         return None
 
-    endpoint = workspace.config.ai.ollama.endpoint
-    model = enrichment.model or "qwen2.5:14b"
-
     from daily_driver.integrations import ollama_client
     from daily_driver.integrations.ollama_client import OllamaNotReachableError
+
+    endpoint = workspace.config.ai.ollama.endpoint
+    model = enrichment.model or ollama_client.DEFAULT_MODEL
 
     try:
         pulled = ollama_client.list_models(endpoint, timeout=5)

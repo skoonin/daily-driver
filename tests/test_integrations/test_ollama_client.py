@@ -211,3 +211,37 @@ def test_generate_num_ctx_capped() -> None:
             prompt, model="m", endpoint="http://localhost:11434", timeout=10
         )
     assert post.call_args.kwargs["json"]["options"]["num_ctx"] == 16384
+
+
+def test_generate_warns_when_prompt_exceeds_cap(caplog) -> None:
+    """A prompt past the num_ctx cap warns once that the tail truncates."""
+    import logging
+
+    prompt = "x" * 400000  # ~100k tokens, well past the 16384 cap
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "x"})
+        with caplog.at_level(logging.WARNING, logger="daily_driver"):
+            ollama_client.generate(
+                prompt, model="m", endpoint="http://localhost:11434", timeout=10
+            )
+    warnings = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "truncat" in r.getMessage().lower()
+    ]
+    assert warnings, f"expected a truncation warning, got: {caplog.records}"
+    # The message names both the estimated and capped token counts.
+    assert "16384" in warnings[0]
+
+
+def test_generate_no_truncation_warning_for_normal_prompt(caplog) -> None:
+    """A prompt within the cap emits no truncation warning."""
+    import logging
+
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "x"})
+        with caplog.at_level(logging.WARNING, logger="daily_driver"):
+            ollama_client.generate(
+                "short prompt", model="m", endpoint="http://localhost:11434", timeout=10
+            )
+    assert not [r for r in caplog.records if "truncat" in r.getMessage().lower()]

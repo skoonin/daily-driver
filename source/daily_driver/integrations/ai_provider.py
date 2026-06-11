@@ -121,7 +121,7 @@ def invoke_for(
         raise ValueError(f"unknown AI provider: {provider!r}")
 
     effective_timeout = timeout if timeout is not None else ai_cfg.ollama.timeout
-    model = model or "qwen2.5:14b"
+    model = model or ollama_client.DEFAULT_MODEL
     try:
         return ollama_client.generate(
             prompt,

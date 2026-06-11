@@ -657,6 +657,18 @@ def test_core_ai_config_rejects_enrichment_key():
         AIConfig.model_validate({"enrichment": {"provider": "ollama"}})
 
 
+def test_core_ai_config_constructor_rejects_enrichment_kwarg():
+    """The migration's central promise: passing enrichment= at all is rejected.
+
+    Locks the extra_forbidden break at the constructor, not only via
+    model_validate, so a stray kwarg can't silently no-op.
+    """
+    from daily_driver.core.config_models import AIConfig, AITaskConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig(enrichment=AITaskConfig())  # type: ignore[call-arg]
+
+
 def test_core_config_rejects_ai_enrichment():
     """End-to-end: a root config with `ai.enrichment:` is rejected."""
     with pytest.raises(ValidationError):

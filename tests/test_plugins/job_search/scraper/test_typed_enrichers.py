@@ -208,3 +208,84 @@ def test_enrich_product_default_writes_both() -> None:
 
     assert out[0].product == "Acme builds widgets"
     assert out[0].gd_rating == "4.1"
+
+
+# ---------------------------------------------------------------------------
+# GD parse miss: log the miss, and in GD-only mode count it as a failure
+# (finding 2). GD-only enriched stat counts any written field (finding 3).
+# ---------------------------------------------------------------------------
+
+
+def test_gd_parse_miss_logged(caplog) -> None:
+    """A non-empty, non-'unknown' line that yields no rating logs the miss."""
+    import logging
+
+    j = _enriched(comp_display="")
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        return "I am not able to determine that"  # no float, no [0-5].[0-9]
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                out, _stats = enrich_company_descriptions([j], ctx)
+
+    misses = [
+        r.getMessage()
+        for r in caplog.records
+        if "gd rating" in r.getMessage().lower() and "Acme" in r.getMessage()
+    ]
+    assert misses, f"expected a GD parse-miss log, got: {caplog.records}"
+    assert out[0].gd_rating == ""  # nothing usable extracted
+
+
+def test_gd_only_parse_miss_counts_as_failure() -> None:
+    """In GD-only mode, a parse miss produced nothing useful -> stats.failed."""
+    j = _enriched(comp_display="")
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        return "no idea, sorry"  # no parseable rating
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            _out, stats = enrich_company_descriptions([j], ctx)
+
+    assert stats["failed"] == 1
+    assert stats["enriched"] == 0
+
+
+def test_gd_only_unknown_is_not_a_failure() -> None:
+    """An honest 'unknown' is a valid answer, not a failure."""
+    j = _enriched(comp_display="")
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        return "unknown"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, stats = enrich_company_descriptions([j], ctx)
+
+    assert stats["failed"] == 0
+    assert out[0].gd_rating == "unknown"
+
+
+def test_gd_only_successful_rating_counts_as_enriched() -> None:
+    """A working GD-only run reports enriched == number of companies (finding 3)."""
+    jobs = [
+        _enriched(company="Acme", url="https://example.com/a", comp_display=""),
+        _enriched(company="Beta", url="https://example.com/b", comp_display=""),
+    ]
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        return "4.2"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, stats = enrich_company_descriptions(jobs, ctx)
+
+    assert stats["enriched"] == 2
+    assert all(j.gd_rating == "4.2" for j in out)
