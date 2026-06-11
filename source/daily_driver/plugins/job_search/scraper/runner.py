@@ -28,9 +28,7 @@ from daily_driver.core.logging import (
 from daily_driver.core.progress import Group, Item, Phase, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
-    IndeedToggle,
     JobSearchPlugin,
-    LinkedInToggle,
     SourceToggle,
 )
 from daily_driver.plugins.job_search.jobs_lock import (
@@ -56,6 +54,12 @@ def _noop_report(done: int, total: int | None = None) -> None:
     display is attached, so scrapers can call ``ctx.report(...)`` unconditionally."""
 
 
+def _noop_checkpoint(jobs: list[dict[str, Any]]) -> None:
+    """Default per-unit checkpoint sink -- discards the batch when no durable sink
+    is attached (dry-run, direct adapter tests), so a slow source can call
+    ``ctx.checkpoint(...)`` unconditionally after each finished unit."""
+
+
 @dataclass(frozen=True)
 class ScrapeContext:
     """Typed inputs threaded through the scraper layer.
@@ -74,6 +78,21 @@ class ScrapeContext:
     # source by the orchestrator (``_run_one``); every scraper reports against
     # its own natural unit (term×country, boards, categories, or a single fetch).
     report: Callable[[int, int | None], None] = _noop_report
+    # Cooperative stop flag for a graceful Ctrl-C / SIGTERM during scraping.
+    # KeyboardInterrupt lands only on the main thread; phase-1 sources run in
+    # worker threads where it never arrives, so the orchestrator sets this event
+    # on the first interrupt and each source checks it between its natural units
+    # and returns the jobs accumulated so far (keeping completed work). Sources
+    # mid-unit finish that one unit (bounded by the unit's own duration).
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    # Per-unit durable checkpoint for the multi-HOUR jobspy-backed sources
+    # (linkedin / indeed). Bound per source by the orchestrator (``_run_one``) to
+    # hand each finished (term x country) unit's rows straight to the sink, so a
+    # crash / kill two hours in keeps every completed unit instead of losing the
+    # whole source. The fast single-call sources (remoteok, hn, greenhouse, wwr,
+    # apple) skip this -- their loss window on a crash is seconds, not worth the
+    # per-unit lock churn -- and rely on the end-of-source append instead.
+    checkpoint: Callable[[list[dict[str, Any]]], None] = _noop_checkpoint
 
 
 class ScraperError(RuntimeError):
@@ -245,15 +264,13 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
 # pydantic -- browser classification must live in code, not config.
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
-# Site-named sources backed by python-jobspy. When both run with equal query
-# knobs the runner merges them into one backend call (see _jobspy_scrape_plan);
-# the library is an implementation detail, never part of the user surface.
+# Site-named sources backed by python-jobspy. Each enabled site is fetched in
+# its own backend call under its own row (see _jobspy_scrape_plan); the library
+# is an implementation detail, never part of the user surface.
 _JOBSPY_SITES: tuple[str, ...] = ("linkedin", "indeed")
 
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
-# A merged jobspy run uses its own joined row id ("linkedin + indeed"), which
-# already reads correctly without a mapping entry.
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "weworkremotely": "we work remotely",
     "hn_who_is_hiring": "hn who's hiring",
@@ -261,40 +278,19 @@ _SOURCE_DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-def _jobspy_toggle(plugin: JobSearchPlugin, site: str) -> LinkedInToggle | IndeedToggle:
-    """The typed toggle for a jobspy-backed site (linkedin / indeed)."""
-    if site == "linkedin":
-        return source_toggle(plugin, "linkedin", LinkedInToggle)
-    return source_toggle(plugin, "indeed", IndeedToggle)
-
-
 def _jobspy_scrape_plan(
     jobspy_sites: list[str], plugin: JobSearchPlugin
 ) -> list[tuple[str, list[str]]]:
     """Decide how the enabled jobspy-backed sites are fetched.
 
-    Returns ``(row_id, sites)`` entries. When both LinkedIn and Indeed are
-    enabled AND their shared query knobs (``results_wanted_per_query`` /
-    ``hours_old``) are equal, they collapse to one merged backend call under the
-    joined row id ``"linkedin + indeed"``. Differing knobs (or only one site
-    enabled) fall back to one call per site, each under its own site-named row.
-    This is the deliberately simple rule: equal knobs merge, anything else
-    splits. ``jobspy_sites`` preserves registry order so the merged list reads
-    ``["linkedin", "indeed"]``.
+    Returns ``(row_id, sites)`` entries -- always one call per enabled site,
+    each under its own site-named row. Each site keeps its own progress row,
+    retry, and failure isolation: in practice Indeed finishes quickly while only
+    LinkedIn is slow, so a combined row / combined failure unit is not worth the
+    merge. ``jobspy_sites`` preserves registry order. ``plugin`` is unused now
+    that there is no merge predicate; kept for a stable call signature.
     """
-    sites = [s for s in _JOBSPY_SITES if s in jobspy_sites]
-    if len(sites) < 2:
-        return [(s, [s]) for s in sites]
-
-    linkedin = _jobspy_toggle(plugin, "linkedin")
-    indeed = _jobspy_toggle(plugin, "indeed")
-    knobs_match = (
-        linkedin.results_wanted_per_query == indeed.results_wanted_per_query
-        and linkedin.hours_old == indeed.hours_old
-    )
-    if knobs_match:
-        return [(" + ".join(sites), list(sites))]
-    return [(s, [s]) for s in sites]
+    return [(s, [s]) for s in _JOBSPY_SITES if s in jobspy_sites]
 
 
 def _display_name(source_id: str) -> str:
@@ -317,11 +313,10 @@ _JOBSPY_SLOW_NOTE = "running -- can take several minutes"
 def _slow_source_note(source_id: str) -> str | None:
     """The running-state note for a known-slow source, or None for the default.
 
-    The jobspy-backed rows are slow regardless of merge vs split; match any row
-    id covering linkedin / indeed (single site or the joined "linkedin + indeed"
-    label) rather than enumerating every combination.
+    Each jobspy-backed site runs under its own row id (``linkedin`` / ``indeed``)
+    and can take minutes; both get the slow-source note.
     """
-    if any(site in source_id for site in _JOBSPY_SITES):
+    if source_id in _JOBSPY_SITES:
         return _JOBSPY_SLOW_NOTE
     return _SLOW_SOURCE_NOTES.get(source_id)
 
@@ -381,6 +376,7 @@ def _run_one(
     on_source_start: Callable[[str], None] | None = None,
     on_source_progress: Callable[[str, int, int | None], None] | None = None,
     scraper_fn: Callable[[ScrapeContext], list[dict[str, Any]]] | None = None,
+    on_source_checkpoint: Callable[[str, list[dict[str, Any]]], None] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
@@ -397,7 +393,14 @@ def _run_one(
     they are safe to invoke from the Phase-1 worker threads.
 
     ``scraper_fn`` overrides the registry lookup; the jobspy-backed group passes
-    a merged/split scrape bound to a row id that may not be a registry key.
+    a per-site scrape bound to a row id (``linkedin`` / ``indeed``).
+
+    ``on_source_checkpoint`` is bound onto the context as ``ctx.checkpoint(batch)``
+    so a slow source (jobspy) hands each finished (term x country) unit straight
+    to the durable sink as it completes. A source that checkpoints is appended
+    incrementally, so the coordinator SKIPS its end-of-source append (it tracks
+    which sources checkpointed); ``_run_one`` still returns the full job list for
+    the run manifest's sources-ok tally and cross-source dedup.
     """
     if scraper_fn is None:
         scraper_fn = SCRAPERS[source_id]
@@ -412,6 +415,13 @@ def _run_one(
             report_cb(source_id, done, total)
 
         ctx = replace(ctx, report=_report)
+    if on_source_checkpoint is not None:
+        checkpoint_cb = on_source_checkpoint  # narrow for the closure below
+
+        def _checkpoint(batch: list[dict[str, Any]]) -> None:
+            checkpoint_cb(source_id, batch)
+
+        ctx = replace(ctx, checkpoint=_checkpoint)
     start = time.perf_counter()
     try:
         jobs = scraper_fn(ctx)
@@ -444,9 +454,13 @@ def _run_one(
             intra_dup,
         )
     if on_source_done is not None:
-        on_source_done(
-            source_id, True, f"{len(jobs)} found in {_fmt_duration(elapsed)}"
-        )
+        # An honest note when the source stopped early on a graceful interrupt:
+        # it kept what it had fetched before the stop, not a complete scrape.
+        if ctx.stop_event.is_set():
+            detail = f"interrupted -- {len(jobs)} found so far"
+        else:
+            detail = f"{len(jobs)} found in {_fmt_duration(elapsed)}"
+        on_source_done(source_id, True, detail)
     return jobs
 
 
@@ -702,80 +716,98 @@ class _JobSink:
         rows that aren't on disk (no phantom dedup entries). A file-write failure
         leaves all state untouched and raises ``ScraperError`` for the caller to
         isolate as a failed source.
+
+        Safe to call repeatedly for the SAME ``source_id``: the funnel/totals
+        accumulate (``setdefault`` + ``+=``) and the dedup sets grow, so the slow
+        jobspy-backed sources checkpoint each finished (term x country) unit by
+        calling this per unit. Later units dedup against earlier ones through the
+        grown ``_known_urls`` / ``_known_keys``, so an intra-source duplicate
+        spanning units is counted "known", never double-appended.
+
+        Thread-safe for concurrent callers: the WHOLE body (dedup-set reads,
+        classification, the file write, and every commit) runs under
+        ``_rows_lock``, so a jobspy worker thread checkpointing a unit and the
+        coordinator appending another source serialize cleanly. The disk lock is
+        taken inside, around the write only (lock order is always _rows_lock then
+        file_lock, matching :meth:`flush`).
         """
         from daily_driver.plugins.job_search.scraper.csv_io import append_jobs_typed
 
-        counts = self.funnel.setdefault(
-            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
-        )
-        # Classify the source's rows into a deferred-commit plan WITHOUT mutating
-        # any shared state yet. ``found`` is the only counter touched here (it is
-        # the raw scrape tally and survives a write failure); every classified
-        # count and dedup-set growth is applied below, after the write lands.
-        counts["found"] += len(jobs)
-        self.raw_found += len(jobs)
-        # Intra-source dedup: a single source's list may repeat a row (e.g.
-        # Apple's locale loop). Those are the funnel's "other" -- found but not
-        # classified -- so detect them here without counting them as "known".
-        seen_urls: set[str] = set()
-        seen_keys: set[str] = set()
-        to_append: list[EnrichedJob] = []
-        commit_urls: list[str] = []
-        commit_keys: list[str] = []
-        known = 0
-        loc_skip = 0
-        new = 0
-        for job in jobs:
-            url = job.get("url", "")
-            key = dedup_key(job.get("company", ""), job.get("role", ""))
-            if (url and url in seen_urls) or (key and key in seen_keys):
-                continue  # within-source duplicate -> "other"
-            if url:
-                seen_urls.add(url)
-            if key:
-                seen_keys.add(key)
-            if (url and url in self._known_urls) or (key and key in self._known_keys):
-                known += 1
-                continue
-            if not url:
-                # url-less new jobs cannot be deduped on future runs; drop them.
-                log.warning(
-                    "Dropping job with no URL (cannot dedup on future runs): %s",
-                    job.get("company", ""),
-                )
-                continue
-            if not location_matches(job, self._plugin):
-                loc_skip += 1
-                continue
-            new += 1
-            commit_urls.append(url)
-            if key:
-                commit_keys.append(key)
-            to_append.append(_enriched_from_scraped(job))
+        with self._rows_lock:
+            counts = self.funnel.setdefault(
+                source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
+            )
+            # Classify the source's rows into a deferred-commit plan WITHOUT
+            # mutating any shared state yet. ``found`` is the only counter touched
+            # here (the raw scrape tally; it survives a write failure); every
+            # classified count and dedup-set growth is applied below, after the
+            # write lands.
+            counts["found"] += len(jobs)
+            self.raw_found += len(jobs)
+            # Intra-source dedup: a single source's list may repeat a row (e.g.
+            # Apple's locale loop). Those are the funnel's "other" -- found but not
+            # classified -- so detect them here without counting them as "known".
+            seen_urls: set[str] = set()
+            seen_keys: set[str] = set()
+            to_append: list[EnrichedJob] = []
+            commit_urls: list[str] = []
+            commit_keys: list[str] = []
+            known = 0
+            loc_skip = 0
+            new = 0
+            for job in jobs:
+                url = job.get("url", "")
+                key = dedup_key(job.get("company", ""), job.get("role", ""))
+                if (url and url in seen_urls) or (key and key in seen_keys):
+                    continue  # within-call duplicate -> "other"
+                if url:
+                    seen_urls.add(url)
+                if key:
+                    seen_keys.add(key)
+                if (url and url in self._known_urls) or (
+                    key and key in self._known_keys
+                ):
+                    known += 1
+                    continue
+                if not url:
+                    # url-less new jobs cannot be deduped on future runs; drop them.
+                    log.warning(
+                        "Dropping job with no URL (cannot dedup on future runs): %s",
+                        job.get("company", ""),
+                    )
+                    continue
+                if not location_matches(job, self._plugin):
+                    loc_skip += 1
+                    continue
+                new += 1
+                commit_urls.append(url)
+                if key:
+                    commit_keys.append(key)
+                to_append.append(_enriched_from_scraped(job))
 
-        if to_append:
-            # ONE critical section: write to disk first, then commit the
-            # in-memory state. Holding _rows_lock across the file write keeps a
-            # concurrent flush from interleaving between extend and write (which
-            # would duplicate/drop rows on disk). append_jobs_typed raises
-            # ScraperError on an OSError, which propagates here BEFORE the
-            # rows.extend and the dedup/funnel commit below -- so a write failure
-            # rolls back to nothing committed and the caller isolates the source.
-            with self._rows_lock, self._disk_lock():
-                append_jobs_typed(self.csv_path, to_append, self.header)
+            if to_append:
+                # Write to disk first, then commit the in-memory state, all under
+                # the held _rows_lock so a concurrent flush can't interleave
+                # between extend and write (which would duplicate/drop rows on
+                # disk). append_jobs_typed raises ScraperError on an OSError, which
+                # propagates here BEFORE the rows.extend and the dedup/funnel
+                # commit below -- so a write failure rolls back to nothing
+                # committed and the caller isolates the source.
+                with self._disk_lock():
+                    append_jobs_typed(self.csv_path, to_append, self.header)
                 self.rows.extend(to_append)
                 # Newly scraped rows carry only canonical columns; keep the
                 # extras list aligned 1:1 so a later flush merges by index.
                 self.row_extras.extend({} for _ in to_append)
-        # Commit dedup state + funnel/totals only now that the rows are durable.
-        self._known_urls.update(commit_urls)
-        self._known_keys.update(commit_keys)
-        counts["known"] += known
-        counts["loc_skip"] += loc_skip
-        counts["new"] += new
-        self.loc_filtered += loc_skip
-        self.pre_filter += new
-        return counts
+            # Commit dedup state + funnel/totals only now that the rows are durable.
+            self._known_urls.update(commit_urls)
+            self._known_keys.update(commit_keys)
+            counts["known"] += known
+            counts["loc_skip"] += loc_skip
+            counts["new"] += new
+            self.loc_filtered += loc_skip
+            self.pre_filter += new
+            return dict(counts)
 
     def flush(self) -> None:
         """Rewrite jobs.csv -- ``preexisting_rows`` then ``rows`` -- through the
@@ -867,6 +899,7 @@ def run_all_scrapers(
     on_sources_enabled: Callable[[list[str]], None] | None = None,
     on_note: Callable[[str], None] | None = None,
     on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None,
+    on_source_checkpoint: Callable[[str, list[dict[str, Any]]], object] | None = None,
     on_phase1_done: Callable[[bool], None] | None = None,
     force_headless: bool = False,
 ) -> tuple[
@@ -919,14 +952,14 @@ def run_all_scrapers(
     ]
     visible_sources = [sid for sid in enabled if sid in non_headless]
 
-    # Collapse the enabled jobspy-backed sites into scrape-plan rows: one merged
-    # row when both run with equal knobs, else one row per site. Each row is a
-    # phase-1 work item bound to a scrape over its site list.
+    # One scrape-plan row per enabled jobspy-backed site. Each row is a phase-1
+    # work item bound to a scrape over its (single-site) list, so each site keeps
+    # its own progress row, retry, and failure isolation.
     jobspy_plan = _jobspy_scrape_plan(jobspy_enabled, ctx.plugin)
 
     # Phase-1 work items: (row_id, scraper_fn). A None scraper_fn means look the
-    # row id up in SCRAPERS; the jobspy rows carry an explicit bound scrape so
-    # the merged row id (e.g. "linkedin + indeed") needs no registry entry.
+    # row id up in SCRAPERS; the jobspy rows carry an explicit bound scrape so a
+    # site row id resolves to its own scrape without a registry entry.
     headless_items: list[
         tuple[str, Callable[[ScrapeContext], list[dict[str, Any]]] | None]
     ] = [(sid, None) for sid in headless_sources]
@@ -980,6 +1013,20 @@ def run_all_scrapers(
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
+    # Sources that checkpoint per unit (the slow jobspy-backed ones) append
+    # incrementally as they run, so the coordinator must SKIP their end-of-source
+    # append (else every checkpointed row would be appended twice). The wrapper
+    # records the source id the first time it checkpoints anything; the sink's
+    # append_source dedups within a call, but a second whole-source append would
+    # re-classify already-known rows as "known" and skew the funnel, so skip it
+    # outright.
+    checkpointed_sources: set[str] = set()
+
+    def _checkpoint(sid: str, batch: list[dict[str, Any]]) -> None:
+        checkpointed_sources.add(sid)
+        if on_source_checkpoint is not None:
+            on_source_checkpoint(sid, batch)
+
     # Phase 1: headless, parallel
     if headless_items:
         headless_ctx = _ctx_with_headless(ctx, True)
@@ -990,6 +1037,34 @@ def run_all_scrapers(
             workers,
         )
         pool = ThreadPoolExecutor(max_workers=max(1, workers))
+        # Track which futures still need collecting so the first-interrupt drain
+        # can resume from where the normal loop left off (no double-processing).
+        pending: set[Any] = set()
+
+        def _collect(fut: Any) -> None:
+            sid = futures[fut]
+            pending.discard(fut)
+            result = fut.result()
+            results.append((sid, result))
+            # Append-as-completed: hand each successful source straight to the
+            # sink on this (coordinator) thread so its rows reach jobs.csv before
+            # the next source finishes. A crash mid-phase then loses only the
+            # in-flight source's current unit. A source that already checkpointed
+            # per unit is fully appended -- skip its end-of-source append.
+            if (
+                on_source_result is not None
+                and not isinstance(result, Exception)
+                and sid not in checkpointed_sources
+            ):
+                on_source_result(sid, result)
+
+        # Only the jobspy-backed (multi-hour) sites checkpoint per unit; the fast
+        # headless sources rely on the end-of-source append (seconds of loss).
+        def _checkpoint_for(
+            row_id: str,
+        ) -> Callable[[str, list[dict[str, Any]]], None] | None:
+            return _checkpoint if row_id in _JOBSPY_SITES else None
+
         try:
             futures = {
                 pool.submit(
@@ -1000,25 +1075,34 @@ def run_all_scrapers(
                     on_source_start,
                     on_source_progress,
                     fn,
+                    _checkpoint_for(row_id),
                 ): row_id
                 for row_id, fn in headless_items
             }
+            pending = set(futures)
             for fut in as_completed(futures):
-                sid = futures[fut]
-                result = fut.result()
-                results.append((sid, result))
-                # Append-as-completed: hand each successful source straight to
-                # the sink on this (coordinator) thread so its rows reach
-                # jobs.csv before the next source finishes. A crash mid-phase
-                # then loses only the in-flight source.
-                if on_source_result is not None and not isinstance(result, Exception):
-                    on_source_result(sid, result)
+                _collect(fut)
         except KeyboardInterrupt:
-            # Drop pending (unstarted) futures and stop waiting on the pool.
-            # In-flight HTTP requests cannot be killed mid-call; they run to
-            # their per-source ``timeout`` before their threads exit. The CLI
-            # boundary catches this re-raise and prints a clean message.
-            pool.shutdown(wait=False, cancel_futures=True)
+            # First Ctrl-C/SIGTERM during scraping: stop gracefully, KEEP what is
+            # already fetched. Set the cooperative stop flag so each still-running
+            # source returns the jobs it has accumulated at its next unit boundary
+            # (in-flight HTTP within a unit runs to its own timeout). Cancel the
+            # unstarted futures, then DRAIN the started ones -- routing their
+            # partial results through the sink -- before re-raising so the run is
+            # marked interrupted at phase=scraping. A SECOND interrupt during the
+            # drain is the escape hatch: abandon the pool wait and re-raise now.
+            ctx.stop_event.set()
+            for fut in pending:
+                fut.cancel()
+            try:
+                for fut in as_completed(pending):
+                    if fut.cancelled():
+                        continue
+                    _collect(fut)
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
+            pool.shutdown(wait=True)
             raise
         else:
             pool.shutdown(wait=True)
@@ -1031,8 +1115,10 @@ def run_all_scrapers(
         on_phase1_done(bool(visible_sources))
 
     # Phase 2: serial (preserves pre-parallel behavior). Visible browser by
-    # default to dodge bot detection; forced headless via force_headless.
-    if visible_sources:
+    # default to dodge bot detection; forced headless via force_headless. Skipped
+    # entirely when a phase-1 interrupt already requested a graceful stop -- the
+    # appended phase-1 rows are kept and the run exits without starting Apple.
+    if visible_sources and not ctx.stop_event.is_set():
         visible_ctx = _ctx_with_headless(ctx, force_headless)
         log.info(
             "[phase2] running %d %s scrapers serially (%s)",
@@ -1041,6 +1127,11 @@ def run_all_scrapers(
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
+            # Apple runs on this (coordinator) thread, so a Ctrl-C/SIGTERM lands
+            # in its call stack directly. Apple catches the interrupt internally,
+            # sets the stop flag, and returns the jobs it accumulated so far; we
+            # append those, then stop the serial loop and re-raise so the run is
+            # marked interrupted at phase=scraping.
             result = _run_one(
                 sid,
                 visible_ctx,
@@ -1051,6 +1142,8 @@ def run_all_scrapers(
             results.append((sid, result))
             if on_source_result is not None and not isinstance(result, Exception):
                 on_source_result(sid, result)
+            if ctx.stop_event.is_set():
+                raise KeyboardInterrupt
 
     all_jobs, failed_sources = _merge_and_dedup(results)
     return all_jobs, failed_sources, results
@@ -2028,6 +2121,10 @@ def _run_impl(
             on_source_done=_on_done,
             on_note=rp.note,
             on_source_result=on_source_result,
+            # Slow jobspy sources checkpoint each finished (term x country) unit
+            # through the SAME failure-isolated append path, so a crash/kill keeps
+            # every completed unit (not the whole-source-or-nothing of before).
+            on_source_checkpoint=on_source_result,
             on_phase1_done=_on_phase1_done,
             # Force Apple headless while the live block owns the terminal.
             force_headless=tty,

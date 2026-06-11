@@ -153,13 +153,13 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
 
     One ``scrape_jobs`` call per (search term x country) requests every site in
     ``sites`` at once via ``site_name=[...]``. ``sites`` is the site list the
-    caller decided to fetch together — the runner merges LinkedIn + Indeed into
-    one list when their query knobs match and splits them otherwise (see
-    ``runner._jobspy_scrape_plan``). When ``sites`` is None the enabled set is
-    read from the top-level ``linkedin`` / ``indeed`` source toggles. Per-row
-    Source attribution survives because ``normalize_jobspy_row`` stamps each row
-    from JobSpy's own ``site`` field, so a merged call still yields rows labeled
-    "linkedin" / "indeed" individually.
+    caller decided to fetch together — the runner always hands a single-site list
+    (one row per enabled site; see ``runner._jobspy_scrape_plan``), but the
+    adapter still accepts a multi-site list (e.g. a direct test call). When
+    ``sites`` is None the enabled set is read from the top-level ``linkedin`` /
+    ``indeed`` source toggles. Per-row Source attribution comes from JobSpy's own
+    ``site`` field via ``normalize_jobspy_row``, so a multi-site call still yields
+    rows labeled "linkedin" / "indeed" individually.
 
     Query knobs (``results_wanted_per_query`` / ``hours_old``) are read from each
     site's own toggle; the indeed-only ``country`` knob backs JobSpy's
@@ -252,6 +252,16 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
 
     for term in terms:
         for country in countries:
+            # Graceful-stop checkpoint between (term x country) searches: a
+            # Ctrl-C/SIGTERM during scraping sets this on the main thread; return
+            # the jobs matched so far rather than starting the next search.
+            if ctx.stop_event.is_set():
+                log.info(
+                    "[%s] stop requested; keeping %d jobs so far",
+                    site_label,
+                    len(jobs),
+                )
+                return jobs
             ctx.report(done, total)
             done += 1
             country_code = country.upper()
@@ -340,13 +350,23 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
                     normalized["origin_country"] = country_code
                     jobs.append(normalized)
 
+            unit_new = jobs[matched_before:]
             log.debug(
                 "[%s] %s / %s: %d matched after role filter",
                 site_label,
                 term,
                 country,
-                len(jobs) - matched_before,
+                len(unit_new),
             )
+            # Durable checkpoint per finished (term x country) unit: hand this
+            # unit's matched rows to the sink as it completes, so a crash / kill
+            # two hours into a multi-hour LinkedIn scrape keeps every completed
+            # unit instead of losing the whole source. A no-op when no durable
+            # sink is attached (dry-run / direct adapter tests). The sink dedups,
+            # so the unchanged end-of-source return (the orchestrator skips a
+            # checkpointed source's final append) never double-appends.
+            if unit_new:
+                ctx.checkpoint(unit_new)
 
     # An enabled site that contributed nothing all run is the per-board outage
     # signal the merge would otherwise hide; surface it.

@@ -370,6 +370,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
         on_sources_enabled=None,
         on_note=None,
         on_source_result=None,
+        on_source_checkpoint=None,
         on_phase1_done=None,
         force_headless=False,
     ):
@@ -438,6 +439,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
         on_sources_enabled=None,
         on_note=None,
         on_source_result=None,
+        on_source_checkpoint=None,
         on_phase1_done=None,
         force_headless=False,
     ):

@@ -46,6 +46,12 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
     total = len(categories)
     done = 0
     for category in categories:
+        # Graceful-stop checkpoint between categories: return what matched so far.
+        if ctx.stop_event.is_set():
+            log.info(
+                "[weworkremotely] stop requested; keeping %d jobs so far", len(jobs)
+            )
+            return jobs
         ctx.report(done, total)
         done += 1
         url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"

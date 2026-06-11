@@ -105,6 +105,11 @@ def scrape_hn_jobs(ctx: ScrapeContext) -> list[dict]:
         f"?tags=job&hitsPerPage={min(max(max_posts, 1), 1000)}"
         f"{age_filter}"
     )
+    # Graceful-stop checkpoint before the (single) fetch: a Ctrl-C/SIGTERM during
+    # scraping sets this on the main thread, so skip the fetch and return empty.
+    if ctx.stop_event.is_set():
+        log.info("[hn_jobs] stop requested before fetch; keeping 0 jobs")
+        return []
     resp = _api_get(session, jobs_url, ctx, label="hn_jobs")
     if not resp:
         return []

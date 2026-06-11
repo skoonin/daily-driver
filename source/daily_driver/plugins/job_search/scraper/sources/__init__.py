@@ -23,10 +23,10 @@ log = get_logger(__name__)
 
 
 # linkedin/indeed are site-named user-surface sources backed by python-jobspy.
-# Each registry entry scrapes only its own site by default; when both are
-# enabled with equal query knobs the runner merges them into one backend call
-# (see runner._jobspy_scrape_plan). The single-site partials below are the
-# fallback path (one site selected, or knobs differing between the two).
+# Each registry entry scrapes only its own site: the runner always fetches each
+# enabled site in its own backend call under its own row (see
+# runner._jobspy_scrape_plan), so each keeps its own progress row, retry, and
+# failure isolation.
 SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "remoteok": scrape_remoteok,
     "weworkremotely": scrape_weworkremotely,

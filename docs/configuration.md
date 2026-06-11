@@ -306,11 +306,11 @@ sources:
     country: USA
 ```
 
-When `linkedin` and `indeed` are both enabled with equal `results_wanted_per_query`
-and `hours_old`, they are fetched in one merged request; if those knobs differ,
-each is fetched separately. Either way the live progress row and the `Source`
-column are site-named. (Glassdoor and Google for Jobs are excluded: broken or
-unsupported upstream.)
+When `linkedin` and `indeed` are both enabled, each is fetched separately, under
+its own progress row, with its own retry and failure isolation — so a slow or
+failing LinkedIn scrape never blocks or fails the fast Indeed one. The live
+progress row and the `Source` column are site-named. (Glassdoor and Google for
+Jobs are excluded: broken or unsupported upstream.)
 
 ## Example
 

@@ -41,6 +41,10 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     total = len(boards)
     done = 0
     for board in boards:
+        # Graceful-stop checkpoint between boards: return what is matched so far.
+        if ctx.stop_event.is_set():
+            log.info("[greenhouse] stop requested; keeping %d jobs so far", len(jobs))
+            return jobs
         ctx.report(done, total)
         done += 1
         api_url = (

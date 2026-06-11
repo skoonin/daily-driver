@@ -242,9 +242,9 @@ Full field reference in [configuration.md](configuration.md#pluginsjob_search).
 `linkedin` and `indeed` are top-level site sources (both fetched via the
 `python-jobspy` library, an implementation detail). They are the CLI selectors
 for `jobs run -S` and the config keys `sources.linkedin` / `sources.indeed`.
-When both are enabled with equal query knobs they share one merged backend
-request; otherwise they run separately. Either way each appears under its own
-site name in the `Source` column and the live progress display.
+When both are enabled, each is fetched separately, under its own progress row,
+with its own retry and failure isolation. Each appears under its own site name
+in the `Source` column and the live progress display.
 
 `daily-driver jobs run --list-sources` prints the live set. `daily-driver
 help sources` does the same.

@@ -227,12 +227,11 @@ tracker:
 #       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
 #
-#       # LinkedIn + Indeed (each its own source). When both are
-#       # enabled with equal results_wanted_per_query and hours_old
-#       # they are fetched in one merged request; if the knobs differ
-#       # they are fetched separately. country (Indeed only) sets the
-#       # regional host and is the fallback for countries the scraper
-#       # does not recognize. Requires `python-jobspy>=1.1.82`.
+#       # LinkedIn + Indeed (each its own source). Each enabled site
+#       # is fetched separately, under its own progress row. country
+#       # (Indeed only) sets the regional host and is the fallback for
+#       # countries the scraper does not recognize. Requires
+#       # `python-jobspy>=1.1.82`.
 #       linkedin:
 #         enabled: true
 #         results_wanted_per_query: 50
