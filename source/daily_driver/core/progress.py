@@ -171,11 +171,18 @@ class RunProgress:
         tb: TracebackType | None,
     ) -> None:
         with self._lock:
-            # A run that pinned no counters (e.g. zero sources) still shows its
-            # title: seat it now so it persists, then close.
-            self._ensure_title_locked()
-            self._closed = True
             manager = self._manager
+            # A run that pinned no counters (e.g. zero sources) still shows its
+            # title: seat it now so it persists. A seat failure during teardown
+            # (e.g. stderr closing on a SIGTERM unwind) must never replace a
+            # propagating exception nor skip stop() -- swallow it so the scroll
+            # region and cursor are always restored below. Seat before clearing
+            # _manager, since _ensure_title_locked reads it.
+            try:
+                self._ensure_title_locked()
+            except Exception:  # noqa: BLE001 -- teardown must always reach stop()
+                pass
+            self._closed = True
             self._manager = None
         # stop() restores the scroll region and cursor; run it outside the lock.
         # _closed is already set and _manager cleared, so no late worker call can

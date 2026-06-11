@@ -403,6 +403,38 @@ def test_live_mode_teardown_stops_manager_on_exception(monkeypatch):
     assert rp._closed is True
 
 
+def test_exit_seats_title_failure_still_stops_and_preserves_exception(monkeypatch):
+    """If seating the pending title raises during __exit__ (e.g. stderr closing
+    on a SIGTERM unwind), the manager is still stopped (scroll region/cursor
+    restored) and the in-flight exception is not replaced by the seat failure."""
+
+    stopped = []
+
+    class _FakeManager:
+        enabled = True
+
+        def status_bar(self, *args, **kwargs):  # seating the title fails
+            raise OSError("stderr closed")
+
+        def stop(self):
+            stopped.append(True)
+
+    fake = _FakeManager()
+    monkeypatch.setattr(RunProgress, "_start_live", lambda self: fake)
+    console, _ = _line_console()
+    rp = RunProgress(console, tty=True, title="Job search run")
+
+    # No counter is created, so the title is still pending when __exit__ tries to
+    # seat it. The body's KeyboardInterrupt must survive the seat OSError.
+    with pytest.raises(KeyboardInterrupt):
+        with rp:
+            raise KeyboardInterrupt()
+
+    assert stopped == [True]  # stop() ran despite the seating failure
+    assert rp._manager is None
+    assert rp._closed is True
+
+
 def test_finish_after_close_is_a_noop(monkeypatch):
     buf, _mgr = _inject_live(monkeypatch)
     console, _ = _line_console()

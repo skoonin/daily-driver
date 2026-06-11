@@ -1330,6 +1330,10 @@ def run_backfill(
                     Console.get_log_console(), tty=tty, title="Job backfill"
                 ) as rp,
             ):
+                # title + "Enriching jobs" header + 3 phase rows (detail,
+                # products, fit/notes) -- reserve the block in one scroll-region
+                # set, as run() does, to avoid the per-bar resize gap.
+                rp.reserve(2 + 3)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
                     plugin,
