@@ -27,8 +27,7 @@ All three listen on `http://localhost:11434`.
 
 ## Test the model
 
-Verify the pulled model actually generates before wiring it into
-daily-driver. Three quick checks, fastest to most representative:
+Verify the pulled model actually generates before wiring it into daily-driver. Three quick checks, fastest to most representative:
 
 **1. CLI smoke test** — confirms the model loads and produces output:
 
@@ -36,11 +35,9 @@ daily-driver. Three quick checks, fastest to most representative:
 ollama run qwen2.5:14b "In one sentence, what does Stripe build?"
 ```
 
-Expect a single-sentence answer. First invocation is slow (model loads
-into RAM); subsequent runs are fast.
+Expect a single-sentence answer. First invocation is slow (model loads into RAM); subsequent runs are fast.
 
-**2. HTTP API test** — exactly the call shape daily-driver uses for
-free-text enrichment (`enrich_company_descriptions`):
+**2. HTTP API test** — the call shape daily-driver uses for free-text enrichment (`enrich_company_descriptions`):
 
 ```
 curl -s http://localhost:11434/api/generate \
@@ -51,13 +48,9 @@ curl -s http://localhost:11434/api/generate \
   }' | jq -r .response
 ```
 
-You should see two short lines back. If you get an empty `response` or
-an `error` field, the model is loaded but the prompt rejected — try a
-different model.
+You should see two short lines back. An empty `response` or an `error` field means the model loaded but rejected the prompt — try a different model.
 
-**3. JSON-mode test** — call shape used for structured enrichment
-(`enrich_fit_and_notes`). The `"format": "json"` flag forces the model
-to emit valid JSON:
+**3. JSON-mode test** — the call shape for structured enrichment (`enrich_fit_and_notes`). The `"format": "json"` flag forces valid JSON:
 
 ```
 curl -s http://localhost:11434/api/generate \
@@ -69,10 +62,7 @@ curl -s http://localhost:11434/api/generate \
   }' | jq -r .response | jq .
 ```
 
-Expect a parseable object: `{"fit": 9, "notes": "..."}`. If `jq` fails
-to parse the inner `.response`, your model is drifting on JSON output
-— pick a stronger model from the [model table](#model-picks-64-gb-m-series)
-(qwen2.5 and phi4 are the most reliable here).
+Expect a parseable object: `{"fit": 9, "notes": "..."}`. If `jq` can't parse the inner `.response`, the model is drifting on JSON output — pick a stronger one from the [model table](#model-picks-64-gb-m-series) (qwen2.5 and phi4 are the most reliable).
 
 ## Config block
 
@@ -105,8 +95,7 @@ Enrichment routing (`provider` / `model`) lives under `plugins.job_search.enrich
 | `llama3.2:3b` | ~2 GB | Faster iteration; lower quality |
 | `qwen2.5:32b` | ~20 GB | Higher quality if RAM permits |
 
-Expect ~10–15 tokens/sec on a 14B model. A 50-job `jobs backfill` finishes
-in a few minutes.
+Expect ~10-15 tokens/sec on a 14B model. A 50-job `jobs backfill` finishes in a few minutes.
 
 > **RAM caveat for `max_parallel > 1`.** Each parallel call holds its own KV cache, which scales with model size and context length. Default `max_parallel: 4` with a 14 GB model can drive ~50 GB peak RAM under load. On a 32 GB Mac drop to `max_parallel: 2`, set `OLLAMA_KV_CACHE_TYPE=q8_0` (see [Tuning](#tuning)), or pick `llama3.2:3b`. `daily-driver doctor` shows the configured value; tune in `.dd-config.yaml`.
 
@@ -157,30 +146,14 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
   daily-driver jobs backfill -vv 2>&1 | tee /tmp/backfill.log
   ```
 
-  Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or where the model returned an empty string. `-v` alone gives the startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
+  Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or returned an empty string. `-v` alone gives startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
 - **`connection refused on 11434`** — `ollama serve` not running.
-- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the
-  start of enrichment; if the server is unreachable or the configured model is
-  not pulled, it skips the product / fit / notes passes (one warning naming the
-  endpoint or model) instead of burning a per-call timeout on every job. Detail
-  pages still run. Start the server (or `ollama pull <model>`), then
-  `jobs backfill` to fill the empty rows.
-- **First request is slow** — Ollama loads the model into RAM on demand.
-  Subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep the model
-  warm between sessions.
-- **Output quality below claude path** — try a larger model, or keep
-  `summary` on claude and route only `enrichment` to ollama.
-- **Tune resource use (optional)** — see [Tuning](#tuning) for the server-side environment variables and recommended settings. The client-side counterpart is `ai.ollama.max_parallel` in `.dd-config.yaml` (default 4); raise it only after raising the server-side `OLLAMA_NUM_PARALLEL` first. Set to `1` to force serial enrichment.
-- **Ctrl-C during a long backfill** — first press shows
-  `Stopping — waiting for N companies still being enriched...`. The
-  command finishes the in-flight model calls (up to `ai.ollama.timeout`
-  each), saves partial progress, and exits. Press Ctrl-C again to
-  force-quit immediately and lose what's in progress.
-- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` run drops
-  a timestamped backup before mutating `jobs.csv`. `daily-driver doctor`
-  warns once you have more than 5; keep the 2–3 most recent and delete
-  the rest with `rm <output_dir>/jobs.csv.bak.*` (then re-create one
-  manually if you want a current rollback point).
+- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the start of enrichment; if the server is unreachable or the model is not pulled, it skips the product / fit / notes passes (one warning naming the endpoint or model) instead of burning a per-call timeout on every job. Detail pages still run. Start the server (or `ollama pull <model>`), then `jobs backfill` to fill the empty rows.
+- **First request is slow** — Ollama loads the model into RAM on demand; subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep it warm between sessions.
+- **Output quality below claude path** — try a larger model, or keep `summary` on claude and route only enrichment to ollama.
+- **Tune resource use (optional)** — see [Tuning](#tuning) for the server-side environment variables. The client-side counterpart is `ai.ollama.max_parallel` (default 4); raise it only after raising server-side `OLLAMA_NUM_PARALLEL`, or set it to `1` for serial enrichment.
+- **Ctrl-C during a long backfill** — first press shows `Stopping — waiting for N companies still being enriched...`. The command finishes in-flight model calls (up to `ai.ollama.timeout` each), saves partial progress, and exits. A second Ctrl-C force-quits and loses what's in progress.
+- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` drops a timestamped backup before mutating `jobs.csv`, and `daily-driver doctor` warns once you have more than 5. Keep the 2-3 most recent and delete the rest with `rm <output_dir>/jobs.csv.bak.*`.
 
 ## See also
 

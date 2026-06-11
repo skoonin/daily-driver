@@ -1,15 +1,15 @@
 # Using Daily Driver
 
-End-to-end guide to the daily flow plus the surfaces you'll touch most
-often: tracker, focus, jobs, day-cycle launchers, summary, voice, and
-scheduler. For the mental model and workspace layout, start with
-[concepts.md](concepts.md). For installation see [install.md](install.md).
-For configuration syntax see [configuration.md](configuration.md). For
-exhaustive per-flag detail see [commands.md](commands.md).
+End-to-end guide to the daily flow and the surfaces you touch most: tracker, focus, jobs, day-cycle launchers, summary, voice, and scheduler.
+
+- Mental model and workspace layout: [concepts.md](concepts.md)
+- Installation: [install.md](install.md)
+- Config syntax: [configuration.md](configuration.md)
+- Per-flag detail: [commands.md](commands.md)
 
 ## First day
 
-A walkthrough you can run end-to-end the first time you set up.
+A walkthrough you can run end-to-end the first time.
 
 ### 1. Scaffold the workspace
 
@@ -19,26 +19,15 @@ cd ~/daily-driver-workspace
 daily-driver doctor
 ```
 
-`init` is idempotent. Re-running it tops up missing files and prints a
-`Created: ... ; Skipped: ...` summary. It will not overwrite `context.md`
-or `voice-profile.md` once they exist; pass `-f` / `--force` only if you
-want to reset `.dd-config.yaml` (the previous copy is preserved as
-`.dd-config.yaml.bak`).
+`init` is idempotent — re-running tops up missing files and prints a `Created: ... ; Skipped: ...` summary. It never clobbers `context.md` or `voice-profile.md`. `-f` / `--force` resets `.dd-config.yaml` (the old copy is kept as `.dd-config.yaml.bak`).
 
-`doctor` checks contracts and dependencies. Exit 0 with WARNINGs is fine;
-ERRORs need `doctor --fix` (regenerates managed files and restores any you
-accidentally deleted) or `doctor --reset` (nuclear overwrite).
+`doctor` checks contracts and dependencies. WARNINGs exit 0; ERRORs need `doctor --fix` (regenerates managed files, restores deleted ones) or `doctor --reset` (full overwrite).
 
 ### 2. Fill in `context.md`
 
-Open `context.md` in your editor and replace the seeded placeholders with
-real biographical context: name, timezone, what you do, what you're
-working on, anything you would tell a new collaborator on day one. This is
-the file `claude` reads before every session, so the better it is, the
-better the conversations.
+Replace the seeded placeholders with real biographical context — what you do, what you're working on, anything you'd tell a new collaborator. `claude` reads this before every session, so a richer file means better conversations.
 
-`voice-profile.md` can wait until you have writing samples — see
-[Voice updates](#voice-updates) below.
+`voice-profile.md` can wait until you have writing samples — see [Voice updates](#voice-updates).
 
 ### 3. Add a first tracker entry
 
@@ -48,8 +37,7 @@ daily-driver tracker list
 daily-driver status
 ```
 
-`status` is the dashboard. It surfaces setup gaps first (if any), totals
-by category and status, stalled items, and seven days of activity.
+`status` is the dashboard: setup gaps first (if any), totals by category and status, stalled items, and seven days of activity.
 
 ### 4. Start the day
 
@@ -57,10 +45,7 @@ by category and status, stalled items, and seven days of activity.
 daily-driver day-start
 ```
 
-Spawns a `claude` session with the `work-planner` agent and your workspace
-attached. It runs `/day-start`, which reads your tracker, recent commits,
-and calendar events, and helps you draft the day's plan. The plan is
-written to `<workspace>/<YYYY>/<MM>/<DD>/plan.md`.
+Spawns a `claude` session with the `work-planner` agent and your workspace attached, then runs `/day-start` — it reads your tracker, recent commits, and calendar, and helps draft the day's plan into `<workspace>/<YYYY>/<MM>/<DD>/plan.md`.
 
 ### 5. Check in at mid-day
 
@@ -68,10 +53,7 @@ written to `<workspace>/<YYYY>/<MM>/<DD>/plan.md`.
 daily-driver check-in
 ```
 
-By default this resumes the morning session (set
-`claude.resume_check_in: false` in `.dd-config.yaml` to start fresh).
-Update the tracker as you go — `claude` can do this via the slash command,
-or you can run `daily-driver tracker update <ID> -s in-progress` directly.
+Resumes the morning session by default (set `claude.resume_check_in: false` to start fresh). Update the tracker as you go — via the slash command, or directly with `daily-driver tracker update <ID> -s in-progress`.
 
 ### 6. Wind down
 
@@ -79,59 +61,32 @@ or you can run `daily-driver tracker update <ID> -s in-progress` directly.
 daily-driver day-end
 ```
 
-Reviews what got done, what didn't, and what to carry forward. Appends to
-the day's `notes.md`.
-
-That's the loop. Repeat tomorrow.
+Reviews what got done, what didn't, and what to carry forward. Appends to the day's `notes.md`. That's the loop — repeat tomorrow.
 
 ## Tracker
 
-The tracker is the load-bearing surface. Categories are config-driven —
-edit `.dd-config.yaml` under `tracker.categories` to add `job`, `errand`,
-`contact`, `ticket`, or anything else.
-
-### Lifecycle commands
+The load-bearing surface. Categories are config-driven — edit `tracker.categories` in `.dd-config.yaml` to add `job`, `errand`, `contact`, `ticket`, or anything else.
 
 | Command | Purpose |
 |---|---|
-| `tracker add -c CAT -T TEXT [...]` | Create a new entry |
-| `tracker list [-c CAT] [-s STATUS] [-t TAG] [--since SPEC] [-j]` | Filter / print as table or JSON |
-| `tracker show ID [-j]` | Single-entry detail view |
-| `tracker update ID [-s STATUS] [-N NOTE] [-t TAGS] [...]` | Update; `-N`/`--note` appends; `-t`/`--tags` replaces |
+| `tracker add -c CAT -T TEXT [...]` | Create an entry |
+| `tracker list [-c CAT] [-s STATUS] [-t TAG] [--since SPEC] [-j]` | Filter; table or JSON |
+| `tracker show ID [-j]` | Single-entry detail |
+| `tracker update ID [-s STATUS] [-N NOTE] [-t TAGS] [...]` | Update; `-N` appends, `-t` replaces |
 | `tracker delete ID` | Remove one entry |
-| `tracker prune [-c CAT] [-s STATUS] [--older-than SPEC] [-n]` | Bulk delete (at least one filter required) |
+| `tracker prune [-c CAT] [-s STATUS] [--older-than SPEC] [-n]` | Bulk delete (one filter required) |
 | `tracker follow-ups [--overdue] [-j]` | Entries with `next_action` set |
 | `tracker stats [-j]` | Counts by category and status |
 
-### Common examples
-
 ```bash
-# Add a job application with extras
-daily-driver tracker add -c job -T "Senior SRE at Acme" \
-    -s open -l https://acme.example/jobs/123 \
-    --extra company=Acme --extra source=linkedin
-
-# Update status and append a note
+daily-driver tracker add -c job -T "Senior SRE at Acme" -s open -l https://acme.example/jobs/123 --extra company=Acme --extra source=linkedin
 daily-driver tracker update abc123 -s blocked -N "waiting on referral"
-
-# Find things that are stalled
-daily-driver tracker list -s open --since week
-
-# Prune dropped jobs older than a month (dry-run first)
-daily-driver tracker prune -c job -s dropped --older-than month -n
-daily-driver tracker prune -c job -s dropped --older-than month
+daily-driver tracker prune -c job -s dropped --older-than month -n   # dry-run first
 ```
 
 ### Statuses
 
-Recommended set: `open`, `in-progress`, `blocked`, `done`, `ruled-out`.
-You can use anything else; the CLI just nudges once (to stderr) when you
-introduce a status outside that set and that no other entry uses. To
-silence the nudge globally, set `tracker.warn_unknown_status: false` in
-`.dd-config.yaml`.
-
-Run `daily-driver help statuses` for the current recommended + in-use
-list.
+Recommended set: `open`, `in-progress`, `blocked`, `done`, `ruled-out`. Anything else works; the CLI nudges once (to stderr) for a status outside that set that no other entry uses. Silence it with `tracker.warn_unknown_status: false`. Run `daily-driver help statuses` for the current recommended + in-use list.
 
 ### Date specifiers
 
@@ -148,8 +103,7 @@ YYYY-MM-DD
 
 ## Focus mode
 
-A flock-backed toggle that other Daily Driver commands respect — most
-notably, scheduled check-ins skip while focus is on.
+A flock-backed toggle other commands respect — scheduled check-ins skip while focus is on.
 
 ```bash
 daily-driver focus on --for 90m --reason "deep work on Q2 OKRs"
@@ -157,51 +111,35 @@ daily-driver focus status
 daily-driver focus off
 ```
 
-`--for` accepts `30m`, `2h`, `1h30m`, or bare minutes. Omitting it falls
-back to `focus.default_duration` in `.dd-config.yaml` (default `25m`).
-`focus status -j` emits JSON.
-
-The lock lives at `.daily-driver/state/focus.lock`. If it gets stuck,
-`focus off` releases it; in the rare case the process died holding the
-lock, delete the file directly.
+`--for` accepts `30m`, `2h`, `1h30m`, or bare minutes; omitting it falls back to `focus.default_duration` (default `25m`). The lock lives at `.daily-driver/state/focus.lock` — if it sticks, `focus off` releases it, or delete the file directly.
 
 ## Day cycle launchers
 
-Three thin wrappers around `claude` that spawn a workspace-aware session
-with the `work-planner` agent.
+Three thin wrappers around `claude` that spawn a workspace-aware session with the `work-planner` agent.
 
-| Command | Slash command run | Typical time |
+| Command | Slash command | Typical time |
 |---|---|---|
 | `day-start` | `/day-start` | morning |
 | `check-in` | `/check-in` | midday |
 | `day-end` | `/day-end` | evening |
 
-Shared flags: `--session-name NAME`, `--agent NAME` (default
-`work-planner`), `--model {sonnet,opus,haiku}`.
-
-`check-in` adds `--no-resume` to force a fresh session instead of resuming
-the morning's. The default is governed by `claude.resume_check_in` in
-`.dd-config.yaml`.
+Shared flags: `--session-name NAME`, `--agent NAME` (default `work-planner`), `--model {sonnet,opus,haiku}`. `check-in` adds `--no-resume` to force a fresh session; the default is governed by `claude.resume_check_in`.
 
 ### In-session slash commands
 
-These ship to `.claude/commands/daily-driver/` but are not CLI subcommands —
-invoke them from inside a running `claude` session.
+These ship to `.claude/commands/daily-driver/` but are not CLI subcommands — invoke them inside a running `claude` session.
 
 | Slash command | What it does |
 |---|---|
-| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/day-start` and can be run standalone. |
+| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/day-start`, or run standalone. |
 
 ## Jobs
 
-The job-search plugin scrapes a configurable set of boards, dedupes against
-existing rows in `jobs.csv`, and uses an AI provider to enrich missing
-fields (fit, notes, comp, Glassdoor rating).
+The job-search plugin scrapes a configurable set of boards, dedupes against `jobs.csv`, and enriches missing fields (fit, notes, comp, Glassdoor rating) via an AI provider.
 
 ### Enable it
 
-Add a `plugins.job_search` block to `.dd-config.yaml` and set
-`scraper.enabled: true`. Minimal example:
+Add a `plugins.job_search` block and set `scraper.enabled: true`. Minimal:
 
 ```yaml
 plugins:
@@ -224,7 +162,7 @@ plugins:
       weworkremotely: {}
 ```
 
-Full field reference in [configuration.md](configuration.md#pluginsjob_search).
+Full field reference: [configuration.md](configuration.md#pluginsjob_search).
 
 ### Sources
 
@@ -239,15 +177,9 @@ Full field reference in [configuration.md](configuration.md#pluginsjob_search).
 | `indeed` | Indeed via JobSpy |
 | `apple` | Apple careers (requires Playwright) |
 
-`linkedin` and `indeed` are top-level site sources (both fetched via the
-`python-jobspy` library, an implementation detail). They are the CLI selectors
-for `jobs run -S` and the config keys `sources.linkedin` / `sources.indeed`.
-When both are enabled, each is fetched separately, under its own progress row,
-with its own retry and failure isolation. Each appears under its own site name
-in the `Source` column and the live progress display.
+`linkedin` and `indeed` are site-named sources (fetched via the `python-jobspy` library, an implementation detail). When both are enabled, each is fetched separately — its own progress row, retry, and failure isolation — and labeled by its own site name in the `Source` column.
 
-`daily-driver jobs run --list-sources` prints the live set. `daily-driver
-help sources` does the same.
+`daily-driver jobs run --list-sources` (or `daily-driver help sources`) prints the live set.
 
 ### Commands
 
@@ -258,43 +190,38 @@ daily-driver jobs run --no-enrich               # append only, skip enrichment
 daily-driver jobs backfill                      # re-enrich empty cells
 daily-driver jobs backfill --limit 20           # cap LLM spend at 20 product + 20 fit
 daily-driver jobs run -S remoteok,hn_jobs       # source override
-
+daily-driver jobs promote https://acme.example/jobs/123   # row -> tracker job entry
 daily-driver jobs status                        # last-run metadata + csv size
 daily-driver jobs prune --older-than month      # archive dropped/rejected/closed rows
 ```
 
-`jobs prune` requires `--older-than SPEC`. Default target statuses are
-`dropped`, `rejected`, `closed`; pass `-s active` (repeatable) to override.
-Pruned rows move to `jobs.archive.csv` — nothing is deleted outright.
+`jobs run` writes as it works, so an interrupt (Ctrl-C or a scheduled `SIGTERM`) keeps what finished. Each source appends as it completes; LinkedIn and Indeed checkpoint after every search unit. A graceful stop drains in-flight work and exits (`130` for Ctrl-C, `143` for `SIGTERM`); a second Ctrl-C quits immediately. An interrupt during scraping skips enrichment — run `jobs backfill` to fill the empty cells later.
+
+`jobs promote` copies a triaged row into a tracker `job` entry once it needs active driving (interviews, follow-ups). The tracker drives work; `jobs.csv` is the discovery record; promotion is the explicit, idempotent bridge — it never mutates `jobs.csv`. Select by exact Link URL or an unambiguous Company substring.
+
+`jobs prune` requires `--older-than SPEC`. Default target statuses are `dropped`, `rejected`, `closed`; pass `-s active` (repeatable) to override. Pruned rows move to `jobs.archive.csv` — nothing is deleted outright.
 
 ### Choosing an AI provider
 
-Enrichment and summary tasks default to the `claude` CLI. You can route
-either (or both) to a local Ollama server with the `ai:` config block:
+Enrichment and summary default to the `claude` CLI. Route either to a local Ollama server with the `ai:` and plugin enrichment blocks:
 
 ```yaml
 ai:
-  enrichment:
-    provider: ollama
-    model: qwen2.5:14b
-  # summary stays on claude by default
   ollama:
     endpoint: http://localhost:11434
     timeout: 60
+plugins:
+  job_search:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
 ```
 
-`claude` is the right pick for low-volume / high-quality tasks. `ollama`
-is the right pick for `jobs backfill` over hundreds of rows: no
-rate limits, free, fully local. Interactive launchers always use `claude`.
-Full setup walkthrough: [ollama-setup.md](ollama-setup.md).
-
-When at least one task is routed to ollama, `daily-driver doctor` adds an
-`AI providers` row that checks server reachability and confirms the model
-is pulled.
+`claude` suits low-volume, high-quality work; `ollama` suits `jobs backfill` over hundreds of rows (no rate limits, free, local). Interactive launchers always use `claude`. Full walkthrough: [ollama-setup.md](ollama-setup.md). When any task routes to ollama, `daily-driver doctor` adds an `AI providers` row checking server reachability and model presence.
 
 ## Summary
 
-Generate a headless summary of any period and pipe it to the clipboard.
+Generate a headless summary of any period and copy it to the clipboard.
 
 ```bash
 daily-driver summary -r today
@@ -303,62 +230,51 @@ daily-driver summary -r 2026-05-01:2026-05-09 --match python --match sre
 daily-driver summary -r yesterday -j                # raw data, no claude
 ```
 
-`-r` / `--range` accepts the same grammar as tracker dates plus
-`YYYY-MM-DD:YYYY-MM-DD`. `--no-clipboard` skips the `pbcopy` step.
-`--timeout SECONDS` (default 180) controls how long to wait for `claude`.
+`-r` / `--range` accepts the tracker date grammar plus `YYYY-MM-DD:YYYY-MM-DD`. `--no-clipboard` skips `pbcopy`; `--timeout SECONDS` (default 180) caps the wait for `claude`.
 
 ## Voice updates
 
-`voice-profile.md` shapes how `claude` writes on your behalf. To rewrite
-it from authentic samples (Slack exports, emails, blog posts, anything
-text-based):
+`voice-profile.md` shapes how `claude` writes on your behalf. Rewrite it from authentic samples (Slack exports, emails, blog posts):
 
 ```bash
 daily-driver voice-update --from ~/exports/slack.txt --from ~/blog/
-daily-driver voice-update --from ~/exports/slack.txt -n   # diff only
+daily-driver voice-update --from ~/exports/slack.txt -n        # diff only
 daily-driver voice-update --from ~/exports/slack.txt --replace
 ```
 
-Default mode is `--append`; pass `--replace` to start over. `-n` /
-`--dry-run` prints the would-be diff without writing.
+Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` prints the diff without writing.
 
-> Run this on writing you actually produced, not on AI-generated text — the
-> profile is supposed to capture your voice, not Claude's.
+> Run this on writing you actually produced, not AI-generated text — the profile captures your voice, not Claude's.
 
 ## Workspace utilities
 
 | Command | Use |
 |---|---|
-| `paths <kind> [-d DATE] [-j]` | Print a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. Useful for shell pipelines. |
-| `gather calendar [--since SPEC] [--until SPEC] [-j]` | Read macOS Calendar (icalBuddy) events as JSON. |
-| `gather git [--repo PATH] [--since SPEC] [--until SPEC] [-j]` | Recent commits from the configured repos (or `--repo PATH`). |
+| `paths <kind> [-d DATE] [-j]` | Print a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. |
+| `gather calendar [--since SPEC] [--until SPEC] [-j]` | Read macOS Calendar (icalBuddy) events. |
+| `gather git [--repo PATH] [--since SPEC] [--until SPEC] [-j]` | Recent commits from configured repos (or `--repo PATH`). |
 | `status [-j]` | Tracker dashboard. |
 
 ## Help
 
-`daily-driver help [TOPIC]` is the in-CLI reference for discoverable
-values that change with config or release:
+`daily-driver help [TOPIC]` is the in-CLI reference for discoverable values that change with config or release:
 
 | Topic | What it lists |
 |---|---|
-| `commands` | Every subcommand with one-line description |
-| `statuses` | Recommended statuses + ones already in your tracker |
-| `categories` | Categories defined in your `tracker.categories` |
+| `commands` | Every subcommand with a one-line description |
+| `statuses` | Recommended statuses + ones in your tracker |
+| `categories` | Categories defined in `tracker.categories` |
 | `sources` | Job-board sources known to the scraper |
 | `dates` | Date-spec grammar |
 | `cadences` | Valid `recurring_tasks[].cadence` values |
 
-`daily-driver help -j` emits a structured payload for scripts or shell
-completion. `daily-driver help` (no topic) prints all sections.
-
-This is distinct from argparse `--help`, which only shows flag usage.
+`daily-driver help -j` emits a structured payload for scripts or completion. No topic prints all sections. This is distinct from argparse `--help`, which only shows flag usage.
 
 ## Scheduler (macOS)
 
-`scheduler` manages launchd plists in `~/Library/LaunchAgents/`. Three
-sub-actions: `install`, `uninstall`, `status`. All idempotent.
+`scheduler` manages launchd plists in `~/Library/LaunchAgents/` via three idempotent actions: `install`, `uninstall`, `status`.
 
-Defaults when `scheduler:` is omitted from `.dd-config.yaml`:
+Defaults when `scheduler:` is omitted:
 
 | Job | Time | Action |
 |---|---|---|
@@ -374,15 +290,11 @@ scheduler:
   jobs:    {time: "06:30"}
 ```
 
-The block is freeform — keys are passed through to the Jinja launchd
-templates. Re-run `daily-driver scheduler install` after changes; it
-unloads, rewrites, and reloads in one step.
-
-Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
+The block is freeform — keys pass through to the Jinja launchd templates. Re-run `scheduler install` after changes; it unloads, rewrites, and reloads in one step. Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
 
 ## Output and verbosity
 
-Daily Driver writes data on stdout and status messages on stderr. Tables, JSON payloads, and resolved paths go to stdout; informational lines, warnings, and log output go to stderr. That split is what lets these pipelines work without ceremony:
+Daily Driver writes data on stdout and status messages on stderr, so pipelines work without ceremony:
 
 ```bash
 daily-driver tracker list -s open -j | jq '.[].title'
@@ -390,32 +302,28 @@ daily-driver paths daily-plan | xargs $EDITOR
 daily-driver summary -r week -j > /tmp/week.json
 ```
 
-The status banners ("Starting jobs run...", "Scrape complete: ...") still print to your terminal because they are on stderr — they do not contaminate the piped data.
+On a TTY, `jobs run` pins a live progress display at the bottom: a `Scraping sources` header bar (green ok / red failed segments) with one bar per source, then an `Enriching jobs` group. Each source reports against its natural unit (search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest) and stays pinned at its result (`linkedin  61 found`, red on failure). It ends with a `Completed:` line reconciling totals. Non-interactive output (cron, launchd, pipes), or a terminal that doesn't answer the cursor-position query, falls back to plain lines.
 
-On a TTY, `jobs run` pins a live progress display at the bottom of the terminal. Every source is its own progress bar that fills as it works and then stays pinned at its result (`linkedin  61 found`, recoloured red on failure); a `Scraping sources` header bar tracks overall completion with green (ok) and red (failed) segments. Each source reports progress against its own natural unit — search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest — so even a fast source shows a bar. An `Enriching jobs` group then shows detail / company / fit fill bars. Known-slow boards show a one-time "running -- can take several minutes" note until real progress arrives, so a long quiet stretch doesn't look like a hang. It ends with a `Completed:` line that reconciles totals (found -> new -> matched location, plus "(N skipped by location)" when applicable). The bars persist at every verbosity; verbosity controls only how much log volume scrolls above them. Problems surface live above the bars as they happen, with a terse `Warnings: N (shown above)` line at the end. A non-interactive stream (cron, launchd, pipes) — or a terminal that doesn't answer the cursor-position query on entry — falls back to plain line-per-row output with no ANSI.
-
-Verbosity is controlled by two mutually exclusive flags:
+Verbosity is two mutually exclusive flags:
 
 | Flag | Effect |
 |---|---|
-| (default) | WARNING and ERROR logs; normal status lines; live progress display on a TTY for `jobs run` |
-| `-v` | Adds INFO logs (per-step progress, source-by-source scrape lines, enrichment startup/end counts), timestamped and scrolling above the persistent `jobs run` display |
-| `-vv` | Adds DEBUG logs (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
-| `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and warnings-as-status |
+| (default) | WARNING + ERROR logs; normal status lines; live progress on a TTY |
+| `-v` | Adds INFO (per-step progress, per-source scrape lines, enrichment counts), scrolling above the pinned display |
+| `-vv` | Adds DEBUG (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
+| `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and the live display |
 
-Use `-v` for "tell me what just happened" — e.g. why a `jobs run` produced few rows, or which calendar window `gather calendar` resolved. Use `-vv` when chasing a specific data bug: ollama returning malformed JSON, enrichment writing fewer fields than expected, or a tracker entry that vanished from a filter.
-
-`--no-color` disables ANSI color but keeps Rich markup and table layout intact, which is what you want when piping output through a pager or redirecting to a file that another tool will read.
+Use `-v` for "tell me what just happened" (why a run produced few rows, which calendar window resolved). Use `-vv` to chase a data bug (ollama returning malformed JSON, fields not written). `--no-color` drops ANSI color but keeps Rich markup and table layout — what you want when paging or redirecting output.
 
 ## Troubleshooting
 
-The full guide is [troubleshooting.md](troubleshooting.md). Quick map:
+Full guide: [troubleshooting.md](troubleshooting.md). Quick map:
 
 | Symptom | Where to look |
 |---|---|
 | `doctor` errors | Run `doctor --fix`; then [troubleshooting.md#doctor-reports-error](troubleshooting.md#doctor-reports-error) |
-| Stale launchd plist or wrong path | `scheduler install` again; if it still fails, [launchd plist won't load](troubleshooting.md#launchd-plist-wont-load) |
-| Focus mode stuck on | `daily-driver focus off`; manual lock removal documented in [Focus mode stuck on](troubleshooting.md#focus-mode-stuck-on) |
+| Stale launchd plist or wrong path | `scheduler install` again; else [launchd plist won't load](troubleshooting.md#launchd-plist-wont-load) |
+| Focus mode stuck on | `daily-driver focus off`; manual removal in [Focus mode stuck on](troubleshooting.md#focus-mode-stuck-on) |
 | Ollama connection refused / model not pulled | [ollama-setup.md#troubleshooting](ollama-setup.md#troubleshooting) |
 | Pydantic config error after upgrade | Read `CHANGELOG.md`, edit `.dd-config.yaml`, run `doctor`. No automatic migrations. |
 
@@ -423,7 +331,7 @@ The full guide is [troubleshooting.md](troubleshooting.md). Quick map:
 
 - [concepts.md](concepts.md) — mental model and workspace overview
 - [commands.md](commands.md) — per-subcommand flag detail
-- [configuration.md](configuration.md) — `.dd-config.yaml` schema and customization
+- [configuration.md](configuration.md) — `.dd-config.yaml` schema
 - [cli-tree.md](cli-tree.md) — at-a-glance command tree
 - [ollama-setup.md](ollama-setup.md) — local-LLM provider
 - [troubleshooting.md](troubleshooting.md) — failure modes and recovery
