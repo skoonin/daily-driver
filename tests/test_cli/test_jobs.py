@@ -1081,3 +1081,101 @@ def test_jobs_status_shows_recovery_line_when_interrupted(
     assert "interrupted during enrichment" in out
     assert "jobs backfill" in out
     assert "jobs run --backfill" not in out
+
+
+# ---------------------------------------------------------------------------
+# jobs promote — CLI wiring
+# ---------------------------------------------------------------------------
+
+
+def _seed_promote_csv(ws_root: Path) -> Path:
+    return _seed_jobs_csv(
+        ws_root,
+        [
+            {
+                "Company": "Acme Corp",
+                "Role": "SRE",
+                "Status": "interviewing",
+                "Link": "https://jobs.example.com/acme/1",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+
+def test_jobs_promote_help_exits_0() -> None:
+    from daily_driver.cli.cli import app
+
+    with pytest.raises(SystemExit) as exc:
+        app(["jobs", "promote", "--help"])
+    assert exc.value.code == 0
+
+
+def test_jobs_promote_creates_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(
+        ["--workspace", str(ws), "jobs", "promote", "https://jobs.example.com/acme/1"]
+    )
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "Promoted job-001" in err
+
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert len(entries) == 1
+    assert entries[0].title == "Acme Corp -- SRE"
+
+
+def test_jobs_promote_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+    url = "https://jobs.example.com/acme/1"
+
+    assert app(["--workspace", str(ws), "jobs", "promote", url]) == 0
+    capsys.readouterr()
+    rc = app(["--workspace", str(ws), "jobs", "promote", url])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "already promoted as job-001" in err
+
+
+def test_jobs_promote_no_match_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "nope-co"])
+    assert rc == 1
+    assert "no jobs.csv row matched" in capsys.readouterr().err
+
+
+def test_jobs_promote_dry_run_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "-n", "acme"])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "would create job entry" in err
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert entries == []
