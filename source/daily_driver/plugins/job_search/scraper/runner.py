@@ -2028,6 +2028,13 @@ def _run_impl(
             _row(sid).progress(completed, total)
 
         def _on_done(sid: str, ok: bool, detail: str) -> None:
+            # A checkpoint-aborted source returns normally from its scraper
+            # (rows persisted so far), so the orchestrator reports ok=True --
+            # but the checkpoint handler already recorded it failed. The live
+            # row must agree with the manifest/exit code, not paint green.
+            if ok and sid in state.failed_sources:
+                ok = False
+                detail = f"{detail} (persistence failed)" if detail else "failed"
             _row(sid).finish(ok, detail)
 
         # The sink IS the durable-record checkpoint: each source's rows are
