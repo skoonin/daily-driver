@@ -1445,6 +1445,10 @@ def run_backfill(
                     Console.get_log_console(), tty=tty, title="Job backfill"
                 ) as rp,
             ):
+                # title + "Enriching jobs" header + 3 phase rows (detail,
+                # products, fit/notes) -- reserve the block in one scroll-region
+                # set, as run() does, to avoid the per-bar resize gap.
+                rp.reserve(2 + 3)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
                     plugin,
@@ -2017,6 +2021,11 @@ def _run_impl(
             return row
 
         def _on_enabled(sids: list[str]) -> None:
+            # Reserve the whole scrape block in one scroll-region set before any
+            # row is pinned: title + group header + one bar per source. Avoids
+            # the per-bar region resizes that corrupt the display on iTerm2 /
+            # VS Code (gap before the block, duplicate block in scrollback).
+            rp.reserve(2 + len(sids))
             for sid in sids:
                 _row(sid)
 
