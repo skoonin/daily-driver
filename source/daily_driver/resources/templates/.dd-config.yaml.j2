@@ -83,17 +83,13 @@ tracker:
 #   # day and want check-in to land in it.
 #   resume_check_in: false
 
-# Optional: AI provider routing for headless tasks (enrichment, summary).
+# Optional: AI provider routing for the headless `summary` task,
+# plus the shared claude/ollama provider-connection blocks (also
+# consulted by `plugins.job_search.enrichment` routing).
 # Interactive launchers (day-start, check-in, day-end) always use claude —
 # they need session resume / agents / workspace context that Ollama lacks.
-# Omitting the entire block keeps claude defaults for every task.
+# Omitting the entire block keeps claude defaults for summary.
 # ai:
-#   enrichment:
-#     # provider: claude | ollama
-#     provider: claude
-#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
-#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
-#     # model: sonnet
 #   summary:
 #     # provider: claude | ollama
 #     provider: claude
@@ -166,10 +162,17 @@ tracker:
 #     # Glassdoor rating, a fit score, and a Notes summary. Each pass
 #     # costs API calls; the max_* values cap how many run.
 #     enrichment:
+#       # provider: claude | ollama
+#       provider: claude
+#       # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#       # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#       # model: sonnet
 #       # Seconds before a single enrichment LLM call is abandoned.
 #       enrich_timeout: 30
 #       # Cap on company-description lookups per run (bounds API cost).
 #       max_enrich_companies: 50
+#       # Look up a one-line Product/Purpose summary for each company.
+#       enrich_product: true
 #       # Look up each company's Glassdoor rating during enrichment.
 #       enrich_gd_rating: true
 #       # Score each job 1-10 for fit against your persona and locations.

@@ -73,18 +73,12 @@ Injected into Claude sessions as context.
 
 ## `ai`
 
-Routes headless AI tasks (enrichment, summary) to either the `claude` CLI
-or a local [Ollama](https://ollama.com) server. Interactive launchers
-(day-start, check-in, day-end) always use `claude`; the `ai` block does
-not affect them.
+Routes the headless `summary` task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. Those provider blocks are also consulted by the job_search plugin's own enrichment routing (`plugins.job_search.enrichment.provider`) — enrichment routing itself lives with the plugin, not here. Interactive launchers (day-start, check-in, day-end) always use `claude`; the `ai` block does not affect them.
 
-Default (omitting the block entirely): `claude` for every task. Existing
-workspaces need no migration.
+Default (omitting the block entirely): `claude` for summary. Existing workspaces using the old `ai.enrichment` block must move that routing under `plugins.job_search.enrichment` (see the migration note below) — `ai.enrichment` is now rejected.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `enrichment.provider` | `claude` \| `ollama` | `claude` | Used by `jobs run --backfill` |
-| `enrichment.model` | string or null | null | Provider-specific identifier |
 | `summary.provider` | `claude` \| `ollama` | `claude` | Used by `summary --range` |
 | `summary.model` | string or null | null | Provider-specific identifier |
 | `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
@@ -92,27 +86,41 @@ workspaces need no migration.
 | `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
 | `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
 
-Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
-`haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,
-`llama3.2:3b`). `null` lets each provider pick its own default.
+Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`, `haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`, `llama3.2:3b`). `null` lets each provider pick its own default.
 
-`max_parallel` raises enrichment throughput only — it does not change the
-`plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many
-jobs get enriched) or the per-call timeout.
+`max_parallel` raises enrichment throughput only — it does not change the `plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many jobs get enriched) or the per-call timeout.
 
-See [`docs/ollama-setup.md`](ollama-setup.md) for installation and the
-`doctor` reachability check.
+See [`docs/ollama-setup.md`](ollama-setup.md) for installation, tuning, and the `doctor` reachability check.
 
-Example: route enrichment to a local model, keep summary on claude:
+Example: route enrichment to a local model, keep summary on claude. Enrichment provider/model now live under the plugin; the shared `ollama:` connection block stays here:
 
 ```yaml
+ai:
+  ollama:
+    endpoint: http://localhost:11434
+    timeout: 90
+plugins:
+  job_search:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
+```
+
+Migration from the pre-split config — the routing moved off `ai:` onto the plugin:
+
+```yaml
+# Before (rejected):
 ai:
   enrichment:
     provider: ollama
     model: qwen2.5:14b
-  ollama:
-    endpoint: http://localhost:11434
-    timeout: 90
+
+# After:
+plugins:
+  job_search:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
 ```
 
 ## `scheduler`
@@ -204,20 +212,25 @@ checks for the configured engine and `doctor --fix` installs it.
 
 ### `enrichment` (`EnrichmentConfig`)
 
-Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, fit, notes).
+Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, product/Glassdoor, fit, notes), plus the AI provider routing for those passes. The provider/model live here (enrichment is plugin-specific); the shared connection/tuning lives in the core `ai.claude:` / `ai.ollama:` blocks.
 
 The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
 
-| Key | Type | Default |
-|-----|------|---------|
-| `enrich_timeout` | int | 30 |
-| `max_enrich_companies` | int | 50 |
-| `enrich_gd_rating` | bool | true |
-| `enrich_fit` | bool | true |
-| `enrich_notes` | bool | true |
-| `max_enrich_fit` | int | 50 |
-| `detail_delay_seconds` | float | 0.5 |
-| `criteria` | list of `{label, assess}` | `[]` |
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `provider` | `claude` \| `ollama` | `claude` | Which backend runs the enrichment LLM calls |
+| `model` | string or null | null | Provider-specific identifier (e.g. `sonnet`, `qwen2.5:14b`) |
+| `enrich_timeout` | int | 30 | |
+| `max_enrich_companies` | int | 50 | |
+| `enrich_product` | bool | true | Fill the Product/Purpose one-liner per company |
+| `enrich_gd_rating` | bool | true | Fill the Glassdoor rating per company |
+| `enrich_fit` | bool | true | |
+| `enrich_notes` | bool | true | |
+| `max_enrich_fit` | int | 50 | |
+| `detail_delay_seconds` | float | 0.5 | |
+| `criteria` | list of `{label, assess}` | `[]` | |
+
+`enrich_product` and `enrich_gd_rating` share one LLM call per company. With both off, the company pass is skipped entirely; with only one on, the prompt asks for and writes only that field.
 
 #### `criteria` — the criteria scanner
 

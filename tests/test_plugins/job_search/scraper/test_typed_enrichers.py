@@ -94,11 +94,16 @@ def test_fit_enrich_score_survives_round_trip(
     """A scored fit must reach the returned EnrichedJob as a bare int (W1.1)."""
     ctx = ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
-            {"enrichment": {"max_enrich_fit": 5, "enrich_timeout": 5}}
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
         ),
-        ai=AIConfig.model_validate(
-            {"enrichment": {"provider": "ollama", "model": "qwen2.5:14b"}}
-        ),
+        ai=AIConfig(),
     )
     monkeypatch.setattr(
         ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "k8s"}'
@@ -135,3 +140,71 @@ def test_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
     j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
     out, _stats = enrich_job_details([j], fake_config)
     assert out[0].status is JobStatus.SKIPPED
+
+
+# ---------------------------------------------------------------------------
+# enrich_product toggle: gate product vs gd_rating writes independently.
+# ---------------------------------------------------------------------------
+
+
+def _company_ctx(**enrichment: object) -> ScrapeContext:
+    base = {"max_enrich_companies": 50, "enrich_fit": False, "enrich_notes": False}
+    base.update(enrichment)
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"scraper": {"enabled": True}, "enrichment": base}
+        ),
+        ai=AIConfig.model_validate({"claude": {"max_parallel": 1}}),
+    )
+
+
+def test_enrich_product_off_skips_product_write_keeps_gd() -> None:
+    """enrich_product=False writes no product, gd_rating still fills."""
+    j = _enriched(comp_display="")
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
+    calls: list[str] = []
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        calls.append(prompt)
+        return "4.3"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, _stats = enrich_company_descriptions([j], ctx)
+
+    assert len(calls) == 1  # one call per company (gd only)
+    assert "Glassdoor" in calls[0] and "build or do" not in calls[0]
+    assert out[0].product == j.product  # unchanged (not written)
+    assert out[0].gd_rating == "4.3"
+
+
+def test_both_product_and_gd_off_skips_phase_entirely() -> None:
+    """Both toggles off => no company-phase LLM calls at all."""
+    j = _enriched()
+    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=False)
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        raise AssertionError("no company call expected when both toggles off")
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, stats = enrich_company_descriptions([j], ctx)
+
+    assert out[0].product == j.product
+    assert stats == {"enriched": 0, "skipped_cached": 0, "failed": 0}
+
+
+def test_enrich_product_default_writes_both() -> None:
+    """Default (both on) writes product and gd_rating from one 2-line response."""
+    j = _enriched(comp_display="")
+    ctx = _company_ctx()
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        return "Acme builds widgets\n4.1"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, _stats = enrich_company_descriptions([j], ctx)
+
+    assert out[0].product == "Acme builds widgets"
+    assert out[0].gd_rating == "4.1"

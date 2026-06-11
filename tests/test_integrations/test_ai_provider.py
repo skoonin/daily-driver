@@ -1,4 +1,10 @@
-"""Unit tests for the AI provider dispatch layer."""
+"""Unit tests for the AI provider dispatch layer.
+
+`invoke_for` takes a resolved route (provider + model) from the caller plus
+the core provider-connection blocks (`ai.claude` / `ai.ollama`). Callers own
+route resolution: summary reads `ai.summary`, the scraper enrichers read
+`plugins.job_search.enrichment`.
+"""
 
 from __future__ import annotations
 
@@ -12,44 +18,55 @@ from daily_driver.integrations import ai_provider, claude_cli, ollama_client
 from daily_driver.integrations.ai_provider import AIInvocationError
 
 
-def test_default_config_routes_to_claude() -> None:
+def test_claude_route_dispatches_to_claude() -> None:
     with patch.object(claude_cli, "invoke", return_value="ok") as inv:
-        out = ai_provider.invoke_for("enrichment", "hi", ai=AIConfig())
+        out = ai_provider.invoke_for(
+            "hi", provider="claude", model="sonnet", ai=AIConfig()
+        )
     assert out == "ok"
     assert inv.call_count == 1
     kwargs = inv.call_args.kwargs
     assert kwargs["headless"] is True
     assert kwargs["session_persistence"] is False
+    assert kwargs["model"] == "sonnet"
 
 
-def test_none_config_routes_to_claude() -> None:
-    with patch.object(claude_cli, "invoke", return_value="ok"):
-        out = ai_provider.invoke_for("summary", "hi", ai=AIConfig())
-    assert out == "ok"
+def test_claude_route_default_model_none() -> None:
+    with patch.object(claude_cli, "invoke", return_value="ok") as inv:
+        ai_provider.invoke_for("hi", provider="claude", model=None, ai=AIConfig())
+    assert inv.call_args.kwargs["model"] is None
 
 
-def test_ollama_provider_routes_to_ollama_client() -> None:
-    ai = AIConfig.model_validate(
-        {"enrichment": {"provider": "ollama", "model": "qwen2.5:14b"}}
-    )
+def test_ollama_route_dispatches_to_ollama_client() -> None:
     with patch.object(ollama_client, "generate", return_value="response text") as gen:
-        out = ai_provider.invoke_for("enrichment", "hi", ai=ai, timeout=42)
+        out = ai_provider.invoke_for(
+            "hi",
+            provider="ollama",
+            model="qwen2.5:14b",
+            ai=AIConfig(),
+            timeout=42,
+        )
     assert out == "response text"
     kwargs = gen.call_args.kwargs
     assert kwargs["model"] == "qwen2.5:14b"
     assert kwargs["endpoint"] == "http://localhost:11434"
     assert kwargs["timeout"] == 42
+    # The prompt rides through so the client can size num_ctx.
+    assert gen.call_args.args[0] == "hi" or kwargs.get("prompt") == "hi"
+
+
+def test_ollama_route_default_model_when_none() -> None:
+    with patch.object(ollama_client, "generate", return_value="x") as gen:
+        ai_provider.invoke_for("p", provider="ollama", model=None, ai=AIConfig())
+    assert gen.call_args.kwargs["model"] == "qwen2.5:14b"
 
 
 def test_ollama_uses_config_timeout_when_none_passed() -> None:
-    ai = AIConfig.model_validate(
-        {
-            "enrichment": {"provider": "ollama", "model": "phi4"},
-            "ollama": {"timeout": 90},
-        }
-    )
+    ai = AIConfig.model_validate({"ollama": {"timeout": 90}})
     with patch.object(ollama_client, "generate", return_value="x") as gen:
-        ai_provider.invoke_for("enrichment", "p", ai=ai, timeout=None)
+        ai_provider.invoke_for(
+            "p", provider="ollama", model="phi4", ai=ai, timeout=None
+        )
     assert gen.call_args.kwargs["timeout"] == 90
 
 
@@ -59,139 +76,84 @@ def test_claude_called_process_error_maps_to_ai_invocation_error() -> None:
     )
     with patch.object(claude_cli, "invoke", side_effect=err):
         with pytest.raises(AIInvocationError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=AIConfig())
+            ai_provider.invoke_for("p", provider="claude", model=None, ai=AIConfig())
     assert exc_info.value.provider == "claude"
     assert exc_info.value.stdout == "auth failed"
     assert exc_info.value.returncode == 1
 
 
-def test_claude_timeout_no_longer_propagates_raw() -> None:
-    """Per I5: a claude timeout now wraps to AITimeoutError so callers
-    have one unified type to match across providers. The integrations seam
-    raises ClaudeTimeoutError; the dispatch layer normalizes it."""
+def test_claude_timeout_wraps_to_ai_timeout_error() -> None:
     from daily_driver.integrations.ai_provider import AITimeoutError
 
-    with patch.object(
-        claude_cli,
-        "invoke",
-        side_effect=claude_cli.ClaudeTimeoutError(5, ["claude"]),
-    ):
-        with pytest.raises(AITimeoutError):
-            ai_provider.invoke_for("enrichment", "p", ai=AIConfig(), timeout=5)
-    # The raw integrations exception should no longer escape here:
-    with patch.object(
-        claude_cli,
-        "invoke",
-        side_effect=claude_cli.ClaudeTimeoutError(5, ["claude"]),
-    ):
-        with pytest.raises(AIInvocationError):  # AITimeoutError IS AIInvocationError
-            ai_provider.invoke_for("enrichment", "p", ai=AIConfig(), timeout=5)
+    err = claude_cli.ClaudeTimeoutError(5, ["claude"])
+    with patch.object(claude_cli, "invoke", side_effect=err):
+        with pytest.raises(AITimeoutError) as exc_info:
+            ai_provider.invoke_for(
+                "p", provider="claude", model=None, ai=AIConfig(), timeout=5
+            )
+    assert exc_info.value.provider == "claude"
+    assert exc_info.value.timeout_seconds == 5
 
 
 def test_ollama_not_reachable_maps_to_ai_invocation_error() -> None:
-    ai = AIConfig.model_validate({"enrichment": {"provider": "ollama", "model": "m"}})
     with patch.object(
         ollama_client,
         "generate",
         side_effect=ollama_client.OllamaNotReachableError("nope"),
     ):
         with pytest.raises(AIInvocationError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai)
+            ai_provider.invoke_for("p", provider="ollama", model="m", ai=AIConfig())
     assert exc_info.value.provider == "ollama"
     assert "nope" in exc_info.value.stderr
 
 
 def test_ollama_model_not_found_maps_to_ai_invocation_error() -> None:
-    ai = AIConfig.model_validate({"enrichment": {"provider": "ollama", "model": "m"}})
     with patch.object(
         ollama_client,
         "generate",
         side_effect=ollama_client.OllamaModelNotFoundError("pull m"),
     ):
         with pytest.raises(AIInvocationError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai)
+            ai_provider.invoke_for("p", provider="ollama", model="m", ai=AIConfig())
     assert exc_info.value.provider == "ollama"
 
 
 def test_ollama_http_error_maps_to_ai_invocation_error_with_body() -> None:
-    ai = AIConfig.model_validate({"enrichment": {"provider": "ollama", "model": "m"}})
     fake_resp = MagicMock()
     fake_resp.status_code = 500
     fake_resp.text = "server boom"
     http_err = requests.HTTPError("500", response=fake_resp)
     with patch.object(ollama_client, "generate", side_effect=http_err):
         with pytest.raises(AIInvocationError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai)
+            ai_provider.invoke_for("p", provider="ollama", model="m", ai=AIConfig())
     assert exc_info.value.provider == "ollama"
     assert exc_info.value.stdout == "server boom"
     assert exc_info.value.returncode == 500
 
 
 def test_ollama_timeout_wraps_to_ai_timeout_error() -> None:
-    """Per I5: requests.Timeout from ollama becomes AITimeoutError (subclass
-    of AIInvocationError). Callers match a single type across providers."""
     from daily_driver.integrations.ai_provider import AITimeoutError
 
     ai = AIConfig.model_validate(
-        {
-            "enrichment": {"provider": "ollama", "model": "m"},
-            "ollama": {"endpoint": "http://localhost:11434", "timeout": 7},
-        }
+        {"ollama": {"endpoint": "http://localhost:11434", "timeout": 7}}
     )
     with patch.object(ollama_client, "generate", side_effect=requests.Timeout("slow")):
         with pytest.raises(AITimeoutError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai, timeout=7)
+            ai_provider.invoke_for("p", provider="ollama", model="m", ai=ai, timeout=7)
     assert exc_info.value.provider == "ollama"
     assert exc_info.value.timeout_seconds == 7
-    # AITimeoutError IS an AIInvocationError — bare catch on the base still works.
     assert isinstance(exc_info.value, AIInvocationError)
 
 
-def test_claude_timeout_wraps_to_ai_timeout_error() -> None:
-    """Per I5: ClaudeTimeoutError from the claude seam becomes AITimeoutError."""
-    from daily_driver.integrations.ai_provider import AITimeoutError
-
-    ai = AIConfig.model_validate({"enrichment": {"provider": "claude"}})
-    err = claude_cli.ClaudeTimeoutError(5, ["claude"])
-    with patch.object(claude_cli, "invoke", side_effect=err):
-        with pytest.raises(AITimeoutError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai, timeout=5)
-    assert exc_info.value.provider == "claude"
-    assert exc_info.value.timeout_seconds == 5
-
-
 def test_ollama_request_exception_normalized_as_ai_invocation_error() -> None:
-    """Per I3: defense-in-depth — any leaked RequestException at the dispatch
-    boundary (DNS edge cases, SSL errors, etc.) becomes AIInvocationError
-    rather than escaping the contract callers rely on."""
-    ai = AIConfig.model_validate(
-        {
-            "enrichment": {"provider": "ollama", "model": "m"},
-            "ollama": {"endpoint": "http://localhost:11434"},
-        }
-    )
-    # ConnectionError is a RequestException; if ollama_client.generate were
-    # to ever let it leak (despite current wrapping), dispatch must catch it.
     leak = requests.ConnectionError("DNS lookup failed")
     with patch.object(ollama_client, "generate", side_effect=leak):
         with pytest.raises(AIInvocationError) as exc_info:
-            ai_provider.invoke_for("enrichment", "p", ai=ai)
+            ai_provider.invoke_for("p", provider="ollama", model="m", ai=AIConfig())
     assert exc_info.value.provider == "ollama"
     assert "DNS lookup failed" in str(exc_info.value)
 
 
-def test_unknown_task_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="unknown AI task"):
-        ai_provider.invoke_for("nonsense", "p", ai=AIConfig())
-
-
-def test_summary_task_independent_model_from_enrichment() -> None:
-    ai = AIConfig.model_validate(
-        {
-            "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-            "summary": {"provider": "claude", "model": "sonnet"},
-        }
-    )
-    with patch.object(claude_cli, "invoke", return_value="s") as inv:
-        ai_provider.invoke_for("summary", "p", ai=ai)
-    assert inv.call_args.kwargs["model"] == "sonnet"
+def test_unknown_provider_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="unknown AI provider"):
+        ai_provider.invoke_for("p", provider="nonsense", model=None, ai=AIConfig())  # type: ignore[arg-type]

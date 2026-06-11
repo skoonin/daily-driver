@@ -130,10 +130,7 @@ pip install -e .
 
 ## Ollama provider issues
 
-If you routed `ai.enrichment.provider` or `ai.summary.provider` to `ollama`,
-see [ollama-setup.md](ollama-setup.md#troubleshooting). Common cases:
-server not running (`connection refused on 11434`), model not pulled
-(visible in `doctor` as a WARNING row), first request slow (cold load).
+If you routed `plugins.job_search.enrichment.provider` or `ai.summary.provider` to `ollama`, see [ollama-setup.md](ollama-setup.md#troubleshooting). Common cases: server not running (`connection refused on 11434`), model not pulled (visible in `doctor` as a WARNING row), first request slow (cold load).
 
 ## Resetting a workspace
 

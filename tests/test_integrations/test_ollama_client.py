@@ -169,3 +169,45 @@ def test_generate_raises_on_200_with_empty_response_field() -> None:
             ollama_client.generate(
                 "hi", model="qwen2.5:14b", endpoint="http://localhost:11434", timeout=5
             )
+
+
+# ---------------------------------------------------------------------------
+# num_ctx sizing: ollama's server default context (4096) silently truncates
+# long enrichment prompts, so generate() sizes options.num_ctx per request.
+# ---------------------------------------------------------------------------
+
+
+def test_generate_sends_num_ctx_floor_for_short_prompt() -> None:
+    """A short prompt still requests at least the 4096 floor."""
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "x"})
+        ollama_client.generate(
+            "hi", model="m", endpoint="http://localhost:11434", timeout=10
+        )
+    opts = post.call_args.kwargs["json"]["options"]
+    assert opts["num_ctx"] == 4096
+
+
+def test_generate_num_ctx_scales_with_prompt_length() -> None:
+    """A long prompt requests more than the floor: ~tokens (len//4) + headroom."""
+    prompt = "x" * 40000  # ~10000 tokens by the len//4 heuristic
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "x"})
+        ollama_client.generate(
+            prompt, model="m", endpoint="http://localhost:11434", timeout=10
+        )
+    num_ctx = post.call_args.kwargs["json"]["options"]["num_ctx"]
+    # 10000 prompt tokens + 1024 output headroom -> >= 11024, above the floor.
+    assert num_ctx >= 11024
+    assert num_ctx <= 16384
+
+
+def test_generate_num_ctx_capped() -> None:
+    """An enormous prompt is capped at the 16384 ceiling, not unbounded."""
+    prompt = "x" * 400000  # ~100k tokens
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "x"})
+        ollama_client.generate(
+            prompt, model="m", endpoint="http://localhost:11434", timeout=10
+        )
+    assert post.call_args.kwargs["json"]["options"]["num_ctx"] == 16384

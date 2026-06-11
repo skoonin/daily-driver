@@ -31,6 +31,23 @@ class OllamaResponseError(RuntimeError):
     """
 
 
+# Ollama's effective context default (OLLAMA_CONTEXT_LENGTH) varies by machine
+# (commonly 4k, scaling up with VRAM) and silently truncates prompts past it,
+# so we size num_ctx per request from the prompt. ~4 chars/token matches the
+# llm.py estimate; +1024 leaves output headroom; floor keeps a sane minimum and
+# the cap bounds the per-request RAM allocation (RAM scales with context).
+_NUM_CTX_FLOOR = 4096
+_NUM_CTX_CAP = 16384
+_OUTPUT_HEADROOM_TOKENS = 1024
+
+
+def _estimate_num_ctx(prompt: str) -> int:
+    """Size options.num_ctx for a prompt: est. tokens + headroom, floored/capped."""
+    prompt_tokens = len(prompt) // 4  # ~4 chars/token, consistent with llm.py
+    sized = prompt_tokens + _OUTPUT_HEADROOM_TOKENS
+    return max(_NUM_CTX_FLOOR, min(sized, _NUM_CTX_CAP))
+
+
 def generate(
     prompt: str,
     *,
@@ -47,7 +64,12 @@ def generate(
         requests.HTTPError: any other non-2xx response.
         requests.Timeout: request exceeded `timeout` seconds.
     """
-    body: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False}
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"num_ctx": _estimate_num_ctx(prompt)},
+    }
     if format_json:
         body["format"] = "json"
     url = f"{endpoint.rstrip('/')}/api/generate"

@@ -8,6 +8,9 @@ log`. Versioned release history starts at 1.0.
 
 ### Added
 
+- **Per-request `num_ctx` for ollama enrichment**: each ollama call now sends an `options.num_ctx` sized to the prompt (estimated tokens + output headroom, floored at 4096, capped at 16384). Ollama's effective context default is machine-dependent and silently truncates longer prompts; sizing it per request keeps enrichment prompts from being cut off. (#PR)
+- **`plugins.job_search.enrichment.enrich_product` toggle** (default `true`): gates the company Product/Purpose lookup independently of the Glassdoor rating. The two share one LLM call per company; with both `enrich_product` and `enrich_gd_rating` off the company pass is skipped entirely, and with only one on the prompt asks for and writes only that field. (#PR)
+- **Detail-phase skip breakdown**: the `jobs run` detail phase summary now itemizes why pages were skipped, e.g. `0 enriched, 7 skipped (5 already complete, 2 blocked host)`, instead of a bare skip count. (#PR)
 - **`jobs run --no-enrich`**: scrape, dedup, location-filter, and append rows
   without running any enrichment — skips detail pages, company products, and
   fit/notes (no enrichment bars, no detail-page or LLM calls). For fast, cheap
@@ -30,6 +33,24 @@ log`. Versioned release history starts at 1.0.
 
 ### Changed
 
+- **BREAKING: AI enrichment routing moved off `ai:` onto the job_search plugin.** The core `ai:` block keeps `summary` routing and the shared `claude:` / `ollama:` provider-connection blocks; the enrichment `provider` / `model` now live under `plugins.job_search.enrichment` (where enrichment is actually used). `ai.enrichment` is rejected — there is no compat shim. Move the routing:
+
+  ```yaml
+  # Before (rejected):
+  ai:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
+
+  # After:
+  plugins:
+    job_search:
+      enrichment:
+        provider: ollama
+        model: qwen2.5:14b
+  ```
+
+- **AI timeout warnings now name the provider**: an enrichment timeout logs `<provider> timed out after Ns` (e.g. `ollama timed out after 60s`) instead of a generic message. For ollama, the first timeout in a run also logs a one-time hint that queued requests count against the timeout and to set `OLLAMA_NUM_PARALLEL` (or `ai.ollama.max_parallel: 1`). (#PR)
 - **`jobs run` now fills the Product column for newly found jobs during the
   run** (previously only `jobs backfill` filled it). Capped by
   `max_enrich_companies` (default 50) per run. (#86)

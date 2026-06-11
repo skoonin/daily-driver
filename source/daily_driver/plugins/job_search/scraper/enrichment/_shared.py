@@ -21,7 +21,7 @@ def _enrich_pool_size(ctx: ScrapeContext) -> int:
     or the per-call timeout.
     """
     ai_cfg = ctx.ai
-    if ai_cfg.enrichment.provider == "ollama":
+    if ctx.plugin.enrichment.provider == "ollama":
         return max(1, ai_cfg.ollama.max_parallel)
     return max(1, ai_cfg.claude.max_parallel)
 

@@ -122,6 +122,102 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
     )
 
 
+def _enrichment_cfg(workspace: Workspace):  # type: ignore[no-untyped-def]
+    """Resolve the job_search enrichment config, or None if unavailable.
+
+    Test stubs and configs without the plugin block may omit any link in the
+    chain, so each hop is guarded rather than assumed.
+    """
+    config = getattr(workspace, "config", None)
+    job_cfg = getattr(getattr(config, "plugins", None), "job_search", None)
+    return getattr(job_cfg, "enrichment", None)
+
+
+def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
+    """Verify Ollama reachability + model presence when enrichment routes to it.
+
+    Enrichment routing lives in `plugins.job_search.enrichment` (provider +
+    model); the shared connection block (`ai.ollama.endpoint`) is core infra.
+    Returns None when enrichment uses the claude default. WARNING on failure,
+    matching the core drift convention.
+    """
+    from daily_driver.core.doctor import CheckResult
+
+    enrichment = _enrichment_cfg(workspace)
+    if enrichment is None or enrichment.provider != "ollama":
+        return None
+
+    endpoint = workspace.config.ai.ollama.endpoint
+    model = enrichment.model or "qwen2.5:14b"
+
+    from daily_driver.integrations import ollama_client
+    from daily_driver.integrations.ollama_client import OllamaNotReachableError
+
+    try:
+        pulled = ollama_client.list_models(endpoint, timeout=5)
+    except OllamaNotReachableError:
+        return CheckResult(
+            name="Enrichment provider",
+            status="WARNING",
+            detail=f"ollama at {endpoint} not reachable (enrichment: ollama {model})",
+            fix_hint="Start the server: ollama serve",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="Enrichment provider",
+            status="WARNING",
+            detail=f"ollama at {endpoint} returned an error: {exc}",
+            fix_hint="Verify `ollama serve` is healthy on the configured endpoint.",
+        )
+
+    if model not in pulled:
+        return CheckResult(
+            name="Enrichment provider",
+            status="WARNING",
+            detail=f"ollama reachable at {endpoint}; model not pulled: {model}",
+            fix_hint=f"Pull the model: ollama pull {model}",
+        )
+    return CheckResult(
+        name="Enrichment provider",
+        status="OK",
+        detail=f"enrichment routes to ollama {model} at {endpoint} (reachable)",
+    )
+
+
+def _check_ollama_num_parallel(workspace: Workspace) -> CheckResult | None:
+    """Hint that OLLAMA_NUM_PARALLEL must be set server-side for parallel calls.
+
+    NUM_PARALLEL is not detectable via the Ollama API, so when enrichment
+    routes to ollama with `ai.ollama.max_parallel > 1` we surface an INFO row
+    spelling out the per-platform set commands. Without a matching server-side
+    NUM_PARALLEL, parallel calls queue and count against the per-call timeout.
+    """
+    from daily_driver.core.doctor import CheckResult
+
+    enrichment = _enrichment_cfg(workspace)
+    if enrichment is None or enrichment.provider != "ollama":
+        return None
+    max_parallel = workspace.config.ai.ollama.max_parallel
+    if max_parallel <= 1:
+        return None
+    return CheckResult(
+        name="Ollama NUM_PARALLEL",
+        status="OK",
+        detail=(
+            f"enrichment fans out up to {max_parallel} parallel ollama calls; "
+            "OLLAMA_NUM_PARALLEL is not detectable via the API. Set it >= "
+            f"{max_parallel} server-side or queued calls count against the timeout."
+        ),
+        fix_hint=(
+            f"macOS app: launchctl setenv OLLAMA_NUM_PARALLEL {max_parallel} "
+            "(then restart the Ollama app); "
+            f"foreground: OLLAMA_NUM_PARALLEL={max_parallel} ollama serve; "
+            "systemd: systemctl edit ollama.service and add "
+            f'Environment="OLLAMA_NUM_PARALLEL={max_parallel}"'
+        ),
+    )
+
+
 def run_checks(workspace: Workspace) -> list[CheckResult]:
     """Return this plugin's doctor rows for the given workspace."""
     results = []
@@ -131,4 +227,10 @@ def run_checks(workspace: Workspace) -> list[CheckResult]:
     pw_row = _check_playwright_browser(workspace)
     if pw_row is not None:
         results.append(pw_row)
+    enrich_row = _check_enrichment_provider(workspace)
+    if enrich_row is not None:
+        results.append(enrich_row)
+    parallel_row = _check_ollama_num_parallel(workspace)
+    if parallel_row is not None:
+        results.append(parallel_row)
     return results

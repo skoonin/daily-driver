@@ -31,6 +31,8 @@ def _ctx(*, max_parallel: int, budget: int = 50) -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
                     "max_enrich_companies": budget,
                     "max_enrich_fit": budget,
                     "enrich_gd_rating": False,
@@ -38,12 +40,7 @@ def _ctx(*, max_parallel: int, budget: int = 50) -> ScrapeContext:
                 }
             }
         ),
-        ai=AIConfig.model_validate(
-            {
-                "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-                "ollama": {"max_parallel": max_parallel},
-            }
-        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": max_parallel}}),
     )
 
 
@@ -73,7 +70,7 @@ def test_total_concurrency_capped_across_both_enrichers(
     high_water = [0]
     lock = threading.Lock()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         with lock:
             active[0] += 1
             high_water[0] = max(high_water[0], active[0])
@@ -111,7 +108,7 @@ def test_serial_provider_runs_both_without_pool(
     """max_parallel=1 must keep every call on the main thread (no overlap pool)."""
     thread_names: list[str] = []
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         thread_names.append(threading.current_thread().name)
         if "valid JSON" in prompt:
             return '{"fit": 7, "notes": "ok"}'
@@ -137,7 +134,7 @@ def test_interrupt_mid_overlap_drains_both_and_reraises_once(
     count_lock = threading.Lock()
     block = threading.Event()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         with count_lock:
             count[0] += 1
             n = count[0]
@@ -182,7 +179,7 @@ def test_interrupt_restores_previous_sigint_handler(
     monkeypatch.setattr(
         ai_provider,
         "invoke_for",
-        lambda task, prompt, **k: (
+        lambda prompt, **k: (
             '{"fit": 7, "notes": "ok"}' if "valid JSON" in prompt else "Some product"
         ),
     )
@@ -198,7 +195,7 @@ def test_nan_fit_is_one_counted_failure_others_enrich(
     single counted failure — not a crash that loses the whole batch. Products
     still stitch and the other jobs still get fits."""
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         if "valid JSON" in prompt:
             # The one bad job returns a non-finite fit; the rest are valid.
             if "Co0 " in prompt or "Co0," in prompt or "at Co0" in prompt:
@@ -226,7 +223,7 @@ def test_worker_exception_is_one_counted_failure_others_enrich(
     """An arbitrary worker exception surfacing at fut.result() must be isolated
     to one counted failure; the rest of the batch still enriches and stitches."""
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         if "valid JSON" in prompt and "Co0" in prompt:
             raise RuntimeError("worker blew up")
         if "valid JSON" in prompt:
@@ -253,7 +250,7 @@ def test_interrupt_with_failing_drain_still_reraises(
     count_lock = threading.Lock()
     block = threading.Event()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         with count_lock:
             count[0] += 1
             n = count[0]

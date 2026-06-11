@@ -716,8 +716,9 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
 
 def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
     """Regression: jobs `run --backfill` must pass the workspace's typed `AIConfig`
-    to enrichment. Without this, every backfill call silently defaults to claude
-    regardless of ai.enrichment.provider.
+    (shared provider blocks) plus the plugin's enrichment routing to enrichment.
+    Without this, every backfill call silently defaults to claude regardless of
+    plugins.job_search.enrichment.provider.
     """
     from daily_driver.cli.cli import app
 
@@ -732,9 +733,6 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
         "    task:\n"
         "      required: [title]\n"
         "ai:\n"
-        "  enrichment:\n"
-        "    provider: ollama\n"
-        "    model: qwen2.5:32b\n"
         "  ollama:\n"
         "    endpoint: http://localhost:11434\n"
         "    timeout: 60\n"
@@ -742,6 +740,9 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
         "  job_search:\n"
         "    scraper:\n"
         "      enabled: true\n"
+        "    enrichment:\n"
+        "      provider: ollama\n"
+        "      model: qwen2.5:32b\n"
     )
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
@@ -749,13 +750,16 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
 
     assert rc == 0
     assert mock_backfill.called
+    plugin = mock_backfill.call_args.args[0]
+    assert plugin.enrichment.provider == "ollama"
+    assert plugin.enrichment.model == "qwen2.5:32b"
+    # The shared provider block still flows through for connection/tuning.
     ai = mock_backfill.call_args.kwargs["ai"]
-    assert ai.enrichment.provider == "ollama"
-    assert ai.enrichment.model == "qwen2.5:32b"
+    assert ai.ollama.timeout == 60
 
 
 def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
-    """Same regression for the live scrape path: ai: must flow through."""
+    """Same regression for the live scrape path: routing must flow through."""
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
@@ -767,14 +771,13 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         "  categories:\n"
         "    task:\n"
         "      required: [title]\n"
-        "ai:\n"
-        "  enrichment:\n"
-        "    provider: ollama\n"
-        "    model: qwen2.5:32b\n"
         "plugins:\n"
         "  job_search:\n"
         "    scraper:\n"
         "      enabled: true\n"
+        "    enrichment:\n"
+        "      provider: ollama\n"
+        "      model: qwen2.5:32b\n"
     )
 
     with patch(
@@ -783,5 +786,6 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
-    ai = mock_run.call_args.kwargs["ai"]
-    assert ai.enrichment.provider == "ollama"
+    plugin = mock_run.call_args.args[0]
+    assert plugin.enrichment.provider == "ollama"
+    assert plugin.enrichment.model == "qwen2.5:32b"

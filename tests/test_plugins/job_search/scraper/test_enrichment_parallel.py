@@ -24,10 +24,14 @@ from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from tests.test_plugins.job_search.scraper import make_enriched
 
 
-def _enrichment_plugin(budget: int) -> JobSearchPlugin:
+def _enrichment_plugin(
+    budget: int, provider: str = "claude", model: str | None = None
+) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "enrichment": {
+                "provider": provider,
+                "model": model,
                 "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
                 "enrich_gd_rating": False,
@@ -39,25 +43,15 @@ def _enrichment_plugin(budget: int) -> JobSearchPlugin:
 
 def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
     return ScrapeContext(
-        plugin=_enrichment_plugin(budget),
-        ai=AIConfig.model_validate(
-            {
-                "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-                "ollama": {"max_parallel": max_parallel},
-            }
-        ),
+        plugin=_enrichment_plugin(budget, provider="ollama", model="qwen2.5:14b"),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": max_parallel}}),
     )
 
 
 def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
     return ScrapeContext(
-        plugin=_enrichment_plugin(budget),
-        ai=AIConfig.model_validate(
-            {
-                "enrichment": {"provider": "claude"},
-                "claude": {"max_parallel": max_parallel},
-            }
-        ),
+        plugin=_enrichment_plugin(budget, provider="claude"),
+        ai=AIConfig.model_validate({"claude": {"max_parallel": max_parallel}}),
     )
 
 
@@ -77,7 +71,7 @@ def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two workers must reach a barrier simultaneously; serial would deadlock."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return "Some product"
 
@@ -94,7 +88,7 @@ def test_claude_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     """Claude must fan out through the pool when claude.max_parallel > 1."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return "Some product"
 
@@ -113,7 +107,7 @@ def test_claude_path_serial_when_max_parallel_one(
     """max_parallel=1 keeps claude on the main thread (no pool)."""
     thread_names: list[str] = []
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         thread_names.append(threading.current_thread().name)
         return "Some product"
 
@@ -165,7 +159,7 @@ def test_ollama_budget_respected_under_parallel(
     call_count = 0
     lock = threading.Lock()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         nonlocal call_count
         with lock:
             call_count += 1
@@ -182,7 +176,7 @@ def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> 
     """enrich_fit_and_notes must also fan out under ollama provider."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return '{"fit": 7, "notes": "ok"}'
 
@@ -232,7 +226,7 @@ def test_worker_log_tag_in_parallel_path(
     """When pool_size > 1, worker log lines carry [enrich wN] tag."""
     import logging
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         raise ai_provider.AIInvocationError(
             "boom", provider="ollama", returncode=1, stdout="", stderr="boom"
         )
@@ -257,7 +251,7 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
     invocation_count = [0]
     count_lock = threading.Lock()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         # Slow first 3 calls so the main thread can interrupt; fast 4th
         # never gets to run because we SIGINT after 3 finish.
         with count_lock:
@@ -297,7 +291,7 @@ def test_ollama_interrupt_notifier_uses_user_voice(
     started = threading.Event()
     proceed = threading.Event()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         started.set()
         proceed.wait(timeout=2.0)
         return "Some product"
@@ -329,7 +323,7 @@ def test_ollama_partial_failure_doesnt_kill_others(
 ) -> None:
     """One worker raising must not abort the others' results."""
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         if "BadCo" in prompt:
             raise ai_provider.AIInvocationError(
                 "boom", provider="ollama", returncode=1, stdout="", stderr="boom"
