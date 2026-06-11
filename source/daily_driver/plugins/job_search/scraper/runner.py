@@ -1593,8 +1593,8 @@ def _run_llm_enrichment(
     typed_jobs: list[EnrichedJob],  # noqa: F821
     ctx: ScrapeContext,
     sink: _JobSink,
-    product_phase: Phase,
-    fit_phase: Phase,
+    product_phase: Phase | None,
+    fit_phase: Phase | None,
     *,
     run_preflight: bool,
     product_budget: int | None = None,
@@ -1628,20 +1628,28 @@ def _run_llm_enrichment(
         # Product and fit/notes overlap under one shared concurrency cap (F1):
         # both fan out through a single executor bounded by the provider's
         # max_parallel, so total claude/ollama subprocesses never exceed it.
-        product_phase.start()
-        fit_phase.start()
+        # A None phase means that pass is disabled by config: no bar exists and
+        # the coordinator's plan builder skips the pass on its own toggles.
+        if product_phase is not None:
+            product_phase.start()
+        if fit_phase is not None:
+            fit_phase.start()
         _, product_stats, fn_stats = enrich_product_and_fit_concurrently(
             typed_jobs,
             ctx,
             product_budget=product_budget,
             fit_budget=fit_budget,
-            product_progress=product_phase.advance,
-            fit_progress=fit_phase.advance,
+            product_progress=(
+                product_phase.advance if product_phase is not None else None
+            ),
+            fit_progress=fit_phase.advance if fit_phase is not None else None,
             # The bars are pinned with total=len(jobs) before the plans exist;
             # once the planner resolves the budget-capped call counts, re-base
             # the denominators so the bars show what will actually be spent.
-            on_product_planned=product_phase.set_total,
-            on_fit_planned=fit_phase.set_total,
+            on_product_planned=(
+                product_phase.set_total if product_phase is not None else None
+            ),
+            on_fit_planned=fit_phase.set_total if fit_phase is not None else None,
             # Periodic in-loop flush degrades (not crashes) on a disk error.
             flush=sink.flush_periodic,
             exclude_fit_urls=exclude_fit_urls,
@@ -1651,16 +1659,18 @@ def _run_llm_enrichment(
     else:
         product_stats = _empty_product_stats()
         fn_stats = _empty_fit_stats()
-    product_phase.done(
-        f"{product_stats['enriched']} enriched, "
-        f"{product_stats['skipped_cached']} cached, "
-        f"{product_stats['failed']} failed"
-    )
-    fit_phase.done(
-        f"{fn_stats['enriched']} enriched, "
-        f"{fn_stats['skipped_budget']} skipped (budget), "
-        f"{fn_stats['failed']} failed"
-    )
+    if product_phase is not None:
+        product_phase.done(
+            f"{product_stats['enriched']} enriched, "
+            f"{product_stats['skipped_cached']} cached, "
+            f"{product_stats['failed']} failed"
+        )
+    if fit_phase is not None:
+        fit_phase.done(
+            f"{fn_stats['enriched']} enriched, "
+            f"{fn_stats['skipped_budget']} skipped (budget), "
+            f"{fn_stats['failed']} failed"
+        )
     return product_stats, fn_stats
 
 
@@ -1699,16 +1709,22 @@ def _enrich_wave(
 
     total = len(jobs)
     detail_phase = enrich_group.phase(f"Detail pages{wave_label}", total=total)
-    # The company pass serves two toggles sharing one call: label the bar by
-    # what is actually enabled, or a gd-only run (enrich_product: false) reads
-    # as if the product toggle were being ignored.
+    # A disabled pass renders NO bar: pinning one with a placeholder total for
+    # work that will never run reads as a stuck/ignored toggle (owner-observed
+    # with both company toggles off). The company pass serves two toggles
+    # sharing one call, so when it does run, label it by what is enabled --
+    # a gd-only run under "Company products" looks like enrich_product is
+    # being ignored.
     enrich_cfg = plugin.enrichment
-    if enrich_cfg.enrich_product:
-        company_label = "Company products"
-    else:
-        company_label = "Glassdoor ratings"
-    product_phase = enrich_group.phase(f"{company_label}{wave_label}", total=total)
-    fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
+    product_phase: Phase | None = None
+    if enrich_cfg.enrich_product or enrich_cfg.enrich_gd_rating:
+        company_label = (
+            "Company products" if enrich_cfg.enrich_product else "Glassdoor ratings"
+        )
+        product_phase = enrich_group.phase(f"{company_label}{wave_label}", total=total)
+    fit_phase: Phase | None = None
+    if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+        fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
 
     if set_phase is not None:
         set_phase("detail")

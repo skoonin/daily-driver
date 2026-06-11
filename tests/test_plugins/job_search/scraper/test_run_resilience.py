@@ -536,6 +536,54 @@ def test_company_phase_labeled_glassdoor_when_product_disabled(
     assert "Company products" not in err
 
 
+def test_disabled_passes_render_no_bars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pass disabled by config gets NO phase row at all -- a pinned bar with
+    a placeholder total for work that never runs reads as a stuck toggle
+    (owner-observed: "Glassdoor ratings 0/1875" with both company toggles off)."""
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
+    )
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {
+                "provider": "claude",
+                "enrich_product": False,
+                "enrich_gd_rating": False,
+                "enrich_fit": True,
+                "enrich_notes": True,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    rc = runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Fit and notes" in err
+    assert "Company products" not in err
+    assert "Glassdoor ratings" not in err
+
+
 def test_overlap_wave2_budget_exhausted_gets_zero_not_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
