@@ -86,6 +86,26 @@ def test_skips_when_no_categories_configured(monkeypatch: Any) -> None:
     assert jobs == []
 
 
+def test_wwr_categories_drive_fetched_rss_urls(monkeypatch: Any) -> None:
+    """Each configured wwr_category becomes a /categories/remote-<cat>-jobs.rss fetch."""
+    fetched: list[str] = []
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        fetched.append(url)
+        return _rss_response()
+
+    monkeypatch.setattr(wwr_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(wwr_module, "_http_session", lambda cfg: MagicMock())
+
+    wwr_module.scrape_weworkremotely(_config(categories=["devops-sysadmin", "design"]))
+
+    assert (
+        "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss"
+        in fetched
+    )
+    assert "https://weworkremotely.com/categories/remote-design-jobs.rss" in fetched
+
+
 def test_skips_malformed_rows(monkeypatch: Any) -> None:
     """Items with no role after colon-split are dropped."""
     malformed_rss = b"""<?xml version="1.0" encoding="UTF-8"?>

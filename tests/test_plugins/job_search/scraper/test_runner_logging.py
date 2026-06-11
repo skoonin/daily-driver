@@ -54,6 +54,65 @@ def test_run_one_logs_starting_at_info(caplog) -> None:
     assert all(r.levelno == logging.INFO for r in starting)
 
 
+def test_parallel_workers_knob_drives_phase1_pool_size(caplog, monkeypatch) -> None:
+    """scraper.parallel_workers sets the phase-1 worker count (in the summary).
+
+    The phase-1 summary reports the worker count it sizes the ThreadPoolExecutor
+    with, so a non-default `parallel_workers: 3` surfaces there.
+    """
+    from daily_driver.plugins.job_search.scraper import runner
+
+    caplog.set_level(logging.INFO, logger="daily_driver")
+    fake = lambda _cfg: []  # noqa: E731
+    monkeypatch.setattr(runner, "SCRAPERS", {"remoteok": fake})
+
+    runner.run_all_scrapers(_cfg_with_sources(["remoteok"], workers=3))
+
+    phase1 = [m for m in (r.getMessage() for r in caplog.records) if "[phase1]" in m]
+    assert phase1, "expected a [phase1] summary line"
+    assert "3 workers" in phase1[0], f"worker count not reflected: {phase1[0]}"
+
+
+def test_disabled_source_is_skipped(caplog, monkeypatch) -> None:
+    """A source with `enabled: false` does not run; an enabled sibling does.
+
+    Drives the runner with a mix and asserts the disabled source's scraper is
+    never invoked while the enabled one is.
+    """
+    from daily_driver.plugins.job_search.scraper import runner
+
+    caplog.set_level(logging.INFO, logger="daily_driver")
+    invoked: list[str] = []
+
+    def _make(name: str):
+        def _scraper(_cfg: object) -> list[object]:
+            invoked.append(name)
+            return []
+
+        return _scraper
+
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"remoteok": _make("remoteok"), "greenhouse": _make("greenhouse")},
+    )
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "scraper": {"enabled": True, "parallel_workers": 2},
+                "sources": {
+                    "remoteok": {"enabled": True},
+                    "greenhouse": {"enabled": False},
+                },
+            }
+        )
+    )
+    runner.run_all_scrapers(ctx)
+
+    assert "remoteok" in invoked
+    assert "greenhouse" not in invoked
+
+
 def test_run_all_scrapers_phase1_summary_lists_source_names(
     caplog, monkeypatch
 ) -> None:

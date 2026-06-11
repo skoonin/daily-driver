@@ -71,6 +71,21 @@ def test_explicit_max_retries_overrides_config() -> None:
     assert sleeps == []
 
 
+def test_config_timeout_reaches_session_get() -> None:
+    """scraper.timeout is passed as the per-request timeout to session.get."""
+    session = MagicMock(spec=requests.Session)
+    session.get.return_value = _fake_response(200)
+
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"scraper": {"timeout": 17, "max_retries": 0}}
+        )
+    )
+    _api_get(session, "https://x", ctx, label="t", sleep=lambda _s: None)
+
+    assert session.get.call_args.kwargs["timeout"] == 17
+
+
 def test_succeeds_first_attempt() -> None:
     session = MagicMock(spec=requests.Session)
     session.get.return_value = _fake_response(200)
