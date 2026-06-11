@@ -113,6 +113,97 @@ def test_fit_enrich_score_survives_round_trip(
     assert out[0].notes == "k8s"
 
 
+def _fit_ctx(**enrichment: object) -> ScrapeContext:
+    base: dict[str, object] = {
+        "provider": "ollama",
+        "model": "qwen2.5:14b",
+        "max_enrich_fit": 5,
+        "enrich_timeout": 5,
+    }
+    base.update(enrichment)
+    return ScrapeContext(
+        plugin=JobSearchPlugin.model_validate({"enrichment": base}),
+        ai=AIConfig(),
+    )
+
+
+@pytest.mark.parametrize(
+    "toggles",
+    [
+        {"enrich_fit": False, "enrich_notes": True},
+        {"enrich_fit": True, "enrich_notes": False},
+        {"enrich_fit": False, "enrich_notes": False},
+    ],
+)
+def test_fit_notes_phase_skipped_when_either_toggle_off(
+    monkeypatch: pytest.MonkeyPatch, toggles: dict[str, bool]
+) -> None:
+    """enrich_fit or enrich_notes off => the whole fit/notes wave is skipped.
+
+    The combined call serves both fields, so the wave runs only when BOTH are
+    on. With either off, no provider call fires and neither fit nor notes is
+    written (they keep their input values).
+    """
+    ctx = _fit_ctx(**toggles)
+
+    def fake_invoke(*a: object, **k: object) -> str:
+        raise AssertionError("no fit/notes call expected when a toggle is off")
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    j = _enriched(description_text="Kubernetes-heavy SRE role", notes="orig")
+    out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
+    assert out[0].fit is None  # unchanged
+    assert out[0].notes == "orig"  # unchanged
+
+
+def test_fit_notes_phase_runs_when_both_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both toggles on (the default) lets the fit/notes wave write both cells."""
+    ctx = _fit_ctx(enrich_fit=True, enrich_notes=True)
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 8, "notes": "infra"}'
+    )
+    j = _enriched(description_text="Platform role")
+    out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
+    assert out[0].fit == 8
+    assert out[0].notes == "infra"
+
+
+def test_persona_and_home_city_reach_fit_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """plugins.job_search.persona + locations.home_city land in the fit prompt.
+
+    Both are surfaced into the natural-language fit/notes prompt; non-default
+    values must appear verbatim so the LLM scores against the right persona and
+    base location.
+    """
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "persona": "Staff Data Engineer",
+            "locations": {"home_city": "Berlin, Germany"},
+            "enrichment": {
+                "provider": "ollama",
+                "model": "qwen2.5:14b",
+                "max_enrich_fit": 5,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    prompts: list[str] = []
+
+    def fake_invoke(prompt, *a, **k):
+        prompts.append(prompt)
+        return '{"fit": 6, "notes": "x"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    enrich_fit_and_notes([_enriched(description_text="desc")], ctx, budget=5)
+
+    assert prompts
+    assert "Staff Data Engineer" in prompts[0]
+    assert "Berlin, Germany" in prompts[0]
+
+
 def test_job_details_short_circuits_when_description_present(
     fake_config: ScrapeContext,
 ) -> None:
@@ -193,6 +284,34 @@ def test_both_product_and_gd_off_skips_phase_entirely() -> None:
     assert stats == {"enriched": 0, "skipped_cached": 0, "failed": 0}
 
 
+def test_enrich_gd_off_writes_product_not_gd() -> None:
+    """enrich_product=true + enrich_gd_rating=false: product written, gd never.
+
+    Mirror of test_enrich_product_off_skips_product_write_keeps_gd for the
+    opposite toggle pairing, pinning combination (c) of the toggle matrix: a
+    product-only company pass writes the Product cell and leaves GD Rating
+    untouched even if the model volunteers a rating line.
+    """
+    j = _enriched(comp_display="", gd_rating="")
+    ctx = _company_ctx(enrich_product=True, enrich_gd_rating=False)
+    calls: list[str] = []
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        calls.append(prompt)
+        # Model returns a second line that looks like a rating; with GD off it
+        # must be ignored, not parsed into gd_rating.
+        return "Acme builds widgets\n4.1"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, _stats = enrich_company_descriptions([j], ctx)
+
+    assert len(calls) == 1  # one product-only company call
+    assert "Glassdoor" not in calls[0]  # prompt does not ask for a rating
+    assert out[0].product == "Acme builds widgets"
+    assert out[0].gd_rating == ""  # never written when gd disabled
+
+
 def test_enrich_product_default_writes_both() -> None:
     """Default (both on) writes product and gd_rating from one 2-line response."""
     j = _enriched(comp_display="")
@@ -207,6 +326,30 @@ def test_enrich_product_default_writes_both() -> None:
 
     assert out[0].product == "Acme builds widgets"
     assert out[0].gd_rating == "4.1"
+
+
+def test_enrichment_model_and_timeout_reach_company_call() -> None:
+    """enrichment.model + enrich_timeout propagate to the provider invocation.
+
+    The company enricher dispatches through ai_provider.invoke_for; the
+    configured model identifier and per-call timeout must land in that call so
+    a user's `model: sonnet` / `enrich_timeout: 12` actually take effect.
+    """
+    j = _enriched(comp_display="")
+    ctx = _company_ctx(model="sonnet", enrich_timeout=12)
+    seen: list[dict[str, object]] = []
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        seen.append({"provider": provider, "model": model, "timeout": timeout})
+        return "Acme builds widgets\n4.1"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            enrich_company_descriptions([j], ctx)
+
+    assert seen and seen[0]["model"] == "sonnet"
+    assert seen[0]["timeout"] == 12
+    assert seen[0]["provider"] == "claude"
 
 
 # ---------------------------------------------------------------------------

@@ -70,6 +70,14 @@ def test_ollama_uses_config_timeout_when_none_passed() -> None:
     assert gen.call_args.kwargs["timeout"] == 90
 
 
+def test_ollama_uses_config_endpoint() -> None:
+    """A non-default ai.ollama.endpoint reaches the ollama client call."""
+    ai = AIConfig.model_validate({"ollama": {"endpoint": "http://gpu-box:11434"}})
+    with patch.object(ollama_client, "generate", return_value="x") as gen:
+        ai_provider.invoke_for("p", provider="ollama", model="phi4", ai=ai)
+    assert gen.call_args.kwargs["endpoint"] == "http://gpu-box:11434"
+
+
 def test_claude_called_process_error_maps_to_ai_invocation_error() -> None:
     err = claude_cli.ClaudeInvocationError(
         1, ["claude"], stdout="auth failed", stderr=""

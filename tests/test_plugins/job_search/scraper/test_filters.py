@@ -109,6 +109,29 @@ class TestMatchesRoles:
         """Entries like 'CI/CD Engineer' must match literally — no regex surprise."""
         assert matches_roles("CI/CD Engineer", _roles("CI/CD Engineer")) is True
 
+    def test_custom_domain_and_seniority_keywords_drive_tier2(self) -> None:
+        """domain_keywords + seniority_keywords REPLACE the built-in tier-2 sets.
+
+        A title built from words outside the defaults (and outside tier-2b) only
+        matches once both custom keyword lists name them; with the default sets
+        the same title falls through every tier to False.
+        """
+        title = "Wizard Robotics Engineer"
+        custom = JobSearchPlugin.model_validate(
+            {"domain_keywords": ["robotics"], "seniority_keywords": ["wizard"]}
+        )
+        assert matches_roles(title, custom) is True
+        # Default keyword sets: "robotics"/"wizard" are not present, so no match.
+        assert matches_roles(title, _plugin()) is False
+
+    def test_custom_domain_without_matching_seniority_rejected(self) -> None:
+        """Custom domain keyword alone is not enough — tier-2 needs both."""
+        custom = JobSearchPlugin.model_validate(
+            {"domain_keywords": ["robotics"], "seniority_keywords": ["wizard"]}
+        )
+        # Domain present, seniority absent => tier-2 fails.
+        assert matches_roles("Robotics Engineer", custom) is False
+
 
 # ---------------------------------------------------------------------------
 # dedup_key
