@@ -59,6 +59,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `jobs run` | `--sources` | `-S` |
 | `jobs run` | `--dry-run` | `-n` |
 | `jobs run` | `--json` | `-j` |
+| `jobs promote` | `--dry-run` | `-n` |
 | `jobs status` | `--json` | `-j` |
 | `jobs prune` | `--status` | `-s` |
 | `jobs prune` | `--dry-run` | `-n` |
@@ -225,6 +226,18 @@ On a TTY, `jobs run` pins a live progress display at the bottom of the terminal:
 Re-enriches empty enrichment fields (Product/Purpose, GD Rating, Fit, Notes) on existing `jobs.csv` rows without scraping. It shares the same enrichment driver as `jobs run`: a `Job backfill` live progress block with the same phase rows (Detail pages / Company products / Fit and notes), the overlapped product + fit/notes coordinator under one shared concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight before any LLM call. Rows already filled — and rows in a skip status — are left untouched, and the counts respect the `enrich_product` / `enrich_gd_rating` toggles (a disabled axis reports zero need; Fit and Notes are one combined need, since a single call fills both). `-n` / `--dry-run` reports the per-phase would-enrich counts and makes no LLM calls and no writes. `--limit N` caps LLM spend for this invocation by bounding both the product and fit/notes budgets at `N` (minimum 1; default: the configured per-phase caps). A pre-mutation backup is written under `backups/` lazily — only when a write actually happens — so a no-op backfill (e.g. the ollama server is down and nothing changes) leaves `jobs.csv` untouched (bytes and mtime) and writes no backup. A Ctrl-C or `SIGTERM` saves partial progress and names the backup. Exit codes: `130` for `SIGINT`, `143` for `SIGTERM`.
 
 backfill holds the jobs lock across its whole read → enrich → rewrite window. Because it rewrites the file from an in-memory snapshot (rather than appending), it cannot drop the lock mid-enrichment the way `jobs run` does, or a concurrent run's appended rows would be clobbered by the rewrite.
+
+### `jobs promote URL-OR-COMPANY [-n|--dry-run]`
+
+Promotes a `jobs.csv` row into a tracker `job` entry once it needs active driving (interviews, follow-ups). The tracker is the system that drives work (follow-ups, day-start planning); `jobs.csv` is the discovery / triage record. Promotion is the explicit bridge between them — never automatic.
+
+The selector resolves a single row, in order: an exact match on the row's Link URL (the primary path), then an unambiguous case-insensitive substring of Company. If the substring matches no rows or more than one, the command lists what it found (or says nothing matched) and exits `1` — pass the full Link URL to disambiguate.
+
+The new entry is category `job`, titled `<Company> -- <Role>`, with the job URL stored both as the entry's `link` and in `extras` (alongside `company`, `role`, and `source`). The resolved status is always named in the success line (`Promoted job-001 [applied]: ...`). The status carries through from the row's Status unchanged when it is a recognized job status (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`); a blank Status (or one outside that set) falls back to `applied`, since promotion implies you are now driving the row, and a one-line warning names the substitution (e.g. `row status 'shortlisted' not in the job lifecycle; recorded as 'applied'`).
+
+The URL in `extras` is the durable key, so promotion is idempotent: promoting the same URL twice does not create a duplicate — it reports `already promoted as <id>` and exits `0`. When the row has no Link, promotion falls back to a weaker `(company, role)` idempotency key and the success line notes `(row has no Link)` so the looser dedup guarantee for that entry is visible.
+
+Promotion does NOT mutate `jobs.csv`. The row's Status is yours to drive by hand; `promote` is single-purpose and only ever writes the tracker. `-n` / `--dry-run` prints the entry that would be created and writes nothing.
 
 ### `jobs status [--json]`
 

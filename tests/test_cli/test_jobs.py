@@ -1081,3 +1081,193 @@ def test_jobs_status_shows_recovery_line_when_interrupted(
     assert "interrupted during enrichment" in out
     assert "jobs backfill" in out
     assert "jobs run --backfill" not in out
+
+
+# ---------------------------------------------------------------------------
+# jobs promote — CLI wiring
+# ---------------------------------------------------------------------------
+
+
+def _seed_promote_csv(ws_root: Path) -> Path:
+    return _seed_jobs_csv(
+        ws_root,
+        [
+            {
+                "Company": "Acme Corp",
+                "Role": "SRE",
+                "Status": "interviewing",
+                "Link": "https://jobs.example.com/acme/1",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+
+def test_jobs_promote_help_exits_0() -> None:
+    from daily_driver.cli.cli import app
+
+    with pytest.raises(SystemExit) as exc:
+        app(["jobs", "promote", "--help"])
+    assert exc.value.code == 0
+
+
+def test_jobs_promote_creates_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(
+        ["--workspace", str(ws), "jobs", "promote", "https://jobs.example.com/acme/1"]
+    )
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    # Resolved status is always named in the success line.
+    assert "Promoted job-001 [interviewing]: Acme Corp -- SRE" in err
+
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert len(entries) == 1
+    assert entries[0].title == "Acme Corp -- SRE"
+
+
+def test_jobs_promote_idempotent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+    url = "https://jobs.example.com/acme/1"
+
+    assert app(["--workspace", str(ws), "jobs", "promote", url]) == 0
+    capsys.readouterr()
+    rc = app(["--workspace", str(ws), "jobs", "promote", url])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "already promoted as job-001" in err
+
+
+def test_jobs_promote_no_match_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "nope-co"])
+    assert rc == 1
+    assert "no jobs.csv row matched" in capsys.readouterr().err
+
+
+def test_jobs_promote_dry_run_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_promote_csv(ws)
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "-n", "acme"])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "would create job entry" in err
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert entries == []
+
+
+def test_jobs_promote_blank_status_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "",
+                "Link": "https://jobs.example.com/hooli/7",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    # Rich may soft-wrap the stderr line at the test console width; collapse
+    # whitespace so the assertion is independent of wrap position.
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "row has no status; recorded as 'applied'" in err
+    assert "Promoted job-001 [applied]: Hooli -- SRE" in err
+
+
+def test_jobs_promote_unknown_status_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Initech",
+                "Role": "Engineer",
+                "Status": "shortlisted",
+                "Link": "https://jobs.example.com/initech/8",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Initech"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert (
+        "row status 'shortlisted' not in the job lifecycle; recorded as 'applied'"
+        in err
+    )
+
+
+def test_jobs_promote_no_link_row_notes_and_dedups(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "(row has no Link)" in err
+
+    # Re-promote of the same blank-Link row is a no-op (company/role dedup key).
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "already promoted as job-001" in err
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert len(entries) == 1
