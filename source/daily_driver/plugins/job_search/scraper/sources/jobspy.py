@@ -176,6 +176,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
         matches_roles,
     )
     from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
         countries_list,
         source_toggle,
     )
@@ -208,9 +209,9 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
         log.debug("[linkedin/indeed] no sites enabled; skipping")
         return []
 
-    # Shared query knobs come from whichever site is in play. When the runner
-    # merges both into one call it has already verified the knobs are equal, so
-    # reading from either toggle is correct; prefer linkedin when present.
+    # Query knobs come from whichever site is in play. The runner always hands a
+    # single-site list, so the one site's toggle is the obvious source. A direct
+    # multi-site test call reads linkedin's knobs when present (else indeed's).
     knob_toggle: LinkedInToggle | IndeedToggle = (
         linkedin_toggle if "linkedin" in enabled_sites else indeed_toggle
     )
@@ -364,9 +365,19 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             # unit instead of losing the whole source. A no-op when no durable
             # sink is attached (dry-run / direct adapter tests). The sink dedups,
             # so the unchanged end-of-source return (the orchestrator skips a
-            # checkpointed source's final append) never double-appends.
+            # checkpointed source's final append) never double-appends. A persist
+            # failure raises CheckpointAborted: stop AT this unit (the source is
+            # already marked failed) rather than scrape on against a dead disk.
             if unit_new:
-                ctx.checkpoint(unit_new)
+                try:
+                    ctx.checkpoint(unit_new)
+                except CheckpointAborted:
+                    log.warning(
+                        "[%s] checkpoint persist failed; stopping after %d jobs",
+                        site_label,
+                        len(jobs),
+                    )
+                    return jobs
 
     # An enabled site that contributed nothing all run is the per-board outage
     # signal the merge would otherwise hide; surface it.

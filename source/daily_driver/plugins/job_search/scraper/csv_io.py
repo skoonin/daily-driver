@@ -223,6 +223,14 @@ def append_jobs_typed(
     Serializing concurrent mutations is the caller's contract: hold
     ``file_lock(jobs_lock_path(...))`` around this call. This function does not
     lock.
+
+    Buffered, NON-ATOMIC append: rows go through Python's buffered writer and are
+    flushed on context-manager exit, not fsynced per row. A second-interrupt
+    process exit (or a kill) mid-write could in principle leave a partial trailing
+    line -- a tiny window, accepted here because this is the per-source/per-unit
+    append path optimized for throughput. The whole-file rewrite path
+    (:func:`atomic_write_rows`) is the atomic one (temp + fsync + os.replace) and
+    is used for every enrichment flush, so a later flush rewrites the file clean.
     """
     from daily_driver.plugins.job_search.scraper.runner import ScraperError
 

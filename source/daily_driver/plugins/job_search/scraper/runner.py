@@ -103,6 +103,18 @@ class ScraperError(RuntimeError):
     """
 
 
+class CheckpointAborted(Exception):
+    """Raised out of ``ctx.checkpoint`` when a per-unit append fails.
+
+    Signals a checkpointing source (jobspy) to stop AT the failing unit and
+    return what it has already persisted, instead of scraping on against a dead
+    disk and then reporting "failed" while later units still land rows. The
+    orchestrator has already recorded the source as failed by the time this is
+    raised; the source catches it and returns early, so "failed" means "stopped
+    at the failure". A no-checkpoint source never sees this.
+    """
+
+
 # ── Source-toggle helper ─────────────────────────────────────────────────────
 
 
@@ -1092,6 +1104,16 @@ def run_all_scrapers(
             # marked interrupted at phase=scraping. A SECOND interrupt during the
             # drain is the escape hatch: abandon the pool wait and re-raise now.
             ctx.stop_event.set()
+            # The graceful drain can take minutes (an in-flight jobspy unit runs
+            # to its own timeout), during which a bare Ctrl-C looks like a no-op
+            # and the user is tempted to press it again -- which hits the abort
+            # path and loses the drain. Surface what is happening, above the live
+            # bars (on_note routes to rp.note), so the wait reads as deliberate.
+            if on_note is not None:
+                on_note(
+                    "Interrupted -- finishing in-flight searches and saving; "
+                    "press Ctrl-C again to abort now"
+                )
             for fut in pending:
                 fut.cancel()
             try:
@@ -2014,6 +2036,9 @@ def _run_impl(
         # single pass with no sink and no writes.
         sink: _JobSink | None = None
         on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None
+        on_source_checkpoint: Callable[[str, list[dict[str, Any]]], object] | None = (
+            None
+        )
         if not dry_run:
             sink = _JobSink(
                 csv_path=csv_path,
@@ -2045,6 +2070,29 @@ def _run_impl(
                         state.failed_sources.append(source_id)
 
             on_source_result = _on_source_result
+
+            def _on_source_checkpoint(
+                source_id: str, jobs: list[dict[str, Any]]
+            ) -> None:
+                # Per-unit checkpoint path. On a persist failure mark the source
+                # failed AND raise CheckpointAborted so the source stops at this
+                # unit -- otherwise it would scrape on against a dead disk and a
+                # later unit could land rows for a source already reported failed.
+                # "failed" then means "stopped at the failure".
+                try:
+                    sink.append_source(source_id, jobs)
+                except ScraperError as exc:
+                    log.error(
+                        "[%s] could not persist a scraped unit, stopping the "
+                        "source and marking it failed: %s",
+                        source_id,
+                        exc,
+                    )
+                    if source_id not in state.failed_sources:
+                        state.failed_sources.append(source_id)
+                    raise CheckpointAborted(str(exc)) from exc
+
+            on_source_checkpoint = _on_source_checkpoint
 
         # Overlap state (Stage 3). When a phase 2 (Apple) follows phase 1, the
         # phase-1 rows are enriched in a background WAVE while Apple still
@@ -2122,9 +2170,11 @@ def _run_impl(
             on_note=rp.note,
             on_source_result=on_source_result,
             # Slow jobspy sources checkpoint each finished (term x country) unit
-            # through the SAME failure-isolated append path, so a crash/kill keeps
-            # every completed unit (not the whole-source-or-nothing of before).
-            on_source_checkpoint=on_source_result,
+            # through the failure-isolated append path, so a crash/kill keeps every
+            # completed unit (not the whole-source-or-nothing of before). On a
+            # persist failure the checkpoint path stops the source (raises
+            # CheckpointAborted) rather than scraping on against a dead disk.
+            on_source_checkpoint=on_source_checkpoint,
             on_phase1_done=_on_phase1_done,
             # Force Apple headless while the live block owns the terminal.
             force_headless=tty,

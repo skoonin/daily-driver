@@ -1383,3 +1383,121 @@ def test_checkpointed_source_not_double_appended_at_end(
     rows = _read_csv(tmp_path / "jobs.csv")
     # Exactly two rows -- not four. The end-of-source append was skipped.
     assert [r["Company"] for r in rows] == ["Acme", "Bravo"]
+
+
+def test_first_interrupt_emits_user_note_before_draining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first Ctrl-C must emit a user-visible note (via on_note) the instant it
+    sets the stop event, BEFORE the (possibly minutes-long) drain -- otherwise the
+    wait looks like a no-op and the user presses Ctrl-C again and loses the drain.
+    """
+    import threading
+
+    b_running = threading.Event()
+
+    def source_a(_ctx: ScrapeContext) -> list[dict[str, Any]]:
+        b_running.wait(timeout=5)
+        return [_scraped("https://a/1", "Acme")]
+
+    def source_b(ctx: ScrapeContext) -> list[dict[str, Any]]:
+        b_running.set()
+        for _ in range(100):
+            if ctx.stop_event.is_set():
+                break
+            ctx.stop_event.wait(timeout=0.05)
+        return [_scraped("https://b/1", "Bravo")]
+
+    monkeypatch.setitem(runner.SCRAPERS, "src_a", source_a)
+    monkeypatch.setitem(runner.SCRAPERS, "src_b", source_b)
+
+    notes: list[str] = []
+
+    def on_result(sid: str, jobs: list[dict[str, Any]]) -> None:
+        if sid == "src_a":
+            raise KeyboardInterrupt  # Ctrl-C while B is still mid-unit
+
+    ctx = ScrapeContext(plugin=_us_remote_plugin())
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run_all_scrapers(
+            ctx,
+            sources_override=["src_a", "src_b"],
+            on_source_result=on_result,
+            on_note=notes.append,
+        )
+
+    # The interrupt note fired, and it tells the user to press again to abort.
+    interrupt_notes = [n for n in notes if "Interrupted" in n]
+    assert interrupt_notes, f"no interrupt note among {notes!r}"
+    assert "Ctrl-C again" in interrupt_notes[0]
+
+
+def test_checkpoint_disk_error_stops_source_at_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkpoint persist failure stops the source AT the failing unit: unit 1
+    lands, unit 2's append raises ScraperError, the source returns early (no unit
+    3 scraped), and the source is marked failed. "failed" means "stopped at the
+    failure", not "kept scraping against a dead disk"."""
+    import json
+
+    from daily_driver.plugins.job_search.scraper import csv_io
+    from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
+        ScraperError,
+    )
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    real_append = csv_io.append_jobs_typed
+
+    def flaky_append(csv_path: Any, jobs: list[Any], header: Any) -> int:
+        # Fail the append of unit 2 (company "Unit2Co"); unit 1 lands normally.
+        if jobs and jobs[0].company == "Unit2Co":
+            raise ScraperError("disk died mid-scrape")
+        return real_append(csv_path, jobs, header)
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.csv_io.append_jobs_typed",
+        flaky_append,
+    )
+
+    units_scraped: list[str] = []
+
+    def fake_linkedin(ctx: ScrapeContext, *, sites: Any = None) -> list[dict[str, Any]]:
+        # Mirror the real adapter: checkpoint each unit, catch CheckpointAborted
+        # to stop at the failing unit and return what is already persisted.
+        jobs: list[dict[str, Any]] = []
+        for label in ("Unit1Co", "Unit2Co", "Unit3Co"):
+            units_scraped.append(label)
+            row = _scraped(f"https://l/{label}", label)
+            jobs.append(row)
+            try:
+                ctx.checkpoint([row])
+            except CheckpointAborted:
+                return jobs
+        return jobs
+
+    monkeypatch.setattr(runner, "scrape_jobspy", fake_linkedin)
+
+    rc = runner.run(
+        _us_remote_plugin(),
+        tmp_path,
+        tmp_path,
+        no_enrich=True,
+        sources_override=["linkedin"],
+    )
+    # Source stopped at the failure -> marked failed -> exit 1.
+    assert rc == 1
+    # Unit 3 was never scraped (the source stopped at unit 2's failure).
+    assert units_scraped == ["Unit1Co", "Unit2Co"]
+    # Unit 1's row is durable; unit 2 (failed append) is not on disk.
+    rows = _read_csv(tmp_path / "jobs.csv")
+    assert [r["Company"] for r in rows] == ["Unit1Co"]
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert "linkedin" in manifest["sources_failed"]
