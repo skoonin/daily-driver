@@ -504,6 +504,24 @@ class Phase(_Row):
                     self._label, self._total or 1, color=_PHASE_COLOR
                 )
 
+    def set_total(self, total: int) -> None:
+        """Re-base the phase's denominator once the real work count is known.
+
+        A phase is often pinned before its work is planned (the bar must exist
+        when the group renders), so the creation-time total is an upper bound.
+        When the planner resolves the actual count (e.g. a budget cap trims the
+        candidate list), the bar must show that truth -- otherwise it reads as
+        if the cap were ignored and can never fill.
+        """
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed:
+                return
+            self._total = max(total, self.completed, 1)
+            if self._bar is not None:
+                self._bar.total = self._total
+                self._bar.refresh()
+
     def advance(self, n: int = 1, detail: str | None = None) -> None:
         owner = self._owner()
         with owner._lock:

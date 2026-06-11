@@ -1358,10 +1358,29 @@ def run_backfill(
             f"{needs['gd']} need GD, {needs['fit_notes']} need Fit/Notes "
             f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
         )
+        # The needs counts are the FULL backlog; one pass spends at most the
+        # config caps (or --limit). Say so when a cap would trim this pass,
+        # or the report reads as if the caps were ignored.
+        enrich_cfg = plugin.enrichment
+        company_cap = limit if limit is not None else enrich_cfg.max_enrich_companies
+        fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
+        cap_notes = []
+        if needs["product"] > company_cap or needs["gd"] > company_cap:
+            cap_notes.append(f"company lookups capped at {company_cap}")
+        if needs["fit_notes"] > fit_cap:
+            cap_notes.append(f"fit/notes capped at {fit_cap}")
+        if cap_notes:
+            source = "--limit" if limit is not None else "config"
+            Console.info(
+                f"This pass would be {', '.join(cap_notes)} ({source}); "
+                "run backfill again to continue."
+            )
         return
 
-    product_budget = limit if limit is not None else 0
-    fit_budget = limit if limit is not None else 0
+    # No --limit: None lets the enrichment plans apply the config caps
+    # (max_enrich_companies / max_enrich_fit).
+    product_budget = limit
+    fit_budget = limit
 
     tty = Console.is_tty() and not Console.quiet_mode
     with file_lock(lock_path):
@@ -1578,8 +1597,8 @@ def _run_llm_enrichment(
     fit_phase: Phase,
     *,
     run_preflight: bool,
-    product_budget: int = 0,
-    fit_budget: int = 0,
+    product_budget: int | None = None,
+    fit_budget: int | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     exclude_companies: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
@@ -1618,6 +1637,11 @@ def _run_llm_enrichment(
             fit_budget=fit_budget,
             product_progress=product_phase.advance,
             fit_progress=fit_phase.advance,
+            # The bars are pinned with total=len(jobs) before the plans exist;
+            # once the planner resolves the budget-capped call counts, re-base
+            # the denominators so the bars show what will actually be spent.
+            on_product_planned=product_phase.set_total,
+            on_fit_planned=fit_phase.set_total,
             # Periodic in-loop flush degrades (not crashes) on a disk error.
             flush=sink.flush_periodic,
             exclude_fit_urls=exclude_fit_urls,
@@ -1650,8 +1674,8 @@ def _enrich_wave(
     *,
     wave_label: str,
     run_preflight: bool,
-    product_budget: int,
-    fit_budget: int,
+    product_budget: int | None,
+    fit_budget: int | None,
     set_phase: Callable[[str], None] | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     exclude_companies: frozenset[str] = frozenset(),
@@ -1662,8 +1686,9 @@ def _enrich_wave(
     ``wave_label`` suffixes the phase rows ("" for the only/first wave, e.g.
     " (wave 2)" for the post-Apple wave) so the live display shows each wave's
     own phase rows -- the honest two-wave UI. ``product_budget`` / ``fit_budget``
-    are this wave's remaining slice of the shared running totals (0 = config
-    cap). ``set_phase`` records the coarse run phase for the manifest. Flushes
+    are this wave's remaining slice of the shared running totals (None = the
+    config caps; an explicit 0 spends nothing). ``set_phase`` records the
+    coarse run phase for the manifest. Flushes
     per phase and on the periodic hook; the caller's try/except flushes once more
     on interrupt. Returns ``(detail_stats, product_stats, fn_stats)``.
     """
@@ -1674,7 +1699,15 @@ def _enrich_wave(
 
     total = len(jobs)
     detail_phase = enrich_group.phase(f"Detail pages{wave_label}", total=total)
-    product_phase = enrich_group.phase(f"Company products{wave_label}", total=total)
+    # The company pass serves two toggles sharing one call: label the bar by
+    # what is actually enabled, or a gd-only run (enrich_product: false) reads
+    # as if the product toggle were being ignored.
+    enrich_cfg = plugin.enrichment
+    if enrich_cfg.enrich_product:
+        company_label = "Company products"
+    else:
+        company_label = "Glassdoor ratings"
+    product_phase = enrich_group.phase(f"{company_label}{wave_label}", total=total)
     fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
 
     if set_phase is not None:
@@ -2141,8 +2174,8 @@ def _run_impl(
                     enrich_group,
                     wave_label="",
                     run_preflight=True,
-                    product_budget=0,  # wave 1 gets the full config budget
-                    fit_budget=0,
+                    product_budget=None,  # wave 1 gets the full config budget
+                    fit_budget=None,
                     set_phase=_set_phase,
                     attempted=attempted,
                 )
@@ -2305,11 +2338,14 @@ def _run_impl(
                         enrich_group,
                         wave_label=" (wave 2)",
                         run_preflight=False,  # wave 1 already probed
+                        # Shared running totals: wave 2 gets exactly what wave 1
+                        # left -- 0 when exhausted (an explicit 0 makes no calls;
+                        # the wave still runs its unbudgeted detail enrichment).
                         product_budget=max(
-                            1, enrich_cfg.max_enrich_companies - len(company_attempted)
+                            0, enrich_cfg.max_enrich_companies - len(company_attempted)
                         ),
                         fit_budget=max(
-                            1, enrich_cfg.max_enrich_fit - len(fit_attempted)
+                            0, enrich_cfg.max_enrich_fit - len(fit_attempted)
                         ),
                         set_phase=_set_phase,
                         exclude_fit_urls=fit_attempted,
@@ -2330,8 +2366,8 @@ def _run_impl(
                     enrich_group,
                     wave_label="",
                     run_preflight=True,
-                    product_budget=0,
-                    fit_budget=0,
+                    product_budget=None,
+                    fit_budget=None,
                     set_phase=_set_phase,
                 )
                 _add_stats(product_stats, p1)

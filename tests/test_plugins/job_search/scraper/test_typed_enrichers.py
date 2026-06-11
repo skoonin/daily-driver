@@ -42,11 +42,10 @@ def _enriched(**overrides: object) -> EnrichedJob:
 
 @pytest.fixture
 def fake_config() -> ScrapeContext:
-    # Both enrichment budgets are zeroed: enrich_fit_and_notes / company
-    # treat budget<=0 as "unset, use config default", so a caller passing
-    # budget=0 still enriches at the config default unless the config itself is
-    # 0. Without max_enrich_fit=0 the fit enricher makes real claude CLI calls
-    # on dev machines where `claude` is on PATH.
+    # Both config caps are zeroed so the enrichers make no provider calls even
+    # when a test leaves budget=None (use-config-default). Without
+    # max_enrich_fit=0 the fit enricher makes real claude CLI calls on dev
+    # machines where `claude` is on PATH.
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
@@ -81,8 +80,7 @@ def test_fit_enrich_passes_through_with_zero_budget(
 ) -> None:
     j = _enriched()
     out, stats = enrich_fit_and_notes([j], fake_config, budget=0)
-    # Effective budget 0 (param 0 + config max_enrich_fit 0) => no jobs
-    # enriched, no claude call.
+    # Explicit budget 0 => no jobs enriched, no provider call.
     assert len(out) == 1
     assert out[0].fit == j.fit  # unchanged
 
@@ -111,6 +109,247 @@ def test_fit_enrich_score_survives_round_trip(
     out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
     assert out[0].fit == 7
     assert out[0].notes == "k8s"
+
+
+def test_fit_budget_zero_makes_no_calls_despite_config_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit budget=0 means NO calls -- it must not fall back to the
+    config cap (wave 2 passes the remaining shared budget, which can be 0)."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda *a, **k: calls.append("x") or '{"fit": 7, "notes": "n"}',
+    )
+    jobs = [_enriched(url=f"https://x/{i}") for i in range(3)]
+    out, stats = enrich_fit_and_notes(jobs, ctx, budget=0)
+    assert calls == []
+    assert stats["skipped_budget"] == 3
+    assert all(o.fit == j.fit for o, j in zip(out, jobs))
+
+
+def test_company_budget_zero_makes_no_calls_despite_config_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_companies": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda *a, **k: calls.append("x") or "Builds widgets",
+    )
+    jobs = [_enriched(url=f"https://x/{i}") for i in range(2)]
+    out, stats = enrich_company_descriptions(jobs, ctx, budget=0)
+    assert calls == []
+    assert stats["enriched"] == 0
+
+
+def test_fit_budget_none_uses_config_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """budget=None (the default) reads the config cap; the cap is enforced."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 1,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda *a, **k: calls.append("x") or '{"fit": 7, "notes": "n"}',
+    )
+    jobs = [
+        _enriched(url="https://x/1", description_text="d"),
+        _enriched(url="https://x/2", description_text="d"),
+    ]
+    _out, stats = enrich_fit_and_notes(jobs, ctx, budget=None)
+    assert len(calls) == 1
+    assert stats["skipped_budget"] == 1
+
+
+def test_location_summary_states_listed_countries_are_acceptable() -> None:
+    """The fit prompt must SAY a job in a configured country is acceptable --
+    a bare country list next to "Based in: <home>" reads as candidate metadata
+    and models then score every non-home-country job as a location mismatch
+    (observed live: Barcelona scored as mismatch with ES configured)."""
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+        _location_summary,
+    )
+
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "locations": {
+                    "home_city": "Vancouver, BC",
+                    "remote": True,
+                    "countries": ["ES", "CA"],
+                },
+            }
+        )
+    )
+    summary = _location_summary(ctx)
+    assert "Spain" in summary
+    assert "NOT a location mismatch" in summary
+    assert "remote roles are acceptable" in summary
+
+
+def test_fit_parses_markdown_fenced_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local models fence their JSON in markdown despite the strict-JSON
+    prompt (observed live with qwen2.5:32b); the parser must peel the fence
+    instead of failing the job."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    fenced = '```json\n{"fit": 6, "notes": "aligned with SRE roles"}\n```'
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: fenced)
+    j = _enriched(url="https://x/1", description_text="d")
+    out, stats = enrich_fit_and_notes([j], ctx)
+    assert out[0].fit == 6
+    assert out[0].notes == "aligned with SRE roles"
+    assert stats["failed"] == 0
+
+
+def test_fit_parses_prose_wrapped_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    wrapped = (
+        'Here is the assessment:\n{"fit": 8, "notes": "strong match"}\nHope that helps.'
+    )
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: wrapped)
+    j = _enriched(url="https://x/1", description_text="d")
+    out, stats = enrich_fit_and_notes([j], ctx)
+    assert out[0].fit == 8
+    assert stats["failed"] == 0
+
+
+def test_fit_truly_non_json_still_counted_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: "I cannot assess this role."
+    )
+    j = _enriched(url="https://x/1", description_text="d")
+    out, stats = enrich_fit_and_notes([j], ctx)
+    assert out[0].fit == j.fit
+    assert stats["failed"] == 1
+
+
+def test_fit_on_planned_reports_budget_capped_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The planner reports the post-budget call count so progress bars show the
+    real denominator (5 eligible, cap 2 -> planned 2)."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 2,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
+    )
+    planned: list[int] = []
+    jobs = [_enriched(url=f"https://x/{i}", description_text="d") for i in range(5)]
+    enrich_fit_and_notes(jobs, ctx, on_planned=planned.append)
+    assert planned == [2]
+
+
+def test_company_on_planned_reports_budget_capped_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_companies": 1,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Builds widgets")
+    planned: list[int] = []
+    jobs = [
+        _enriched(url="https://x/1", company="A"),
+        _enriched(url="https://x/2", company="B"),
+    ]
+    enrich_company_descriptions(jobs, ctx, on_planned=planned.append)
+    assert planned == [1]
 
 
 def test_job_details_short_circuits_when_description_present(
