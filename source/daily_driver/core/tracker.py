@@ -30,7 +30,8 @@ RECOMMENDED_STATUSES: tuple[str, ...] = (
 )
 
 # job-category lifecycle mirrors the job_search plugin's JOBS_RECOMMENDED_STATUSES
-# (scraper.models) plus the tracker-only `dropped` terminal state.
+# (scraper.models), kept aligned so a `job`-category tracker entry and a jobs.csv
+# row share one vocabulary.
 JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "found",
     "skipped",
@@ -38,6 +39,7 @@ JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "interviewing",
     "rejected",
     "dropped",
+    "closed",
 )
 
 

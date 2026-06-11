@@ -61,6 +61,9 @@ JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "interviewing",
     "rejected",
     "dropped",
+    # `closed` is a shipped jobs_archive.DEFAULT_PRUNE_STATUSES target, so it
+    # must be recognized or every prune would warn about the tool's own default.
+    "closed",
 )
 
 
@@ -242,8 +245,10 @@ class EnrichedJob(BaseModel):
     # stance): any string is accepted and preserved, but the spelling is
     # normalized (case-folded, underscores -> hyphens) so `ruled_out` and
     # `ruled-out` never diverge. The CSV write path warns once per run on
-    # values outside JOBS_RECOMMENDED_STATUSES.
-    status: str = JOBS_DEFAULT_STATUS
+    # values outside JOBS_RECOMMENDED_STATUSES. Default is blank: a deliberately
+    # empty cell must round-trip blank rather than being relabelled; only the
+    # scrape path (from_normalized) sets JOBS_DEFAULT_STATUS.
+    status: str = ""
     skip_reason: str = ""
     date_applied: dt.date | None = None
     # Drives `jobs prune --older-than`. Defaults to Date Found on write when
@@ -275,8 +280,9 @@ class EnrichedJob(BaseModel):
     @field_validator("status", mode="before")
     @classmethod
     def _normalize_status(cls, v: Any) -> str:
-        text = normalize_status(v if isinstance(v, str) else str(v))
-        return text or JOBS_DEFAULT_STATUS
+        # Spelling only: blank stays blank (never coerced to a default), so a
+        # deliberately empty cell survives a backfill/prune rewrite unchanged.
+        return normalize_status(v if isinstance(v, str) else str(v))
 
     @property
     def product_filled(self) -> bool:
@@ -295,6 +301,9 @@ class EnrichedJob(BaseModel):
     @classmethod
     def from_normalized(cls, n: NormalizedJob) -> EnrichedJob:
         return cls(
+            # Scraped path: a fresh listing is `found`. (The read path leaves a
+            # blank cell blank; the field default is "".)
+            status=JOBS_DEFAULT_STATUS,
             company=n.company,
             role=n.role,
             location=n.location,
@@ -358,9 +367,9 @@ class EnrichedJob(BaseModel):
             canonical = source.split("/")[0].lower() or "unknown"
             board = ""
         return cls(
-            # The validator normalizes spelling (e.g. `ruled_out` -> `ruled-out`)
-            # and falls back to the default for a blank cell.
-            status=row.get("Status", "") or JOBS_DEFAULT_STATUS,
+            # The validator normalizes spelling (e.g. `ruled_out` -> `ruled-out`).
+            # A blank/missing cell stays blank — never relabelled to a default.
+            status=row.get("Status", ""),
             notes=row.get("Notes", ""),
             company=row.get("Company", ""),
             location=row.get("Location", ""),

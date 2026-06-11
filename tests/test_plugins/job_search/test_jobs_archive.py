@@ -350,6 +350,103 @@ def test_prune_no_candidates_leaves_files_untouched(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# prune — visible status canonicalization (review #1)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_reports_status_canonicalization(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A prune rewrite that fixes a kept row's Status spelling surfaces a notice."""
+    from daily_driver.core.console import Console
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            # Archived (stale rejected) — triggers the rewrite path.
+            _row(company="Old", link="old", status="rejected", last_seen="2026-04-01"),
+            # Kept but with a non-canonical spelling that the rewrite fixes.
+            _row(
+                company="Keep",
+                link="keep",
+                status="In Progress",
+                last_seen="2026-05-20",
+            ),
+        ],
+    )
+
+    info_calls: list[str] = []
+    monkeypatch.setattr(
+        Console, "info", classmethod(lambda cls, msg: info_calls.append(msg))
+    )
+
+    jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+    notices = [m for m in info_calls if "Canonicalized" in m]
+    assert len(notices) == 1
+    assert "1 status spelling" in notices[0]
+    assert _read_csv(csv_path)[0]["Status"] == "in-progress"
+
+
+def test_prune_no_canonicalization_notice_when_canonical(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """No notice when the rewritten rows are already canonically spelled."""
+    from daily_driver.core.console import Console
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            _row(company="Old", link="old", status="rejected", last_seen="2026-04-01"),
+            _row(company="Keep", link="keep", status="found", last_seen="2026-05-20"),
+        ],
+    )
+
+    info_calls: list[str] = []
+    monkeypatch.setattr(
+        Console, "info", classmethod(lambda cls, msg: info_calls.append(msg))
+    )
+
+    jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+    assert not [m for m in info_calls if "Canonicalized" in m]
+
+
+def test_prune_warns_once_across_keep_and_candidates(
+    tmp_path: Path, caplog: Any
+) -> None:
+    """One offending value spanning kept + archived rows warns once (review #4a)."""
+    import logging
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            # Stale + unknown status -> archived, and a kept row with the SAME
+            # unknown status. Before the dedup fix this warned twice.
+            _row(company="A", link="a", status="frobnicated", last_seen="2026-04-01"),
+            _row(company="B", link="b", status="frobnicated", last_seen="2026-05-20"),
+        ],
+    )
+
+    logger_name = "daily_driver.plugins.job_search.scraper.csv_io"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        jobs_archive.prune(
+            csv_path, tmp_path, cutoff=_CUTOFF, statuses=("frobnicated",)
+        )
+
+    messages = {
+        r.getMessage()
+        for r in caplog.records
+        if r.name == logger_name and r.levelno >= logging.WARNING
+    }
+    assert len(messages) == 1
+    assert "frobnicated" in next(iter(messages))
+
+
+# ---------------------------------------------------------------------------
 # load_archive_dedup — silence-on-malformed-archive guard
 # ---------------------------------------------------------------------------
 

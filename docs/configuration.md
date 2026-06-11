@@ -67,7 +67,7 @@ Injected into Claude sessions as context.
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
-| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, skipped, applied, interviewing, rejected, dropped`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
+| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
 | `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.

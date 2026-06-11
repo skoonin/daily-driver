@@ -19,6 +19,34 @@ from daily_driver.plugins.job_search.scraper.models import (
 log = get_logger(__name__)
 
 
+def canonicalize_status_cells(rows: list[dict[str, str]]) -> list[tuple[str, str]]:
+    """Canonicalize the Status spelling of each row in place; report the changes.
+
+    Returns the ``(old, new)`` pairs whose spelling actually changed (e.g.
+    ``("Ruled_Out", "ruled-out")``), so callers can surface a one-line notice
+    that a rewrite touched rows the user did not explicitly edit. A blank cell
+    stays blank and meaning never changes — spelling only.
+    """
+    changes: list[tuple[str, str]] = []
+    for row in rows:
+        raw = row.get("Status")
+        if not raw:
+            continue
+        canonical = normalize_status(raw)
+        if canonical != raw:
+            row["Status"] = canonical
+            changes.append((raw, canonical))
+    return changes
+
+
+def format_canonicalized_notice(changes: list[tuple[str, str]]) -> str | None:
+    """One-line summary of status canonicalizations, or None when none happened."""
+    if not changes:
+        return None
+    old, new = changes[0]
+    return f"Canonicalized {len(changes)} status spelling(s) (e.g. {old} -> {new})"
+
+
 def warn_unknown_job_statuses(statuses: list[str]) -> None:
     """Warn once on any normalized status outside JOBS_RECOMMENDED_STATUSES.
 
@@ -230,4 +258,6 @@ __all__ = [
     "append_rows",
     "dedup_sets_from_rows",
     "warn_unknown_job_statuses",
+    "canonicalize_status_cells",
+    "format_canonicalized_notice",
 ]

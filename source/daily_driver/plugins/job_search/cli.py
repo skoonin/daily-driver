@@ -293,7 +293,9 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         return 2
 
     if args.status:
-        statuses = tuple(s.strip().lower() for s in args.status if s.strip())
+        # Normalization (case-fold, underscores -> hyphens) happens in _is_stale,
+        # so pass the raw user values through and just drop blanks.
+        statuses = tuple(s.strip() for s in args.status if s.strip())
     else:
         statuses = DEFAULT_PRUNE_STATUSES
 
