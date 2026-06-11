@@ -825,6 +825,9 @@ def run(
         enrich_job_details,
         enrich_product_and_fit_concurrently,
     )
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        render_detail_summary,
+    )
 
     started_at = datetime.now(timezone.utc)
     csv_path = output_dir / "jobs.csv"
@@ -1006,10 +1009,7 @@ def run(
             typed_jobs, detail_stats = enrich_job_details(
                 typed_jobs, ctx, progress=detail_phase.advance
             )
-            detail_phase.done(
-                f"{detail_stats['enriched']} enriched, "
-                f"{detail_stats['skipped']} skipped ({detail_stats['total']} total)"
-            )
+            detail_phase.done(render_detail_summary(detail_stats))
 
             # Product and fit/notes overlap under one shared concurrency cap
             # (F1): both fan out through a single executor bounded by the

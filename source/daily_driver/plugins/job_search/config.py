@@ -198,10 +198,28 @@ class Criterion(BaseModel):
 
 
 class EnrichmentConfig(BaseModel):
-    """Knobs for the post-scrape enrichment passes (comp, fit, notes)."""
+    """Knobs for the post-scrape enrichment passes (comp, fit, notes).
+
+    Owns its own AI provider routing: enrichment is plugin-specific, so the
+    provider/model selection lives here rather than leaking into core's `ai:`
+    block. The provider-connection blocks (parallelism, ollama endpoint /
+    timeout) are still shared core infra under `ai.claude:` / `ai.ollama:`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: Literal["claude", "ollama"] = Field(
+        default="claude",
+        description="provider: claude | ollama",
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
+            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".'
+        ),
+        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
+    )
     enrich_timeout: int = Field(
         default=30,
         description="Seconds before a single enrichment LLM call is abandoned.",
@@ -209,6 +227,10 @@ class EnrichmentConfig(BaseModel):
     max_enrich_companies: int = Field(
         default=50,
         description="Cap on company-description lookups per run (bounds API cost).",
+    )
+    enrich_product: bool = Field(
+        default=True,
+        description="Look up a one-line Product/Purpose summary for each company.",
     )
     enrich_gd_rating: bool = Field(
         default=True,

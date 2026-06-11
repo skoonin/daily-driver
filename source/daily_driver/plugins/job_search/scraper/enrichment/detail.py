@@ -33,19 +33,39 @@ log = get_logger(__name__)
 _MAX_DETAIL_WORKERS = 4
 
 
-def _should_skip(job: EnrichedJob) -> bool:
-    """True when a job needs no detail fetch (comp present, inactive, no/bad URL)."""
+def _skip_reason(job: EnrichedJob) -> str | None:
+    """Classify why a job needs no detail fetch, or None when it should fetch.
+
+    Reasons are short, user-facing phrases reused verbatim in the phase summary
+    so the breakdown reads plainly. Order mirrors the original skip checks.
+    """
     if job.comp:
-        return True
+        return "already complete"
     if job.status.value in ENRICH_SKIP_STATUSES:
-        return True
+        return "inactive"
     url = (job.url or "").strip()
     if not url:
-        return True
+        return "no url"
     # linkedin: anonymous detail pages don't emit JSON-LD (JobSpy already fills
     # description). news.ycombinator.com: aggressive 429 on /item?id=*. indeed:
     # bot-walls bare requests with 403 (JobSpy already fills description).
-    return "linkedin.com" in url or "news.ycombinator.com" in url or "indeed.com" in url
+    if "linkedin.com" in url or "news.ycombinator.com" in url or "indeed.com" in url:
+        return "blocked host"
+    return None
+
+
+def render_detail_summary(stats: dict[str, Any]) -> str:
+    """Render the detail phase.done line with a per-reason skip breakdown.
+
+    e.g. "0 enriched, 7 skipped (5 already complete, 2 blocked host)". The
+    per-reason counts in ``stats['skip_reasons']`` sum to ``stats['skipped']``.
+    """
+    base = f"{stats['enriched']} enriched, {stats['skipped']} skipped"
+    reasons = stats.get("skip_reasons") or {}
+    if not reasons:
+        return base
+    parts = ", ".join(f"{count} {reason}" for reason, count in reasons.items())
+    return f"{base} ({parts})"
 
 
 class _HostThrottle:
@@ -111,7 +131,7 @@ def enrich_job_details(
     ctx: ScrapeContext,
     *,
     progress: ProgressCallback | None = None,
-) -> tuple[list[EnrichedJob], dict[str, int]]:
+) -> tuple[list[EnrichedJob], dict[str, Any]]:
     """Fetch each job's detail page and fill comp/posted_date/description.
 
     Fetches run on a small thread pool (``min(4, n_hosts)`` workers) with
@@ -137,11 +157,14 @@ def enrich_job_details(
     hn_skipped_logged = False
     indeed_skipped_logged = False
     skipped_count = 0
+    skip_reasons: dict[str, int] = {}
     fetch_targets: list[tuple[int, str]] = []  # (slot index, url)
     for i, job in enumerate(out):
         url = (job.url or "").strip()
-        if _should_skip(job):
+        reason = _skip_reason(job)
+        if reason is not None:
             skipped_count += 1
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             if url and "news.ycombinator.com" in url and not hn_skipped_logged:
                 log.debug(
                     "[detail] skipping HN detail enrichment "
@@ -281,5 +304,6 @@ def enrich_job_details(
         "fetched": fetched_count[0],
         "enriched": enriched_count,
         "skipped": skipped_count,
+        "skip_reasons": skip_reasons,
         "total": len(out),
     }

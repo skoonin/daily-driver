@@ -287,18 +287,21 @@ class ClaudeProviderConfig(BaseModel):
 
 
 class AIConfig(BaseModel):
-    """Per-task provider routing for headless AI calls.
+    """Provider routing for the core `summary` task plus shared provider blocks.
 
-    Default resolves to `provider: claude` for every task, so omitting the
-    `ai:` block in `.dd-config.yaml` preserves the existing claude-only
-    behavior. Interactive launchers (day-start, check-in, day-end) ignore
-    this block — they always use the `claude` CLI directly for session /
-    agent / workspace-context features Ollama doesn't have.
+    Default resolves to `provider: claude`, so omitting the `ai:` block in
+    `.dd-config.yaml` preserves the existing claude-only behavior. The
+    `claude:` / `ollama:` blocks are shared connection/tuning infra consulted
+    by whichever provider a task routes to — `summary` here, and the
+    job_search plugin's own `enrichment` routing
+    (`plugins.job_search.enrichment.provider`). Interactive launchers
+    (day-start, check-in, day-end) ignore this block — they always use the
+    `claude` CLI directly for session / agent / workspace-context features
+    Ollama doesn't have.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    enrichment: AITaskConfig = Field(default=AITaskConfig(), description="")
     summary: AITaskConfig = Field(default=AITaskConfig(), description="")
     claude: ClaudeProviderConfig = Field(
         default=ClaudeProviderConfig(),
@@ -457,13 +460,14 @@ class Config(BaseModel):
         json_schema_extra={
             "template_commented": True,
             "block_comment": (
-                "Optional: AI provider routing for headless tasks (enrichment,"
-                " summary).\n"
+                "Optional: AI provider routing for the headless `summary` task,\n"
+                "plus the shared claude/ollama provider-connection blocks (also\n"
+                "consulted by `plugins.job_search.enrichment` routing).\n"
                 "Interactive launchers (day-start, check-in, day-end) always use"
                 " claude —\n"
                 "they need session resume / agents / workspace context that Ollama"
                 " lacks.\n"
-                "Omitting the entire block keeps claude defaults for every task."
+                "Omitting the entire block keeps claude defaults for summary."
             ),
         },
     )

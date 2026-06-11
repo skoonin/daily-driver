@@ -205,3 +205,69 @@ def test_slot_replacement_on_calling_thread() -> None:
 
     assert apply_threads
     assert all(n == "MainThread" for n in apply_threads), apply_threads
+
+
+# ---------------------------------------------------------------------------
+# Skip-reason breakdown (PART B.1): tally why each job was skipped.
+# ---------------------------------------------------------------------------
+
+
+def test_skip_reason_breakdown_tallied() -> None:
+    """stats['skip_reasons'] tallies per-reason; the counts sum to skipped."""
+    from daily_driver.plugins.job_search.scraper.models import JobStatus
+
+    jobs = [
+        _job("https://acme.com/job", comp="$200k"),  # already complete
+        _job("https://acme.com/job2", comp="$150k"),  # already complete
+        _job("https://www.linkedin.com/jobs/view/1"),  # blocked host
+        _job("https://news.ycombinator.com/item?id=1"),  # blocked host
+        _job(""),  # no url
+        _job("https://x.com/j", status=JobStatus.SKIPPED),  # inactive
+        _job("https://boards.greenhouse.io/acme/jobs/9"),  # real fetch
+    ]
+    resp = MagicMock()
+    resp.text = "<html></html>"
+    with (
+        patch(f"{_DETAIL}._api_get", return_value=resp),
+        patch(f"{_DETAIL}._parse_detail_page", return_value={}),
+    ):
+        _out, stats = enrich_job_details(jobs, _ctx(0))
+
+    reasons = stats["skip_reasons"]
+    assert sum(reasons.values()) == stats["skipped"] == 6
+    assert reasons["already complete"] == 2
+    assert reasons["blocked host"] == 2
+    assert reasons["no url"] == 1
+    assert reasons["inactive"] == 1
+
+
+def test_render_skip_breakdown_string() -> None:
+    """The detail phase summary renders e.g. '0 enriched, 7 skipped (...)'."""
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        render_detail_summary,
+    )
+
+    stats = {
+        "enriched": 0,
+        "skipped": 7,
+        "total": 7,
+        "fetched": 0,
+        "skip_reasons": {"already complete": 5, "blocked host": 2},
+    }
+    out = render_detail_summary(stats)
+    assert out == "0 enriched, 7 skipped (5 already complete, 2 blocked host)"
+
+
+def test_render_skip_breakdown_no_skips() -> None:
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        render_detail_summary,
+    )
+
+    stats = {
+        "enriched": 3,
+        "skipped": 0,
+        "total": 3,
+        "fetched": 3,
+        "skip_reasons": {},
+    }
+    assert render_detail_summary(stats) == "3 enriched, 0 skipped"

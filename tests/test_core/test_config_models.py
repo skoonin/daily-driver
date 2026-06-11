@@ -560,28 +560,23 @@ def test_ai_config_defaults_to_claude_everywhere():
     from daily_driver.core.config_models import AIConfig
 
     ai = AIConfig()
-    assert ai.enrichment.provider == "claude"
-    assert ai.enrichment.model is None
     assert ai.summary.provider == "claude"
     assert ai.summary.model is None
     assert ai.ollama.endpoint == "http://localhost:11434"
     assert ai.ollama.timeout == 60
 
 
-def test_ai_config_per_task_ollama_with_model():
+def test_ai_config_summary_ollama_with_model():
     from daily_driver.core.config_models import AIConfig
 
     ai = AIConfig.model_validate(
         {
-            "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-            "summary": {"provider": "claude", "model": "sonnet"},
+            "summary": {"provider": "ollama", "model": "qwen2.5:14b"},
             "ollama": {"endpoint": "http://10.0.0.5:11434", "timeout": 120},
         }
     )
-    assert ai.enrichment.provider == "ollama"
-    assert ai.enrichment.model == "qwen2.5:14b"
-    assert ai.summary.provider == "claude"
-    assert ai.summary.model == "sonnet"
+    assert ai.summary.provider == "ollama"
+    assert ai.summary.model == "qwen2.5:14b"
     assert ai.ollama.endpoint == "http://10.0.0.5:11434"
     assert ai.ollama.timeout == 120
 
@@ -617,8 +612,8 @@ def test_ollama_config_rejects_extra_keys():
 def test_root_config_omitting_ai_block_uses_defaults():
     """Backwards-compat: omitting `ai:` keeps claude-only behavior."""
     c = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
-    assert c.ai.enrichment.provider == "claude"
     assert c.ai.summary.provider == "claude"
+    assert EnrichmentConfig().provider == "claude"
 
 
 def test_every_field_has_description():
@@ -639,3 +634,98 @@ def test_every_field_has_description():
             if finfo.description is None:
                 failures.append(f"{obj.__name__}.{fname}")
     assert not failures, f"missing description: {failures}"
+
+
+# ---------------------------------------------------------------------------
+# AIConfig split: core keeps summary + provider blocks; enrichment moves to
+# the job_search plugin (PART A of the enrichment-config split).
+# ---------------------------------------------------------------------------
+
+
+def test_core_ai_config_has_no_enrichment_task():
+    """Core `ai:` no longer owns an enrichment task block."""
+    from daily_driver.core.config_models import AIConfig
+
+    assert "enrichment" not in AIConfig.model_fields
+
+
+def test_core_ai_config_rejects_enrichment_key():
+    """A stale `ai.enrichment:` block hard-fails (extra=forbid, no shim)."""
+    from daily_driver.core.config_models import AIConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig.model_validate({"enrichment": {"provider": "ollama"}})
+
+
+def test_core_ai_config_constructor_rejects_enrichment_kwarg():
+    """The migration's central promise: passing enrichment= at all is rejected.
+
+    Locks the extra_forbidden break at the constructor, not only via
+    model_validate, so a stray kwarg can't silently no-op.
+    """
+    from daily_driver.core.config_models import AIConfig, AITaskConfig
+
+    with pytest.raises(ValidationError):
+        AIConfig(enrichment=AITaskConfig())  # type: ignore[call-arg]
+
+
+def test_core_config_rejects_ai_enrichment():
+    """End-to-end: a root config with `ai.enrichment:` is rejected."""
+    with pytest.raises(ValidationError):
+        Config.model_validate(
+            {
+                "tracker": {"categories": {"task": {"required": ["title"]}}},
+                "ai": {"enrichment": {"provider": "ollama"}},
+            }
+        )
+
+
+def test_core_ai_config_keeps_summary_and_providers():
+    """Summary routing + claude/ollama connection blocks survive on core."""
+    from daily_driver.core.config_models import AIConfig
+
+    m = AIConfig()
+    assert m.summary.provider == "claude"
+    assert m.claude.max_parallel == 4
+    assert m.ollama.endpoint == "http://localhost:11434"
+
+
+def test_core_summary_can_route_to_ollama():
+    """Summary may route to ollama (shared provider infra)."""
+    from daily_driver.core.config_models import AIConfig
+
+    m = AIConfig.model_validate({"summary": {"provider": "ollama", "model": "phi4"}})
+    assert m.summary.provider == "ollama"
+    assert m.summary.model == "phi4"
+
+
+def test_plugin_enrichment_gains_provider_and_model():
+    """EnrichmentConfig now carries its own provider/model routing."""
+    m = EnrichmentConfig()
+    assert m.provider == "claude"
+    assert m.model is None
+    routed = EnrichmentConfig.model_validate(
+        {"provider": "ollama", "model": "qwen2.5:14b"}
+    )
+    assert routed.provider == "ollama"
+    assert routed.model == "qwen2.5:14b"
+
+
+def test_plugin_enrichment_provider_rejects_unknown():
+    with pytest.raises(ValidationError):
+        EnrichmentConfig.model_validate({"provider": "gpt4"})
+
+
+def test_plugin_enrichment_roundtrips_with_existing_knobs():
+    """Provider/model coexist with the existing budget/timeout knobs."""
+    m = EnrichmentConfig.model_validate(
+        {
+            "provider": "ollama",
+            "model": "phi4",
+            "enrich_timeout": 45,
+            "max_enrich_fit": 10,
+        }
+    )
+    assert m.provider == "ollama"
+    assert m.enrich_timeout == 45
+    assert m.max_enrich_fit == 10

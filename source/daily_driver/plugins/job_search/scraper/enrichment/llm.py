@@ -18,6 +18,7 @@ import json
 import math
 import re
 import shutil
+import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -45,38 +46,84 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
+# Ollama serializes calls beyond OLLAMA_NUM_PARALLEL, so queued requests still
+# count against the per-call timeout — a wide fan-out can time out purely from
+# queueing. The remedy is server-side, so the full hint is logged ONCE per run
+# (not per timed-out call, which would flood the log). Guarded by a lock since
+# enrichment fans out across a thread pool.
+_OLLAMA_HINT_LOCK = threading.Lock()
+_ollama_hint_logged = False
+
+_OLLAMA_QUEUE_HINT = (
+    "queued requests count against the timeout; ensure OLLAMA_NUM_PARALLEL >= "
+    "max_parallel on the server or set ai.ollama.max_parallel: 1"
+)
+
+
+def _reset_ollama_hint() -> None:
+    """Re-arm the once-per-run ollama queue hint at the start of an enrich run."""
+    global _ollama_hint_logged
+    with _OLLAMA_HINT_LOCK:
+        _ollama_hint_logged = False
+
+
+def _log_provider_timeout(tag: str, label: str, provider: str, seconds: int) -> None:
+    """Log a provider-named timeout; for ollama, append the queue hint once."""
+    global _ollama_hint_logged
+    log.warning("%s %s: %s timed out after %ds", tag, label, provider, seconds)
+    if provider != "ollama":
+        return
+    with _OLLAMA_HINT_LOCK:
+        if _ollama_hint_logged:
+            return
+        _ollama_hint_logged = True
+    log.warning("%s %s", tag, _OLLAMA_QUEUE_HINT)
+
 
 def _fetch_company_info(
     company: str,
     ctx: ScrapeContext,
+    include_product: bool,
     include_gd: bool,
     timeout: int,
 ) -> tuple[str, str, bool]:
     """Fetch product/GD-rating for one company. Returns (product, gd_rating, failed).
 
     Worker function: catches all expected exceptions and returns failed=True
-    instead of propagating, so it is safe to call from a thread pool.
+    instead of propagating, so it is safe to call from a thread pool. The prompt
+    requests only the enabled field(s); a disabled field is never asked for or
+    written.
     """
-    if include_gd:
+    if include_product and include_gd:
         prompt = (
             f"Answer in exactly 2 lines, no preamble:\n"
             f"Line 1: What does {company} build or do? (max 12 words)\n"
             f"Line 2: Glassdoor rating (e.g. 4.1), or 'unknown' if unsure."
         )
-    else:
+    elif include_product:
         prompt = (
             f"In one sentence (max 12 words), what does {company} build or do? "
             "Answer only, no preamble."
         )
+    else:
+        prompt = (
+            f"What is {company}'s Glassdoor rating (e.g. 4.1)? "
+            "Answer with the number only, or 'unknown' if unsure. No preamble."
+        )
+    enrichment_cfg = ctx.plugin.enrichment
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout
+            prompt,
+            provider=enrichment_cfg.provider,
+            model=enrichment_cfg.model,
+            ai=ctx.ai,
+            timeout=timeout,
         )
     except AITimeoutError as exc:
-        log.warning(
-            "%s %s: AI provider timed out after %ds",
+        _log_provider_timeout(
             _enrich_tag("enrich"),
             company,
+            exc.provider,
             exc.timeout_seconds or timeout,
         )
         return "", "", True
@@ -97,26 +144,56 @@ def _fetch_company_info(
         return "", "", True
 
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
-    product = lines[0] if lines else ""
+    product = lines[0] if (include_product and lines) else ""
     gd_rating = ""
-    if include_gd and len(lines) >= 2:
-        raw = lines[1].strip().lower()
-        if raw == "unknown":
-            gd_rating = "unknown"
-        else:
-            try:
-                gd_rating = str(round(float(raw), 1))
-            except ValueError:
-                m = re.search(r"([0-5]\.\d)", lines[1].strip())
-                if m:
-                    gd_rating = m.group(1)
-                    log.info(
-                        "%s GD rating fallback regex extracted %s for %s",
-                        _enrich_tag("enrich"),
-                        gd_rating,
-                        company,
-                    )
-    return product, gd_rating, False
+    if include_gd:
+        # Both fields: rating is line 2. GD-only: rating is line 1 (no product
+        # line was requested).
+        gd_line = (
+            lines[1]
+            if (include_product and len(lines) >= 2)
+            else (lines[0] if lines else "")
+        )
+        gd_rating = _parse_gd_rating(gd_line, company)
+
+    # In GD-only mode the rating is the call's sole product; an unparseable
+    # answer means the call yielded nothing useful, so count it as a failure
+    # rather than caching an empty rating silently. (With product enabled the
+    # product line still carries value, so it is not a failure.)
+    failed = include_gd and not include_product and not gd_rating
+    return product, gd_rating, failed
+
+
+def _parse_gd_rating(line: str, company: str) -> str:
+    """Extract a Glassdoor rating from one response line ('' when none found).
+
+    Logs a miss (info) when a non-empty, non-"unknown" line yields no rating via
+    either the float parse or the regex fallback — that's a silent gap otherwise.
+    """
+    raw = line.strip().lower()
+    if not raw:
+        return ""
+    if raw == "unknown":
+        return "unknown"
+    try:
+        return str(round(float(raw), 1))
+    except ValueError:
+        m = re.search(r"([0-5]\.\d)", line.strip())
+        if m:
+            log.info(
+                "%s GD rating fallback regex extracted %s for %s",
+                _enrich_tag("enrich"),
+                m.group(1),
+                company,
+            )
+            return m.group(1)
+    log.info(
+        "%s GD rating not parseable for %s from line %r",
+        _enrich_tag("enrich"),
+        company,
+        line.strip()[:120],
+    )
+    return ""
 
 
 @dataclass
@@ -149,28 +226,39 @@ def _build_company_plan(
 ) -> _CompanyPlan | None:
     """Resolve the company enricher's work, or ``None`` to skip the pass.
 
-    Returns ``None`` (and logs) when the claude provider is configured but its
-    CLI is not on PATH — the caller then returns the untouched jobs.
+    Returns ``None`` when both `enrich_product` and `enrich_gd_rating` are
+    disabled (nothing to fetch), or (and logs) when the claude provider is
+    configured but its CLI is not on PATH — the caller then returns the
+    untouched jobs.
     """
     stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
     # mid-pass leaves enriched-so-far results for a caller that persists them
     # (backfill rewrites on interrupt; run() does not flush mid-run yet).
     out = jobs
-    if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
+    cfg = ctx.plugin.enrichment
+    include_product = cfg.enrich_product
+    include_gd = cfg.enrich_gd_rating
+    if not include_product and not include_gd:
+        log.debug("[enrich] product and gd_rating both disabled via config")
+        return None
+    if cfg.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return None
 
-    cfg = ctx.plugin.enrichment
     if budget <= 0:
         budget = cfg.max_enrich_companies
-    include_gd = cfg.enrich_gd_rating
     timeout = cfg.enrich_timeout
 
+    # A company needs a call when an enabled field is still missing on its row.
     unique_companies = {
         job.company.strip()
         for job in out
-        if not job.product_filled and job.company.strip()
+        if job.company.strip()
+        and (
+            (include_product and not job.product_filled)
+            or (include_gd and not job.gd_rating)
+        )
     }
     pool_size = _enrich_pool_size(ctx)
     log.info(
@@ -196,7 +284,7 @@ def _build_company_plan(
     heartbeat = max(1, len(companies) // 5)
 
     def _fetch(company: str) -> tuple[str, str, bool]:
-        return _fetch_company_info(company, ctx, include_gd, timeout)
+        return _fetch_company_info(company, ctx, include_product, include_gd, timeout)
 
     def _consume(fut: Future[Any], company: str) -> None:
         # `applied` makes re-consume (interrupt drain after the main loop already
@@ -223,7 +311,10 @@ def _build_company_plan(
 
     def _stitch() -> None:
         for i, job in enumerate(out):
-            if job.product_filled:
+            # The cached-skip shortcut applies only when product enrichment is
+            # on (product_filled means no further product work). With product
+            # disabled, a product-filled job may still need its gd_rating.
+            if include_product and job.product_filled:
                 stats["skipped_cached"] += 1
                 continue
             company = job.company.strip()
@@ -231,7 +322,7 @@ def _build_company_plan(
             if not cached:
                 continue
             updates: dict[str, Any] = {}
-            if cached.get("product"):
+            if include_product and cached.get("product"):
                 updates["product"] = cached["product"]
             if cached.get("gd_rating") and not job.gd_rating:
                 updates["gd_rating"] = cached["gd_rating"]
@@ -253,8 +344,10 @@ def _build_company_plan(
                     exc,
                 )
                 continue
-            if "product" in updates:
-                stats["enriched"] += 1
+            # Count any written field: a GD-only run writes only gd_rating, so
+            # gating on "product" alone would report "0 enriched" for a working
+            # run.
+            stats["enriched"] += 1
 
     return _CompanyPlan(
         out=out,
@@ -274,6 +367,7 @@ def enrich_company_descriptions(
     *,
     budget: int = 0,
     progress: ProgressCallback | None = None,
+    _reset_hint: bool = True,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Product/Purpose and GD Rating using the configured AI provider.
 
@@ -285,8 +379,14 @@ def enrich_company_descriptions(
     through ``ThreadPoolExecutor`` when the provider's ``max_parallel > 1``;
     ``pool_size == 1`` runs serially on the main thread.
 
+    ``_reset_hint`` re-arms the once-per-run ollama queue hint; the concurrent
+    coordinator already arms it once for both phases and passes False so a serial
+    run can't emit the hint twice.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_cached, failed.
     """
+    if _reset_hint:
+        _reset_ollama_hint()
     plan = _build_company_plan(jobs, ctx, budget, progress)
     if plan is None:
         return jobs, {"enriched": 0, "skipped_cached": 0, "failed": 0}
@@ -572,15 +672,20 @@ def _fetch_fit_notes_for_job(
         prompt,
     )
 
+    enrichment_cfg = ctx.plugin.enrichment
     try:
         stdout = ai_provider.invoke_for(
-            "enrichment", prompt, ai=ctx.ai, timeout=timeout
+            prompt,
+            provider=enrichment_cfg.provider,
+            model=enrichment_cfg.model,
+            ai=ctx.ai,
+            timeout=timeout,
         )
     except AITimeoutError as exc:
-        log.warning(
-            "%s %s: AI provider timed out after %ds",
+        _log_provider_timeout(
             _enrich_tag("enrich-fit-notes"),
             company,
+            exc.provider,
             exc.timeout_seconds or timeout,
         )
         return None, "", True
@@ -697,11 +802,11 @@ def _build_fit_plan(
     # mid-pass leaves enriched-so-far results for a caller that persists them
     # (backfill rewrites on interrupt; run() does not flush mid-run yet).
     out = jobs
-    if ctx.ai.enrichment.provider == "claude" and shutil.which("claude") is None:
+    cfg = ctx.plugin.enrichment
+    if cfg.provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return None
 
-    cfg = ctx.plugin.enrichment
     if not cfg.enrich_fit or not cfg.enrich_notes:
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
         return None
@@ -857,6 +962,7 @@ def enrich_fit_and_notes(
     *,
     budget: int = 0,
     progress: ProgressCallback | None = None,
+    _reset_hint: bool = True,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -867,9 +973,15 @@ def enrich_fit_and_notes(
     ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
     serially on the main thread.
 
+    ``_reset_hint`` re-arms the once-per-run ollama queue hint; the concurrent
+    coordinator passes False (it arms once for both phases) so a serial run
+    can't emit the hint twice.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
     skipped_no_desc (always 0; retained for shape compatibility), failed.
     """
+    if _reset_hint:
+        _reset_ollama_hint()
     plan = _build_fit_plan(jobs, ctx, budget, progress)
     if plan is None:
         return jobs, {
@@ -968,15 +1080,23 @@ def enrich_product_and_fit_concurrently(
     Falls back to running the two enrichers serially when the provider is
     serial (``pool_size == 1``) — there is no concurrency to overlap.
     """
+    _reset_ollama_hint()
     pool_size = _enrich_pool_size(ctx)
     if pool_size <= 1:
         # Serial provider: nothing to overlap. Run sequentially so behavior
         # (and the per-phase progress bars) matches the non-overlapped path.
+        # _reset_hint=False: the coordinator already armed the once-per-run
+        # ollama queue hint above, so the sub-enrichers must not re-arm it (a
+        # re-arm between phases could emit the hint twice in one serial run).
         out, product_stats = enrich_company_descriptions(
-            jobs, ctx, budget=product_budget, progress=product_progress
+            jobs,
+            ctx,
+            budget=product_budget,
+            progress=product_progress,
+            _reset_hint=False,
         )
         out, fit_stats = enrich_fit_and_notes(
-            out, ctx, budget=fit_budget, progress=fit_progress
+            out, ctx, budget=fit_budget, progress=fit_progress, _reset_hint=False
         )
         return out, product_stats, fit_stats
 

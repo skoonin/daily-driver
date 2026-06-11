@@ -432,7 +432,7 @@ def test_doctor_ai_row_ok_when_ollama_reachable_with_model(
     _stamp_workspace(ws)
     _set_ai_config(
         ws,
-        "ai:\n" "  enrichment:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
+        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
     )
 
     monkeypatch.setattr(
@@ -463,7 +463,7 @@ def test_doctor_ai_row_warning_when_ollama_not_reachable(
     _stamp_workspace(ws)
     _set_ai_config(
         ws,
-        "ai:\n" "  enrichment:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
+        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
     )
 
     def _raise(endpoint, timeout=5):
@@ -492,7 +492,7 @@ def test_doctor_ai_row_warning_when_model_not_pulled(
     _stamp_workspace(ws)
     _set_ai_config(
         ws,
-        "ai:\n" "  enrichment:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
+        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
     )
 
     monkeypatch.setattr(
