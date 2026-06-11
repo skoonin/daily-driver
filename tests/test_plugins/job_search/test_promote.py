@@ -115,6 +115,43 @@ def test_promote_blank_status_falls_back_to_applied(
     assert result.created is True
     assert result.entry is not None
     assert result.entry.status == "applied"
+    # Blank Status is a silent state claim unless surfaced — flag it.
+    assert result.status_fallback is True
+    assert result.raw_status == ""
+
+
+def test_promote_unknown_status_falls_back_and_flags(
+    workspace: Workspace,
+) -> None:
+    tracker = Tracker(workspace)
+    path = tracker._workspace.output_dir / "jobs.csv"  # type: ignore[attr-defined]
+    _write_jobs_csv(
+        path,
+        [
+            {
+                "Company": "Initech",
+                "Role": "Engineer",
+                "Status": "shortlisted",
+                "Link": "https://jobs.example.com/initech/9",
+                "Source": "linkedin",
+            }
+        ],
+    )
+    result = promote(tracker, path, "https://jobs.example.com/initech/9")
+    assert result.created is True
+    assert result.entry is not None
+    assert result.entry.status == "applied"
+    assert result.status_fallback is True
+    # The raw value is normalized for the warning, preserving meaning.
+    assert result.raw_status == "shortlisted"
+
+
+def test_promote_recognized_status_no_fallback(
+    workspace: Workspace, jobs_csv: Path
+) -> None:
+    tracker = Tracker(workspace)
+    result = promote(tracker, jobs_csv, "https://jobs.example.com/acme/1")
+    assert result.status_fallback is False
 
 
 def test_promote_is_idempotent_by_url(workspace: Workspace, jobs_csv: Path) -> None:
@@ -153,3 +190,89 @@ def test_promote_empty_csv_raises(workspace: Workspace) -> None:
     missing = workspace.output_dir / "jobs.csv"
     with pytest.raises(PromoteError):
         promote(tracker, missing, "anything")
+
+
+def test_promote_empty_link_row_sets_has_link_false(
+    workspace: Workspace,
+) -> None:
+    tracker = Tracker(workspace)
+    path = workspace.output_dir / "jobs.csv"
+    _write_jobs_csv(
+        path,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            }
+        ],
+    )
+    result = promote(tracker, path, "Hooli")
+    assert result.created is True
+    assert result.has_link is False
+    assert result.entry is not None
+    assert result.entry.extras["url"] == ""
+
+
+def test_promote_empty_link_row_is_idempotent_on_company_role(
+    workspace: Workspace,
+) -> None:
+    """A blank-Link row re-promotes as a no-op via the (company, role) key."""
+    tracker = Tracker(workspace)
+    path = workspace.output_dir / "jobs.csv"
+    _write_jobs_csv(
+        path,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            }
+        ],
+    )
+    first = promote(tracker, path, "Hooli")
+    assert first.created is True
+    assert first.entry is not None
+
+    second = promote(tracker, path, "Hooli")
+    assert second.created is False
+    assert second.already_promoted_id == first.entry.id
+    assert len(tracker.list(category="job")) == 1
+
+
+def test_promote_two_distinct_empty_link_rows_both_promote(
+    workspace: Workspace,
+) -> None:
+    """Two blank-Link rows with different company/role both promote (no false dedup)."""
+    tracker = Tracker(workspace)
+    path = workspace.output_dir / "jobs.csv"
+    _write_jobs_csv(
+        path,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            },
+            {
+                "Company": "Pied Piper",
+                "Role": "Backend",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            },
+        ],
+    )
+    a = promote(tracker, path, "Hooli")
+    b = promote(tracker, path, "Pied Piper")
+    assert a.created is True
+    assert b.created is True
+    assert a.entry is not None and b.entry is not None
+    assert a.entry.id != b.entry.id
+    assert len(tracker.list(category="job")) == 2

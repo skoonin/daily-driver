@@ -350,6 +350,8 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
 
 
 def _run_promote(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from rich.markup import escape
+
     from daily_driver.core.tracker import Tracker
     from daily_driver.plugins.job_search.promote import PromoteError, promote
 
@@ -362,18 +364,37 @@ def _run_promote(args: argparse.Namespace, workspace) -> int:  # type: ignore[no
         Console.error(str(exc))
         return 1
 
+    # Console.print parses Rich markup, so escape values built from CSV cells
+    # (a `[applied]` status or a `[bracketed]` title would otherwise be eaten as
+    # a style tag and vanish from the line).
+    title = escape(result.title)
+    status = escape(result.status)
+
     if not result.created and result.already_promoted_id is not None:
-        Console.success(
-            f"already promoted as {result.already_promoted_id}: {result.title}"
-        )
+        Console.success(f"already promoted as {result.already_promoted_id}: {title}")
         return 0
 
+    # A blank or unrecognized row Status was silently recorded as the fallback;
+    # surface it so the asserted state claim is visible.
+    if result.status_fallback:
+        if result.raw_status:
+            Console.warning(
+                f"row status {result.raw_status!r} not in the job lifecycle; "
+                f"recorded as {result.status!r}"
+            )
+        else:
+            Console.warning(f"row has no status; recorded as {result.status!r}")
+
+    # No Link means promotion fell back to the weaker (company, role) dedup key;
+    # flag it so the looser idempotency guarantee for this entry is visible.
+    no_link_note = "" if result.has_link else " (row has no Link)"
+
     if args.dry_run:
-        Console.info(f"would create job entry [{result.status}]: {result.title}")
+        Console.info(f"would create job entry \\[{status}]: {title}{no_link_note}")
         return 0
 
     assert result.entry is not None  # created path always carries an entry
-    Console.success(f"Promoted {result.entry.id}: {result.title}")
+    Console.success(f"Promoted {result.entry.id} \\[{status}]: {title}{no_link_note}")
     return 0
 
 

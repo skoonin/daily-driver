@@ -35,10 +35,20 @@ class PromoteError(Exception):
 class PromoteResult:
     """Outcome of a promote call.
 
-    ``created`` is False when the URL was already promoted (idempotent no-op);
+    ``created`` is False when the row was already promoted (idempotent no-op);
     ``entry`` is the existing entry in that case. ``dry_run`` carries no entry
     (nothing was written) but does carry the resolved title / status / extras
     so the caller can report what *would* be created.
+
+    ``has_link`` is False when the source row had a blank Link — promotion then
+    falls back to the weaker (company, role) idempotency key, which the caller
+    surfaces so the user knows the dedup guarantee is looser for that entry.
+
+    ``status_fallback`` is True when the row's Status was blank or outside the
+    job lifecycle and was recorded as the fallback; ``raw_status`` carries the
+    (normalized) original value so the caller can name it in a warning. A
+    silently substituted status is a meaningful state claim, so the caller must
+    surface it.
     """
 
     created: bool
@@ -46,6 +56,9 @@ class PromoteResult:
     title: str
     status: str
     extras: dict[str, str]
+    has_link: bool
+    status_fallback: bool
+    raw_status: str
     already_promoted_id: str | None = None
 
 
@@ -84,27 +97,45 @@ def _select_row(rows: list[dict[str, str]], selector: str) -> dict[str, str]:
     )
 
 
-def _resolve_status(raw_status: str) -> str:
+def _resolve_status(raw_status: str) -> tuple[str, bool, str]:
     """Map a jobs.csv Status into the tracker `job` status to store.
 
-    The two vocabularies are identical, so a recognized status carries through
-    unchanged. A blank cell (or one outside the job set) falls back to
-    `applied` — promotion implies the user is actively driving the row.
+    Returns ``(status, fell_back, normalized_raw)``. The two vocabularies are
+    identical, so a recognized status carries through unchanged (``fell_back``
+    False). A blank cell, or one outside the job set, falls back to `applied`
+    (``fell_back`` True) — promotion implies the user is actively driving the
+    row. ``normalized_raw`` is the original value (normalized for spelling) so
+    the caller can name it in a warning.
     """
     normalized = normalize_status(raw_status)
     if normalized in _JOB_STATUS_SET:
-        return normalized
-    return _FALLBACK_STATUS
+        return normalized, False, normalized
+    return _FALLBACK_STATUS, True, normalized
 
 
-def _find_promoted(tracker: Tracker, url: str) -> TrackerEntry | None:
-    """Return an existing `job` entry already linked to ``url``, or None.
+def _find_promoted(
+    tracker: Tracker, url: str, company: str, role: str
+) -> TrackerEntry | None:
+    """Return an existing `job` entry that already promotes this row, or None.
 
-    The URL stored in extras is the durable key; matching on it makes promotion
-    idempotent across renames of the company/role title.
+    The URL stored in extras is the durable idempotency key. When the row has
+    no Link, fall back to a (company, role) match against entries that ALSO
+    lack a url — so a blank-Link row can't collide with a real-Link entry that
+    happens to share a company/role, and a re-promote of the same blank-Link
+    row is still a no-op rather than a silent duplicate.
     """
     for entry in tracker.list(category="job"):
-        if (entry.extras.get("url") or "") == url:
+        entry_url = entry.extras.get("url") or ""
+        if url:
+            if entry_url == url:
+                return entry
+            continue
+        # Blank-Link path: only consider other blank-url entries, matched on
+        # the weaker (company, role) key.
+        if not entry_url and (
+            (entry.extras.get("company") or "") == company
+            and (entry.extras.get("role") or "") == role
+        ):
             return entry
     return None
 
@@ -135,7 +166,8 @@ def promote(
     role = (row.get("Role") or "").strip()
     url = (row.get("Link") or "").strip()
     source = (row.get("Source") or "").strip()
-    status = _resolve_status(row.get("Status") or "")
+    status, status_fallback, raw_status = _resolve_status(row.get("Status") or "")
+    has_link = bool(url)
 
     title = f"{company or '(unknown)'} -- {role or '(unknown role)'}"
     extras = {
@@ -145,7 +177,7 @@ def promote(
         "source": source,
     }
 
-    existing = _find_promoted(tracker, url) if url else None
+    existing = _find_promoted(tracker, url, company, role)
     if existing is not None:
         return PromoteResult(
             created=False,
@@ -153,12 +185,22 @@ def promote(
             title=existing.title,
             status=existing.status,
             extras=extras,
+            has_link=has_link,
+            status_fallback=status_fallback,
+            raw_status=raw_status,
             already_promoted_id=existing.id,
         )
 
     if dry_run:
         return PromoteResult(
-            created=False, entry=None, title=title, status=status, extras=extras
+            created=False,
+            entry=None,
+            title=title,
+            status=status,
+            extras=extras,
+            has_link=has_link,
+            status_fallback=status_fallback,
+            raw_status=raw_status,
         )
 
     entry = tracker.add(
@@ -169,5 +211,12 @@ def promote(
         extras=extras,
     )
     return PromoteResult(
-        created=True, entry=entry, title=entry.title, status=entry.status, extras=extras
+        created=True,
+        entry=entry,
+        title=entry.title,
+        status=entry.status,
+        extras=extras,
+        has_link=has_link,
+        status_fallback=status_fallback,
+        raw_status=raw_status,
     )

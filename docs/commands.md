@@ -233,9 +233,9 @@ Promotes a `jobs.csv` row into a tracker `job` entry once it needs active drivin
 
 The selector resolves a single row, in order: an exact match on the row's Link URL (the primary path), then an unambiguous case-insensitive substring of Company. If the substring matches no rows or more than one, the command lists what it found (or says nothing matched) and exits `1` — pass the full Link URL to disambiguate.
 
-The new entry is category `job`, titled `<Company> -- <Role>`, with the job URL stored both as the entry's `link` and in `extras` (alongside `company`, `role`, and `source`). The status carries through from the row's Status unchanged when it is a recognized job status (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`); a blank Status (or one outside that set) falls back to `applied`, since promotion implies you are now driving the row.
+The new entry is category `job`, titled `<Company> -- <Role>`, with the job URL stored both as the entry's `link` and in `extras` (alongside `company`, `role`, and `source`). The resolved status is always named in the success line (`Promoted job-001 [applied]: ...`). The status carries through from the row's Status unchanged when it is a recognized job status (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`); a blank Status (or one outside that set) falls back to `applied`, since promotion implies you are now driving the row, and a one-line warning names the substitution (e.g. `row status 'shortlisted' not in the job lifecycle; recorded as 'applied'`).
 
-The URL in `extras` is the durable key, so promotion is idempotent: promoting the same URL twice does not create a duplicate — it reports `already promoted as <id>` and exits `0`.
+The URL in `extras` is the durable key, so promotion is idempotent: promoting the same URL twice does not create a duplicate — it reports `already promoted as <id>` and exits `0`. When the row has no Link, promotion falls back to a weaker `(company, role)` idempotency key and the success line notes `(row has no Link)` so the looser dedup guarantee for that entry is visible.
 
 Promotion does NOT mutate `jobs.csv`. The row's Status is yours to drive by hand; `promote` is single-purpose and only ever writes the tracker. `-n` / `--dry-run` prints the entry that would be created and writes nothing.
 

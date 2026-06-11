@@ -1124,9 +1124,10 @@ def test_jobs_promote_creates_entry(
     rc = app(
         ["--workspace", str(ws), "jobs", "promote", "https://jobs.example.com/acme/1"]
     )
-    err = capsys.readouterr().err
+    err = " ".join(capsys.readouterr().err.split())
     assert rc == 0
-    assert "Promoted job-001" in err
+    # Resolved status is always named in the success line.
+    assert "Promoted job-001 [interviewing]: Acme Corp -- SRE" in err
 
     entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
     assert len(entries) == 1
@@ -1179,3 +1180,94 @@ def test_jobs_promote_dry_run_writes_nothing(
     assert "would create job entry" in err
     entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
     assert entries == []
+
+
+def test_jobs_promote_blank_status_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "",
+                "Link": "https://jobs.example.com/hooli/7",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    # Rich may soft-wrap the stderr line at the test console width; collapse
+    # whitespace so the assertion is independent of wrap position.
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "row has no status; recorded as 'applied'" in err
+    assert "Promoted job-001 [applied]: Hooli -- SRE" in err
+
+
+def test_jobs_promote_unknown_status_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Initech",
+                "Role": "Engineer",
+                "Status": "shortlisted",
+                "Link": "https://jobs.example.com/initech/8",
+                "Source": "linkedin",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Initech"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert (
+        "row status 'shortlisted' not in the job lifecycle; recorded as 'applied'"
+        in err
+    )
+
+
+def test_jobs_promote_no_link_row_notes_and_dedups(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.core.workspace import Workspace
+
+    ws = _init_workspace(tmp_path)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Company": "Hooli",
+                "Role": "SRE",
+                "Status": "applied",
+                "Link": "",
+                "Source": "referral",
+            }
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "(row has no Link)" in err
+
+    # Re-promote of the same blank-Link row is a no-op (company/role dedup key).
+    rc = app(["--workspace", str(ws), "jobs", "promote", "Hooli"])
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 0
+    assert "already promoted as job-001" in err
+    entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
+    assert len(entries) == 1
