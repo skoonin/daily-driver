@@ -1,28 +1,18 @@
-"""CSV read/write helpers for jobs.csv (canonical layout, dedup, backfill)."""
+"""CSV read/write helpers for jobs.csv (canonical layout, dedup, backups)."""
 
 from __future__ import annotations
 
 import csv
 import os
 import shutil
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins.job_search.jobs_lock import (
-    clear_stale_adjacent_lock,
-    jobs_lock_path,
-)
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
     EnrichedJob,
 )
-
-if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -212,132 +202,10 @@ def _active(job: EnrichedJob) -> bool:
     return job.status.value not in ENRICH_SKIP_STATUSES
 
 
-def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
-    """Re-enrich existing jobs.csv rows that have empty enrichment fields."""
-    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
-        enrich_company_descriptions,
-        enrich_fit_and_notes,
-    )
-    from daily_driver.plugins.job_search.scraper.runner import ScraperError
-
-    if not csv_path.exists():
-        raise ScraperError(f"jobs.csv not found at {csv_path}")
-
-    clear_stale_adjacent_lock(csv_path)
-    # Hold one shared sentinel lock for the entire backfill lifecycle so run/
-    # prune cannot interleave while we enrich in memory then rewrite. The lock is
-    # deliberately held ACROSS the (slow) enrichment phase, not just the rewrite:
-    # backfill rewrites the whole file from its in-memory snapshot, so dropping
-    # the lock during enrichment would let a concurrent run append rows that the
-    # rewrite then clobbers. (run() can drop its lock during enrichment because
-    # it only appends — backfill cannot, because it overwrites.)
-    with file_lock(jobs_lock_path(ephemeral_dir)):
-        with open(csv_path, newline="", encoding="utf-8") as lock_fh:
-            reader = csv.DictReader(lock_fh)
-            stored_columns = list(reader.fieldnames or [])
-            rows = list(reader)
-
-        # Reads are header-name-based, so a legacy column order (or a missing
-        # Remote column) loads fine. The rewrite emits CANONICAL_HEADER, so an
-        # old-layout file adopts the canonical column order; stored Location text
-        # is read faithfully and left as-is (no auto-migration).
-        #
-        # Unknown / hand-added columns (e.g. a user's "Priority") are not modelled
-        # by EnrichedJob, so carry them through verbatim — both the header labels
-        # (appended after the canonical columns, in stored order) and each row's
-        # cells (re-merged on write). Enrichers preserve row order and never add
-        # or drop rows, so the captured extras line up with the final jobs by
-        # index.
-        extra_columns = [c for c in stored_columns if c not in CANONICAL_HEADER]
-        extras_per_row: list[dict[str, str]] = [
-            {c: r.get(c, "") for c in extra_columns} for r in rows
-        ]
-        header = CANONICAL_HEADER + extra_columns
-        if extra_columns:
-            log.info(
-                "[backfill] carrying through %d non-canonical column(s): %s",
-                len(extra_columns),
-                ", ".join(extra_columns),
-            )
-
-        def _rows_with_extras(js: list[EnrichedJob]) -> list[dict[str, str]]:
-            out: list[dict[str, str]] = []
-            for i, job in enumerate(js):
-                row = job.to_csv_row()
-                if i < len(extras_per_row):
-                    row.update(extras_per_row[i])
-                out.append(row)
-            return out
-
-        jobs = [EnrichedJob.from_csv_row(r) for r in rows]
-
-        active = [j for j in jobs if _active(j)]
-        needs_product = sum(1 for j in active if not j.product_filled)
-        needs_fit = sum(1 for j in active if not j.fit)
-        needs_gd = sum(1 for j in active if not j.gd_rating)
-        needs_notes = sum(1 for j in active if not j.notes)
-        skipped_count = len(jobs) - len(active)
-
-        log.info(
-            "[backfill] %d rows (%d skipped excluded): "
-            "%d need Product, %d need GD, %d need Fit, %d need Notes",
-            len(jobs),
-            skipped_count,
-            needs_product,
-            needs_gd,
-            needs_fit,
-            needs_notes,
-        )
-
-        if not (needs_product or needs_fit or needs_gd or needs_notes):
-            print("All rows already enriched, nothing to backfill.")
-            return
-
-        # One pre-mutation snapshot: covers both crash recovery (on interrupt)
-        # and undo (after a successful but unwanted enrichment).
-        backup = _make_backup(csv_path)
-        log.info("[backfill] backed up to %s", backup.name)
-
-        try:
-            jobs, _ = enrich_company_descriptions(jobs, ctx, budget=0)
-            jobs, _ = enrich_fit_and_notes(jobs, ctx, budget=0)
-        except KeyboardInterrupt:
-            try:
-                atomic_write_rows(csv_path, header, _rows_with_extras(jobs))
-                save_status = (
-                    f"partial progress saved to jobs.csv "
-                    f"(original preserved at {backup.name})"
-                )
-            except OSError as exc:
-                # Disk full / permission denied / etc. Original jobs.csv is
-                # intact (atomic-rename only fires on a successful tmp write)
-                # and the .bak from before this run still exists, so the
-                # user has a clean rollback path even when we can't write.
-                save_status = (
-                    f"could not save partial progress ({exc}). "
-                    f"Original preserved at {backup.name}"
-                )
-            print(f"Backfill interrupted: {save_status}", file=sys.stderr)
-            raise
-
-        atomic_write_rows(csv_path, header, _rows_with_extras(jobs))
-
-    active = [j for j in jobs if _active(j)]
-    filled_product = needs_product - sum(1 for j in active if not j.product_filled)
-    filled_fit = needs_fit - sum(1 for j in active if not j.fit)
-    filled_gd = needs_gd - sum(1 for j in active if not j.gd_rating)
-    filled_notes = needs_notes - sum(1 for j in active if not j.notes)
-    print(
-        f"Backfill complete: +{filled_product} Product, +{filled_gd} GD, "
-        f"+{filled_fit} Fit, +{filled_notes} Notes"
-    )
-
-
 __all__ = [
     "CANONICAL_HEADER",
     "load_existing_jobs",
     "append_jobs_typed",
-    "backfill",
     "read_rows",
     "atomic_write_rows",
     "append_rows",

@@ -1,43 +1,16 @@
-"""Tests for csv_io: backfill budget sentinel and backup helper."""
+"""Tests for csv_io: backup helper and the model's Fit-cell parsing."""
 
 from __future__ import annotations
 
 import csv
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
-from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.csv_io import (
-    CANONICAL_HEADER,
-    backfill,
-)
+from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
     parse_fit,
     parse_fit_cell,
-)
-from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-
-# ---------------------------------------------------------------------------
-# Item 5 — backfill must not pass sys.maxsize as budget
-# ---------------------------------------------------------------------------
-
-_MINIMAL_CTX = ScrapeContext(
-    plugin=JobSearchPlugin.model_validate(
-        {
-            "scraper": {
-                "enabled": True,
-                "timeout": 5,
-                "max_retries": 1,
-            },
-            "enrichment": {
-                "max_enrich_companies": 10,
-                "detail_delay_seconds": 0,
-            },
-        }
-    )
 )
 
 
@@ -62,63 +35,6 @@ def _write_minimal_csv(path: Path, *, needs_enrichment: bool = True) -> None:
             row["Product/Purpose"] = "SaaS"
             row["GD Rating"] = "4.0"
         writer.writerow(row)
-
-
-def test_backfill_uses_config_budget_not_maxsize(tmp_path: Path) -> None:
-    """backfill() must pass budget=0 (config sentinel), never sys.maxsize."""
-    csv_path = tmp_path / "jobs.csv"
-    _write_minimal_csv(csv_path)
-
-    called_with: list[dict] = []
-
-    def _capture_company(jobs: Any, *args: Any, **kwargs: Any) -> Any:
-        called_with.append({"fn": "enrich_company_descriptions", **kwargs})
-        return jobs, {}
-
-    def _capture_fit(jobs: Any, *args: Any, **kwargs: Any) -> Any:
-        called_with.append({"fn": "enrich_fit_and_notes", **kwargs})
-        return jobs, {}
-
-    with (
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_company_descriptions",
-            side_effect=_capture_company,
-        ),
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_fit_and_notes",
-            side_effect=_capture_fit,
-        ),
-    ):
-        backfill(_MINIMAL_CTX, csv_path, tmp_path)
-
-    assert called_with, "enrichment functions were not called at all"
-    for call in called_with:
-        assert call.get("budget") != sys.maxsize, (
-            f"{call['fn']} was called with budget=sys.maxsize; "
-            "it should use budget=0 (the config-default sentinel)"
-        )
-
-
-def test_backfill_skips_enrichment_when_all_rows_filled(tmp_path: Path) -> None:
-    """backfill() must return early without calling enrichment if all rows are complete."""
-    csv_path = tmp_path / "jobs.csv"
-    _write_minimal_csv(csv_path, needs_enrichment=False)
-
-    with (
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_company_descriptions"
-        ) as mock_company,
-        patch(
-            "daily_driver.plugins.job_search.scraper.enrichment.llm.enrich_fit_and_notes"
-        ) as mock_fit,
-    ):
-        backfill(_MINIMAL_CTX, csv_path, tmp_path)
-
-    mock_company.assert_not_called()
-    mock_fit.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 
 
 def test_canonical_header_scan_friendly_order() -> None:

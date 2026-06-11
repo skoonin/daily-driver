@@ -2,7 +2,7 @@
 
 EnrichedJob knows only the 15 canonical columns. A user who hand-adds a column
 (e.g. "Priority") must keep both its header label and every cell value across a
-backfill rewrite. The carry-through lives in csv_io, not the model.
+backfill rewrite. The carry-through lives in the _JobSink flush rewrite path.
 """
 
 from __future__ import annotations
@@ -10,28 +10,54 @@ from __future__ import annotations
 import csv
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER, backfill
-from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from daily_driver.plugins.job_search.scraper import runner
+from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 
 
-def _ctx() -> ScrapeContext:
-    # Zero budgets => enrichers no-op (no provider calls); backfill still runs
-    # its read -> rewrite cycle.
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
-                "enrichment": {
-                    "max_enrich_companies": 0,
-                    "max_enrich_fit": 0,
-                    "detail_delay_seconds": 0,
-                },
-            }
+def _plugin() -> JobSearchPlugin:
+    return JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "enrichment": {
+                "max_enrich_companies": 0,
+                "max_enrich_fit": 0,
+                "detail_delay_seconds": 0,
+            },
+        }
+    )
+
+
+def _stub_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No-op detail + LLM enrichment: backfill still runs its read -> rewrite cycle."""
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 0,
+            "enriched": 0,
+            "failed": 0,
+            "skipped": len(jobs),
+            "skip_reasons": {},
+        }
+
+    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        return (
+            jobs,
+            {"enriched": 0, "skipped_cached": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
         )
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+    monkeypatch.setattr(
+        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
     )
 
 
@@ -66,11 +92,14 @@ def _read(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     return list(reader.fieldnames or []), list(reader)
 
 
-def test_backfill_preserves_extra_header_and_cells(tmp_path: Path) -> None:
+def test_backfill_preserves_extra_header_and_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     csv_path = tmp_path / "jobs.csv"
     _write_with_extra(csv_path)
+    _stub_enrichment(monkeypatch)
 
-    backfill(_ctx(), csv_path, tmp_path)
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     header_after, rows_after = _read(csv_path)
     # Canonical columns first, then the extras in stable original order.
@@ -83,13 +112,16 @@ def test_backfill_preserves_extra_header_and_cells(tmp_path: Path) -> None:
 
 
 def test_backfill_logs_carried_columns(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     csv_path = tmp_path / "jobs.csv"
     _write_with_extra(csv_path)
+    _stub_enrichment(monkeypatch)
 
     with caplog.at_level(logging.INFO, logger="daily_driver"):
-        backfill(_ctx(), csv_path, tmp_path)
+        runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     assert any(
         "Priority" in r.getMessage() and "Recruiter" in r.getMessage()

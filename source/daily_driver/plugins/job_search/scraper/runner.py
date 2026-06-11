@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -575,8 +576,10 @@ class _JobSink:
     location-filters, lifts survivors to ``EnrichedJob``, appends them to
     jobs.csv under the sentinel lock, and folds them into ``rows`` so a later
     source (the Apple wave) dedups against them. ``flush`` rewrites the whole
-    file from ``rows`` through the one backfill rewrite path so a mid-enrichment
-    crash loses at most one flush window. All sink methods run on the
+    file -- ``preexisting_rows`` (what was on disk before the run, carried
+    through verbatim) followed by ``rows`` -- through the one backfill rewrite
+    path so a mid-enrichment crash loses at most one flush window. All sink
+    methods run on the
     coordinator thread; no internal locking beyond the per-call sentinel lock,
     which is held only around each I/O burst — never across LLM calls.
     """
@@ -590,10 +593,18 @@ class _JobSink:
         known_urls: set[str],
         known_keys: set[str],
         plugin: JobSearchPlugin,
+        external_lock_held: bool = False,
+        preexisting_rows: list[dict[str, str]] | None = None,
     ) -> None:
         self.csv_path = csv_path
         self.lock_path = lock_path
         self.header = header
+        # backfill holds the sentinel ``file_lock`` for its whole lifecycle (read
+        # -> enrich -> rewrite) so a concurrent run's appends can't slip into the
+        # window a backfill rewrite would clobber. flock is not reentrant across
+        # fds in one process, so the sink must NOT re-take it per flush in that
+        # mode -- it would deadlock against the lock the caller already holds.
+        self._external_lock_held = external_lock_held
         # Dedup state: seeded from jobs.csv + the archive table, then GROWN as
         # rows are appended this run. A hit means the row is already on disk (or
         # was just written by an earlier source) -> "known". The Apple wave
@@ -605,8 +616,43 @@ class _JobSink:
         self._known_urls = known_urls
         self._known_keys = known_keys
         self._plugin = plugin
+        # Rows that were already in jobs.csv before this run, as raw CSV dicts.
+        # ``flush`` rewrites the WHOLE file, so it must write these back first
+        # (field-for-field, re-serialized -- never lifted through EnrichedJob,
+        # so hand-edited cells round-trip untouched) or every pre-existing row
+        # would be wiped. The run path captures them under the same initial
+        # lock that seeds the dedup state; backfill leaves this empty (its
+        # ``rows`` holds the whole file).
+        self.preexisting_rows: list[dict[str, str]] = list(preexisting_rows or [])
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
+        # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
+        # row in ``rows``, aligned POSITIONALLY and 1:1. Positional (not Link-
+        # keyed) carry-through is the only lossless identity: an empty-Link row
+        # keeps its own extras, and two rows sharing a Link keep their DISTINCT
+        # extras. The run path appends an empty dict per appended row (canonical-
+        # only); backfill preloads one per pre-existing row. Enrichment replaces
+        # row slots in place and never adds/drops rows, so this stays aligned.
+        self.row_extras: list[dict[str, str]] = []
+        # Ordered non-canonical column labels, appended after the canonical
+        # header on rewrite. Empty for the run path (scraped rows are canonical);
+        # set by backfill from the stored file's header so column ORDER is stable.
+        self.extra_columns: list[str] = []
+        # Optional one-shot hook fired inside ``flush`` immediately before the
+        # first ``atomic_write_rows``. backfill uses it to take the pre-mutation
+        # backup LAZILY -- only when a write actually happens -- so a no-op
+        # backfill (e.g. ollama down, nothing to persist) neither backs up nor
+        # rewrites the file. ``_pre_write_done`` makes it fire exactly once.
+        self.pre_write_hook: Callable[[], None] | None = None
+        self._pre_write_done = False
+        # When set (backfill), ``flush`` reads the current file and SKIPS the
+        # write -- and so the lazy backup -- when the rendered rows are byte-for-
+        # byte identical to what is already on disk. This is the no-churn
+        # guarantee: an ollama-down / nothing-changed backfill must not rewrite
+        # the file or drop a backup. The run path leaves this False -- it always
+        # appends new rows, so its flush always has something to persist, and
+        # paying a per-flush full-file read+compare there would be wasted work.
+        self.skip_flush_if_unchanged = False
         # Serializes every disk-mutating section against every other one. An
         # append (extend rows + write the rows to disk) and a flush (snapshot +
         # rewrite the whole file) must each be atomic relative to the other:
@@ -631,6 +677,18 @@ class _JobSink:
         # end so a silent disk problem can't masquerade as a healthy run.
         self.persistence_degraded = False
         self._degraded_reason = ""
+
+    def _disk_lock(self) -> AbstractContextManager[None]:
+        """The cross-process lock to take around a disk-mutating section.
+
+        When the caller already holds the sentinel ``file_lock`` for the whole
+        lifecycle (backfill), this is a no-op so the inner section does not
+        re-acquire a non-reentrant flock and deadlock. Otherwise (run) it is the
+        real per-section ``file_lock``.
+        """
+        if self._external_lock_held:
+            return nullcontext()
+        return file_lock(self.lock_path)
 
     def append_source(
         self, source_id: str, jobs: list[dict[str, Any]]
@@ -702,9 +760,12 @@ class _JobSink:
             # ScraperError on an OSError, which propagates here BEFORE the
             # rows.extend and the dedup/funnel commit below -- so a write failure
             # rolls back to nothing committed and the caller isolates the source.
-            with self._rows_lock, file_lock(self.lock_path):
+            with self._rows_lock, self._disk_lock():
                 append_jobs_typed(self.csv_path, to_append, self.header)
                 self.rows.extend(to_append)
+                # Newly scraped rows carry only canonical columns; keep the
+                # extras list aligned 1:1 so a later flush merges by index.
+                self.row_extras.extend({} for _ in to_append)
         # Commit dedup state + funnel/totals only now that the rows are durable.
         self._known_urls.update(commit_urls)
         self._known_keys.update(commit_keys)
@@ -716,13 +777,19 @@ class _JobSink:
         return counts
 
     def flush(self) -> None:
-        """Rewrite jobs.csv from ``rows`` through the one backfill rewrite path.
+        """Rewrite jobs.csv -- ``preexisting_rows`` then ``rows`` -- through the
+        one backfill rewrite path.
 
         Snapshot AND rewrite happen under one held ``_rows_lock`` + ``file_lock``
         so the whole flush is atomic relative to an append (no interleave between
         reading the rows and writing them out). The locks are held only for the
         rewrite, never across the slow LLM calls that produced the updates, so a
         concurrent prune/backfill is serialized but not starved.
+
+        Unknown / hand-added columns are carried through POSITIONALLY via
+        ``row_extras`` (aligned 1:1 with ``rows``), not keyed by Link: every row
+        keeps exactly ITS OWN extras even when its Link is blank or shared with
+        another row.
 
         Raises ``OSError`` on a write failure -- the caller decides whether to
         degrade (periodic flush) or propagate (final flush). See
@@ -733,29 +800,34 @@ class _JobSink:
             read_rows,
         )
 
-        with self._rows_lock, file_lock(self.lock_path):
+        with self._rows_lock, self._disk_lock():
             snapshot = list(self.rows)
-            # Carry through any unknown/hand-added columns verbatim, indexed by
-            # Link, so a flush never drops a user's "Priority" column. The append
-            # path only ever wrote canonical columns, so extras come from rows
-            # that pre-dated this run.
-            stored_header, stored_rows = read_rows(self.csv_path)
-            extra_columns = [c for c in stored_header if c not in self.header]
-            extras_by_link: dict[str, dict[str, str]] = {}
-            if extra_columns:
-                for row in stored_rows:
-                    link = (row.get("Link") or "").strip()
-                    if link:
-                        extras_by_link[link] = {
-                            c: row.get(c, "") for c in extra_columns
-                        }
-            out_header = self.header + extra_columns
-            out_rows: list[dict[str, str]] = []
-            for job in snapshot:
+            extras_snapshot = list(self.row_extras)
+            out_header = self.header + self.extra_columns
+            # Pre-existing file rows lead, field-for-field; this run's rows follow
+            # in append order, so the rewrite preserves the on-disk layout.
+            out_rows: list[dict[str, str]] = list(self.preexisting_rows)
+            for i, job in enumerate(snapshot):
                 csv_row = job.to_csv_row()
-                if extra_columns:
-                    csv_row.update(extras_by_link.get(job.url, {}))
+                if i < len(extras_snapshot):
+                    csv_row.update(extras_snapshot[i])
                 out_rows.append(csv_row)
+            if self.skip_flush_if_unchanged:
+                # No-churn: skip the write (and the lazy backup) when the file
+                # already holds exactly these rows. read_rows returns only the
+                # cells; compare against the same projection of out_rows.
+                cur_header, cur_rows = read_rows(self.csv_path)
+                projected = [
+                    {c: row.get(c, "") for c in out_header} for row in out_rows
+                ]
+                if cur_header == out_header and cur_rows == projected:
+                    return
+            # Fire the one-shot pre-write hook (backfill's lazy backup) BEFORE the
+            # write, inside the lock, so the backup snapshots the on-disk state
+            # that this write is about to replace.
+            if self.pre_write_hook is not None and not self._pre_write_done:
+                self._pre_write_done = True
+                self.pre_write_hook()
             atomic_write_rows(self.csv_path, out_header, out_rows)
 
     def flush_periodic(self) -> None:
@@ -1028,22 +1100,22 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
     except ollama_client.OllamaNotReachableError:
         Console.warning(
             f"ollama not reachable at {endpoint} -- LLM enrichment skipped this "
-            "run; start the server (ollama serve) and run jobs run --backfill to "
+            "run; start the server (ollama serve) and run jobs backfill to "
             "fill these rows"
         )
         return False
     except Exception as exc:  # noqa: BLE001
         Console.warning(
             f"ollama at {endpoint} returned an error ({exc}) -- LLM enrichment "
-            "skipped this run; run jobs run --backfill once it is healthy"
+            "skipped this run; run jobs backfill once it is healthy"
         )
         return False
 
     if model not in pulled:
         Console.warning(
             f"ollama model {model!r} not pulled at {endpoint} -- LLM enrichment "
-            f"skipped this run; pull it (ollama pull {model}) and run jobs run "
-            "--backfill to fill these rows"
+            f"skipped this run; pull it (ollama pull {model}) and run jobs "
+            "backfill to fill these rows"
         )
         return False
     return True
@@ -1064,6 +1136,46 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 # ── Public entry points ──────────────────────────────────────────────────────
 
 
+def _backfill_needs(
+    jobs: list[EnrichedJob],  # noqa: F821
+    plugin: JobSearchPlugin,
+) -> dict[str, int]:
+    """Per-phase counts of rows the enrichers WOULD actually touch.
+
+    Rows in an ENRICH_SKIP status are excluded (deliberately untouched). The
+    counts mirror the enrichers' own eligibility, not a re-implementation:
+
+    - ``fit`` uses :func:`_fit_notes_eligible` -- the combined predicate, since
+      one fit/notes call fills both Fit and Notes. There is no separate notes
+      count (a single call covers it), so the dry-run report and the
+      nothing-to-do short-circuit speak in those terms.
+    - ``product`` / ``gd`` respect the ``enrich_product`` / ``enrich_gd_rating``
+      toggles: a disabled axis reports zero need (the company pass would never
+      fill it). When a row's company already has the field filled it is not
+      counted either.
+
+    Used by the dry-run report and the start-of-run short-circuit.
+    """
+    from daily_driver.plugins.job_search.scraper.csv_io import _active
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+        _fit_notes_eligible,
+    )
+
+    cfg = plugin.enrichment
+    active = [j for j in jobs if _active(j)]
+    product = (
+        sum(1 for j in active if not j.product_filled) if cfg.enrich_product else 0
+    )
+    gd = sum(1 for j in active if not j.gd_rating) if cfg.enrich_gd_rating else 0
+    fit_notes = sum(1 for j in active if _fit_notes_eligible(j))
+    return {
+        "rows": len(active),
+        "product": product,
+        "gd": gd,
+        "fit_notes": fit_notes,
+    }
+
+
 def run_backfill(
     plugin: JobSearchPlugin,
     csv_path: Path,
@@ -1071,12 +1183,207 @@ def run_backfill(
     *,
     ai: AIConfig | None = None,
     context_text: str = "",
+    dry_run: bool = False,
+    limit: int | None = None,
 ) -> None:
-    """Re-enrich empty fields in an existing jobs.csv."""
-    from daily_driver.plugins.job_search.scraper.csv_io import backfill
+    """Re-enrich empty fields in an existing jobs.csv via the modern driver.
+
+    Shares the run-side enrichment machinery: ``_enrich_wave`` renders the same
+    Detail pages / Company products / Fit and notes phase rows under a "Job
+    backfill" :class:`RunProgress` block, fans the product + fit/notes passes out
+    through the overlapped coordinator under the shared concurrency cap, flushes
+    every ~25 results, and runs the ollama preflight before the LLM phases.
+
+    The enrichers themselves skip already-filled fields and ENRICH_SKIP-status
+    rows, so handing the whole row list to the wave enriches only the empties.
+
+    ``limit`` caps LLM spend this invocation by bounding BOTH the product and fit
+    budgets at ``limit`` (``None`` -> 0, the config-cap sentinel; the CLI rejects
+    ``limit < 1``). ``dry_run`` reports the per-phase would-enrich counts and
+    makes zero LLM/detail calls and zero writes (no backup either).
+
+    Locking: the sentinel ``file_lock`` is held for the WHOLE lifecycle -- the
+    read of jobs.csv, the enrichment, and every rewrite all happen inside it.
+    backfill rewrites the file from its in-memory snapshot, so reading or
+    rewriting outside the lock would let a concurrent run's append slip into the
+    window and be clobbered. The sink is built with ``external_lock_held=True``
+    so its per-flush sections do not re-take the (non-reentrant) flock.
+
+    The pre-mutation backup is LAZY: taken just before the first actual write
+    (the sink's ``pre_write_hook``), so a no-op backfill (ollama down, nothing to
+    persist) leaves the file untouched and writes no backup. The final rewrite is
+    skipped entirely when enrichment changed no row content.
+    """
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        _make_backup,
+        read_rows,
+    )
+    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+
+    if not csv_path.exists():
+        raise ScraperError(f"jobs.csv not found at {csv_path}")
 
     ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
-    backfill(ctx, csv_path, ephemeral_dir)
+    ai_cfg = ctx.ai
+    clear_stale_adjacent_lock(csv_path)
+    lock_path = jobs_lock_path(ephemeral_dir)
+
+    # Dry-run reads outside the lock: it never writes, so a concurrent run can't
+    # be clobbered by it. The real path reads INSIDE the lock (below).
+    if dry_run:
+        _, stored_rows = read_rows(csv_path)
+        jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        needs = _backfill_needs(jobs, plugin)
+        skipped = len(jobs) - needs["rows"]
+        Console.info(
+            f"Backfill dry-run: {needs['product']} need Product, "
+            f"{needs['gd']} need GD, {needs['fit_notes']} need Fit/Notes "
+            f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
+        )
+        return
+
+    product_budget = limit if limit is not None else 0
+    fit_budget = limit if limit is not None else 0
+
+    tty = Console.is_tty() and not Console.quiet_mode
+    with file_lock(lock_path):
+        # READ INSIDE THE LOCK: the snapshot the rewrite is built from must be
+        # consistent with the lock window, or a concurrent run's append between
+        # an out-of-lock read and the rewrite would be lost.
+        stored_header, stored_rows = read_rows(csv_path)
+        jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        # Unknown / hand-added columns (e.g. a user's "Priority") are not modelled
+        # by EnrichedJob; carry them through POSITIONALLY (the sink merges
+        # row_extras by index, lossless for empty/duplicate Links). The sink gets
+        # CANONICAL_HEADER plus the explicit extra-column ORDER from the file.
+        extra_columns = [c for c in stored_header if c not in CANONICAL_HEADER]
+        row_extras = [{c: r.get(c, "") for c in extra_columns} for r in stored_rows]
+        if extra_columns:
+            log.info(
+                "[backfill] carrying through %d non-canonical column(s): %s",
+                len(extra_columns),
+                ", ".join(extra_columns),
+            )
+
+        needs = _backfill_needs(jobs, plugin)
+        skipped = len(jobs) - needs["rows"]
+        log.info(
+            "[backfill] %d rows (%d skipped excluded): "
+            "%d need Product, %d need GD, %d need Fit/Notes",
+            len(jobs),
+            skipped,
+            needs["product"],
+            needs["gd"],
+            needs["fit_notes"],
+        )
+
+        if not (needs["product"] or needs["gd"] or needs["fit_notes"]):
+            # No backup, no rewrite: release the lock cleanly. (The lock context
+            # exits normally when we return.)
+            Console.info("All rows already enriched, nothing to backfill.")
+            return
+
+        sink = _JobSink(
+            csv_path=csv_path,
+            lock_path=lock_path,
+            header=CANONICAL_HEADER,
+            known_urls=set(),
+            known_keys=set(),
+            plugin=plugin,
+            external_lock_held=True,
+        )
+        sink.rows = jobs
+        sink.row_extras = row_extras
+        sink.extra_columns = extra_columns
+        # No-churn: every backfill flush (periodic and final) skips the write --
+        # and the lazy backup -- when nothing actually changed on disk.
+        sink.skip_flush_if_unchanged = True
+
+        # Lazy backup: the sink fires this once, just before its first real write.
+        backup_holder: list[Path] = []
+
+        def _take_backup() -> None:
+            backup = _make_backup(csv_path)
+            backup_holder.append(backup)
+            log.info("[backfill] backed up to %s", backup.name)
+
+        sink.pre_write_hook = _take_backup
+
+        try:
+            with (
+                live_log_window(tty),
+                RunProgress(
+                    Console.get_log_console(), tty=tty, title="Job backfill"
+                ) as rp,
+            ):
+                enrich_group = rp.group("Enriching jobs")
+                _enrich_wave(
+                    plugin,
+                    ai_cfg,
+                    jobs,
+                    ctx,
+                    sink,
+                    enrich_group,
+                    wave_label="",
+                    run_preflight=True,
+                    product_budget=product_budget,
+                    fit_budget=fit_budget,
+                )
+                enrich_group.done()
+        except KeyboardInterrupt as interrupt:
+            # Persist whatever the interrupted wave produced; the final rewrite
+            # still runs under the held lock. The original jobs.csv is intact if
+            # the write itself fails (atomic rename only fires on success), and a
+            # backup gives a clean rollback either way. A second Ctrl-C (or any
+            # other error) during this teardown flush must NOT replace the
+            # original interrupt and degrade exit 130 -> 1: log it and re-raise
+            # the original. The lazy backup is taken INSIDE flush, so read
+            # backup_holder AFTER it returns.
+            try:
+                sink.flush()
+            except KeyboardInterrupt:
+                log.warning("Second interrupt during backfill teardown flush")
+            except Exception as exc:  # noqa: BLE001 -- never mask the original KI
+                log.error("Backfill teardown flush failed: %s", exc)
+            else:
+                if backup_holder:
+                    Console.warning(
+                        f"Backfill interrupted: partial progress saved to "
+                        f"jobs.csv (original preserved at {backup_holder[0].name})"
+                    )
+                else:
+                    Console.warning("Backfill interrupted: no changes to save")
+            raise interrupt
+        else:
+            # Parity with run(): if periodic saves degraded mid-run, say so once,
+            # then let the final flush retry. The final flush is a no-op (no
+            # write, no backup) when enrichment changed nothing -- e.g. ollama
+            # down -- so a quiet run leaves the file's bytes and mtime untouched.
+            # A final-flush OSError is caught here to name the backup before
+            # re-raising, so the user has a rollback path even when the disk
+            # write fails.
+            if sink.persistence_degraded:
+                Console.warning(
+                    f"periodic saves failed during the backfill "
+                    f"({sink._degraded_reason}); retrying the final save now"
+                )
+            try:
+                sink.flush()
+            except OSError as exc:
+                backup_name = backup_holder[0].name if backup_holder else "(none taken)"
+                Console.error(
+                    f"Backfill final save failed ({exc}); original preserved "
+                    f"at {backup_name}"
+                )
+                raise
+
+    after = _backfill_needs(jobs, plugin)
+    Console.success(
+        f"Backfill complete: +{needs['product'] - after['product']} Product, "
+        f"+{needs['gd'] - after['gd']} GD, "
+        f"+{needs['fit_notes'] - after['fit_notes']} Fit/Notes"
+    )
 
 
 def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
@@ -1146,7 +1453,7 @@ def _run_llm_enrichment(
     (the server state cannot change mid-run). On a failed probe the LLM phases
     render as zero-count done bars and zero counters (the same shape
     ``--no-enrich`` records), so the manifest stays honest and the user fills the
-    rows later with ``jobs run --backfill``. The claude provider is untouched
+    rows later with ``jobs backfill``. The claude provider is untouched
     (its which-guard inside the enrichers already covers a missing CLI).
     ``sink.flush`` is the periodic resilience hook, invoked every ~25 results on
     the coordinator thread. ``product_budget`` / ``fit_budget`` are the SHARED
@@ -1321,7 +1628,7 @@ def _write_run_manifest(
 
     ``phase_reached`` (scraping|detail|enrichment|complete) and ``interrupted``
     let ``jobs status`` surface a recovery line when a run was cut short, so the
-    user knows to finish enrichment with ``jobs run --backfill``.
+    user knows to finish enrichment with ``jobs backfill``.
     """
     run_manifest = {
         "started_at": started_at.isoformat(),
@@ -1438,6 +1745,7 @@ def _run_impl(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
+        read_rows,
     )
 
     csv_path = output_dir / "jobs.csv"
@@ -1456,6 +1764,24 @@ def _run_impl(
 
     with file_lock(lock_path):
         known_urls, known_keys, header = load_existing_jobs(csv_path)
+        # Captured under the same lock as the dedup seed: the sink's flush
+        # rewrites the WHOLE file, so it must carry these rows through
+        # field-for-field or every pre-existing row would be wiped by the
+        # first flush.
+        _, preexisting_rows = read_rows(csv_path)
+        # A hand-edited row with MORE cells than the header parks the overflow
+        # under DictReader's None key, which the rewrite's DictWriter drops
+        # (extrasaction="ignore"). The old append-only path never rewrote
+        # those bytes; now that every enriching run does, surface the trim
+        # instead of letting it happen silently.
+        ragged = [r for r in preexisting_rows if None in r]
+        if ragged:
+            log.warning(
+                "jobs.csv has %d row(s) with more cells than the header; the "
+                "extra trailing cells will be dropped on the next save: %s",
+                len(ragged),
+                ", ".join(str(r.get("Link") or "(no link)") for r in ragged),
+            )
 
         # Union archive-table dedup state so triaged listings (pruned to
         # jobs.archive.csv) are never re-discovered.
@@ -1566,6 +1892,7 @@ def _run_impl(
                 known_urls=known_urls,
                 known_keys=known_keys,
                 plugin=plugin,
+                preexisting_rows=preexisting_rows,
             )
             state.sink = sink
 
@@ -1744,7 +2071,7 @@ def _run_impl(
             # place and flushes jobs.csv per completed phase and every ~25 LLM
             # results. An interrupt/crash is caught by the run() wrapper, which
             # flushes the partial pass and writes the interrupted manifest; a
-            # mid-enrichment loss is at most one flush window (--backfill resumes).
+            # mid-enrichment loss is at most one flush window (jobs backfill resumes).
             assert sink is not None  # not dry_run -> sink exists
             # Wave 1 (phase-1 rows) may already be running in a background thread
             # (started at on_phase1_done). Join it, then enrich the remaining

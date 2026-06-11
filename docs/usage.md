@@ -255,7 +255,8 @@ help sources` does the same.
 daily-driver jobs run                           # full run, writes jobs.csv
 daily-driver jobs run -n                        # dry run (no writes)
 daily-driver jobs run --no-enrich               # append only, skip enrichment
-daily-driver jobs run --backfill                # re-enrich empty cells
+daily-driver jobs backfill                      # re-enrich empty cells
+daily-driver jobs backfill --limit 20           # cap LLM spend at 20 product + 20 fit
 daily-driver jobs run -S remoteok,hn_jobs       # source override
 
 daily-driver jobs status                        # last-run metadata + csv size
@@ -283,7 +284,7 @@ ai:
 ```
 
 `claude` is the right pick for low-volume / high-quality tasks. `ollama`
-is the right pick for `jobs run --backfill` over hundreds of rows: no
+is the right pick for `jobs backfill` over hundreds of rows: no
 rate limits, free, fully local. Interactive launchers always use `claude`.
 Full setup walkthrough: [ollama-setup.md](ollama-setup.md).
 

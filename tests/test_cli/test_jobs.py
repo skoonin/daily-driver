@@ -64,6 +64,7 @@ def test_jobs_help_lists_core_actions(capsys: pytest.CaptureFixture[str]) -> Non
     assert "run" in combined
     assert "status" in combined
     assert "prune" in combined
+    assert "backfill" in combined
 
 
 def test_jobs_no_action_exits_2(
@@ -142,16 +143,112 @@ def test_jobs_run_scraper_disabled_returns_zero(
     assert "Scraper disabled" in captured.err
 
 
-def test_jobs_run_backfill_dispatches(tmp_path: Path) -> None:
+def test_jobs_backfill_dispatches(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+        rc = app(["--workspace", str(ws), "jobs", "backfill"])
 
     assert rc == 0
     assert mock_backfill.called
+
+
+def test_jobs_run_rejects_backfill_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`jobs run --backfill` is deleted; argparse rejects the unknown flag."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with pytest.raises(SystemExit) as exc:
+        app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err.lower()
+    assert "backfill" in err and "unrecognized" in err
+
+
+def test_jobs_backfill_dry_run_passes_flag(tmp_path: Path) -> None:
+    """`-n/--dry-run` propagates as dry_run=True to run_backfill."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill", "--dry-run"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("dry_run") is True
+
+
+def test_jobs_backfill_limit_passes_through(tmp_path: Path) -> None:
+    """`--limit N` propagates as limit=N to run_backfill."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill", "--limit", "7"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("limit") == 7
+
+
+def test_jobs_backfill_limit_defaults_none(tmp_path: Path) -> None:
+    """Without --limit, run_backfill receives limit=None (use config caps)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("limit") is None
+
+
+def test_jobs_backfill_limit_zero_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--limit 0 would mean full spend (budget<=0 sentinel); reject it (exit 2)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with pytest.raises(SystemExit) as exc:
+        app(["--workspace", str(ws), "jobs", "backfill", "--limit", "0"])
+
+    assert exc.value.code == 2
+    assert ">= 1" in capsys.readouterr().err
+
+
+def test_jobs_backfill_limit_negative_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A negative --limit is rejected at the parser (exit 2)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with pytest.raises(SystemExit) as exc:
+        app(["--workspace", str(ws), "jobs", "backfill", "--limit", "-5"])
+
+    assert exc.value.code == 2
+    assert ">= 1" in capsys.readouterr().err
+
+
+def test_jobs_backfill_help_states_limit_minimum(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The --limit help text states the minimum of 1."""
+    from daily_driver.cli.cli import app
+
+    with pytest.raises(SystemExit):
+        app(["jobs", "backfill", "--help"])
+    assert "minimum 1" in capsys.readouterr().out
 
 
 def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
@@ -663,7 +760,7 @@ def test_jobs_run_keyboard_interrupt_no_traceback_with_verbose(
     assert "Traceback" not in captured.out
 
 
-def test_jobs_run_backfill_keyboard_interrupt_exits_130(
+def test_jobs_backfill_keyboard_interrupt_exits_130(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Ctrl-C during backfill should return 130 and print a clean message."""
@@ -677,7 +774,7 @@ def test_jobs_run_backfill_keyboard_interrupt_exits_130(
     with patch(
         "daily_driver.plugins.job_search.scraper.run_backfill", side_effect=boom
     ):
-        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+        rc = app(["--workspace", str(ws), "jobs", "backfill"])
 
     captured = capsys.readouterr()
     assert rc == 130
@@ -714,8 +811,8 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     assert any("pruned" in k for k in keys)
 
 
-def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
-    """Regression: jobs `run --backfill` must pass the workspace's typed `AIConfig`
+def test_jobs_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
+    """Regression: jobs `backfill` must pass the workspace's typed `AIConfig`
     (shared provider blocks) plus the plugin's enrichment routing to enrichment.
     Without this, every backfill call silently defaults to claude regardless of
     plugins.job_search.enrichment.provider.
@@ -746,7 +843,7 @@ def test_jobs_run_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> No
     )
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--backfill"])
+        rc = app(["--workspace", str(ws), "jobs", "backfill"])
 
     assert rc == 0
     assert mock_backfill.called
@@ -863,4 +960,5 @@ def test_jobs_status_shows_recovery_line_when_interrupted(
     out = capsys.readouterr().out
     assert rc == 0
     assert "interrupted during enrichment" in out
-    assert "jobs run --backfill" in out
+    assert "jobs backfill" in out
+    assert "jobs run --backfill" not in out

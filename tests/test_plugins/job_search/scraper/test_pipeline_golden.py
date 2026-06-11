@@ -17,12 +17,15 @@ from __future__ import annotations
 import csv
 import datetime as dt
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper import runner
 from daily_driver.plugins.job_search.scraper.csv_io import (
     CANONICAL_HEADER,
     append_jobs_typed,
-    backfill,
 )
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
@@ -30,7 +33,6 @@ from daily_driver.plugins.job_search.scraper.models import (
     NormalizedJob,
     RawScrapedJob,
 )
-from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 # The frozen 15-column jobs.csv layout. The single derived CANONICAL_HEADER must
 # equal this list. Remote sits immediately after Location; Product/Purpose moved
@@ -119,24 +121,51 @@ def test_golden_round_trip_is_byte_stable(tmp_path: Path) -> None:
     assert second.read_bytes() == first_bytes
 
 
-def _backfill_ctx() -> ScrapeContext:
-    # Zero budgets make the enrichers no-op (no provider calls) while backfill
-    # still runs its read -> (enrich) -> rewrite cycle through the CSV path.
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
-                "enrichment": {
-                    "max_enrich_companies": 0,
-                    "max_enrich_fit": 0,
-                    "detail_delay_seconds": 0,
-                },
-            }
-        )
+def _backfill_plugin() -> JobSearchPlugin:
+    return JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "enrichment": {
+                "max_enrich_companies": 0,
+                "max_enrich_fit": 0,
+                "detail_delay_seconds": 0,
+            },
+        }
     )
 
 
-def test_backfill_round_trip_preserves_rows_and_order(tmp_path: Path) -> None:
+def _stub_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No-op detail + LLM enrichment: backfill still runs its read -> rewrite cycle.
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 0,
+            "enriched": 0,
+            "failed": 0,
+            "skipped": len(jobs),
+            "skip_reasons": {},
+        }
+
+    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        return (
+            jobs,
+            {"enriched": 0, "skipped_cached": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+        )
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+    monkeypatch.setattr(
+        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
+    )
+
+
+def test_backfill_round_trip_preserves_rows_and_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A no-op backfill (enrichment stubbed) leaves rows + header order intact."""
     csv_path = tmp_path / "jobs.csv"
     # A fixture row that already needs enrichment (blank Product/Fit/Notes/GD)
@@ -167,7 +196,8 @@ def test_backfill_round_trip_preserves_rows_and_order(tmp_path: Path) -> None:
         for r in csv.DictReader(csv_path.read_text(encoding="utf-8").splitlines())
     }
 
-    backfill(_backfill_ctx(), csv_path, tmp_path)
+    _stub_enrichment(monkeypatch)
+    runner.run_backfill(_backfill_plugin(), csv_path, tmp_path)
 
     text_after = csv_path.read_text(encoding="utf-8")
     header_after = text_after.splitlines()[0]
