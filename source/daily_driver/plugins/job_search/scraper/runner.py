@@ -563,6 +563,153 @@ def _source_breakdown_segments(counts: dict[str, int]) -> list[tuple[int, str]]:
     ]
 
 
+class _JobSink:
+    """The durable-record checkpoint for one run: appends each source's rows to
+    jobs.csv as it lands, then lets enrichment update those rows in place with
+    periodic flushes.
+
+    The sink is the single owner of the run's growing ``rows`` list and the
+    dedup state. ``append_source`` dedups one source's scraped dicts (against the
+    known url/key sets PLUS rows appended earlier this run), drops url-less rows,
+    location-filters, lifts survivors to ``EnrichedJob``, appends them to
+    jobs.csv under the sentinel lock, and folds them into ``rows`` so a later
+    source (the Apple wave) dedups against them. ``flush`` rewrites the whole
+    file from ``rows`` through the one backfill rewrite path so a mid-enrichment
+    crash loses at most one flush window. All sink methods run on the
+    coordinator thread; no internal locking beyond the per-call sentinel lock,
+    which is held only around each I/O burst — never across LLM calls.
+    """
+
+    def __init__(
+        self,
+        *,
+        csv_path: Path,
+        lock_path: Path,
+        header: list[str],
+        known_urls: set[str],
+        known_keys: set[str],
+        plugin: JobSearchPlugin,
+    ) -> None:
+        self.csv_path = csv_path
+        self.lock_path = lock_path
+        self.header = header
+        # Dedup state: seeded from jobs.csv + the archive table, then GROWN as
+        # rows are appended this run. A hit means the row is already on disk (or
+        # was just written by an earlier source) -> "known". The Apple wave
+        # dedups against phase-1's appended rows through this same set, so a
+        # cross-source duplicate is phase-1-wins and counts as known (deliberate;
+        # the row genuinely is in the csv by then). Intra-source exact duplicates
+        # (one source's list repeating a row) are caught per-call and counted as
+        # the funnel's "other", matching the old _per_source_funnel.
+        self._known_urls = known_urls
+        self._known_keys = known_keys
+        self._plugin = plugin
+        # Master list every enricher mutates in place; also the flush source.
+        self.rows: list[EnrichedJob] = []
+        # Per-source funnel accumulated at append time (mirrors _per_source_funnel).
+        self.funnel: dict[str, dict[str, int]] = {}
+        # Run totals for the reconciling Completed line.
+        self.raw_found = 0
+        self.pre_filter = 0  # new (deduped, url-bearing, pre-location) survivors
+        self.loc_filtered = 0
+
+    def append_source(
+        self, source_id: str, jobs: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Dedup/filter/lift one source's rows, append them, return its funnel.
+
+        Returns the per-source counts (found/new/known/loc_skip). Updates the
+        run's dedup state and totals so cross-source duplicates are caught and
+        the Completed line reconciles across sources.
+        """
+        from daily_driver.plugins.job_search.scraper.csv_io import append_jobs_typed
+
+        counts = self.funnel.setdefault(
+            source_id, {"found": 0, "new": 0, "known": 0, "loc_skip": 0}
+        )
+        # Intra-source dedup: a single source's list may repeat a row (e.g.
+        # Apple's locale loop). Those are the funnel's "other" -- found but not
+        # classified -- so detect them here without counting them as "known".
+        seen_urls: set[str] = set()
+        seen_keys: set[str] = set()
+        to_append: list[EnrichedJob] = []
+        for job in jobs:
+            counts["found"] += 1
+            self.raw_found += 1
+            url = job.get("url", "")
+            key = dedup_key(job.get("company", ""), job.get("role", ""))
+            if (url and url in seen_urls) or (key and key in seen_keys):
+                continue  # within-source duplicate -> "other"
+            if url:
+                seen_urls.add(url)
+            if key:
+                seen_keys.add(key)
+            if (url and url in self._known_urls) or (key and key in self._known_keys):
+                counts["known"] += 1
+                continue
+            if not url:
+                # url-less new jobs cannot be deduped on future runs; drop them.
+                log.warning(
+                    "Dropping job with no URL (cannot dedup on future runs): %s",
+                    job.get("company", ""),
+                )
+                continue
+            if not location_matches(job, self._plugin):
+                counts["loc_skip"] += 1
+                self.loc_filtered += 1
+                continue
+            counts["new"] += 1
+            self.pre_filter += 1
+            # Grow the known set immediately so the next source (and the Apple
+            # wave) dedups against this just-accepted row.
+            self._known_urls.add(url)
+            if key:
+                self._known_keys.add(key)
+            to_append.append(_enriched_from_scraped(job))
+
+        if to_append:
+            self.rows.extend(to_append)
+            with file_lock(self.lock_path):
+                append_jobs_typed(self.csv_path, to_append, self.header)
+        return counts
+
+    def flush(self) -> None:
+        """Rewrite jobs.csv from ``rows`` through the one backfill rewrite path.
+
+        Holds the sentinel lock only around the rewrite, never across the slow
+        LLM calls that produced the updates — matching run()'s append discipline
+        so a concurrent prune/backfill is serialized but not starved.
+        """
+        from daily_driver.plugins.job_search.scraper.csv_io import (
+            atomic_write_rows,
+            read_rows,
+        )
+
+        with file_lock(self.lock_path):
+            # Carry through any unknown/hand-added columns verbatim, indexed by
+            # Link, so a flush never drops a user's "Priority" column. The append
+            # path only ever wrote canonical columns, so extras come from rows
+            # that pre-dated this run.
+            stored_header, stored_rows = read_rows(self.csv_path)
+            extra_columns = [c for c in stored_header if c not in self.header]
+            extras_by_link: dict[str, dict[str, str]] = {}
+            if extra_columns:
+                for row in stored_rows:
+                    link = (row.get("Link") or "").strip()
+                    if link:
+                        extras_by_link[link] = {
+                            c: row.get(c, "") for c in extra_columns
+                        }
+            out_header = self.header + extra_columns
+            out_rows: list[dict[str, str]] = []
+            for job in self.rows:
+                csv_row = job.to_csv_row()
+                if extra_columns:
+                    csv_row.update(extras_by_link.get(job.url, {}))
+                out_rows.append(csv_row)
+            atomic_write_rows(self.csv_path, out_header, out_rows)
+
+
 def run_all_scrapers(
     ctx: ScrapeContext,
     *,
@@ -572,6 +719,8 @@ def run_all_scrapers(
     on_source_progress: Callable[[str, int, int | None], None] | None = None,
     on_sources_enabled: Callable[[list[str]], None] | None = None,
     on_note: Callable[[str], None] | None = None,
+    on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None,
+    on_phase1_done: Callable[[], None] | None = None,
     force_headless: bool = False,
 ) -> tuple[
     list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
@@ -709,7 +858,14 @@ def run_all_scrapers(
             }
             for fut in as_completed(futures):
                 sid = futures[fut]
-                results.append((sid, fut.result()))
+                result = fut.result()
+                results.append((sid, result))
+                # Append-as-completed: hand each successful source straight to
+                # the sink on this (coordinator) thread so its rows reach
+                # jobs.csv before the next source finishes. A crash mid-phase
+                # then loses only the in-flight source.
+                if on_source_result is not None and not isinstance(result, Exception):
+                    on_source_result(sid, result)
         except KeyboardInterrupt:
             # Drop pending (unstarted) futures and stop waiting on the pool.
             # In-flight HTTP requests cannot be killed mid-call; they run to
@@ -719,6 +875,11 @@ def run_all_scrapers(
             raise
         else:
             pool.shutdown(wait=True)
+
+    # Phase 1 results are all appended; signal the caller so it can start
+    # enriching them while phase 2 (Apple) still scrapes (overlap).
+    if on_phase1_done is not None:
+        on_phase1_done()
 
     # Phase 2: serial (preserves pre-parallel behavior). Visible browser by
     # default to dodge bot detection; forced headless via force_headless.
@@ -731,18 +892,16 @@ def run_all_scrapers(
             ", ".join(visible_sources),
         )
         for sid in visible_sources:
-            results.append(
-                (
-                    sid,
-                    _run_one(
-                        sid,
-                        visible_ctx,
-                        on_source_done,
-                        on_source_start,
-                        on_source_progress,
-                    ),
-                )
+            result = _run_one(
+                sid,
+                visible_ctx,
+                on_source_done,
+                on_source_start,
+                on_source_progress,
             )
+            results.append((sid, result))
+            if on_source_result is not None and not isinstance(result, Exception):
+                on_source_result(sid, result)
 
     all_jobs, failed_sources = _merge_and_dedup(results)
     return all_jobs, failed_sources, results
@@ -899,7 +1058,6 @@ def run(
     """
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
-        append_jobs_typed,
         load_existing_jobs,
     )
     from daily_driver.plugins.job_search.scraper.enrichment import (
@@ -936,13 +1094,16 @@ def run(
 
         if not header:
             header = CANONICAL_HEADER
-            csv_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                    csv.writer(f).writerow(header)
-            except OSError as exc:
-                log.error("Cannot initialize %s: %s", csv_path, exc)
-                return 1
+            # dry-run writes nothing at all (in-memory single pass), so skip
+            # initializing the file too -- the append path never fires under it.
+            if not dry_run:
+                csv_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+                        csv.writer(f).writerow(header)
+                except OSError as exc:
+                    log.error("Cannot initialize %s: %s", csv_path, exc)
+                    return 1
 
     log.info(
         "Loaded %d existing URLs, %d existing keys from %s",
@@ -1001,6 +1162,23 @@ def run(
         def _on_done(sid: str, ok: bool, detail: str) -> None:
             _row(sid).finish(ok, detail)
 
+        # The sink IS the durable-record checkpoint: each source's rows are
+        # deduped/filtered/lifted and appended to jobs.csv as it lands (the
+        # append-as-completed callback below). dry-run keeps the old in-memory
+        # single pass with no sink and no writes.
+        sink: _JobSink | None = None
+        on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None
+        if not dry_run:
+            sink = _JobSink(
+                csv_path=csv_path,
+                lock_path=lock_path,
+                header=header,
+                known_urls=known_urls,
+                known_keys=known_keys,
+                plugin=plugin,
+            )
+            on_source_result = sink.append_source
+
         all_jobs, failed_sources, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
@@ -1009,56 +1187,61 @@ def run(
             on_source_progress=_on_progress,
             on_source_done=_on_done,
             on_note=rp.note,
+            on_source_result=on_source_result,
             # Force Apple headless while the live block owns the terminal.
             force_headless=tty,
         )
 
-        new_jobs = [
-            j
-            for j in all_jobs
-            if (not j.get("url") or j["url"] not in known_urls)
-            and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
-        ]
-
-        urlless = [j for j in new_jobs if not j.get("url")]
-        if urlless:
-            log.warning(
-                "Dropping %d jobs with no URL (cannot dedup on future runs)",
-                len(urlless),
-            )
-        new_jobs = [j for j in new_jobs if j.get("url")]
-        log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
-
-        pre_filter = len(new_jobs)
-        new_jobs = [j for j in new_jobs if location_matches(j, plugin)]
-        filtered = pre_filter - len(new_jobs)
-        if filtered:
-            log.info("Filtered %d jobs by location preferences", filtered)
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
-        # raw_found = total scraped before cross-source dedup, so the header
-        # matches the per-source rows and the Completed line; len(all_jobs)
-        # would show the deduped count and contradict them. Reused below for
-        # the Completed line. pre_filter (not the post-location count) so "new"
-        # matches the Completed line and isn't conflated with location matches.
-        raw_found = sum(
-            len(jobs) for _, jobs in source_results if not isinstance(jobs, Exception)
-        )
+
+        if sink is not None:
+            # Append-time funnel: the sink classified every row as it was written,
+            # so the totals and per-source breakdown are already accumulated.
+            raw_found = sink.raw_found
+            pre_filter = sink.pre_filter
+            filtered = sink.loc_filtered
+            funnel = sink.funnel
+            typed_jobs = sink.rows
+        else:
+            # dry-run: replicate the former in-memory dedup/filter/lift in one
+            # pass so the preview table and Completed line match a real run.
+            new_jobs = [
+                j
+                for j in all_jobs
+                if (not j.get("url") or j["url"] not in known_urls)
+                and dedup_key(j.get("company", ""), j.get("role", "")) not in known_keys
+            ]
+            urlless = [j for j in new_jobs if not j.get("url")]
+            if urlless:
+                log.warning(
+                    "Dropping %d jobs with no URL (cannot dedup on future runs)",
+                    len(urlless),
+                )
+            new_jobs = [j for j in new_jobs if j.get("url")]
+            log.info("Found %d jobs total, %d new", len(all_jobs), len(new_jobs))
+            pre_filter = len(new_jobs)
+            new_jobs = [j for j in new_jobs if location_matches(j, plugin)]
+            filtered = pre_filter - len(new_jobs)
+            if filtered:
+                log.info("Filtered %d jobs by location preferences", filtered)
+            raw_found = sum(
+                len(jobs)
+                for _, jobs in source_results
+                if not isinstance(jobs, Exception)
+            )
+            funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+            typed_jobs = [_enriched_from_scraped(j) for j in new_jobs]
+
         scrape_group.done(f"{raw_found} found, {pre_filter} new")
 
-        # Colour each finished source bar by what it found. The funnel is computed
-        # here, while the bars are still live, and reused for the summary after the
-        # block tears down (it persists -- a `with` block is not a scope).
-        funnel = _per_source_funnel(source_results, known_urls, known_keys, plugin)
+        # Colour each finished source bar by what it found. The funnel persists
+        # past the `with` block (it is not a scope), so it is reused for the
+        # summary after teardown.
         for sid, counts in funnel.items():
             row = source_rows.get(sid)
             if row is not None:
                 row.show_breakdown(_source_breakdown_segments(counts))
-
-        # Cross from the dict-based source boundary into the typed pipeline:
-        # every surviving merged dict is validated through RawScrapedJob and
-        # lifted to a frozen EnrichedJob. The rest operates on these.
-        typed_jobs: list[EnrichedJob] = [_enriched_from_scraped(j) for j in new_jobs]
 
         if dry_run or no_enrich:
             # Both skip every enrichment phase: dry-run avoids writes entirely,
@@ -1194,10 +1377,15 @@ def run(
         _print_dry_run_table(typed_jobs)
         return 1 if failed_sources else 0
 
-    # Re-acquire the sentinel only for the append. The lock was dropped during
-    # enrichment above so slow LLM calls don't block concurrent prune/backfill.
-    with file_lock(lock_path):
-        written = append_jobs_typed(csv_path, typed_jobs, header)
+    # Rows were already appended per-source during scraping (the durable-record
+    # checkpoint). Persist the in-place enrichment with one final rewrite through
+    # the backfill rewrite path; the lock is taken only for the rewrite, never
+    # across the LLM calls, so a concurrent prune/backfill is serialized but not
+    # starved. --no-enrich leaves the rows as appended (no rewrite needed).
+    assert sink is not None  # dry_run returned above; non-dry-run always has a sink
+    written = len(sink.rows)
+    if not no_enrich:
+        sink.flush()
     skip_note = " (enrichment skipped)" if no_enrich else ""
     Console.success(
         f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note}"

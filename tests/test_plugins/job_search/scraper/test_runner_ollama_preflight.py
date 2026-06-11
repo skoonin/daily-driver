@@ -37,13 +37,19 @@ def _scraped_job() -> dict[str, Any]:
 
 
 def _stub_scrapers(monkeypatch: pytest.MonkeyPatch, jobs: list[dict[str, Any]]) -> None:
-    """Make run_all_scrapers return ``jobs`` with no failed sources."""
+    """Make run_all_scrapers return ``jobs`` with no failed sources.
+
+    Drives ``on_source_result`` so the run() sink appends the rows during
+    scraping, as the real orchestrator does.
+    """
     results = [("remoteok", list(jobs))]
-    monkeypatch.setattr(
-        runner,
-        "run_all_scrapers",
-        lambda *_a, **_kw: (list(jobs), [], results),
-    )
+
+    def fake_run_all(*_a: Any, on_source_result: Any = None, **_kw: Any) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", list(jobs))
+        return list(jobs), [], results
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_run_all)
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
