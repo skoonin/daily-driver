@@ -576,8 +576,10 @@ class _JobSink:
     location-filters, lifts survivors to ``EnrichedJob``, appends them to
     jobs.csv under the sentinel lock, and folds them into ``rows`` so a later
     source (the Apple wave) dedups against them. ``flush`` rewrites the whole
-    file from ``rows`` through the one backfill rewrite path so a mid-enrichment
-    crash loses at most one flush window. All sink methods run on the
+    file -- ``preexisting_rows`` (what was on disk before the run, carried
+    through verbatim) followed by ``rows`` -- through the one backfill rewrite
+    path so a mid-enrichment crash loses at most one flush window. All sink
+    methods run on the
     coordinator thread; no internal locking beyond the per-call sentinel lock,
     which is held only around each I/O burst — never across LLM calls.
     """
@@ -592,6 +594,7 @@ class _JobSink:
         known_keys: set[str],
         plugin: JobSearchPlugin,
         external_lock_held: bool = False,
+        preexisting_rows: list[dict[str, str]] | None = None,
     ) -> None:
         self.csv_path = csv_path
         self.lock_path = lock_path
@@ -613,6 +616,14 @@ class _JobSink:
         self._known_urls = known_urls
         self._known_keys = known_keys
         self._plugin = plugin
+        # Rows that were already in jobs.csv before this run, as raw CSV dicts.
+        # ``flush`` rewrites the WHOLE file, so it must write these back first
+        # (verbatim -- never lifted through EnrichedJob, so hand-edited cells
+        # round-trip untouched) or every pre-existing row would be wiped. The
+        # run path captures them under the same initial lock that seeds the
+        # dedup state; backfill leaves this empty (its ``rows`` holds the whole
+        # file).
+        self.preexisting_rows: list[dict[str, str]] = list(preexisting_rows or [])
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
         # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
@@ -766,7 +777,8 @@ class _JobSink:
         return counts
 
     def flush(self) -> None:
-        """Rewrite jobs.csv from ``rows`` through the one backfill rewrite path.
+        """Rewrite jobs.csv -- ``preexisting_rows`` then ``rows`` -- through the
+        one backfill rewrite path.
 
         Snapshot AND rewrite happen under one held ``_rows_lock`` + ``file_lock``
         so the whole flush is atomic relative to an append (no interleave between
@@ -792,7 +804,9 @@ class _JobSink:
             snapshot = list(self.rows)
             extras_snapshot = list(self.row_extras)
             out_header = self.header + self.extra_columns
-            out_rows: list[dict[str, str]] = []
+            # Pre-existing file rows lead, byte-for-byte; this run's rows follow
+            # in append order, so the rewrite preserves the on-disk layout.
+            out_rows: list[dict[str, str]] = list(self.preexisting_rows)
             for i, job in enumerate(snapshot):
                 csv_row = job.to_csv_row()
                 if i < len(extras_snapshot):
@@ -1731,6 +1745,7 @@ def _run_impl(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
+        read_rows,
     )
 
     csv_path = output_dir / "jobs.csv"
@@ -1749,6 +1764,10 @@ def _run_impl(
 
     with file_lock(lock_path):
         known_urls, known_keys, header = load_existing_jobs(csv_path)
+        # Captured under the same lock as the dedup seed: the sink's flush
+        # rewrites the WHOLE file, so it must carry these rows through verbatim
+        # or every pre-existing row would be wiped by the first flush.
+        _, preexisting_rows = read_rows(csv_path)
 
         # Union archive-table dedup state so triaged listings (pruned to
         # jobs.archive.csv) are never re-discovered.
@@ -1859,6 +1878,7 @@ def _run_impl(
                 known_urls=known_urls,
                 known_keys=known_keys,
                 plugin=plugin,
+                preexisting_rows=preexisting_rows,
             )
             state.sink = sink
 

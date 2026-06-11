@@ -817,6 +817,117 @@ def test_append_and_flush_no_duplicate_rows_under_interleave(tmp_path: Path) -> 
     assert len(known_urls) == 21
 
 
+def test_flush_preserves_preexisting_rows(tmp_path: Path) -> None:
+    """A run-path flush rewrites the whole file, so rows already in jobs.csv
+    before the run (including hand-added columns) must be carried through —
+    not replaced by only this run's appended rows."""
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        load_existing_jobs,
+        read_rows,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    header = CANONICAL_HEADER + ["Priority"]
+    old_rows = [
+        {
+            "Status": "applied",
+            "Company": "OldCo",
+            "Role": "SRE",
+            "Link": "https://old/1",
+            "Priority": "high",
+        },
+        {
+            "Status": "new",
+            "Company": "OldCo2",
+            "Role": "SRE",
+            "Link": "https://old/2",
+            "Priority": "",
+        },
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=header)
+        w.writeheader()
+        w.writerows(old_rows)
+
+    # Mirror run()'s setup: dedup state + header from the file, pre-existing
+    # rows captured for flush carry-through.
+    known_urls, known_keys, file_header = load_existing_jobs(csv_path)
+    _, preexisting = read_rows(csv_path)
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=file_header,
+        known_urls=known_urls,
+        known_keys=known_keys,
+        plugin=_us_remote_plugin(),
+        preexisting_rows=preexisting,
+    )
+    sink.append_source("remoteok", [_scraped("https://new/1", "NewCo")])
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert [r["Company"] for r in rows] == ["OldCo", "OldCo2", "NewCo"]
+    # Hand-edited cells on the pre-existing rows are untouched.
+    assert rows[0]["Status"] == "applied"
+    assert rows[0]["Priority"] == "high"
+    assert rows[2]["Priority"] == ""
+
+
+def test_run_enrichment_flush_preserves_preexisting_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An enriching run against a populated jobs.csv must keep every
+    pre-existing row through the enrichment flushes (regression: the flush
+    rewrote the file from only this run's rows, wiping the rest)."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER)
+        w.writeheader()
+        w.writerow(
+            {
+                "Status": "applied",
+                "Company": "OldCo",
+                "Role": "SRE",
+                "Fit": "9",
+                "Link": "https://old/1",
+            }
+        )
+
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 8, "notes": "great"}'
+    )
+
+    rc = runner.run(
+        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+    )
+    assert rc == 0
+    rows = _read_csv(csv_path)
+    assert [r["Company"] for r in rows] == ["OldCo", "Acme"]
+    # The pre-existing row is byte-identical: status and fit untouched.
+    assert rows[0]["Status"] == "applied"
+    assert rows[0]["Fit"] == "9"
+    assert rows[1]["Fit"] == "8"
+
+
 def test_periodic_flush_failure_degrades_then_final_flush_retries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
