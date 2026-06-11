@@ -222,6 +222,8 @@ log`. Versioned release history starts at 1.0.
   bare-location sources (greenhouse, HN, remoteok, wwr) genuinely lack a country
   in their upstream data and are left as a follow-up. (#69)
 
+- **`jobs run` live progress block no longer opens a large blank gap or leaves a duplicate of itself in scrollback.** The block now reserves its full height in a single terminal scroll-region set instead of resizing the region once per progress bar. The old per-bar resizing emitted a separate scroll-region change and bottom-row line feed for every row, which some terminals (iTerm2, and VS Code's xterm.js terminal especially with GPU acceleration off) rendered as a tall run of blank lines before the block, or as a frozen mid-run copy of the block stranded in scrollback above the final one. Streamed warning/error lines still appear above the bars and persist in scrollback as before. (#TBD)
+
 ## [0.1.0] — 2026-06-01
 
 ### Fixed

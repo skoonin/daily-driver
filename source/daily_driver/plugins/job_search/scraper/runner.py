@@ -1902,6 +1902,11 @@ def _run_impl(
             return row
 
         def _on_enabled(sids: list[str]) -> None:
+            # Reserve the whole scrape block in one scroll-region set before any
+            # row is pinned: title + group header + one bar per source. Avoids
+            # the per-bar region resizes that corrupt the display on iTerm2 /
+            # VS Code (gap before the block, duplicate block in scrollback).
+            rp.reserve(2 + len(sids))
             for sid in sids:
                 _row(sid)
 

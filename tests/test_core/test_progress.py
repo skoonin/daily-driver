@@ -247,12 +247,67 @@ def test_live_mode_failed_source_uses_red_subcounter(monkeypatch):
 def test_live_mode_title_pinned_as_status_bar(monkeypatch):
     """In live mode the title is a pinned status bar (top of the bottom block),
     not an ordinary line above the scroll region -- so no terminal-height gap
-    opens between the title and the bars."""
+    opens between the title and the bars. It seats lazily, on the first counter
+    (here, the group header), so the whole block sets the scroll region once."""
     buf, _mgr = _inject_live(monkeypatch)
     console, _ = _line_console()
     with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.group("Scraping sources").item("apple")  # first counter seats the title
         assert rp._title_bar is not None  # pinned, not plain-printed
     assert "Job search run" in buf.getvalue()
+
+
+def test_live_mode_empty_run_still_shows_title(monkeypatch):
+    """A run that pins no counters still shows its title (seated at teardown)."""
+    buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        assert rp._title_bar is None  # not seated until a counter or teardown
+    assert rp._title_bar is not None
+    assert "Job search run" in buf.getvalue()
+
+
+def test_reserve_sets_scroll_region_once(monkeypatch):
+    """reserve() pre-sizes the block so adding bars does not keep resizing the
+    scroll region: a single CSI r (change-scroll-region) reaches the stream for
+    the whole block instead of one per bar."""
+    buf, _mgr = _inject_live(monkeypatch)
+    # A buffer-bound manager renders no ANSI, so drive a real TTY-shaped term to
+    # observe the scroll-region sequence. Count region sets via the manager's own
+    # accounting instead: each grow bumps scroll_offset, so a single reserve to
+    # the final size means scroll_offset never grows again as bars are added.
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.reserve(2 + 3)  # title + header + 3 sources
+        offset_after_reserve = _mgr.scroll_offset
+        g = rp.group("Scraping sources")
+        for name in ("a", "b", "c"):
+            g.item(name).start()
+        # Bars fit inside the reserved region; the region never grew again.
+        assert _mgr.scroll_offset == offset_after_reserve
+    assert "Job search run" in buf.getvalue()
+
+
+def test_reserve_is_idempotent_and_noop_after_first(monkeypatch):
+    """A second reserve() is a no-op (block already seated)."""
+    buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.reserve(5)
+        first = _mgr.scroll_offset
+        rp.reserve(20)  # ignored -- already reserved
+        assert _mgr.scroll_offset == first
+
+
+def test_reserve_noop_in_plain_mode():
+    """reserve() does nothing in plain mode and the title still prints."""
+    console, buf = _line_console()
+    with RunProgress(console, tty=False, title="Job search run") as rp:
+        rp.reserve(8)  # must not raise
+        rp.group("Scraping sources").item("apple").finish(ok=True, detail="5 jobs")
+    out = buf.getvalue()
+    assert "Job search run" in out
+    assert "apple: 5 jobs" in out
 
 
 def test_live_mode_show_breakdown_stacks_colored_segments(monkeypatch):
