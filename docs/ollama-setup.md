@@ -159,6 +159,12 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
 
   Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or where the model returned an empty string. `-v` alone gives the startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
 - **`connection refused on 11434`** — `ollama serve` not running.
+- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the
+  start of enrichment; if the server is unreachable or the configured model is
+  not pulled, it skips the product / fit / notes passes (one warning naming the
+  endpoint or model) instead of burning a per-call timeout on every job. Detail
+  pages still run. Start the server (or `ollama pull <model>`), then
+  `jobs run --backfill` to fill the empty rows.
 - **First request is slow** — Ollama loads the model into RAM on demand.
   Subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep the model
   warm between sessions.
