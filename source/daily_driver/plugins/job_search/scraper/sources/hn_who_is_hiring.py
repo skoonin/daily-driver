@@ -41,6 +41,11 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
         "https://hn.algolia.com/api/v1/search_by_date"
         "?tags=story,author_whoishiring&hitsPerPage=12"
     )
+    # Graceful-stop checkpoint before the (story-lookup) fetch: a Ctrl-C/SIGTERM
+    # during scraping sets this on the main thread, so skip it and return empty.
+    if ctx.stop_event.is_set():
+        log.info("[hn_who_is_hiring] stop requested before fetch; keeping 0 jobs")
+        return []
     stories_resp = _api_get(session, stories_url, ctx, label="hn_who_is_hiring")
     if not stories_resp:
         return []

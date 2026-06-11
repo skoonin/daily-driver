@@ -109,6 +109,13 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
             total = len(countries)
             done = 0
             for country in countries:
+                # Graceful-stop checkpoint between locale/country steps: a
+                # Ctrl-C/SIGTERM during scraping sets the flag on the main thread,
+                # so return the roles accumulated so far rather than starting the
+                # next country.
+                if ctx.stop_event.is_set():
+                    log.info("[apple] stop requested; keeping %d roles", len(jobs))
+                    break
                 ctx.report(done, total)
                 done += 1
                 # Pass the full alias list: Apple's API rejects JobSpy's primary
@@ -263,6 +270,12 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                 # Per-country heartbeat at INFO so -v shows motion through the
                 # long (multi-minute, multi-country) Apple scrape.
                 log.info("[apple] %s: %d roles matched so far", country, len(jobs))
+    except KeyboardInterrupt:
+        # First Ctrl-C/SIGTERM lands here on the coordinator thread mid-country.
+        # Flag the graceful stop so the orchestrator marks the run interrupted,
+        # and KEEP the roles accumulated so far instead of dropping them.
+        ctx.stop_event.set()
+        log.info("[apple] interrupted; keeping %d roles found so far", len(jobs))
     except Exception as exc:
         log.warning("[apple] browser session error: %s", exc)
 

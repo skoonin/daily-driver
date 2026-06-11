@@ -149,8 +149,9 @@ def test_url_stripped_at_boundary(bad_url: str) -> None:
 class TestMergedJobspyScraper:
     """``scrape_jobspy(ctx, sites=[...])`` requests the given sites in one
     ``scrape_jobs`` call, reading per-site query knobs off the top-level
-    ``linkedin`` / ``indeed`` source toggles. The merge-vs-split decision lives
-    in the runner; this layer just executes the site list it is handed."""
+    ``linkedin`` / ``indeed`` source toggles. The runner always hands a
+    single-site list (one row per enabled site); the adapter still accepts a
+    multi-site list, which these tests exercise directly."""
 
     @staticmethod
     def _config(countries: list[str] | None = None, **sources: object) -> ScrapeContext:
@@ -298,3 +299,33 @@ class TestMergedJobspyScraper:
         # One config term x one country -> reported once at (0, 1).
         assert reports and reports[0] == (0, 1)
         assert all(total == 1 for _done, total in reports)
+
+    def test_checkpoints_each_term_country_unit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each finished (term x country) unit's matched rows are handed to
+        ``ctx.checkpoint`` as the unit completes, so a crash mid-scrape keeps the
+        completed units. Two countries -> two checkpoint batches."""
+        from dataclasses import replace
+
+        import jobspy as jobspy_pkg
+        import pandas as pd
+
+        # A distinct row per country so each unit's batch is identifiable.
+        def fake(**kwargs: object) -> object:
+            location = kwargs["location"]
+            url = f"https://indeed.com/job/{location}"
+            return pd.DataFrame([self._row("indeed", url)])
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        batches: list[list[dict]] = []
+        ctx = replace(
+            self._config(countries=["US", "CA"], indeed=True),
+            checkpoint=lambda batch: batches.append(list(batch)),
+        )
+        out = scrape_jobspy(ctx, sites=["indeed"])
+        # One unit per country -> two checkpoint batches, each with that unit's row.
+        assert len(batches) == 2
+        assert all(len(b) == 1 for b in batches)
+        # The full list is still returned for the manifest/results path.
+        assert len(out) == 2

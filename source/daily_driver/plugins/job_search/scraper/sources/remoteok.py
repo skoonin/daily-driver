@@ -30,6 +30,12 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     jobs: list[dict] = []
     seen_ids: set[str] = set()
 
+    # Graceful-stop checkpoint before the (single) fetch: a Ctrl-C/SIGTERM during
+    # scraping sets this on the main thread, so skip the fetch and return empty.
+    if ctx.stop_event.is_set():
+        log.info("[remoteok] stop requested before fetch; keeping 0 jobs")
+        return jobs
+
     resp = _api_get(session, "https://remoteok.com/api", ctx, label="remoteok")
     if not resp:
         return jobs

@@ -378,12 +378,11 @@ class JobSearchPlugin(BaseModel):
                     " `playwright install`):"
                 ),
                 "linkedin": (
-                    "LinkedIn + Indeed (each its own source). When both are\n"
-                    "enabled with equal results_wanted_per_query and hours_old\n"
-                    "they are fetched in one merged request; if the knobs differ\n"
-                    "they are fetched separately. country (Indeed only) sets the\n"
-                    "regional host and is the fallback for countries the scraper\n"
-                    "does not recognize. Requires `python-jobspy>=1.1.82`."
+                    "LinkedIn + Indeed (each its own source). Each enabled site\n"
+                    "is fetched separately, under its own progress row. country\n"
+                    "(Indeed only) sets the regional host and is the fallback for\n"
+                    "countries the scraper does not recognize. Requires\n"
+                    "`python-jobspy>=1.1.82`."
                 ),
             },
         },
