@@ -242,6 +242,10 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                                     "url": detail_url,
                                     "source": "Apple Careers",
                                     "date_found": today().isoformat(),
+                                    # Per-search ISO country: the origin-country
+                                    # hint the row lift uses when the location
+                                    # text names no country.
+                                    "origin_country": country,
                                 }
                             )
                         except Exception as exc:

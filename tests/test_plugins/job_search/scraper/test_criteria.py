@@ -230,7 +230,7 @@ def test_worker_folds_criteria_into_notes() -> None:
         "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
         return_value=payload,
     ):
-        fit, notes, failed = _fetch_fit_notes_for_job(
+        fit, notes, _remote, failed = _fetch_fit_notes_for_job(
             _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
         )
     assert not failed
@@ -244,7 +244,7 @@ def test_worker_missing_criteria_key_leaves_notes_unchanged() -> None:
         "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
         return_value=payload,
     ):
-        _fit, notes, failed = _fetch_fit_notes_for_job(
+        _fit, notes, _remote, failed = _fetch_fit_notes_for_job(
             _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
         )
     assert not failed
@@ -257,7 +257,7 @@ def test_worker_malformed_criteria_value_does_not_crash() -> None:
         "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
         return_value=payload,
     ):
-        _fit, notes, failed = _fetch_fit_notes_for_job(
+        _fit, notes, _remote, failed = _fetch_fit_notes_for_job(
             _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
         )
     assert not failed

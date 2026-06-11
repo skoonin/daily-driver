@@ -234,8 +234,40 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
     with file_lock(jobs_lock_path(ephemeral_dir)):
         with open(csv_path, newline="", encoding="utf-8") as lock_fh:
             reader = csv.DictReader(lock_fh)
-            header = list(reader.fieldnames or CANONICAL_HEADER)
+            stored_columns = list(reader.fieldnames or [])
             rows = list(reader)
+
+        # Reads are header-name-based, so a legacy column order (or a missing
+        # Remote column) loads fine. The rewrite emits CANONICAL_HEADER, so an
+        # old-layout file adopts the canonical column order; stored Location text
+        # is read faithfully and left as-is (no auto-migration).
+        #
+        # Unknown / hand-added columns (e.g. a user's "Priority") are not modelled
+        # by EnrichedJob, so carry them through verbatim — both the header labels
+        # (appended after the canonical columns, in stored order) and each row's
+        # cells (re-merged on write). Enrichers preserve row order and never add
+        # or drop rows, so the captured extras line up with the final jobs by
+        # index.
+        extra_columns = [c for c in stored_columns if c not in CANONICAL_HEADER]
+        extras_per_row: list[dict[str, str]] = [
+            {c: r.get(c, "") for c in extra_columns} for r in rows
+        ]
+        header = CANONICAL_HEADER + extra_columns
+        if extra_columns:
+            log.info(
+                "[backfill] carrying through %d non-canonical column(s): %s",
+                len(extra_columns),
+                ", ".join(extra_columns),
+            )
+
+        def _rows_with_extras(js: list[EnrichedJob]) -> list[dict[str, str]]:
+            out: list[dict[str, str]] = []
+            for i, job in enumerate(js):
+                row = job.to_csv_row()
+                if i < len(extras_per_row):
+                    row.update(extras_per_row[i])
+                out.append(row)
+            return out
 
         jobs = [EnrichedJob.from_csv_row(r) for r in rows]
 
@@ -271,7 +303,7 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
             jobs, _ = enrich_fit_and_notes(jobs, ctx, budget=0)
         except KeyboardInterrupt:
             try:
-                atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
+                atomic_write_rows(csv_path, header, _rows_with_extras(jobs))
                 save_status = (
                     f"partial progress saved to jobs.csv "
                     f"(original preserved at {backup.name})"
@@ -288,7 +320,7 @@ def backfill(ctx: ScrapeContext, csv_path: Path, ephemeral_dir: Path) -> None:
             print(f"Backfill interrupted: {save_status}", file=sys.stderr)
             raise
 
-        atomic_write_rows(csv_path, header, [j.to_csv_row() for j in jobs])
+        atomic_write_rows(csv_path, header, _rows_with_extras(jobs))
 
     active = [j for j in jobs if _active(j)]
     filled_product = needs_product - sum(1 for j in active if not j.product_filled)
