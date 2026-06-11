@@ -42,11 +42,27 @@ def add_parser(
         parents=parents,
         help="Run the configured job-board search pipeline",
     )
-    p_run.add_argument(
+    # --dry-run prints a human table to stdout; --json emits machine JSON to
+    # stdout. Both own the stdout channel, and a dry-run writes no manifest, so
+    # combining them would corrupt the JSON contract (table + bare object). Reject
+    # the combination at the parser rather than silently producing junk.
+    p_run_output = p_run.add_mutually_exclusive_group()
+    p_run_output.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
         help="Print results without writing to jobs.csv",
+    )
+    p_run_output.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help=(
+            "After the run, emit the run-manifest JSON (jobs-last-run.json) to "
+            "stdout for scripting. Suppresses the live progress block; "
+            "diagnostics still go to stderr. Not combinable with --dry-run."
+        ),
     )
     p_run.add_argument(
         "--no-enrich",
@@ -70,17 +86,6 @@ def add_parser(
         "--list-sources",
         action="store_true",
         help="List the available job-board names and exit",
-    )
-    p_run.add_argument(
-        "-j",
-        "--json",
-        action="store_true",
-        default=False,
-        help=(
-            "After the run, emit the run-manifest JSON (jobs-last-run.json) to "
-            "stdout for scripting. Suppresses the live progress block; "
-            "diagnostics still go to stderr."
-        ),
     )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
@@ -186,15 +191,22 @@ def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def
 def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
     """Print the run manifest (jobs-last-run.json) to stdout for `jobs run --json`.
 
-    The runner writes the manifest on every non-dry-run exit; we read it back and
-    re-emit it so stdout carries the machine-readable result while the runner's
-    diagnostics stayed on stderr. A dry-run writes no manifest -- emit an empty
-    object so a scripted consumer still gets valid JSON rather than nothing.
+    The runner writes the manifest on every exit that has a sink -- a clean
+    completion (``interrupted=False``) or a Ctrl-C / SIGTERM / crash
+    (``interrupted=True``). ``--json`` is mutually exclusive with ``--dry-run``
+    (which writes no manifest), so under ``--json`` a manifest always exists; we
+    read it back and re-emit it so stdout carries the machine-readable result
+    while the runner's diagnostics stayed on stderr.
+
+    If the manifest is unreadable (an I/O error, not the dry-run case) emit an
+    empty object so a scripted consumer still gets valid JSON, and warn on stderr
+    naming the path so "unreadable" is distinguishable from "nothing to report".
     """
     manifest_path = output_dir / "jobs-last-run.json"
     try:
         payload = manifest_path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        Console.warning(f"could not read run manifest {manifest_path}: {exc}")
         print(json.dumps({}))
         return
     # Pass the file through as-is so the on-disk manifest and stdout never drift.
@@ -270,6 +282,11 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             "(in-flight HTTP requests will finish first). "
             "Run jobs backfill to finish enrichment."
         )
+        # The run() wrapper already wrote an interrupted=True manifest before
+        # re-raising; re-emit it so a --json consumer gets the interrupted
+        # manifest JSON on stdout rather than nothing. Exit code is unchanged.
+        if emit_json:
+            _emit_run_manifest(output_dir)
         return 143 if sigterm else 130
     finally:
         restore_sigterm_handler(sigterm_prev)

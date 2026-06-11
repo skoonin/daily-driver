@@ -104,6 +104,35 @@ def test_company_descriptions_routes_with_plugin_provider() -> None:
     assert out[0].product == "Acme makes widgets"
 
 
+def test_company_product_scaffolding_only_line_is_failed_not_cached() -> None:
+    """A response that is pure prompt scaffolding (e.g. exactly "Product:")
+    strips to empty; it must be counted as a failed lookup and NOT written as a
+    silent empty product cell, so `jobs backfill` can retry it."""
+    jobs = [make_enriched(company="Acme", product="")]
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "phi4",
+                    "enrich_timeout": 5,
+                    "enrich_product": True,
+                    "enrich_gd_rating": False,
+                }
+            }
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    with patch.object(
+        ai_provider, "invoke_for", side_effect=lambda *a, **k: "Product:"
+    ):
+        out, stats = enrichment.enrich_company_descriptions(jobs, ctx)
+
+    assert out[0].product == ""  # not stitched as a silent empty cell
+    assert stats["failed"] == 1  # counted as a failure, so it shows in summaries
+
+
 def test_fit_and_notes_routes_with_plugin_provider() -> None:
     """Site 2 (fit/notes JSON) resolves its route from the plugin config."""
     jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]

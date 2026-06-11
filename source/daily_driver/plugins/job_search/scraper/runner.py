@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -1648,12 +1649,22 @@ def _write_run_manifest(
         "interrupted": interrupted,
     }
     last_run_path = output_dir / "jobs-last-run.json"
+    # Atomic write (temp + fsync + os.replace, mirroring csv_io.atomic_write_rows):
+    # `jobs run --json` reads this file back and pipes it downstream, so a partial
+    # write must never leave malformed JSON that a consumer then parses. os.replace
+    # is atomic on POSIX, so a reader sees either the old file or the complete new
+    # one. A mid-write failure unlinks the temp file before propagating to the
+    # best-effort handler below.
+    tmp_path = last_run_path.with_suffix(last_run_path.suffix + ".tmp")
     try:
-        last_run_path.write_text(
-            json.dumps(run_manifest, indent=2) + "\n", encoding="utf-8"
-        )
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(run_manifest, indent=2) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, last_run_path)
         log.debug("Run manifest written to %s", last_run_path)
     except OSError as exc:
+        tmp_path.unlink(missing_ok=True)
         log.warning("Could not write run manifest: %s", exc)
 
 
