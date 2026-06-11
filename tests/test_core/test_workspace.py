@@ -38,6 +38,51 @@ def test_init_raises_if_already_initialized(tmp_path):
         Workspace.init(tmp_path)
 
 
+def test_init_missing_template_raises_workspace_error(tmp_path, monkeypatch):
+    """A missing packaged config template = broken wheel; init fails loudly."""
+    import daily_driver.core.workspace as workspace_mod
+
+    class _MissingTraversable:
+        def joinpath(self, _name):
+            return self
+
+        def read_text(self, *_a, **_kw):
+            raise FileNotFoundError("template gone")
+
+    monkeypatch.setattr(
+        workspace_mod.importlib.resources, "files", lambda _pkg: _MissingTraversable()
+    )
+    with pytest.raises(WorkspaceError, match="wheel is broken"):
+        Workspace.init(tmp_path)
+
+
+def test_init_template_render_error_surfaces_and_falls_back(tmp_path, monkeypatch):
+    """A malformed template degrades to the minimal fallback AND warns on the
+    terminal (Console.warning), not only in the log."""
+    import jinja2
+
+    import daily_driver.core.workspace as workspace_mod
+    from daily_driver.core.console import Console
+
+    def _boom(*_a, **_kw):
+        raise jinja2.TemplateError("bad template")
+
+    monkeypatch.setattr(jinja2.Environment, "from_string", _boom)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        Console, "warning", staticmethod(lambda msg, *a, **k: warnings.append(msg))
+    )
+
+    ws = Workspace.init(tmp_path)
+    # Fallback config is valid and has the minimal tracker category.
+    assert "task" in ws.config.tracker.categories
+    assert workspace_mod._MINIMAL_CONFIG_FALLBACK.strip() in (
+        (tmp_path / ".dd-config.yaml").read_text()
+    )
+    assert any("fallback config" in w for w in warnings)
+
+
 # ---------------------------------------------------------------------------
 # Workspace.discover_or_fail — override path
 # ---------------------------------------------------------------------------

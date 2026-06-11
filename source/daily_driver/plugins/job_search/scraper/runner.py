@@ -1667,12 +1667,17 @@ def run(
     dry_run: bool = False,
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
+    suppress_live: bool = False,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
     Returns the process-style exit code (0 success, 1 on failed sources /
-    I/O error). Performs no argparse or ``sys.exit()`` — the CLI layer is
-    responsible for exit handling.
+    persistence degraded / I/O error). Performs no argparse or ``sys.exit()`` --
+    the CLI layer is responsible for exit handling.
+
+    ``suppress_live`` forces plain mode (no pinned live block) regardless of TTY;
+    the ``jobs run --json`` path sets it so stdout stays a clean JSON channel
+    while diagnostics still go to stderr.
 
     Thin wrapper around :func:`_run_impl` that owns the manifest-on-every-exit
     guarantee: a ``_RunState`` carries the manifest-relevant state, and ANY exit
@@ -1694,6 +1699,7 @@ def run(
             dry_run=dry_run,
             no_enrich=no_enrich,
             sources_override=sources_override,
+            suppress_live=suppress_live,
             started_at=started_at,
             state=state,
         )
@@ -1737,6 +1743,7 @@ def _run_impl(
     dry_run: bool = False,
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
+    suppress_live: bool = False,
     started_at: datetime,
     state: _RunState,
 ) -> int:
@@ -1846,7 +1853,8 @@ def _run_impl(
     # pinned. Non-TTY (cron/pipe) -- and an unresponsive TTY -- get plain line
     # mode, no block. Quiet mode ("errors only") suppresses the block entirely;
     # the plain-mode progress lines are dropped by RunProgress under quiet too.
-    tty = Console.is_tty() and not Console.quiet_mode
+    # --json (suppress_live) also forces plain mode so stdout stays clean JSON.
+    tty = Console.is_tty() and not Console.quiet_mode and not suppress_live
     with (
         live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
@@ -2228,6 +2236,13 @@ def _run_impl(
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))
+        return 1
+
+    # A run whose periodic saves degraded -- even when the final flush recovered
+    # the data on disk -- exits non-zero so a scripted/scheduled caller treats
+    # the run as not-fully-clean and can re-run or alert. The data is persisted;
+    # the exit code reports that the run did not proceed normally throughout.
+    if not no_enrich and sink.persistence_degraded:
         return 1
 
     if written > 0:

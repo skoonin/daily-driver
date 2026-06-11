@@ -979,6 +979,8 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
 ) -> None:
     """A periodic-flush OSError sets persistence_degraded + warns (not an
     enrichment failure), enrichment continues, and the final flush retries (F3).
+    The data is recovered on disk, but a degraded run exits non-zero so a
+    scripted/scheduled caller treats it as not-fully-clean.
     """
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
@@ -1019,7 +1021,7 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
     rc = runner.run(
         _enrich_plugin_no_product(), tmp_path, tmp_path, ai=_serial_ctx().ai
     )
-    assert rc == 0  # degraded, not failed
+    assert rc == 1  # degraded run exits non-zero even though the final flush recovered
     # Final flush retried and succeeded: enrichment is on disk.
     rows = _read_csv(tmp_path / "jobs.csv")
     assert len(rows) == 3

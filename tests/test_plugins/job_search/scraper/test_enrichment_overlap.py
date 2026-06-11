@@ -249,6 +249,10 @@ def test_interrupt_with_failing_drain_still_reraises(
     count = [0]
     count_lock = threading.Lock()
     block = threading.Event()
+    # Set by the 4th provider call: a deterministic signal that the early NaN
+    # results exist (so the drain has a failing _apply to swallow) before the
+    # interrupt fires -- no polling/deadline race against pool scheduling.
+    four_done = threading.Event()
 
     def fake_invoke(prompt: str, **kwargs: Any) -> str:
         with count_lock:
@@ -256,6 +260,8 @@ def test_interrupt_with_failing_drain_still_reraises(
             n = count[0]
         is_fit = "valid JSON" in prompt
         if n <= 4:
+            if n == 4:
+                four_done.set()
             # Some early-finished fit results carry a NaN so the drain's _apply
             # path (which reaches int()) raises mid-drain.
             if is_fit:
@@ -268,13 +274,10 @@ def test_interrupt_with_failing_drain_still_reraises(
     jobs = _jobs(16)
 
     def trip_sigint() -> None:
-        deadline = time.time() + 2.0
-        while time.time() < deadline:
-            with count_lock:
-                if count[0] >= 4:
-                    break
-            time.sleep(0.01)
-        os.kill(os.getpid(), signal.SIGINT)
+        # Wait on the event rather than polling a wall-clock deadline; only fire
+        # once the failing results are guaranteed present.
+        if four_done.wait(timeout=10.0):
+            os.kill(os.getpid(), signal.SIGINT)
 
     threading.Thread(target=trip_sigint, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):

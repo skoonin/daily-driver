@@ -79,10 +79,6 @@ _BAR_FORMAT = "{desc}{desc_pad}{percentage:3.0f}%|{bar}| {count:{len_total}d}/{t
 # Shown before a total is known (or once count reaches total): just desc + count.
 _COUNTER_FORMAT = "{desc}{desc_pad}{count:d}"
 
-# Blank rows pinned at the very bottom of the live block so it sits a little
-# above the terminal's last line rather than flush against it.
-_BOTTOM_MARGIN_ROWS = 2
-
 _OK_COLOR = "green"  # group-header fill (finished-ok children)
 _FAIL_COLOR = "red"  # group-header failed subcounter + a failed source bar
 _SOURCE_BAR_COLOR = "blue"  # per-source progress bar
@@ -121,8 +117,6 @@ class RunProgress:
         if self._tty:
             self._manager = self._start_live()
         if self._manager is not None:
-            # Reserve the bottom margin first so every real bar lands above it.
-            self._pin_bottom_margin()
             # Enlighten anchors every bar to the bottom of the terminal. Printing
             # the title as an ordinary line leaves it where the cursor was (near
             # the top of a fresh terminal), so the whole terminal height shows as
@@ -131,6 +125,13 @@ class RunProgress:
             # top slot of the block (see _add_counter's reversed-order placement)
             # -- sets it flush above the bars; the empty space falls above the
             # block, the normal bottom-anchored look.
+            #
+            # No blank bottom-margin rows are pinned: each pinned row grows
+            # enlighten's reserved scroll region by one fed line feed
+            # (Manager._set_scroll_area emits '\n' per added offset), so a cosmetic
+            # margin reads as a multi-line blank gap appearing before the block.
+            # The one row enlighten must feed to seat the region is inherent; we
+            # add nothing on top of it.
             if self._title:
                 self._title_bar = self._manager.status_bar(self._title, leave=True)
         elif self._title:
@@ -156,23 +157,6 @@ class RunProgress:
             manager.enabled = False
             return None
         return manager
-
-    def _pin_bottom_margin(self) -> None:
-        """Pin blank status bars at the lowest positions so the live block sits a
-        couple of rows above the terminal's last line. Each empty status bar
-        holds one row; pinned at positions 1..N they keep those bottom rows
-        blank while every real bar takes a position above them.
-        """
-        manager = self._manager
-        if manager is None:
-            return
-        # enlighten rejects a pinned position greater than the terminal height,
-        # so clamp the margin to what fits and keep at least one row for the bars
-        # -- a 1-row terminal gets no margin rather than a ValueError out of
-        # __enter__ (which would skip __exit__ and leave the scroll region set).
-        rows = min(_BOTTOM_MARGIN_ROWS, max(0, manager.height - 1))
-        for position in range(1, rows + 1):
-            manager.status_bar("", position=position, leave=True)
 
     def __exit__(
         self,
@@ -466,6 +450,11 @@ class Phase(_Row):
                     self._label, self._total or 1, color=_PHASE_COLOR
                 )
             if self._bar is not None:
+                # Surface the item currently being processed (e.g. the company an
+                # LLM enrichment call is on) in the bar label, so a long phase
+                # shows live which work it is doing rather than only a count.
+                if detail:
+                    self._bar.desc = f"{self._label}  {detail}"
                 self._bar.update(n)
 
     def done(self, summary: str | None = None) -> None:

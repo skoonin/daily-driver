@@ -58,6 +58,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `focus status` | `--json` | `-j` |
 | `jobs run` | `--sources` | `-S` |
 | `jobs run` | `--dry-run` | `-n` |
+| `jobs run` | `--json` | `-j` |
 | `jobs status` | `--json` | `-j` |
 | `jobs prune` | `--status` | `-s` |
 | `jobs prune` | `--dry-run` | `-n` |
@@ -207,11 +208,11 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
 
-### `jobs run [-n|--dry-run] [--no-enrich] [--sources LIST | --list-sources]`
+### `jobs run [-n|--dry-run] [--no-enrich] [-j|--json] [--sources LIST | --list-sources]`
 
-Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via the provider configured under `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). `--dry-run` prints matches without writing. `--no-enrich` appends the scraped rows but skips all three enrichment phases (detail pages, company products, fit/notes) — no enrichment bars render and no detail-page or LLM calls are made, for a fast/cheap run you can fill later with `jobs backfill`. `-S` / `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits.
+Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via the provider configured under `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). `--dry-run` prints matches without writing. `--no-enrich` appends the scraped rows but skips all three enrichment phases (detail pages, company products, fit/notes) — no enrichment bars render and no detail-page or LLM calls are made, for a fast/cheap run you can fill later with `jobs backfill`. `-S` / `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits. `-j` / `--json` emits the run manifest (the `jobs-last-run.json` content) to stdout after the run for scripting; it suppresses the live progress block and keeps all diagnostics on stderr, so stdout stays clean JSON for `jq`.
 
-`jobs run` writes as it works, so an interrupted run keeps what it finished. Each source's new rows are appended to `jobs.csv` as that source completes, and enrichment rewrites the file as it progresses (after each phase and periodically within the long LLM phases). A Ctrl-C, a scheduled-run `SIGTERM`, or a crash drains in-flight work, saves it, and exits — losing at most the one source still scraping or the last enrichment batch. Run `jobs backfill` to finish the empty enrichment fields. Exit codes follow convention: `130` for Ctrl-C (`SIGINT`), `143` for `SIGTERM`.
+`jobs run` writes as it works, so an interrupted run keeps what it finished. Each source's new rows are appended to `jobs.csv` as that source completes, and enrichment rewrites the file as it progresses (after each phase and periodically within the long LLM phases). A Ctrl-C, a scheduled-run `SIGTERM`, or a crash drains in-flight work, saves it, and exits — losing at most the one source still scraping or the last enrichment batch. Run `jobs backfill` to finish the empty enrichment fields. Exit codes follow convention: `0` when every source succeeded and saves were clean, `1` when any source failed or persistence degraded during the run (even if the final save recovered the data), `130` for Ctrl-C (`SIGINT`), `143` for `SIGTERM`.
 
 Available sources: `apple`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `indeed`, `linkedin`, `remoteok`, `weworkremotely`. `linkedin` and `indeed` are site-named selectors (e.g. `-S linkedin` or `-S linkedin,indeed`); when both run with equal query knobs they share one merged backend request, otherwise they run separately. Run `daily-driver help sources` for the same list at runtime.
 

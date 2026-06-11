@@ -210,6 +210,21 @@ def test_live_mode_phase_renders_fill_bar(monkeypatch):
     assert BAR_GLYPH in buf.getvalue()
 
 
+def test_live_mode_phase_advance_detail_shows_in_bar(monkeypatch):
+    """Phase.advance(detail=...) folds the current item (e.g. company) into the
+    bar label so a long phase shows live which work it is doing."""
+    _buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True) as rp:
+        phase = rp.group("Enriching jobs").phase("Fit and notes", total=4)
+        phase.start()
+        phase.advance(1, detail="Acme")
+        assert "Fit and notes" in phase._bar.desc
+        assert "Acme" in phase._bar.desc
+        phase.advance(1, detail="Globex")
+        assert "Globex" in phase._bar.desc
+
+
 def test_live_mode_failed_source_uses_red_subcounter(monkeypatch):
     """A failed source advances the header's red subcounter, not the green
     main counter -- so ok vs failed show as coloured segments."""

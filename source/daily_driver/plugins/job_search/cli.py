@@ -71,6 +71,17 @@ def add_parser(
         action="store_true",
         help="List the available job-board names and exit",
     )
+    p_run.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help=(
+            "After the run, emit the run-manifest JSON (jobs-last-run.json) to "
+            "stdout for scripting. Suppresses the live progress block; "
+            "diagnostics still go to stderr."
+        ),
+    )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
 
@@ -172,6 +183,24 @@ def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def
     return plugins.job_search, workspace.config.ai, context_text
 
 
+def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
+    """Print the run manifest (jobs-last-run.json) to stdout for `jobs run --json`.
+
+    The runner writes the manifest on every non-dry-run exit; we read it back and
+    re-emit it so stdout carries the machine-readable result while the runner's
+    diagnostics stayed on stderr. A dry-run writes no manifest -- emit an empty
+    object so a scripted consumer still gets valid JSON rather than nothing.
+    """
+    manifest_path = output_dir / "jobs-last-run.json"
+    try:
+        payload = manifest_path.read_text(encoding="utf-8")
+    except OSError:
+        print(json.dumps({}))
+        return
+    # Pass the file through as-is so the on-disk manifest and stdout never drift.
+    print(payload.rstrip("\n"))
+
+
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.plugins.job_search.scraper import run as run_scrape
     from daily_driver.plugins.job_search.scraper.enrichment._shared import (
@@ -207,6 +236,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     plugin, ai, context_text = resolved
     output_dir = workspace.output_dir
     ephemeral_dir = workspace.ephemeral_dir
+    emit_json = getattr(args, "json", False)
 
     # A scheduled run is stopped with SIGTERM; install a run-scoped handler that
     # routes it through the same graceful drain/flush path as Ctrl-C (it raises
@@ -214,7 +244,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     # command.
     sigterm_prev = install_sigterm_handler()
     try:
-        return run_scrape(
+        rc = run_scrape(
             plugin,
             output_dir,
             ephemeral_dir,
@@ -223,7 +253,11 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             dry_run=args.dry_run,
             no_enrich=args.no_enrich,
             sources_override=sources_override,
+            suppress_live=emit_json,
         )
+        if emit_json:
+            _emit_run_manifest(output_dir)
+        return rc
     except KeyboardInterrupt:
         # SIGTERM and SIGINT both unwind here; pick the conventional exit code
         # (143 = 128 + SIGTERM, 130 = 128 + SIGINT).

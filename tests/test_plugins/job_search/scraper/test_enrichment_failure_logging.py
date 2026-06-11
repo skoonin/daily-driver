@@ -151,6 +151,51 @@ def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
     assert "server boom" in matched[0]
 
 
+def test_fit_notes_failed_job_logs_info_one_liner(caplog) -> None:
+    """A failed fit/notes call emits a per-job INFO one-liner (visible at -v),
+    so a single failure is identifiable without dropping to -vv."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_fit_and_notes(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "enrichment failed" in m for m in info_msgs
+    ), f"expected an INFO per-job failure line, got: {info_msgs}"
+
+
+def test_company_failed_lookup_logs_info_one_liner(caplog) -> None:
+    """A failed company-description lookup emits a per-company INFO one-liner."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_company_descriptions(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "lookup failed" in m for m in info_msgs
+    ), f"expected an INFO per-company failure line, got: {info_msgs}"
+
+
 # ---------------------------------------------------------------------------
 # Provider-named timeout warnings + ollama queue hint (PART B.2)
 # ---------------------------------------------------------------------------

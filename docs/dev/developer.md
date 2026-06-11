@@ -111,6 +111,19 @@ Key invariants:
 
 `ENTRIES` is the authoritative list of package-managed templates rendered into the workspace root (each a `ContractEntry(src, dst)`); `generate()` iterates it, so adding a managed root file means appending one entry and nothing else. To add a contract check beyond those, edit `check()` directly, then run `make test-unit`.
 
+## Output registers
+
+Daily Driver writes to four distinct output registers. Picking the wrong one is the most common output bug (status text on stdout breaks `| jq`; a data payload on stderr is invisible to a pipe). Use this table to choose:
+
+| Register | API | Stream | Purpose | Gated by |
+| --- | --- | --- | --- | --- |
+| Rich Console (user-facing) | `Console.print` (payload) / `Console.info` / `Console.success` / `Console.warning` / `Console.error` | stdout for `print`; stderr for status/warning/error | Human-readable status, summaries, tables, and prompts | `--quiet` mutes `print`/`info`/`success`; `warning`/`error` always show |
+| Logging (diagnostics) | `dd_logging.get_logger(__name__).{debug,info,warning,error}` | stderr | Module-level diagnostic trail for debugging a run after the fact | Log level (`-q`/`-v`/`-vv` map to ERROR/INFO/DEBUG; bare = WARNING) |
+| Live progress block | `core.progress.RunProgress` (Groups / Items / Phases) | stderr (same object the log handler binds) | Pinned, in-place progress for a long run that owns the terminal | TTY-only; suppressed under `--quiet` and forced to plain lines on non-TTY / unresponsive TTY / `jobs run --json` |
+| Machine output (stdout contract) | bare `print(json.dumps(...))` or a single resolved path | stdout | A parseable contract for scripting (`--json`, `paths`) | Never gated -- a stable process contract |
+
+The split keeps stdout a clean data channel: `daily-driver tracker list --json | jq` and `daily-driver jobs run --json` work because only the machine payload reaches stdout, while every status line, log line, and progress bar goes to stderr regardless of verbosity. The live progress block and the logging register deliberately share one underlying `sys.stderr` object so log lines scroll above the pinned bars on one channel.
+
 ## Console and logging
 
 Two separate concerns, one shared Rich color theme.

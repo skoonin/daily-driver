@@ -682,11 +682,17 @@ def test_merge_settings_backs_up_malformed_file(tmp_path: Path, caplog) -> None:
     ), "backup must be logged at WARNING with the backup path"
 
 
-def test_render_initial_config_missing_template_warns_and_falls_back(
-    monkeypatch: pytest.MonkeyPatch, caplog
+def test_render_initial_config_missing_template_raises_workspace_error(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A missing .dd-config.yaml.j2 must log a clear warning and return the fallback."""
+    """A *missing* .dd-config.yaml.j2 means a broken wheel; init must fail loudly
+    (WorkspaceError) rather than silently scaffold a half-configured workspace.
+
+    (A template *render* error still degrades to the minimal fallback; that path
+    is covered in tests/test_core/test_workspace.py.)
+    """
     from daily_driver.core import workspace as ws_mod
+    from daily_driver.core.workspace import WorkspaceError
 
     real_files = ws_mod.importlib.resources.files
 
@@ -709,13 +715,8 @@ def test_render_initial_config_missing_template_warns_and_falls_back(
 
     monkeypatch.setattr(ws_mod.importlib.resources, "files", fake_files)
 
-    with caplog.at_level(logging.WARNING, logger="daily_driver"):
-        result = ws_mod._render_initial_config()
-
-    assert result == ws_mod._MINIMAL_CONFIG_FALLBACK
-    assert any(
-        ".dd-config.yaml.j2" in r.getMessage() for r in caplog.records
-    ), "missing template must be named in a WARNING log"
+    with pytest.raises(WorkspaceError, match="wheel is broken"):
+        ws_mod._render_initial_config()
 
 
 # Plugin package-data extension point (W15). job_search ships no slash-commands,

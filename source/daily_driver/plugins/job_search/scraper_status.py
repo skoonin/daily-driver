@@ -37,7 +37,10 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
         with open(csv_path, newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             for row in reader:
-                state = (row.get("status") or "").strip().lower() or "unknown"
+                # The canonical jobs.csv column is "Status" (capitalized, per
+                # EnrichedJob.CSV_COLUMN_TO_ATTR); a lowercase key never matches,
+                # so every row would fall through to "unknown".
+                state = (row.get("Status") or "").strip().lower() or "unknown"
                 counts[state] = counts.get(state, 0) + 1
     except OSError:
         return {}

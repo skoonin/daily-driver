@@ -446,6 +446,56 @@ def test_jobs_run_retired_jobspy_selector_rejected(
     assert "unknown source" in err
 
 
+def test_jobs_run_json_suppresses_live_and_emits_manifest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`jobs run --json` forces suppress_live and prints jobs-last-run.json to stdout."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    manifest = {
+        "started_at": "2026-06-10T00:00:00+00:00",
+        "sources_ok": ["remoteok"],
+        "sources_failed": [],
+        "new_jobs": 4,
+        "interrupted": False,
+        "phase_reached": "complete",
+    }
+
+    def fake_run(*_a, **_kw):  # type: ignore[no-untyped-def]
+        # The runner writes the manifest on every non-dry-run exit; emulate that.
+        (ws / "jobs-last-run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return 0
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", side_effect=fake_run
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--json"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("suppress_live") is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["new_jobs"] == 4
+    assert payload["phase_reached"] == "complete"
+
+
+def test_jobs_run_without_json_does_not_suppress_live(tmp_path: Path) -> None:
+    """Default run leaves suppress_live False so the live block renders on a TTY."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("suppress_live") is False
+
+
 # ---------------------------------------------------------------------------
 # jobs status
 # ---------------------------------------------------------------------------
@@ -516,7 +566,7 @@ def test_jobs_status_json_with_last_run(
     }
     (ws / "jobs-last-run.json").write_text(json.dumps(last_run), encoding="utf-8")
 
-    csv_content = "status,company,role\napplied,Acme,SRE\ninterviewing,Corp,DevOps\nskipped,Bad,Role\n"
+    csv_content = "Status,Company,Role\napplied,Acme,SRE\ninterviewing,Corp,DevOps\nskipped,Bad,Role\n"
     (ws / "jobs.csv").write_text(csv_content, encoding="utf-8")
 
     rc = app(["--workspace", str(ws), "jobs", "status", "--json"])

@@ -144,7 +144,7 @@ def _fetch_company_info(
         return "", "", True
 
     lines = [ln for ln in stdout.splitlines() if ln.strip()]
-    product = lines[0] if (include_product and lines) else ""
+    product = _clean_product_line(lines[0]) if (include_product and lines) else ""
     gd_rating = ""
     if include_gd:
         # Both fields: rating is line 2. GD-only: rating is line 1 (no product
@@ -162,6 +162,25 @@ def _fetch_company_info(
     # product line still carries value, so it is not a failure.)
     failed = include_gd and not include_product and not gd_rating
     return product, gd_rating, failed
+
+
+# Prompt scaffolding the model sometimes echoes into its answer: the prompt's own
+# "Line 1:" / "Line 2:" labels, an enumerated/bulleted list marker, or a
+# "Product:" / "Purpose:" field label. Stripped so none of it reaches a CSV cell.
+_PRODUCT_SCAFFOLD_RE = re.compile(
+    r"^\s*(?:line\s*\d+\s*[:.)-]|\d+\s*[.)]|[-*]|product\s*:|purpose\s*:)\s*",
+    re.IGNORECASE,
+)
+
+
+def _clean_product_line(line: str) -> str:
+    """Strip a single leading list/label prefix off a product/purpose answer.
+
+    One pass is deliberate: the model echoes at most one prefix in practice, and a
+    greedy loop risks eating a legitimate leading token that merely looks like a
+    marker.
+    """
+    return _PRODUCT_SCAFFOLD_RE.sub("", line, count=1).strip()
 
 
 def _parse_gd_rating(line: str, company: str) -> str:
@@ -305,6 +324,10 @@ def _build_company_plan(
             cache[company] = {"product": product, "gd_rating": gd_rating}
             if failed:
                 stats["failed"] += 1
+                # INFO (visible at -v): name the failed company so a single
+                # failure is identifiable without -vv; the provider-level cause
+                # was already logged at WARNING by the fetch worker.
+                log.info("%s %s: lookup failed", _enrich_tag("enrich"), company)
             if progress is not None:
                 progress(1, company)
         done_count[0] += 1
@@ -899,12 +922,16 @@ def _build_fit_plan(
         if _fit_notes_eligible(j) and j.url not in exclude_urls
     ]
     eligible_count = len(eligible_idx)
+    no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
     if context_text:
         # context.md rides every per-job enrichment prompt; a large file
         # multiplies token cost across the run, so surface the projection.
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
-            jobs_to_enrich = min(budget, eligible_count)
+            # No-description jobs are left to Fit-only by prompt design and add no
+            # description payload, so the context projection counts only the jobs
+            # that actually carry a description into the call.
+            jobs_to_enrich = max(0, min(budget, eligible_count) - no_desc)
             log.warning(
                 "[enrich-fit-notes] context.md is ~%d tokens, injected into ~%d "
                 "enrichment calls this run (~%d input tokens); trim it if that's "
@@ -913,7 +940,6 @@ def _build_fit_plan(
                 jobs_to_enrich,
                 ctx_tokens * jobs_to_enrich,
             )
-    no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
     log.info(
         "[enrich-fit-notes] enriching up to %d jobs (%d eligible%s)...",
         budget,
@@ -947,12 +973,10 @@ def _build_fit_plan(
         company = job.company or "unknown"
         if failed:
             stats["failed"] += 1
-            log.debug(
-                "[enrich-fit-notes] %s: call failed, no write (pre fit=%r notes=%r)",
-                company,
-                job.fit,
-                job.notes,
-            )
+            # INFO (visible at -v): a one-liner naming the failed job so a single
+            # failure is identifiable without dropping to -vv. The provider-level
+            # cause was already logged at WARNING by the fetch worker.
+            log.info("[enrich-fit-notes] %s: enrichment failed, no write", company)
             return
         updates: dict[str, Any] = {}
         wrote_fit = not job.fit and fit is not None
