@@ -416,6 +416,8 @@ def _overlap_run(
         exclude_fit_urls: frozenset[str] = frozenset(),
         exclude_companies: frozenset[str] = frozenset(),
         attempted: dict[str, set[str]] | None = None,
+        on_product_planned: Any = None,
+        on_fit_planned: Any = None,
     ) -> Any:
         call[0] += 1
         eligible = [
@@ -481,13 +483,77 @@ def test_overlap_two_waves_share_fit_budget(
     )
     assert len(waves) == 2
     assert waves[0]["n"] == 7
-    assert waves[0]["fit_budget"] in (0, 10)  # wave 1 gets the full config budget
+    assert waves[0]["fit_budget"] in (None, 10)  # wave 1 gets the full config budget
     # Wave 2 sees the whole 12-row list but excludes the 7 wave-1 URLs and caps
     # its fit budget at 10 - 7 = 3 (the shared running total).
     assert waves[1]["n"] == 12
     assert waves[1]["fit_budget"] == 3
     assert waves[1]["exclude_fit_urls"] == phase1_urls
     assert waves[1]["eligible"] == 5  # only the Apple rows remain eligible
+
+
+def test_company_phase_labeled_glassdoor_when_product_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With enrich_product=false the company pass runs gd-only; the phase row
+    must say so, or the run reads as if the product toggle were ignored."""
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", jobs)
+        return jobs, [], [("remoteok", jobs)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "4.2")
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {
+                "provider": "claude",
+                "enrich_product": False,
+                "enrich_gd_rating": True,
+                "enrich_fit": False,
+                "enrich_notes": False,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    rc = runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Glassdoor ratings" in err
+    assert "Company products" not in err
+
+
+def test_overlap_wave2_budget_exhausted_gets_zero_not_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When wave 1 exhausts the shared budget exactly, wave 2's budgets must be
+    0 (no further spend), not a phantom minimum of 1 that overshoots the caps."""
+    phase1_urls = {f"https://p1/{i}" for i in range(7)}
+    waves = _overlap_run(
+        monkeypatch,
+        tmp_path,
+        budget=7,
+        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
+        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
+        wave1_fit_attempted=phase1_urls,
+        wave1_companies_attempted={f"P1Co{i}" for i in range(7)},
+    )
+    assert len(waves) == 2
+    assert waves[1]["fit_budget"] == 0
+    assert waves[1]["product_budget"] == 0
 
 
 def test_overlap_failed_wave1_row_not_reattempted_in_wave2(

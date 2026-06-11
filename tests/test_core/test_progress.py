@@ -225,6 +225,24 @@ def test_live_mode_phase_advance_detail_shows_in_bar(monkeypatch):
         assert "Globex" in phase._bar.desc
 
 
+def test_live_mode_phase_set_total_rebases_denominator(monkeypatch):
+    """set_total re-bases a phase pinned with an upper-bound total once the
+    planner resolves the real (e.g. budget-capped) work count."""
+    _buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True) as rp:
+        phase = rp.group("Enriching jobs").phase("Fit and notes", total=100)
+        phase.start()
+        phase.set_total(7)
+        assert phase._bar.total == 7
+        # Never below what has already completed (and never zero).
+        phase.advance(3)
+        phase.set_total(1)
+        assert phase._bar.total == 3
+        phase.set_total(0)
+        assert phase._bar.total == 3
+
+
 def test_live_mode_failed_source_uses_red_subcounter(monkeypatch):
     """A failed source advances the header's red subcounter, not the green
     main counter -- so ok vs failed show as coloured segments."""

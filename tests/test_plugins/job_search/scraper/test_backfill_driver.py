@@ -67,13 +67,15 @@ def _row(
     }
 
 
-def _plugin() -> JobSearchPlugin:
+def _plugin(
+    max_enrich_companies: int = 50, max_enrich_fit: int = 50
+) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
             "enrichment": {
-                "max_enrich_companies": 50,
-                "max_enrich_fit": 50,
+                "max_enrich_companies": max_enrich_companies,
+                "max_enrich_fit": max_enrich_fit,
                 "detail_delay_seconds": 0,
             },
         }
@@ -197,7 +199,7 @@ def test_backfill_limit_bounds_both_budgets(
 def test_backfill_no_limit_uses_config_budgets(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without --limit, both budgets pass 0 (the config-cap sentinel)."""
+    """Without --limit, both budgets pass None (the config-cap sentinel)."""
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(csv_path, [_row(company="C", link="https://example.com/c")])
     _stub_detail(monkeypatch)
@@ -221,8 +223,27 @@ def test_backfill_no_limit_uses_config_budgets(
 
     runner.run_backfill(_plugin(), csv_path, tmp_path, limit=None)
 
-    assert captured["product_budget"] == 0
-    assert captured["fit_budget"] == 0
+    assert captured["product_budget"] is None
+    assert captured["fit_budget"] is None
+
+
+def test_backfill_dry_run_notes_config_cap_when_needs_exceed_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When the backlog exceeds the config caps, the dry-run report says the
+    pass is capped -- otherwise the needs counts read as if caps were ignored."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company=f"C{i}", link=f"https://example.com/{i}") for i in range(3)],
+    )
+    plugin = _plugin(max_enrich_fit=2, max_enrich_companies=2)
+    runner.run_backfill(plugin, csv_path, tmp_path, dry_run=True)
+    err = capsys.readouterr().err
+    assert "capped at 2" in err
+    assert "run backfill again" in err
 
 
 def test_backfill_flushes_periodically(

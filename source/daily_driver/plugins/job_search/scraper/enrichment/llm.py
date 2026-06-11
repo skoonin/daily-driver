@@ -173,6 +173,32 @@ def _fetch_company_info(
     return product, gd_rating, failed
 
 
+def _extract_json_payload(raw: str) -> str:
+    """Peel LLM wrapping off a JSON response before parsing.
+
+    Local models routinely fence their JSON in markdown (```json ... ```) or
+    preface it with prose despite a strict-JSON prompt; a raw json.loads then
+    fails the whole job. Strip a leading/trailing code fence, and if the result
+    still doesn't start with a brace, fall back to the outermost {...} span.
+    Returns the original string when no JSON-looking payload is found, so the
+    caller's JSONDecodeError path (counted failure + warning) is unchanged.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        # Drop the opening fence line (``` or ```json) and a closing ``` line.
+        body = lines[1:]
+        if body and body[-1].strip().startswith("```"):
+            body = body[:-1]
+        text = "\n".join(body).strip()
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start : end + 1]
+    return text or raw
+
+
 # Prompt scaffolding the model sometimes echoes into its answer: the prompt's own
 # "Line 1:" / "Line 2:" labels, an enumerated/bulleted list marker, or a
 # "Product:" / "Purpose:" field label. Stripped so none of it reaches a CSV cell.
@@ -249,9 +275,10 @@ class _CompanyPlan:
 def _build_company_plan(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
-    budget: int,
+    budget: int | None,
     progress: ProgressCallback | None,
     exclude_companies: frozenset[str] = frozenset(),
+    on_planned: Callable[[int], None] | None = None,
 ) -> _CompanyPlan | None:
     """Resolve the company enricher's work, or ``None`` to skip the pass.
 
@@ -280,8 +307,12 @@ def _build_company_plan(
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return None
 
-    if budget <= 0:
+    # None means "use the config cap"; an explicit 0 means NO calls (e.g. a
+    # second wave whose shared budget wave 1 already exhausted). Without the
+    # distinction a 0 would silently re-grant the full config budget.
+    if budget is None:
         budget = cfg.max_enrich_companies
+    budget = max(0, budget)
     timeout = cfg.enrich_timeout
 
     # A company needs a call when an enabled field is still missing on its row
@@ -305,6 +336,10 @@ def _build_company_plan(
     )
 
     companies = list(unique_companies)[:budget]
+    # Report the PLANNED call count (post-budget) so the caller's progress bar
+    # shows the real denominator, not the whole row count.
+    if on_planned is not None:
+        on_planned(len(companies))
     if len(unique_companies) > budget:
         log.warning(
             "[enrich] budget reached (%d), %d companies unenriched",
@@ -411,11 +446,12 @@ def enrich_company_descriptions(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
     *,
-    budget: int = 0,
+    budget: int | None = None,
     progress: ProgressCallback | None = None,
     _reset_hint: bool = True,
     exclude_companies: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    on_planned: Callable[[int], None] | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Product/Purpose and GD Rating using the configured AI provider.
 
@@ -439,7 +475,9 @@ def enrich_company_descriptions(
     """
     if _reset_hint:
         _reset_ollama_hint()
-    plan = _build_company_plan(jobs, ctx, budget, progress, exclude_companies)
+    plan = _build_company_plan(
+        jobs, ctx, budget, progress, exclude_companies, on_planned=on_planned
+    )
     if attempted is not None:
         attempted["product_companies"] = set(plan.companies) if plan else set()
     if plan is None:
@@ -500,9 +538,14 @@ def _location_summary(ctx: ScrapeContext) -> str:
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
     loc_cfg = ctx.plugin.locations
+    # Spell out the SEMANTICS, not just the data: a bare "Countries: ..." list
+    # next to "Based in: Vancouver" reads as candidate metadata, and models then
+    # score any non-home-country job as a location mismatch (observed live with
+    # a Spain role despite ES being configured). Say explicitly that a job in a
+    # listed country IS acceptable.
     parts = [f"Based in: {home_city(ctx.plugin)}"]
     if loc_cfg is None:
-        parts.append("Remote: yes")
+        parts.append("remote roles are acceptable")
         return "; ".join(parts)
     if loc_cfg.countries:
         # Aliases are stored lowercase for matching; the longest is the full
@@ -510,9 +553,12 @@ def _location_summary(ctx: ScrapeContext) -> str:
         names = [
             max(country_names(c), key=len, default=c).title() for c in loc_cfg.countries
         ]
-        parts.append("Countries: " + ", ".join(names))
+        parts.append(
+            "a job located in any of these countries is acceptable and is NOT a "
+            "location mismatch: " + ", ".join(names)
+        )
     if loc_cfg.remote:
-        parts.append("Remote: yes")
+        parts.append("remote roles are acceptable from anywhere")
     return "; ".join(parts)
 
 
@@ -810,7 +856,7 @@ def _fetch_fit_notes_for_job(
         raw,
     )
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(_extract_json_payload(raw))
     except json.JSONDecodeError:
         log.warning(
             "%s company=%s role=%s: non-JSON response: %r",
@@ -887,9 +933,10 @@ class _FitPlan:
 def _build_fit_plan(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
-    budget: int,
+    budget: int | None,
     progress: ProgressCallback | None,
     exclude_urls: frozenset[str] = frozenset(),
+    on_planned: Callable[[int], None] | None = None,
 ) -> _FitPlan | None:
     """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
@@ -917,8 +964,11 @@ def _build_fit_plan(
         log.debug("[enrich-fit-notes] fit or notes disabled via config")
         return None
 
-    if budget <= 0:
+    # None means "use the config cap"; an explicit 0 means NO calls (see the
+    # company plan: a wave-2 exhausted shared budget must not re-grant the cap).
+    if budget is None:
         budget = cfg.max_enrich_fit
+    budget = max(0, budget)
     loc_summary = _location_summary(ctx)
     role_persona = ctx.plugin.persona or "SRE/Platform/Infra engineer"
     hc = home_city(ctx.plugin)
@@ -970,6 +1020,9 @@ def _build_fit_plan(
         )
 
     target_idx = eligible_idx[:budget]
+    # Report the PLANNED call count (post-budget) -- see _build_company_plan.
+    if on_planned is not None:
+        on_planned(len(target_idx))
     if eligible_count > budget:
         log.warning(
             "[enrich-fit-notes] budget reached (%d), skipping %d jobs",
@@ -1083,11 +1136,12 @@ def enrich_fit_and_notes(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
     *,
-    budget: int = 0,
+    budget: int | None = None,
     progress: ProgressCallback | None = None,
     _reset_hint: bool = True,
     exclude_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    on_planned: Callable[[int], None] | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -1111,7 +1165,9 @@ def enrich_fit_and_notes(
     """
     if _reset_hint:
         _reset_ollama_hint()
-    plan = _build_fit_plan(jobs, ctx, budget, progress, exclude_urls)
+    plan = _build_fit_plan(
+        jobs, ctx, budget, progress, exclude_urls, on_planned=on_planned
+    )
     if attempted is not None:
         attempted["fit_urls"] = (
             {jobs[i].url for i in plan.target_idx} if plan else set()
@@ -1214,8 +1270,10 @@ def enrich_product_and_fit_concurrently(
     jobs: list[EnrichedJob],
     ctx: ScrapeContext,
     *,
-    product_budget: int = 0,
-    fit_budget: int = 0,
+    product_budget: int | None = None,
+    fit_budget: int | None = None,
+    on_product_planned: Callable[[int], None] | None = None,
+    on_fit_planned: Callable[[int], None] | None = None,
     product_progress: ProgressCallback | None = None,
     fit_progress: ProgressCallback | None = None,
     flush: Callable[[], None] | None = None,
@@ -1283,6 +1341,7 @@ def enrich_product_and_fit_concurrently(
             _reset_hint=False,
             exclude_companies=exclude_companies,
             attempted=attempted,
+            on_planned=on_product_planned,
         )
         out, fit_stats = enrich_fit_and_notes(
             out,
@@ -1292,13 +1351,21 @@ def enrich_product_and_fit_concurrently(
             _reset_hint=False,
             exclude_urls=exclude_fit_urls,
             attempted=attempted,
+            on_planned=on_fit_planned,
         )
         return out, product_stats, fit_stats
 
     company_plan = _build_company_plan(
-        jobs, ctx, product_budget, product_progress, exclude_companies
+        jobs,
+        ctx,
+        product_budget,
+        product_progress,
+        exclude_companies,
+        on_planned=on_product_planned,
     )
-    fit_plan = _build_fit_plan(jobs, ctx, fit_budget, fit_progress, exclude_fit_urls)
+    fit_plan = _build_fit_plan(
+        jobs, ctx, fit_budget, fit_progress, exclude_fit_urls, on_planned=on_fit_planned
+    )
     if attempted is not None:
         attempted["product_companies"] = (
             set(company_plan.companies) if company_plan is not None else set()
