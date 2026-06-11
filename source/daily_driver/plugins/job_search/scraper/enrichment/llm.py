@@ -864,7 +864,7 @@ def _fetch_fit_notes_for_job(
 
 def _fit_notes_eligible(job: EnrichedJob) -> bool:
     """A job still wants a fit/notes call: active status, missing fit or notes."""
-    return job.status.value not in ENRICH_SKIP_STATUSES and not (job.fit and job.notes)
+    return job.status not in ENRICH_SKIP_STATUSES and not (job.fit and job.notes)
 
 
 @dataclass
