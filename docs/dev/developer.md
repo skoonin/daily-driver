@@ -153,6 +153,16 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 
 **Exception — `focus.lock` is lock-as-data by design.** It is intentionally both the flock and its own JSON payload (focus start/end/reason), so it does sit in `ephemeral_dir` next to nothing it guards but itself. Payload writes are atomic (temp file + `os.replace`) so a crash mid-write never leaves a truncated body; `focus status` reads it locklessly by design, keeping the launchd check-in hook's read path cheap.
 
+## `jobs run` resilience
+
+`jobs run` treats `jobs.csv` itself as the run's checkpoint — there is no separate state file. `runner._JobSink` owns the run's growing row list and dedup state and is the only writer:
+
+- **Per-source append.** As each source finishes (the `on_source_result` callback off `run_all_scrapers`), `_JobSink.append_source` dedups/filters/lifts that source's rows and appends them to `jobs.csv` under the `jobs.lock` sentinel. A crash mid-scrape loses only the source still in flight. The per-source funnel (found / new / known / location-skipped) is accumulated at append time.
+- **Enrichment as in-place flush.** Enrichers replace row slots in `_JobSink.rows`; `_JobSink.flush()` rewrites the whole file through the one backfill rewrite path (`csv_io.atomic_write_rows` + the unknown-column carry-through), holding the lock only for the rewrite, never across LLM calls. A flush fires after each enrichment phase and every ~25 LLM results (the `flush` hook composed onto the progress callback in `enrich_product_and_fit_concurrently`), so a crash mid-enrichment loses at most one flush window; `jobs run --backfill` resumes the empty rows.
+- **Scrape/enrich overlap.** When an Apple (phase 2) scrape follows phase 1, the phase-1 rows enrich in a background **wave** while Apple still scrapes; Apple's rows get a second wave afterward. The two enrichment budgets (`max_enrich_companies` / `max_enrich_fit`) are shared running totals — wave 2 gets what wave 1 left. The wave-1 thread and the appending coordinator thread serialize on `_JobSink._rows_lock` (list growth vs. flush snapshot); slot replacement is GIL-atomic and never overlaps an appended index.
+- **Interrupts.** `SIGTERM` (a scheduled run's stop signal) is routed through the same graceful drain/flush path as Ctrl-C: the CLI installs a run-scoped handler (`enrichment/_shared.install_sigterm_handler`, main-thread-only, like the SIGINT notifier) that raises `KeyboardInterrupt`; `run()` flushes the partial enrichment and writes the manifest before re-raising. The CLI exits `130` for `SIGINT`, `143` for `SIGTERM`.
+- **Manifest.** `jobs-last-run.json` is written on both the happy and interrupt paths and carries `phase_reached` (`scraping` / `detail` / `enrichment` / `complete`) and `interrupted`; `jobs status` prints a recovery line when the last run was cut short.
+
 ## Extensibility
 
 ### Without forking
