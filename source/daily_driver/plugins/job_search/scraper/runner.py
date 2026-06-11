@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,7 +23,7 @@ from daily_driver.core.logging import (
     get_logger,
     live_log_window,
 )
-from daily_driver.core.progress import Item, Phase, RunProgress
+from daily_driver.core.progress import Group, Item, Phase, RunProgress
 from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
     IndeedToggle,
@@ -606,6 +607,13 @@ class _JobSink:
         self._plugin = plugin
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
+        # Guards growth of ``rows`` vs. a flush snapshot: during scrape/enrich
+        # overlap the Apple wave's append_source extends the list on the
+        # coordinator thread while the wave-1 enrichment thread flushes it.
+        # Slot replacement (out[i] = ...) is GIL-atomic and only ever touches an
+        # index the wave already owns, so it needs no lock; only extend/snapshot
+        # race, and this serializes them.
+        self._rows_lock = threading.Lock()
         # Per-source funnel accumulated at append time (mirrors _per_source_funnel).
         self.funnel: dict[str, dict[str, int]] = {}
         # Run totals for the reconciling Completed line.
@@ -668,7 +676,8 @@ class _JobSink:
             to_append.append(_enriched_from_scraped(job))
 
         if to_append:
-            self.rows.extend(to_append)
+            with self._rows_lock:
+                self.rows.extend(to_append)
             with file_lock(self.lock_path):
                 append_jobs_typed(self.csv_path, to_append, self.header)
         return counts
@@ -685,6 +694,11 @@ class _JobSink:
             read_rows,
         )
 
+        # Snapshot the row list under the rows lock so a concurrent append (the
+        # overlapping Apple wave) cannot mutate it mid-iteration. The slow csv
+        # write then runs against the immutable snapshot.
+        with self._rows_lock:
+            snapshot = list(self.rows)
         with file_lock(self.lock_path):
             # Carry through any unknown/hand-added columns verbatim, indexed by
             # Link, so a flush never drops a user's "Priority" column. The append
@@ -702,7 +716,7 @@ class _JobSink:
                         }
             out_header = self.header + extra_columns
             out_rows: list[dict[str, str]] = []
-            for job in self.rows:
+            for job in snapshot:
                 csv_row = job.to_csv_row()
                 if extra_columns:
                     csv_row.update(extras_by_link.get(job.url, {}))
@@ -720,7 +734,7 @@ def run_all_scrapers(
     on_sources_enabled: Callable[[list[str]], None] | None = None,
     on_note: Callable[[str], None] | None = None,
     on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None,
-    on_phase1_done: Callable[[], None] | None = None,
+    on_phase1_done: Callable[[bool], None] | None = None,
     force_headless: bool = False,
 ) -> tuple[
     list[dict[str, Any]], list[str], list[tuple[str, list[dict[str, Any]] | Exception]]
@@ -877,9 +891,11 @@ def run_all_scrapers(
             pool.shutdown(wait=True)
 
     # Phase 1 results are all appended; signal the caller so it can start
-    # enriching them while phase 2 (Apple) still scrapes (overlap).
+    # enriching them while phase 2 (Apple) still scrapes (overlap). The flag
+    # tells the caller whether a phase 2 actually follows -- only then is the
+    # overlapped two-wave path worth the background thread.
     if on_phase1_done is not None:
-        on_phase1_done()
+        on_phase1_done(bool(visible_sources))
 
     # Phase 2: serial (preserves pre-parallel behavior). Visible browser by
     # default to dodge bot detection; forced headless via force_headless.
@@ -1055,23 +1071,30 @@ def _run_llm_enrichment(
     sink: _JobSink,
     product_phase: Phase,
     fit_phase: Phase,
+    *,
+    run_preflight: bool,
+    product_budget: int = 0,
+    fit_budget: int = 0,
 ) -> tuple[dict[str, int], dict[str, int]]:
     """Run the overlapped product + fit/notes LLM pass, flushing as it goes.
 
-    Returns ``(product_stats, fn_stats)``. The ollama preflight gates the pass:
-    on a failed probe the LLM phases render as zero-count done bars and zero
-    counters (the same shape ``--no-enrich`` records), so the manifest stays
-    honest and the user fills the rows later with ``jobs run --backfill``. The
-    claude provider is untouched (its which-guard inside the enrichers already
-    covers a missing CLI). ``sink.flush`` is the periodic resilience hook,
-    invoked every ~25 results on the coordinator thread.
+    Returns ``(product_stats, fn_stats)``. ``run_preflight`` gates the ollama
+    reachability probe -- run it before the FIRST wave only; later waves skip it
+    (the server state cannot change mid-run). On a failed probe the LLM phases
+    render as zero-count done bars and zero counters (the same shape
+    ``--no-enrich`` records), so the manifest stays honest and the user fills the
+    rows later with ``jobs run --backfill``. The claude provider is untouched
+    (its which-guard inside the enrichers already covers a missing CLI).
+    ``sink.flush`` is the periodic resilience hook, invoked every ~25 results on
+    the coordinator thread. ``product_budget`` / ``fit_budget`` are the SHARED
+    running totals' remaining allowance for this wave (0 = use the config cap).
     """
     from daily_driver.plugins.job_search.scraper.enrichment import (
         enrich_product_and_fit_concurrently,
     )
 
     run_llm = True
-    if _llm_enrichment_requested(plugin):
+    if run_preflight and _llm_enrichment_requested(plugin):
         run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
 
     if run_llm:
@@ -1083,6 +1106,8 @@ def _run_llm_enrichment(
         _, product_stats, fn_stats = enrich_product_and_fit_concurrently(
             typed_jobs,
             ctx,
+            product_budget=product_budget,
+            fit_budget=fit_budget,
             product_progress=product_phase.advance,
             fit_progress=fit_phase.advance,
             flush=sink.flush,
@@ -1101,6 +1126,91 @@ def _run_llm_enrichment(
         f"{fn_stats['failed']} failed"
     )
     return product_stats, fn_stats
+
+
+def _enrich_wave(
+    plugin: JobSearchPlugin,
+    ai_cfg: AIConfig,
+    jobs: list[EnrichedJob],  # noqa: F821
+    ctx: ScrapeContext,
+    sink: _JobSink,
+    enrich_group: Group,
+    *,
+    wave_label: str,
+    run_preflight: bool,
+    product_budget: int,
+    fit_budget: int,
+) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
+    """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
+
+    ``wave_label`` suffixes the phase rows ("" for the only/first wave, e.g.
+    " (wave 2)" for the post-Apple wave) so the live display shows each wave's
+    own phase rows -- the honest two-wave UI. ``product_budget`` / ``fit_budget``
+    are this wave's remaining slice of the shared running totals (0 = config
+    cap). Flushes per phase and on the periodic hook; the caller's try/except
+    flushes once more on interrupt. Returns ``(detail_stats, product_stats,
+    fn_stats)``.
+    """
+    from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        render_detail_summary,
+    )
+
+    total = len(jobs)
+    detail_phase = enrich_group.phase(f"Detail pages{wave_label}", total=total)
+    product_phase = enrich_group.phase(f"Company products{wave_label}", total=total)
+    fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
+
+    detail_phase.start()
+    _, detail_stats = enrich_job_details(jobs, ctx, progress=detail_phase.advance)
+    detail_phase.done(render_detail_summary(detail_stats))
+    sink.flush()  # persist detail comp/posted_date before the LLM phases
+
+    product_stats, fn_stats = _run_llm_enrichment(
+        plugin,
+        ai_cfg,
+        jobs,
+        ctx,
+        sink,
+        product_phase,
+        fit_phase,
+        run_preflight=run_preflight,
+        product_budget=product_budget,
+        fit_budget=fit_budget,
+    )
+    return detail_stats, product_stats, fn_stats
+
+
+def _wave_attempts(stats: dict[str, Any]) -> int:
+    """LLM-call attempts a wave consumed (for shared-budget accounting).
+
+    Every targeted job lands as either enriched or failed; budget-skipped jobs
+    were never attempted. So attempts = enriched + failed -- the count to deduct
+    from the next wave's remaining shared budget.
+    """
+    return int(stats.get("enriched", 0)) + int(stats.get("failed", 0))
+
+
+def _add_stats(into: dict[str, int], more: dict[str, int]) -> None:
+    """Accumulate one enrichment stats dict into a running total in place.
+
+    Two-wave runs sum each wave's counters so the end-of-run reconciliation and
+    manifest report the combined total, not the last wave alone.
+    """
+    for key, value in more.items():
+        into[key] = into.get(key, 0) + value
+
+
+def _accumulate_enrich_stats(
+    product_stats: dict[str, int],
+    fn_stats: dict[str, int],
+    wave_result: dict[str, dict[str, Any]],
+) -> None:
+    """Fold a completed wave's product/fit stats into the running totals."""
+    if "product" in wave_result:
+        _add_stats(product_stats, wave_result["product"])
+    if "fit" in wave_result:
+        _add_stats(fn_stats, wave_result["fit"])
 
 
 def run(
@@ -1123,10 +1233,6 @@ def run(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
-    )
-    from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
-    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
-        render_detail_summary,
     )
 
     started_at = datetime.now(timezone.utc)
@@ -1240,6 +1346,55 @@ def run(
             )
             on_source_result = sink.append_source
 
+        # Overlap state (Stage 3). When a phase 2 (Apple) follows phase 1, the
+        # phase-1 rows are enriched in a background WAVE while Apple still
+        # scrapes; Apple's rows get a second wave afterward. Budgets are SHARED
+        # running totals across waves. Enrichment runs on the wave-1 thread here,
+        # not the main thread, so the per-enricher SIGINT notifier no-ops (main-
+        # thread only) -- the run-level signal handler covers interrupts instead.
+        enrich_cfg = plugin.enrichment
+        do_enrich = not (dry_run or no_enrich)
+        enrich_group: Group | None = None
+        wave1_thread: threading.Thread | None = None
+        wave1_result: dict[str, dict[str, Any]] = {}
+        wave1_error: list[BaseException] = []
+        wave1_count = [0]  # phase-1 rows handed to wave 1
+
+        def _run_wave1(phase1_jobs: list[EnrichedJob]) -> None:
+            assert sink is not None and enrich_group is not None
+            try:
+                d, p, f = _enrich_wave(
+                    plugin,
+                    ai_cfg,
+                    phase1_jobs,
+                    ctx,
+                    sink,
+                    enrich_group,
+                    wave_label="",
+                    run_preflight=True,
+                    product_budget=0,  # wave 1 gets the full config budget
+                    fit_budget=0,
+                )
+                wave1_result.update({"detail": d, "product": p, "fit": f})
+            except BaseException as exc:  # noqa: BLE001 -- relayed to main thread
+                wave1_error.append(exc)
+
+        def _on_phase1_done(has_phase2: bool) -> None:
+            # Only overlap when an Apple phase actually follows -- otherwise the
+            # single post-scrape wave on the main thread is simpler and keeps the
+            # interrupt notifier live.
+            if not (do_enrich and has_phase2) or sink is None:
+                return
+            nonlocal enrich_group, wave1_thread
+            with sink._rows_lock:
+                phase1_jobs = list(sink.rows)
+            wave1_count[0] = len(phase1_jobs)
+            enrich_group = rp.group("Enriching jobs")
+            wave1_thread = threading.Thread(
+                target=_run_wave1, args=(phase1_jobs,), daemon=True
+            )
+            wave1_thread.start()
+
         all_jobs, failed_sources, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
@@ -1249,6 +1404,7 @@ def run(
             on_source_done=_on_done,
             on_note=rp.note,
             on_source_result=on_source_result,
+            on_phase1_done=_on_phase1_done,
             # Force Apple headless while the live block owns the terminal.
             force_headless=tty,
         )
@@ -1304,63 +1460,80 @@ def run(
             if row is not None:
                 row.show_breakdown(_source_breakdown_segments(counts))
 
-        if dry_run or no_enrich:
-            # Both skip every enrichment phase: dry-run avoids writes entirely,
-            # --no-enrich appends the lifted rows unenriched for a later
-            # backfill. Render no enrichment bars and report zero counters.
+        product_stats = _empty_product_stats()
+        fn_stats = _empty_fit_stats()
+        if not do_enrich:
+            # dry-run avoids writes entirely; --no-enrich appends the lifted rows
+            # unenriched for a later backfill. Render no enrichment bars and
+            # report zero counters.
             log.info(
                 "[%s] skipping enrichment (no detail/LLM calls)",
                 "dry-run" if dry_run else "no-enrich",
             )
-            product_stats = {"enriched": 0, "skipped_cached": 0, "failed": 0}
-            fn_stats = {
-                "enriched": 0,
-                "skipped_budget": 0,
-                "skipped_no_desc": 0,
-                "failed": 0,
-            }
         else:
-            # Create all three phases up front so they read as pending while the
-            # earlier phases run. Each enriches the same candidate set, so the
-            # job count is the bar total (enrichment annotates in place, never
-            # drops rows, so the count holds across phases).
-            enrich_total = len(typed_jobs)
-            enrich_group = rp.group("Enriching jobs")
-            detail_phase = enrich_group.phase("Detail pages", total=enrich_total)
-            product_phase = enrich_group.phase("Company products", total=enrich_total)
-            fit_phase = enrich_group.phase("Fit and notes", total=enrich_total)
-
-            # The sink is the durable checkpoint: enrichment mutates its rows in
-            # place, flushes (rewrites jobs.csv) per completed phase plus every
-            # ~25 LLM results, and flushes once more on interrupt before
-            # re-raising. A crash mid-enrichment then loses at most one flush
-            # window; jobs run --backfill resumes the empty rows naturally.
+            # The sink is the durable checkpoint: each wave mutates its rows in
+            # place and flushes jobs.csv per completed phase, every ~25 LLM
+            # results, and once more on interrupt. A crash mid-enrichment loses
+            # at most one flush window; jobs run --backfill resumes the rest.
             assert sink is not None  # not dry_run -> sink exists
             try:
-                detail_phase.start()
-                typed_jobs, detail_stats = enrich_job_details(
-                    typed_jobs, ctx, progress=detail_phase.advance
-                )
-                detail_phase.done(render_detail_summary(detail_stats))
-                sink.flush()  # persist detail comp/posted_date before the LLM phases
-                (
-                    product_stats,
-                    fn_stats,
-                ) = _run_llm_enrichment(
-                    plugin,
-                    ai_cfg,
-                    typed_jobs,
-                    ctx,
-                    sink,
-                    product_phase,
-                    fit_phase,
-                )
+                # Wave 1 (phase-1 rows) may already be running in a background
+                # thread (started at on_phase1_done). Join it, then enrich the
+                # remaining (Apple) rows as wave 2 with the budget wave 1 left.
+                if wave1_thread is not None:
+                    wave1_thread.join()
+                    if wave1_error:
+                        raise wave1_error[0]
+                    assert enrich_group is not None
+                    _accumulate_enrich_stats(product_stats, fn_stats, wave1_result)
+                    # Wave 2 receives the WHOLE row list (so its slot mutations
+                    # and the periodic flush both target sink.rows directly); the
+                    # already-enriched phase-1 rows are skipped as ineligible, so
+                    # only the newly-landed Apple rows are actually enriched.
+                    if len(typed_jobs) > wave1_count[0]:
+                        fit_used = _wave_attempts(wave1_result.get("fit", {}))
+                        prod_used = _wave_attempts(wave1_result.get("product", {}))
+                        _, p2, f2 = _enrich_wave(
+                            plugin,
+                            ai_cfg,
+                            typed_jobs,
+                            ctx,
+                            sink,
+                            enrich_group,
+                            wave_label=" (wave 2)",
+                            run_preflight=False,  # wave 1 already probed
+                            product_budget=max(
+                                1, enrich_cfg.max_enrich_companies - prod_used
+                            ),
+                            fit_budget=max(1, enrich_cfg.max_enrich_fit - fit_used),
+                        )
+                        _add_stats(product_stats, p2)
+                        _add_stats(fn_stats, f2)
+                else:
+                    # No overlap (no Apple phase, or it landed nothing): one wave
+                    # over every row on the main thread, same as the classic path.
+                    enrich_group = rp.group("Enriching jobs")
+                    _, p1, f1 = _enrich_wave(
+                        plugin,
+                        ai_cfg,
+                        typed_jobs,
+                        ctx,
+                        sink,
+                        enrich_group,
+                        wave_label="",
+                        run_preflight=True,
+                        product_budget=0,
+                        fit_budget=0,
+                    )
+                    _add_stats(product_stats, p1)
+                    _add_stats(fn_stats, f1)
             except KeyboardInterrupt:
                 # Persist whatever enrichment landed before the interrupt so a
                 # ^C/SIGTERM never discards a partial enrichment pass.
                 sink.flush()
                 raise
-            enrich_group.done()
+            if enrich_group is not None:
+                enrich_group.done()
 
     n = len(typed_jobs)
     log.info(

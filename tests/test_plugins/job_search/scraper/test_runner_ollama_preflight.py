@@ -215,6 +215,8 @@ def test_preflight_reachable_runs_enrichment_no_warning(
         jobs: list[Any],
         ctx: Any,
         *,
+        product_budget: int = 0,
+        fit_budget: int = 0,
         product_progress: Any = None,
         fit_progress: Any = None,
         flush: Any = None,

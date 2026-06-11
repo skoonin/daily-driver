@@ -176,6 +176,8 @@ def test_default_path_still_enriches(
         jobs: list[Any],
         ctx: Any,
         *,
+        product_budget: int = 0,
+        fit_budget: int = 0,
         product_progress: Any = None,
         fit_progress: Any = None,
         flush: Any = None,

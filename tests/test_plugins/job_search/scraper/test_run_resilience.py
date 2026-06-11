@@ -336,3 +336,109 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
     # row survived the flush-on-interrupt.
     assert len(rows) == 4
     assert any(r["Fit"] == "7" for r in rows)
+
+
+# ── Stage 3: scrape/enrich overlap with shared budget ────────────────────────
+
+
+def _overlap_plugin(budget: int) -> JobSearchPlugin:
+    return JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {
+                "provider": "claude",
+                "max_enrich_companies": budget,
+                "max_enrich_fit": budget,
+                "enrich_gd_rating": False,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+
+
+def test_overlap_two_waves_share_fit_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase-1 rows enrich in wave 1; Apple rows in wave 2; the fit budget is a
+    shared running total (wave1 consumes 7, wave2 gets the remaining 3)."""
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    phase1 = [_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)]
+    apple = [_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(5)]
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_phase1_done: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        # Phase 1: append the 7 headless rows, then signal phase-1 done so
+        # wave-1 enrichment can start.
+        if on_source_result is not None:
+            on_source_result("remoteok", phase1)
+        if on_phase1_done is not None:
+            on_phase1_done(True)
+        # Phase 2: Apple lands its 5 rows after.
+        if on_source_result is not None:
+            on_source_result("apple", apple)
+        return phase1 + apple, [], [("remoteok", phase1), ("apple", apple)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    waves: list[dict[str, Any]] = []
+
+    def fake_concurrent(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        product_budget: int = 0,
+        fit_budget: int = 0,
+        product_progress: Any = None,
+        fit_progress: Any = None,
+        flush: Any = None,
+        flush_every: int = 25,
+    ) -> Any:
+        waves.append({"n": len(jobs), "fit_budget": fit_budget})
+        # Each enriched: advance the shared progress so flush hooks fire.
+        for j in jobs:
+            if fit_progress is not None:
+                fit_progress(1, j.company)
+        return (
+            jobs,
+            {"enriched": len(jobs), "skipped_cached": 0, "failed": 0},
+            {
+                "enriched": len(jobs),
+                "skipped_budget": 0,
+                "skipped_no_desc": 0,
+                "failed": 0,
+            },
+        )
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    monkeypatch.setattr(
+        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
+    )
+
+    rc = runner.run(
+        _overlap_plugin(budget=10),
+        tmp_path,
+        tmp_path,
+        ai=_serial_ctx().ai,
+        no_enrich=False,
+    )
+    assert rc == 0
+    # Two waves. Wave 1 enriches the 7 phase-1 rows. Wave 2 receives the whole
+    # 12-row list (the already-enriched phase-1 rows skip as ineligible in real
+    # runs; the stub counts the list it is handed).
+    assert len(waves) == 2
+    assert waves[0]["n"] == 7
+    assert waves[1]["n"] == 12
+    # Shared running total: wave 1 attempted 7 of the budget-10, so wave 2 caps
+    # at the remaining 3.
+    assert waves[0]["fit_budget"] in (0, 10)  # wave 1 gets the full config budget
+    assert waves[1]["fit_budget"] == 3
