@@ -24,7 +24,12 @@ from daily_driver.core.logging import (
 )
 from daily_driver.core.progress import Item, RunProgress
 from daily_driver.integrations.notify import desktop_notify
-from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
+from daily_driver.plugins.job_search.config import (
+    IndeedToggle,
+    JobSearchPlugin,
+    LinkedInToggle,
+    SourceToggle,
+)
 from daily_driver.plugins.job_search.jobs_lock import (
     clear_stale_adjacent_lock,
     jobs_lock_path,
@@ -35,6 +40,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
     HTTPError,
     HTTPTimeout,
 )
+from daily_driver.plugins.job_search.scraper.sources.jobspy import scrape_jobspy
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
@@ -221,16 +227,56 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
 # pydantic -- browser classification must live in code, not config.
 _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 
+# Site-named sources backed by python-jobspy. When both run with equal query
+# knobs the runner merges them into one backend call (see _jobspy_scrape_plan);
+# the library is an implementation detail, never part of the user surface.
+_JOBSPY_SITES: tuple[str, ...] = ("linkedin", "indeed")
+
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
+# A merged jobspy run uses its own joined row id ("linkedin + indeed"), which
+# already reads correctly without a mapping entry.
 _SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "weworkremotely": "we work remotely",
     "hn_who_is_hiring": "hn who's hiring",
     "hn_jobs": "hn jobs",
-    # One merged JobSpy scraper requests LinkedIn + Indeed in a single call; the
-    # row reads as both so the funnel labels what it covers.
-    "jobspy": "linkedin + indeed (jobspy)",
 }
+
+
+def _jobspy_toggle(plugin: JobSearchPlugin, site: str) -> LinkedInToggle | IndeedToggle:
+    """The typed toggle for a jobspy-backed site (linkedin / indeed)."""
+    if site == "linkedin":
+        return source_toggle(plugin, "linkedin", LinkedInToggle)
+    return source_toggle(plugin, "indeed", IndeedToggle)
+
+
+def _jobspy_scrape_plan(
+    jobspy_sites: list[str], plugin: JobSearchPlugin
+) -> list[tuple[str, list[str]]]:
+    """Decide how the enabled jobspy-backed sites are fetched.
+
+    Returns ``(row_id, sites)`` entries. When both LinkedIn and Indeed are
+    enabled AND their shared query knobs (``results_wanted_per_query`` /
+    ``hours_old``) are equal, they collapse to one merged backend call under the
+    joined row id ``"linkedin + indeed"``. Differing knobs (or only one site
+    enabled) fall back to one call per site, each under its own site-named row.
+    This is the deliberately simple rule: equal knobs merge, anything else
+    splits. ``jobspy_sites`` preserves registry order so the merged list reads
+    ``["linkedin", "indeed"]``.
+    """
+    sites = [s for s in _JOBSPY_SITES if s in jobspy_sites]
+    if len(sites) < 2:
+        return [(s, [s]) for s in sites]
+
+    linkedin = _jobspy_toggle(plugin, "linkedin")
+    indeed = _jobspy_toggle(plugin, "indeed")
+    knobs_match = (
+        linkedin.results_wanted_per_query == indeed.results_wanted_per_query
+        and linkedin.hours_old == indeed.hours_old
+    )
+    if knobs_match:
+        return [(" + ".join(sites), list(sites))]
+    return [(s, [s]) for s in sites]
 
 
 def _display_name(source_id: str) -> str:
@@ -242,15 +288,23 @@ def _display_name(source_id: str) -> str:
 # timer) reassures the user the row isn't stuck. Unmapped sources show a plain
 # "running" marker.
 _SLOW_SOURCE_NOTES: dict[str, str] = {
-    "jobspy": "running -- can take several minutes",
     # Apple runs headless while the live block is pinned (force_headless), so the
     # note describes the slow headless browser scrape, not a visible window.
     "apple": "running -- headless browser scrape, can take a minute",
 }
 
+_JOBSPY_SLOW_NOTE = "running -- can take several minutes"
+
 
 def _slow_source_note(source_id: str) -> str | None:
-    """The running-state note for a known-slow source, or None for the default."""
+    """The running-state note for a known-slow source, or None for the default.
+
+    The jobspy-backed rows are slow regardless of merge vs split; match any row
+    id covering linkedin / indeed (single site or the joined "linkedin + indeed"
+    label) rather than enumerating every combination.
+    """
+    if any(site in source_id for site in _JOBSPY_SITES):
+        return _JOBSPY_SLOW_NOTE
     return _SLOW_SOURCE_NOTES.get(source_id)
 
 
@@ -308,6 +362,7 @@ def _run_one(
     on_source_done: Callable[[str, bool, str], None] | None = None,
     on_source_start: Callable[[str], None] | None = None,
     on_source_progress: Callable[[str, int, int | None], None] | None = None,
+    scraper_fn: Callable[[ScrapeContext], list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
@@ -322,8 +377,12 @@ def _run_one(
     bar against its own natural unit (term×country, boards, categories, or a
     single fetch). All three drive only the thread-safe progress display, so
     they are safe to invoke from the Phase-1 worker threads.
+
+    ``scraper_fn`` overrides the registry lookup; the jobspy-backed group passes
+    a merged/split scrape bound to a row id that may not be a registry key.
     """
-    scraper_fn = SCRAPERS[source_id]
+    if scraper_fn is None:
+        scraper_fn = SCRAPERS[source_id]
     timeout = ctx.plugin.scraper.timeout
     log.info("[%s] starting", source_id)
     if on_source_start is not None:
@@ -543,20 +602,43 @@ def run_all_scrapers(
         log.debug("[%s] disabled in config, skipping", sid)
 
     non_headless = _PLAYWRIGHT_SOURCES
-    headless_sources = [sid for sid in enabled if sid not in non_headless]
+    jobspy_enabled = [sid for sid in enabled if sid in _JOBSPY_SITES]
+    headless_sources = [
+        sid for sid in enabled if sid not in non_headless and sid not in _JOBSPY_SITES
+    ]
     visible_sources = [sid for sid in enabled if sid in non_headless]
+
+    # Collapse the enabled jobspy-backed sites into scrape-plan rows: one merged
+    # row when both run with equal knobs, else one row per site. Each row is a
+    # phase-1 work item bound to a scrape over its site list.
+    jobspy_plan = _jobspy_scrape_plan(jobspy_enabled, ctx.plugin)
+
+    # Phase-1 work items: (row_id, scraper_fn). A None scraper_fn means look the
+    # row id up in SCRAPERS; the jobspy rows carry an explicit bound scrape so
+    # the merged row id (e.g. "linkedin + indeed") needs no registry entry.
+    headless_items: list[
+        tuple[str, Callable[[ScrapeContext], list[dict[str, Any]]] | None]
+    ] = [(sid, None) for sid in headless_sources]
+    for row_id, sites in jobspy_plan:
+
+        def _jobspy_call(
+            scrape_ctx: ScrapeContext, _sites: list[str] = sites
+        ) -> list[dict[str, Any]]:
+            return scrape_jobspy(scrape_ctx, sites=_sites)
+
+        headless_items.append((row_id, _jobspy_call))
 
     # Announce the full run order up front so the display can list every source
     # as pending before any of them start.
     if on_sources_enabled is not None:
-        on_sources_enabled(headless_sources + visible_sources)
+        on_sources_enabled([rid for rid, _ in headless_items] + visible_sources)
 
-    # JobSpy attaches its own stderr-bound log handlers. Reroute them through our
-    # counting handler here -- single-threaded, before the parallel phase spawns
-    # any JobSpy worker -- so their WARN+ lines count toward the run's
+    # python-jobspy attaches its own stderr-bound log handlers. Reroute them
+    # through our counting handler here -- single-threaded, before the parallel
+    # phase spawns any worker -- so their WARN+ lines count toward the run's
     # Warnings: N total and read in our format, and stay silent in normal mode.
-    # (Live per-source progress comes from ctx.report, not JobSpy's logs.)
-    if "jobspy" in enabled:
+    # (Live per-source progress comes from ctx.report, not the library's logs.)
+    if jobspy_enabled:
         try:
             import jobspy  # noqa: F401  -- create the import-time JobSpy:* loggers
         except ImportError:
@@ -572,10 +654,9 @@ def run_all_scrapers(
                 logging.getLogger(f"JobSpy:{site}")
             adopt_third_party_loggers("JobSpy")
 
-        # Explain the per-board query count once, here in the single-threaded
-        # setup -- not inside the JobSpy worker, which would race enlighten's
-        # cursor. The merged JobSpy call searches every (search term x country)
-        # pair across the enabled boards.
+        # Explain the per-site query count once, here in the single-threaded
+        # setup -- not inside the worker, which would race enlighten's cursor.
+        # Each site searches every (search term x country) pair.
         if on_note is not None:
             from daily_driver.plugins.job_search.scraper.roles import _search_terms
 
@@ -583,18 +664,18 @@ def run_all_scrapers(
             countries = countries_list(ctx.plugin)
             on_note(
                 f"{len(terms)} search terms x {len(countries)} countries "
-                f"= {len(terms) * len(countries)} searches per JobSpy board"
+                f"= {len(terms) * len(countries)} searches per site"
             )
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
     # Phase 1: headless, parallel
-    if headless_sources:
+    if headless_items:
         headless_ctx = _ctx_with_headless(ctx, True)
         log.info(
             "[phase1] running %d headless scrapers (%s), %d workers",
-            len(headless_sources),
-            ", ".join(headless_sources),
+            len(headless_items),
+            ", ".join(rid for rid, _ in headless_items),
             workers,
         )
         pool = ThreadPoolExecutor(max_workers=max(1, workers))
@@ -602,13 +683,14 @@ def run_all_scrapers(
             futures = {
                 pool.submit(
                     _run_one,
-                    sid,
+                    row_id,
                     headless_ctx,
                     on_source_done,
                     on_source_start,
                     on_source_progress,
-                ): sid
-                for sid in headless_sources
+                    fn,
+                ): row_id
+                for row_id, fn in headless_items
             }
             for fut in as_completed(futures):
                 sid = futures[fut]

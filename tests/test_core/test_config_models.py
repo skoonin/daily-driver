@@ -16,7 +16,6 @@ from daily_driver.core.config_models import (
 )
 from daily_driver.plugins.job_search.config import (
     EnrichmentConfig,
-    JobsConfig,
     JobSearchPlugin,
     Locations,
     ScraperConfig,
@@ -281,10 +280,10 @@ def test_sources_legacy_bool_coerced():
     """YAML form `sources: {remoteok: true}` migrates to SourceToggle."""
     from daily_driver.plugins.job_search.config import SourceToggle
 
-    m = JobSearchPlugin(sources={"remoteok": True, "jobspy": False})
+    m = JobSearchPlugin(sources={"remoteok": True, "linkedin": False})
     assert isinstance(m.sources["remoteok"], SourceToggle)
     assert m.sources["remoteok"].enabled is True
-    assert m.sources["jobspy"].enabled is False
+    assert m.sources["linkedin"].enabled is False
 
 
 def test_sources_typed_form():
@@ -317,66 +316,86 @@ def test_sources_per_source_knobs_on_toggles():
     assert m.sources["hn_jobs"].hn_max_posts == 25
 
 
-def test_jobspy_toggle_per_site_flags():
-    """jobspy entry coerces to JobspyToggle with per-site bool flags."""
-    from daily_driver.plugins.job_search.config import JobspyToggle
+def test_linkedin_toggle_defaults():
+    """`linkedin` is a top-level site source carrying its own query knobs."""
+    from daily_driver.plugins.job_search.config import LinkedInToggle
+
+    m = JobSearchPlugin(sources={"linkedin": {"enabled": True}})
+    toggle = m.sources["linkedin"]
+    assert isinstance(toggle, LinkedInToggle)
+    assert toggle.enabled is True
+    assert toggle.results_wanted_per_query == 50
+    assert toggle.hours_old == 168
+    # LinkedIn takes no country param (scrape_jobs has no linkedin country knob).
+    assert not hasattr(toggle, "country")
+
+
+def test_indeed_toggle_defaults():
+    """`indeed` is a top-level site source; `country` lives here, not on linkedin."""
+    from daily_driver.plugins.job_search.config import IndeedToggle
+
+    m = JobSearchPlugin(sources={"indeed": {"enabled": True}})
+    toggle = m.sources["indeed"]
+    assert isinstance(toggle, IndeedToggle)
+    assert toggle.enabled is True
+    assert toggle.results_wanted_per_query == 50
+    assert toggle.hours_old == 168
+    assert toggle.country == "USA"
+
+
+def test_indeed_toggle_custom_knobs():
+    from daily_driver.plugins.job_search.config import IndeedToggle
 
     m = JobSearchPlugin(
         sources={
-            "jobspy": {
+            "indeed": {
                 "enabled": True,
-                "linkedin": False,
-                "indeed": True,
+                "results_wanted_per_query": 100,
+                "hours_old": 72,
+                "country": "CA",
             }
         }
     )
-    toggle = m.sources["jobspy"]
-    assert isinstance(toggle, JobspyToggle)
-    assert toggle.enabled is True
-    assert toggle.linkedin is False
-    assert toggle.indeed is True
+    toggle = m.sources["indeed"]
+    assert isinstance(toggle, IndeedToggle)
+    assert toggle.results_wanted_per_query == 100
+    assert toggle.hours_old == 72
+    assert toggle.country == "CA"
 
 
-def test_jobspy_toggle_carries_jobs_config():
-    """JobsConfig query knobs live on the jobspy toggle, not flat on scraper."""
-    from daily_driver.plugins.job_search.config import JobspyToggle
+def test_site_toggle_legacy_bool_coerced():
+    from daily_driver.plugins.job_search.config import IndeedToggle, LinkedInToggle
 
-    m = JobSearchPlugin(sources={"jobspy": {"jobs": {"results_wanted_per_query": 100}}})
-    toggle = m.sources["jobspy"]
-    assert isinstance(toggle, JobspyToggle)
-    assert toggle.jobs.results_wanted_per_query == 100
-
-
-def test_jobspy_toggle_legacy_bool_coerced():
-    from daily_driver.plugins.job_search.config import JobspyToggle
-
-    m = JobSearchPlugin(sources={"jobspy": False})
-    assert isinstance(m.sources["jobspy"], JobspyToggle)
-    assert m.sources["jobspy"].enabled is False
-    assert m.sources["jobspy"].linkedin is True
+    m = JobSearchPlugin(sources={"linkedin": True, "indeed": False})
+    assert isinstance(m.sources["linkedin"], LinkedInToggle)
+    assert m.sources["linkedin"].enabled is True
+    assert isinstance(m.sources["indeed"], IndeedToggle)
+    assert m.sources["indeed"].enabled is False
 
 
-# ---------------------------------------------------------------------------
-# JobsConfig
-# ---------------------------------------------------------------------------
-
-
-def test_jobs_config_defaults():
-    m = JobsConfig()
-    assert m.results_wanted_per_query == 50
-    assert m.hours_old == 168
-    assert m.country_indeed == "USA"
-
-
-def test_jobs_config_custom():
-    m = JobsConfig(results_wanted_per_query=100, hours_old=72, country_indeed="CA")
-    assert m.results_wanted_per_query == 100
-    assert m.country_indeed == "CA"
-
-
-def test_jobs_config_rejects_extra():
+def test_old_jobspy_source_rejected():
+    """The retired `sources.jobspy:` block fails the normal config validation —
+    `jobspy` coerces to a bare SourceToggle (enable/disable only), so its old
+    per-site / `jobs` payload trips `extra_forbidden`. The intended hard break,
+    no special shim."""
     with pytest.raises(ValidationError):
-        JobsConfig(bad_key="x")
+        JobSearchPlugin(
+            sources={
+                "jobspy": {
+                    "enabled": True,
+                    "linkedin": True,
+                    "indeed": True,
+                    "jobs": {"results_wanted_per_query": 50},
+                }
+            }
+        )
+
+
+def test_indeed_toggle_rejects_extra():
+    from daily_driver.plugins.job_search.config import IndeedToggle
+
+    with pytest.raises(ValidationError):
+        IndeedToggle(country_indeed="USA")  # old field name no longer valid
 
 
 # ---------------------------------------------------------------------------

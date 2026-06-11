@@ -239,9 +239,12 @@ Full field reference in [configuration.md](configuration.md#pluginsjob_search).
 | `indeed` | Indeed via JobSpy |
 | `apple` | Apple careers (requires Playwright) |
 
-`linkedin` and `indeed` are the CLI selectors for `jobs run -S`.
-In `.dd-config.yaml` they are sub-toggles under the `jobspy:` source
-(`jobspy.linkedin`, etc.), not top-level source keys.
+`linkedin` and `indeed` are top-level site sources (both fetched via the
+`python-jobspy` library, an implementation detail). They are the CLI selectors
+for `jobs run -S` and the config keys `sources.linkedin` / `sources.indeed`.
+When both are enabled with equal query knobs they share one merged backend
+request; otherwise they run separately. Either way each appears under its own
+site name in the `Source` column and the live progress display.
 
 `daily-driver jobs run --list-sources` prints the live set. `daily-driver
 help sources` does the same.

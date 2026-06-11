@@ -31,15 +31,52 @@ log`. Versioned release history starts at 1.0.
   `max_enrich_companies` (default 50) per run. (#86)
 - **Faster CLI startup**: template-rendering dependencies now load only during
   `init`, not on every command invocation. (#76)
-- **JobSpy is now one merged `jobspy` source**: LinkedIn and Indeed are
-  requested in a single `scrape_jobs` call per search rather than two separate
-  scrapers, so `jobs run -S` (and the source registry) take `jobspy` instead of
-  `linkedin` / `indeed`. Enable each site via the `sources.jobspy.linkedin` /
-  `sources.jobspy.indeed` sub-toggles (unchanged); per-row Source attribution
-  still shows the originating site. If one site fails mid-call, the run retries
-  the enabled sites individually for that search so the healthy site's rows are
-  not lost, and an enabled site that returns zero rows across the whole run logs
-  a warning. (#87)
+- **LinkedIn + Indeed merge their backend fetch when their knobs match**:
+  when both `linkedin` and `indeed` are enabled with equal
+  `results_wanted_per_query` and `hours_old`, they are requested in a single
+  underlying call per search (faster, fewer requests) rather than two; differing
+  knobs fall back to one call per site. This is internal — the selectors,
+  config keys, progress rows, and `Source` column are all the site names
+  (`linkedin`, `indeed`), never the backend library. If one site fails mid-call,
+  the run retries the enabled sites individually for that search so the healthy
+  site's rows are not lost, and an enabled site that returns zero rows across the
+  whole run logs a warning. (#87)
+- **BREAKING: `linkedin` and `indeed` are now top-level config sources**
+  (was a single `sources.jobspy:` block with `linkedin` / `indeed` sub-flags and
+  a nested `jobs:` query block). Each site now carries its own
+  `results_wanted_per_query` and `hours_old`; the Indeed-only `country` knob
+  replaces `country_indeed` (and lives only on `indeed`, the one site it
+  affects). `jobs run -S jobspy` is gone — select `-S linkedin` and/or
+  `-S indeed`. There is no compat shim: a config still carrying `sources.jobspy:`
+  fails the normal config-validation check and must be rewritten. Before:
+
+  ```yaml
+  sources:
+    jobspy:
+      enabled: true
+      linkedin: true
+      indeed: true
+      jobs:
+        results_wanted_per_query: 50
+        hours_old: 168
+        country_indeed: USA
+  ```
+
+  After:
+
+  ```yaml
+  sources:
+    linkedin:
+      enabled: true
+      results_wanted_per_query: 50
+      hours_old: 168
+    indeed:
+      enabled: true
+      results_wanted_per_query: 50
+      hours_old: 168
+      country: USA
+  ```
+  (#PR)
 - **Faster `jobs run`**: the Product and Fit/Notes enrichment phases now overlap
   under one shared concurrency cap (never more than `claude.max_parallel`
   provider calls in flight across both), detail-page fetches run on a small
@@ -95,7 +132,7 @@ log`. Versioned release history starts at 1.0.
   the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`,
   `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested
   under each source (`wwr_categories`, `greenhouse_boards`, `hn_max_posts`, and
-  the `jobspy.jobs` query block), and `ai.ollama.max_parallel` — all previously
+  the `linkedin` / `indeed` query knobs), and `ai.ollama.max_parallel` — all previously
   valid config but hidden from the template. `scraper.headless` stays out: it is
   overridden per scrape phase, so a value set there has no effect. (#71)
 - **BREAKING: removed the `plugins.job_search.locations.cities` config field**

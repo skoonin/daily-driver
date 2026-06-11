@@ -255,16 +255,22 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
-| `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`) + `jobs` (`JobsConfig`) |
+| `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
+| `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
 | any other | `SourceToggle` | (enable/disable only) |
 
-`jobspy.jobs` (jobspy aggregator query settings):
+`linkedin` and `indeed` are the two site-named sources fetched via the
+`python-jobspy` library (an implementation detail). Their query knobs:
 
-| Key | Type | Default |
-|-----|------|---------|
-| `results_wanted_per_query` | int | 50 |
-| `hours_old` | int | 168 (7 days) |
-| `country_indeed` | string | `USA` |
+| Key | Type | Default | On |
+|-----|------|---------|----|
+| `results_wanted_per_query` | int | 50 | both |
+| `hours_old` | int | 168 (7 days) | both |
+| `country` | string | `USA` | indeed only |
+
+`country` sets Indeed's regional host and is the fallback used when a configured
+country code is not one the scraper recognizes. LinkedIn takes no country
+parameter, so it has no `country` knob.
 
 ```yaml
 sources:
@@ -274,15 +280,22 @@ sources:
   greenhouse:
     enabled: true
     greenhouse_boards: [anthropic, stripe]
-  jobspy:
+  linkedin:
     enabled: true
-    linkedin: true
-    indeed: true     # google/glassdoor excluded: broken/unsupported in JobSpy
-    jobs:
-      results_wanted_per_query: 25
+    results_wanted_per_query: 50
+    hours_old: 168
+  indeed:
+    enabled: true
+    results_wanted_per_query: 50
+    hours_old: 168
+    country: USA
 ```
 
-Each enabled JobSpy site runs as its own parallel scraper. Omitted sub-flags default to `true`.
+When `linkedin` and `indeed` are both enabled with equal `results_wanted_per_query`
+and `hours_old`, they are fetched in one merged request; if those knobs differ,
+each is fetched separately. Either way the live progress row and the `Source`
+column are site-named. (Glassdoor and Google for Jobs are excluded: broken or
+unsupported upstream.)
 
 ## Example
 

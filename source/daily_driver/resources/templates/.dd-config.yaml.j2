@@ -216,17 +216,18 @@ tracker:
 #       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
 #
-#       # python-jobspy aggregator. LinkedIn + Indeed are requested in
-#       # one merged call per search (requires `python-jobspy>=1.1.82`,
-#       # fetched with linkedin_fetch_description=True); toggle each site
-#       # with the linkedin/indeed flags. Glassdoor is intentionally
-#       # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
-#       # not parsed") on every request as of 2026-04.
-#       jobspy:
+#       # LinkedIn + Indeed (each its own source). When both are
+#       # enabled with equal results_wanted_per_query and hours_old
+#       # they are fetched in one merged request; if the knobs differ
+#       # they are fetched separately. country (Indeed only) sets the
+#       # regional host and is the fallback for countries the scraper
+#       # does not recognize. Requires `python-jobspy>=1.1.82`.
+#       linkedin:
 #         enabled: true
-#         linkedin: true
-#         indeed: true
-#         jobs:
-#           results_wanted_per_query: 50
-#           hours_old: 168
-#           country_indeed: USA
+#         results_wanted_per_query: 50
+#         hours_old: 168
+#       indeed:            # indeed.com (country sets the regional host)
+#         enabled: true
+#         results_wanted_per_query: 50
+#         hours_old: 168
+#         country: USA

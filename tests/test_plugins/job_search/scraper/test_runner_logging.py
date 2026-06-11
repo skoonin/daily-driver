@@ -174,11 +174,13 @@ def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
     ddlog.configure("normal")
     our_handler = ddlog._handler
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"jobspy": lambda _ctx: []})
+    # The jobspy-backed group routes through runner.scrape_jobspy; stub it so no
+    # network call fires while logger adoption is exercised.
+    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
     try:
         runner.run_all_scrapers(
-            _cfg_with_sources(["jobspy"], workers=1),
-            sources_override=["jobspy"],
+            _cfg_with_sources(["linkedin"], workers=1),
+            sources_override=["linkedin"],
         )
         # Both the import-time and the runtime-cased loggers route through us.
         assert module_logger.handlers == [our_handler]
@@ -215,18 +217,20 @@ def test_source_breakdown_segments_maps_funnel_to_colors() -> None:
 
 def test_run_all_scrapers_notes_jobspy_query_count_once(monkeypatch) -> None:
     """The per-board search count is announced once via on_note -- not per
-    JobSpy site -- so two enabled sites don't duplicate the line."""
+    site -- so two enabled sites (linkedin + indeed) don't duplicate the line.
+    The note speaks in site terms; the word "jobspy" must not appear."""
     from daily_driver.plugins.job_search.scraper import runner
 
     notes: list[str] = []
-    monkeypatch.setattr(runner, "SCRAPERS", {"jobspy": lambda _ctx: []})
+    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
     runner.run_all_scrapers(
-        _cfg_with_sources(["jobspy"], workers=1),
-        sources_override=["jobspy"],
+        _cfg_with_sources(["linkedin", "indeed"], workers=1),
+        sources_override=["linkedin", "indeed"],
         on_note=notes.append,
     )
-    assert len(notes) == 1  # one line for both boards, not one per site
-    assert "searches per JobSpy board" in notes[0]
+    assert len(notes) == 1  # one line for both sites, not one per site
+    assert "searches per site" in notes[0]
+    assert "jobspy" not in notes[0].lower()
 
 
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
