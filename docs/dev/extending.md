@@ -69,30 +69,192 @@ For headless flows, call `launch_headless()` from `_claude_session` with capture
 
 ## Adding a plugin
 
-A plugin is a feature slice (config + CLI + optional scheduler/doctor/package-data) that core wires through a static registry. `job_search` is the reference implementation. No runtime discovery — every plugin is listed explicitly.
+A plugin is a feature slice (config + CLI + optional scheduler/doctor/package-data) that core wires through a static registry.
+`job_search` is the reference implementation.
+No runtime discovery — every plugin is listed explicitly in `plugins.PLUGINS`, and `_validate_registry` `find_spec`-checks every declared hook module at import so a typo'd path fails at startup, not when the command first runs.
 
-1. Create `source/daily_driver/plugins/<name>/` with an `__init__.py` exposing a module-level `PLUGIN`:
+### Hello-world: a reminders plugin
+
+A complete, copy-paste plugin that exercises two hooks: a `reminders list` CLI subcommand (`command_module`) that reads its config, and one launchd job (`scheduled_jobs_builder`) fired at a configured `HH:MM`.
+The `config_model` and a `doctor` check are shown as clearly-marked OPTIONAL extensions — a plugin needs neither.
+
+Directory layout under `source/daily_driver/plugins/reminders/`:
+
+```
+reminders/
+  __init__.py     # the PLUGIN descriptor
+  cli.py          # command_module: add_parser + run
+  config.py       # config_model (OPTIONAL)
+  scheduler.py    # scheduled_jobs_builder
+  doctor.py       # doctor_checks (OPTIONAL)
+```
+
+`__init__.py` — the `PLUGIN` descriptor (the only thing core reads to wire the plugin):
 
 ```python
 from daily_driver.plugins._base import Plugin
-from daily_driver.plugins.<name>.config import MyPluginConfig
+from daily_driver.plugins.reminders.config import RemindersPlugin
 
 PLUGIN = Plugin(
-    name="<name>",                       # plugins.<name> config namespace + identifier
-    command_name="<verb>",               # CLI subcommand
-    command_module="daily_driver.plugins.<name>.cli",
-    command_help="One-line --help text",
-    config_model=MyPluginConfig,         # BaseModel for plugins.<name>
-    # Optional contributions:
-    # scheduled_jobs_builder="daily_driver.plugins.<name>.scheduler.build_scheduled_jobs",
-    # doctor_checks="daily_driver.plugins.<name>.doctor.run_checks",
-    # package_data_dirs=(PackageDataDir("daily_driver.plugins.<name>.commands", "commands/<name>"),),
+    name="reminders",                    # plugins.reminders config namespace + identifier
+    command_name="reminders",            # CLI subcommand verb
+    command_module="daily_driver.plugins.reminders.cli",
+    command_help="Home-maintenance reminders",
+    config_model=RemindersPlugin,        # OPTIONAL: typed plugins.reminders block
+    scheduled_jobs_builder="daily_driver.plugins.reminders.scheduler.build_scheduled_jobs",
+    launchd_labels=("com.daily-driver.reminders",),  # swept on scheduler uninstall
+    doctor_checks="daily_driver.plugins.reminders.doctor.run_checks",  # OPTIONAL
 )
 ```
 
-2. Add it to the `PLUGINS` tuple in `plugins/__init__.py`. `_validate_registry` runs at import and `find_spec`-checks every declared module, so a typo'd hook path fails at startup.
+`cli.py` — the `command_module` hook (`add_parser` + `run`, same shape as a core subcommand):
 
-3. Implement only what `PLUGIN` declares. `command_module` exposes `add_parser` / `run` (see "Adding a subcommand"); `config_model` is a Pydantic `BaseModel` (it becomes `plugins.<name>` and is `extra="forbid"` via the assembled `PluginsConfig`); `scheduled_jobs_builder` returns `list[ScheduledJob]`; `doctor_checks` returns `list[CheckResult]`; `package_data_dirs` declares `.md` dirs copied into the workspace `.claude/` tree by `core.generate`.
+```python
+from __future__ import annotations
+
+import argparse
+
+from daily_driver.cli._common import add_global_flags, resolve_workspace
+
+
+def add_parser(subparsers, parents):
+    parser = subparsers.add_parser("reminders", parents=parents, help="Home reminders")
+    nested = parser.add_subparsers(dest="reminders_action", metavar="<action>")
+    p_list = nested.add_parser("list", parents=parents, help="List configured reminders")
+    add_global_flags(p_list)
+    p_list.set_defaults(func=_run_list)
+    parser.set_defaults(func=run)
+    return parser
+
+
+def _run_list(args, workspace):
+    plugins = workspace.config.plugins
+    cfg = plugins.reminders if plugins else None
+    for item in (cfg.items if cfg else []):
+        print(f"- {item}")
+    return 0
+
+
+def run(args):
+    return args.func(args, resolve_workspace(args))
+```
+
+`scheduler.py` — the `scheduled_jobs_builder` hook.
+`SchedulerContext` carries the scheduler-namespace config and resolved primitives, not the plugin's own config, so the builder rediscovers the workspace from `ctx.workspace_root` to read `plugins.reminders.at`:
+
+```python
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from daily_driver.core.scheduler import ScheduledJob, SchedulerContext
+
+LABEL = "com.daily-driver.reminders"
+
+
+def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
+    from daily_driver.core.scheduler import ScheduledJob
+    from daily_driver.core.workspace import Workspace
+
+    workspace = Workspace.discover_or_fail(override=Path(ctx.workspace_root))
+    plugins = workspace.config.plugins
+    cfg = plugins.reminders if plugins else None
+    if cfg is None or not cfg.at:  # no time configured -> no launchd job
+        return []
+
+    stdout, stderr = ctx.log_paths("reminders")
+    args = [ctx.dd_bin, "reminders", "list", "--workspace", ctx.workspace_root]
+    return [
+        ScheduledJob(
+            label=LABEL,
+            template="checkin.plist.j2",  # reuse core's daily-times template
+            program_arguments=args,
+            context={
+                "label": LABEL,
+                "program_arguments": args,
+                "times": [ctx.parse_hhmm(cfg.at)],
+                "stdout_path": str(stdout),
+                "stderr_path": str(stderr),
+                "env_path": ctx.env_path,
+                "home": ctx.home,
+            },
+        )
+    ]
+```
+
+OPTIONAL `config.py` — the `config_model`.
+A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so an unknown key fails validation):
+
+```python
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class RemindersPlugin(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[str] = Field(default=[], description="Home-maintenance reminders")
+    at: str | None = Field(default=None, description="Daily fire time, HH:MM")
+```
+
+OPTIONAL `doctor.py` — the `doctor_checks` hook returns `list[CheckResult]`:
+
+```python
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from daily_driver.core.doctor import CheckResult
+    from daily_driver.core.workspace import Workspace
+
+
+def run_checks(workspace: Workspace) -> list[CheckResult]:
+    from daily_driver.core.doctor import CheckResult
+
+    plugins = workspace.config.plugins
+    cfg = plugins.reminders if plugins else None
+    if cfg and cfg.at and not cfg.items:
+        return [
+            CheckResult(
+                name="reminders",
+                status="WARNING",
+                detail="A fire time is set but no reminders are configured.",
+                fix_hint="Add entries under plugins.reminders.items.",
+            )
+        ]
+    return []
+```
+
+Register it in the `PLUGINS` tuple in `plugins/__init__.py`:
+
+```python
+from daily_driver.plugins.reminders import PLUGIN as _reminders
+
+PLUGINS: tuple[Plugin, ...] = (_job_search, _reminders)
+```
+
+Add the config namespace to the workspace `.dd-config.yaml`:
+
+```yaml
+plugins:
+  reminders:
+    items:
+      - "Replace furnace filter"
+      - "Test smoke detectors"
+    at: "09:00"
+```
+
+Try it:
+
+```bash
+daily-driver reminders list --workspace /path/to/workspace
+# - Replace furnace filter
+# - Test smoke detectors
+```
 
 Core stays import-light: it imports `PLUGINS` lazily inside the functions that iterate it (scheduler, doctor, generate) and imports each plugin's implementation only on dispatch.
 
@@ -102,6 +264,10 @@ Core stays import-light: it imports `PLUGINS` lazily inside the functions that i
 - [ ] Added to `PLUGINS` in `plugins/__init__.py`
 - [ ] `config_model` is a `BaseModel`; tests in `tests/test_plugins/<name>/`
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`
+
+### Plugin or tracker category?
+
+Rows alone is a tracker category (no code needed); rows plus a source to scrape or a schedule to run is a plugin.
 
 ## Adding a scraper source
 
