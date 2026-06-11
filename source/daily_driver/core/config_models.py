@@ -112,6 +112,20 @@ class TrackerConfig(BaseModel):
         ),
         json_schema_extra={"template_commented": True},
     )
+    extra_statuses: list[str] = Field(
+        default=[],
+        description=(
+            "Extra status values to add to the tracker's recommended set, on top\n"
+            "of the built-ins (open, in-progress, blocked, done, ruled-out). Values\n"
+            "here never trigger the `warn_unknown_status` nudge. Spelling is\n"
+            "normalized (case-folded, underscores -> hyphens), so `ruled_out` and\n"
+            "`ruled-out` are the same status."
+        ),
+        json_schema_extra={
+            "template_commented": True,
+            "template_example": ["waiting", "snoozed"],
+        },
+    )
     categories: dict[str, TrackerCategoryConfig] = Field(
         default={"task": TrackerCategoryConfig(required=["title"])},
         description="",

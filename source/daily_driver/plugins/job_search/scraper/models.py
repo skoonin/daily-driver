@@ -11,7 +11,6 @@ stage's instance.
 from __future__ import annotations
 
 import datetime as dt
-from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -30,6 +29,7 @@ from pydantic import (
 )
 
 from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -48,18 +48,26 @@ def clamp_fit(score: int) -> int:
     return max(FIT_MIN, min(score, FIT_MAX))
 
 
-class JobStatus(str, Enum):
-    FOUND = "found"
-    SKIPPED = "skipped"
-    APPLIED = "applied"
-    REJECTED = "rejected"
-    DROPPED = "dropped"
+# The job_search lifecycle vocabulary. jobs.csv Status values and tracker
+# `job`-category statuses share the same normalization/warning machinery
+# (core.statuses), but each domain owns its own recommended set — these need
+# not match the tracker's generic set. `found` is the default for a freshly
+# scraped row.
+JOBS_DEFAULT_STATUS = "found"
+JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
+    "found",
+    "skipped",
+    "applied",
+    "interviewing",
+    "rejected",
+    "dropped",
+)
 
 
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
 # passes (fit/notes/product): kept for visibility, not worth spending
 # enrichment calls on.
-ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
+ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({"skipped"})
 
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -230,7 +238,12 @@ class EnrichedJob(BaseModel):
     posted_date: dt.date | None = None
     description_text: str = ""
 
-    status: JobStatus = JobStatus.FOUND
+    # Free-text on purpose (shares the tracker's "convention, not enforcement"
+    # stance): any string is accepted and preserved, but the spelling is
+    # normalized (case-folded, underscores -> hyphens) so `ruled_out` and
+    # `ruled-out` never diverge. The CSV write path warns once per run on
+    # values outside JOBS_RECOMMENDED_STATUSES.
+    status: str = JOBS_DEFAULT_STATUS
     skip_reason: str = ""
     date_applied: dt.date | None = None
     # Drives `jobs prune --older-than`. Defaults to Date Found on write when
@@ -258,6 +271,12 @@ class EnrichedJob(BaseModel):
         "Source": "source",
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, v: Any) -> str:
+        text = normalize_status(v if isinstance(v, str) else str(v))
+        return text or JOBS_DEFAULT_STATUS
 
     @property
     def product_filled(self) -> bool:
@@ -298,14 +317,14 @@ class EnrichedJob(BaseModel):
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
-        if self.status is JobStatus.SKIPPED and self.skip_reason:
+        if self.status in ENRICH_SKIP_STATUSES and self.skip_reason:
             notes = (
                 f"{self.notes} | {self.skip_reason}".strip(" |")
                 if self.notes
                 else self.skip_reason
             )
         return {
-            "Status": self.status.value,
+            "Status": self.status,
             "Company": self.company,
             "Role": self.role,
             "Fit": "" if self.fit is None else str(self.fit),
@@ -339,7 +358,9 @@ class EnrichedJob(BaseModel):
             canonical = source.split("/")[0].lower() or "unknown"
             board = ""
         return cls(
-            status=JobStatus(row.get("Status", "found") or "found"),
+            # The validator normalizes spelling (e.g. `ruled_out` -> `ruled-out`)
+            # and falls back to the default for a blank cell.
+            status=row.get("Status", "") or JOBS_DEFAULT_STATUS,
             notes=row.get("Notes", ""),
             company=row.get("Company", ""),
             location=row.get("Location", ""),
@@ -385,8 +406,10 @@ class Source(Protocol):
 
 
 __all__ = [
+    "ENRICH_SKIP_STATUSES",
     "EnrichedJob",
-    "JobStatus",
+    "JOBS_DEFAULT_STATUS",
+    "JOBS_RECOMMENDED_STATUSES",
     "NonEmptyStr",
     "NormalizedJob",
     "RawScrapedJob",

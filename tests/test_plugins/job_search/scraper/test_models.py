@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
     Source,
@@ -187,7 +186,7 @@ class TestEnrichedJob:
         assert EnrichedJob.from_csv_row(row).fit == 7
 
     def test_csv_skip_reason_appended_when_skipped(self) -> None:
-        j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
+        j = _enriched(status="skipped", skip_reason="manually skipped")
         row = j.to_csv_row()
         assert "manually skipped" in row["Notes"]
 
@@ -209,8 +208,14 @@ def test_source_protocol_runtime_checkable() -> None:
     assert isinstance(fake, Source)
 
 
-def test_jobstatus_dropped_replaces_archived() -> None:
-    """JobStatus.ARCHIVED was renamed to DROPPED; the old value is gone."""
-    assert JobStatus("dropped") is JobStatus.DROPPED
-    with pytest.raises(ValueError):
-        JobStatus("archived")
+def test_status_is_free_text_normalized() -> None:
+    """Status is a normalized free-text string, not a closed enum."""
+    raw = RawScrapedJob(
+        company="Acme", role="SRE", url="https://example.com/j", source="remoteok"
+    )
+    base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
+    # Default is `found`; underscore/upper variants normalize to hyphen/lower.
+    assert base.status == "found"
+    assert base.with_updates(status="Ruled_Out").status == "ruled-out"
+    # Any string is accepted (convention, not enforcement) — no ValidationError.
+    assert base.with_updates(status="some-custom").status == "some-custom"

@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from daily_driver.core.clock import now, today
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status, warn_unknown_statuses
 from daily_driver.core.workspace import Workspace
 
 _logger = get_logger("tracker")
@@ -28,12 +29,13 @@ RECOMMENDED_STATUSES: tuple[str, ...] = (
     "ruled-out",
 )
 
-# job-category lifecycle mirrors scraper.models.JobStatus values plus the
-# tracker-only `dropped` terminal state (was `archived` pre-rename).
+# job-category lifecycle mirrors the job_search plugin's JOBS_RECOMMENDED_STATUSES
+# (scraper.models) plus the tracker-only `dropped` terminal state.
 JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "found",
     "skipped",
     "applied",
+    "interviewing",
     "rejected",
     "dropped",
 )
@@ -153,20 +155,30 @@ class Tracker:
         recommended set, or (c) another entry in the same workspace already
         uses the same custom status.
         """
-        if not self._workspace.config.tracker.warn_unknown_status:
+        tracker_cfg = self._workspace.config.tracker
+        if not tracker_cfg.warn_unknown_status:
             return
         recommended_set = _recommended_for_category(category)
-        if status in recommended_set:
+        if category != "job":
+            recommended_set = recommended_set + tuple(tracker_cfg.extra_statuses)
+        # Compare on normalized spelling so `ruled_out`/`Ruled Out` match the
+        # recommended `ruled-out`; the stored status keeps its original spelling.
+        normalized_recommended = {normalize_status(s) for s in recommended_set}
+        if normalize_status(status) in normalized_recommended:
             return
-        if any(e.status == status for e in existing_entries):
+        if any(
+            normalize_status(e.status) == normalize_status(status)
+            for e in existing_entries
+        ):
             return
-        recommended = ", ".join(recommended_set)
-        _logger.warning(
-            "'%s' is not in the recommended set (%s)\n"
-            "         Set tracker.warn_unknown_status: false in "
-            ".dd-config.yaml to silence",
-            status,
-            recommended,
+        warn_unknown_statuses(
+            _logger,
+            offending=[status],
+            recommended=recommended_set,
+            hint=(
+                "Set tracker.warn_unknown_status: false in .dd-config.yaml "
+                "to silence"
+            ),
         )
 
     def add(

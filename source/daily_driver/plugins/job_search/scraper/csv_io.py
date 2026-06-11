@@ -9,12 +9,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status, warn_unknown_statuses
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_SKIP_STATUSES,
+    JOBS_RECOMMENDED_STATUSES,
     EnrichedJob,
 )
 
 log = get_logger(__name__)
+
+
+def warn_unknown_job_statuses(statuses: list[str]) -> None:
+    """Warn once on any normalized status outside JOBS_RECOMMENDED_STATUSES.
+
+    Called from the jobs.csv write paths so an out-of-vocabulary Status value
+    (a typo, or a status the workflow has outgrown) surfaces as one WARNING per
+    write rather than silently. Spelling is already normalized by the caller;
+    this only flags values whose MEANING is unrecognized.
+    """
+    recognized = {normalize_status(s) for s in JOBS_RECOMMENDED_STATUSES}
+    offending = [s for s in statuses if s and normalize_status(s) not in recognized]
+    warn_unknown_statuses(
+        log, offending=offending, recommended=JOBS_RECOMMENDED_STATUSES
+    )
 
 
 # The single source of truth for jobs.csv column order, derived from the model.
@@ -184,6 +201,8 @@ def append_jobs_typed(
     if not jobs:
         return 0
 
+    warn_unknown_job_statuses([job.status for job in jobs])
+
     written = 0
     try:
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
@@ -199,7 +218,7 @@ def append_jobs_typed(
 
 
 def _active(job: EnrichedJob) -> bool:
-    return job.status.value not in ENRICH_SKIP_STATUSES
+    return job.status not in ENRICH_SKIP_STATUSES
 
 
 __all__ = [
@@ -210,4 +229,5 @@ __all__ = [
     "atomic_write_rows",
     "append_rows",
     "dedup_sets_from_rows",
+    "warn_unknown_job_statuses",
 ]

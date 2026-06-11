@@ -19,6 +19,7 @@ from pathlib import Path
 
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status
 from daily_driver.plugins.job_search.jobs_lock import (
     clear_stale_adjacent_lock,
     jobs_lock_path,
@@ -31,6 +32,9 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     dedup_sets_from_rows,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    warn_unknown_job_statuses,
+)
 
 log = get_logger(__name__)
 
@@ -41,6 +45,15 @@ DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
 
 def archive_path_for(jobs_csv: Path) -> Path:
     return jobs_csv.with_name("jobs.archive.csv")
+
+
+def _normalize_status_cells(rows: list[dict[str, str]]) -> None:
+    """Canonicalize the Status spelling of each row in place; warn once on unknowns."""
+    for row in rows:
+        raw = row.get("Status")
+        if raw:
+            row["Status"] = normalize_status(raw)
+    warn_unknown_job_statuses([r.get("Status", "") for r in rows])
 
 
 def _parse_iso(s: str) -> date | None:
@@ -61,8 +74,9 @@ def _is_stale(
     Falls back to ``Date Found`` when ``Date Last Seen`` is empty — without an
     on-rescan upsert path, existing rows often only have ``Date Found``.
     """
-    status = (row.get("Status") or "").strip().lower()
-    if status not in statuses:
+    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
+    status = normalize_status(row.get("Status") or "")
+    if status not in {normalize_status(s) for s in statuses}:
         return False
     seen = _parse_iso(row.get("Date Last Seen", "")) or _parse_iso(
         row.get("Date Found", "")
@@ -101,6 +115,13 @@ def prune(
 
         if dry_run or not candidates:
             return candidates, 0
+
+        # The whole file is being rewritten anyway, so canonicalize the Status
+        # spelling of every retained/archived row (ruled_out -> ruled-out) and
+        # surface any out-of-vocabulary values once. Meaning is never changed.
+        if "Status" in header:
+            _normalize_status_cells(keep)
+            _normalize_status_cells(candidates)
 
         _append_rows(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)

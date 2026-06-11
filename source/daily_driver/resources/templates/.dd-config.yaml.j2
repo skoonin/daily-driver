@@ -35,6 +35,12 @@ tracker:
   # ruled-out). Entries still save with the custom status; the warning
   # is a one-time hint. Set to false to silence.
   # warn_unknown_status: true
+  # Extra status values to add to the tracker's recommended set, on top
+  # of the built-ins (open, in-progress, blocked, done, ruled-out). Values
+  # here never trigger the `warn_unknown_status` nudge. Spelling is
+  # normalized (case-folded, underscores -> hyphens), so `ruled_out` and
+  # `ruled-out` are the same status.
+  # extra_statuses: [waiting, snoozed]
   categories:
     task:
       required: [title]

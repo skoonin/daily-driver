@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import logging
 from pathlib import Path
+
+import pytest
 
 from daily_driver.plugins.job_search.scraper.csv_io import append_jobs_typed
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
 )
@@ -27,7 +29,9 @@ def _enriched(**overrides: object) -> EnrichedJob:
         comp_display="$150,000-$200,000",
     )
     base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
-    return base.model_copy(update=dict(overrides))
+    # with_updates routes through model_validate so the status validator
+    # normalizes (model_copy would bypass it).
+    return base.with_updates(**overrides)
 
 
 def _read_rows(path: Path) -> list[dict[str, str]]:
@@ -59,12 +63,44 @@ def test_append_jobs_typed_handles_skipped_with_reason(tmp_path: Path) -> None:
     csv_path = tmp_path / "jobs.csv"
     csv_path.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
 
-    j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
+    j = _enriched(status="skipped", skip_reason="manually skipped")
     append_jobs_typed(csv_path, [j], CANONICAL_HEADER)
 
     row = _read_rows(csv_path)[0]
     assert row["Status"] == "skipped"
     assert "manually skipped" in row["Notes"]
+
+
+def test_append_jobs_typed_normalizes_underscore_status(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    csv_path.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
+
+    j = _enriched(status="ruled_out")
+    append_jobs_typed(csv_path, [j], CANONICAL_HEADER)
+
+    assert _read_rows(csv_path)[0]["Status"] == "ruled-out"
+
+
+def test_append_jobs_typed_warns_once_on_unknown_status(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    csv_path.write_text(",".join(CANONICAL_HEADER) + "\n", encoding="utf-8")
+
+    jobs = [_enriched(status="frobnicated"), _enriched(status="frobnicated")]
+    logger_name = "daily_driver.plugins.job_search.scraper.csv_io"
+    with caplog.at_level(logging.WARNING, logger=logger_name):
+        append_jobs_typed(csv_path, jobs, CANONICAL_HEADER)
+
+    messages = {
+        r.getMessage()
+        for r in caplog.records
+        if r.name == logger_name and r.levelno >= logging.WARNING
+    }
+    # One distinct warning message regardless of how many rows carried the
+    # offending status (the helper dedups offending values into one record).
+    assert len(messages) == 1
+    assert "frobnicated" in next(iter(messages))
 
 
 def test_append_jobs_typed_round_trips_via_from_csv_row(tmp_path: Path) -> None:

@@ -241,6 +241,12 @@ def test_is_stale_status_is_case_insensitive() -> None:
     )
 
 
+def test_is_stale_status_underscore_variant_matches() -> None:
+    """`ruled_out` normalizes to `ruled-out`; a `ruled-out` prune target matches."""
+    row = _row(company="X", link="x", status="ruled_out", last_seen="2026-04-01")
+    assert jobs_archive._is_stale(row, cutoff=_CUTOFF, statuses=("ruled-out",))
+
+
 def test_is_stale_cutoff_is_exclusive_on_boundary() -> None:
     # last_seen == cutoff is NOT stale (criterion is strictly < cutoff).
     row = _row(company="X", link="x", status="rejected", last_seen="2026-05-01")

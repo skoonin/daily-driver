@@ -99,7 +99,7 @@ Reference command — distinct from argparse `--help` (usage). Prints the subcom
 
 YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `required` field lists are defined in `.dd-config.yaml` under `tracker.categories`. Writes are flock-guarded.
 
-Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Set `tracker.warn_unknown_status: false` in `.dd-config.yaml` to silence.
+Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Status spelling is normalized (case-folded, underscores and spaces turned into hyphens), so `Ruled_Out` and `ruled-out` are the same status and neither warns. Extend the recommended set with `tracker.extra_statuses` in `.dd-config.yaml`; the `job` category instead uses the job-search lifecycle (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`). Set `tracker.warn_unknown_status: false` to silence the nudge.
 
 ### `tracker add --category CAT --title TEXT [flags]`
 
@@ -206,6 +206,8 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 ## Job search plugin
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
+
+The `jobs.csv` `Status` column shares the tracker's status machinery: values are normalized on write (case-folded, underscores and spaces turned into hyphens, so `ruled_out` becomes `ruled-out`), and a status outside the job-search recommended set (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`) logs one WARNING per run naming the offending values. Normalization is spelling only and never changes a status's meaning; reading `jobs.csv` does not rewrite it — existing rows are only canonicalized when a row is already being rewritten (enrichment flush, backfill, prune).
 
 ### `jobs run [-n|--dry-run] [--no-enrich] [--sources LIST | --list-sources]`
 

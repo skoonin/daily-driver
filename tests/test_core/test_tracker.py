@@ -549,6 +549,37 @@ tracker:
     assert not _tracker_warnings(caplog)
 
 
+def test_underscore_variant_of_recommended_does_not_warn(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`ruled_out` normalizes to the recommended `ruled-out`, so no warning."""
+    tracker = Tracker(workspace)
+    with caplog.at_level(logging.WARNING, logger="daily_driver.tracker"):
+        tracker.add(category="task", title="t", status="ruled_out")
+    assert not _tracker_warnings(caplog)
+
+
+def test_extra_statuses_extends_recommended_set(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A status listed in tracker.extra_statuses must not warn."""
+    config_text = """\
+daily_driver:
+  output_dir: .
+tracker:
+  extra_statuses: [waiting, snoozed]
+  categories:
+    task: {required: [title]}
+"""
+    (tmp_path / ".dd-config.yaml").write_text(config_text, encoding="utf-8")
+    (tmp_path / ".daily-driver").mkdir(exist_ok=True)
+    ws = Workspace.discover_or_fail(override=tmp_path)
+    tracker = Tracker(ws)
+    with caplog.at_level(logging.WARNING, logger="daily_driver.tracker"):
+        tracker.add(category="task", title="t", status="waiting")
+    assert not _tracker_warnings(caplog)
+
+
 # ---------------------------------------------------------------------------
 # update() merges --extra keys into existing extras (does not replace)
 # ---------------------------------------------------------------------------
