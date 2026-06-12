@@ -393,9 +393,15 @@ def _build_company_plan(
     def _stitch() -> None:
         for i, job in enumerate(out):
             # The cached-skip shortcut applies only when product enrichment is
-            # on (product_filled means no further product work). With product
-            # disabled, a product-filled job may still need its gd_rating.
-            if include_product and job.product_filled:
+            # on (product_filled means no further product work) AND there is no
+            # remaining gd work: a product-filled job with a blank gd_rating
+            # still needs the rating written (the company pass serves both
+            # fields and may have fetched it), so fall through to the gd branch.
+            if (
+                include_product
+                and job.product_filled
+                and (not include_gd or job.gd_rating)
+            ):
                 stats["skipped_cached"] += 1
                 continue
             company = job.company.strip()
@@ -403,7 +409,7 @@ def _build_company_plan(
             if not cached:
                 continue
             updates: dict[str, Any] = {}
-            if include_product and cached.get("product"):
+            if include_product and not job.product_filled and cached.get("product"):
                 updates["product"] = cached["product"]
             if cached.get("gd_rating") and not job.gd_rating:
                 updates["gd_rating"] = cached["gd_rating"]

@@ -326,6 +326,53 @@ def test_prune_partitions_stale_and_kept_rows(tmp_path: Path) -> None:
     }
 
 
+def test_prune_reconciles_drifted_archive_header(tmp_path: Path) -> None:
+    """An existing archive with an OLD/narrower header must not corrupt when prune
+    appends rows under jobs.csv's NEW header (the Remote-column upgrade path).
+
+    A blind append serialized the new row under the new header into a file whose
+    header row was the old layout, shifting every cell so the archived URL became
+    unreadable and dropped out of the dedup set. Prune now reconciles the header
+    so the archived Link survives.
+    """
+    csv_path = tmp_path / "jobs.csv"
+    archive = jobs_archive.archive_path_for(csv_path)
+    # Pre-existing archive from an earlier prune with a NARROWER header.
+    old_header = ["Status", "Company", "Role", "Link"]
+    with open(archive, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=old_header, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Status": "rejected",
+                "Company": "PriorCo",
+                "Role": "SRE",
+                "Link": "https://example.com/prior",
+            }
+        )
+
+    # jobs.csv carries today's wider header; prune one stale row out of it.
+    _write_csv(
+        csv_path,
+        [
+            _row(
+                company="OldCo",
+                link="https://example.com/old",
+                status="rejected",
+                last_seen="2026-04-01",
+            )
+        ],
+    )
+
+    jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+    # Both the prior and newly-archived URLs must be recoverable from the dedup
+    # set (so neither triaged job is re-discovered on a later scrape).
+    urls, _keys = jobs_archive.load_archive_dedup(csv_path)
+    assert "https://example.com/prior" in urls
+    assert "https://example.com/old" in urls
+
+
 def test_prune_missing_csv_returns_empty(tmp_path: Path) -> None:
     csv_path = tmp_path / "absent.csv"
 

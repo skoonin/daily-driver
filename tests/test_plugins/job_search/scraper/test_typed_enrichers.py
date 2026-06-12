@@ -552,6 +552,29 @@ def test_enrich_gd_off_writes_product_not_gd() -> None:
     assert out[0].gd_rating == ""  # never written when gd disabled
 
 
+def test_gd_rating_written_when_product_already_filled() -> None:
+    """Both toggles on, product already filled but GD blank: the fetched rating
+    must be written, not discarded. The product-filled early-skip used to
+    short-circuit the row before the gd write, burning budget every run with no
+    forward progress."""
+    j = _enriched(product="Real product text", gd_rating="")
+    ctx = _company_ctx(enrich_product=True, enrich_gd_rating=True)
+    calls: list[str] = []
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        calls.append(prompt)
+        return "Acme builds widgets\n4.2"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, stats = enrich_company_descriptions([j], ctx)
+
+    assert len(calls) == 1  # the company is still fetched (gd needed)
+    assert out[0].product == "Real product text"  # existing product untouched
+    assert out[0].gd_rating == "4.2"  # fetched rating now lands
+    assert stats["enriched"] == 1  # counted as real work, not skipped_cached
+
+
 def test_enrich_product_default_writes_both() -> None:
     """Default (both on) writes product and gd_rating from one 2-line response."""
     j = _enriched(comp_display="")
