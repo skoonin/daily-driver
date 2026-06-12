@@ -37,6 +37,16 @@ def test_count_jobs_by_state_buckets_unknown(tmp_path: Path) -> None:
     assert counts == {"applied": 2, "unknown": 1, "interviewing": 1}
 
 
+def test_count_jobs_by_state_normalizes_status_spelling(tmp_path: Path) -> None:
+    """A hand-edited `Ruled_Out` and a canonical `ruled-out` are the same status;
+    they must group under one count key (normalize_status), not split into two
+    buckets the way a bare `.lower()` would."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(csv_path, ["Ruled_Out", "ruled-out", "Ruled Out"])
+    counts = scraper_status.count_jobs_by_state(csv_path)
+    assert counts == {"ruled-out": 3}
+
+
 def test_count_jobs_by_state_reads_capitalized_status_column(tmp_path: Path) -> None:
     """Regression: jobs.csv uses the capitalized "Status" column. A lowercase
     "status" lookup landed every row in "unknown"; the per-state counts must

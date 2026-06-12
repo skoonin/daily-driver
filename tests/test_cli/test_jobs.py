@@ -565,6 +565,55 @@ def test_jobs_run_json_interrupt_emits_manifest_and_exits_130(
     assert payload["phase_reached"] == "enrichment"
 
 
+def test_jobs_run_json_emits_manifest_on_non_interrupt_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A non-KeyboardInterrupt crash with --json must still emit the on-disk
+    interrupted manifest to stdout, honoring the documented --json contract
+    (previously only the Ctrl-C arm re-emitted, so a crash left stdout empty)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    manifest = {
+        "started_at": "2026-06-11T00:00:00+00:00",
+        "sources_ok": [],
+        "sources_failed": [],
+        "new_jobs": 1,
+        "interrupted": True,
+        "phase_reached": "enrichment",
+    }
+
+    def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
+        # The run() wrapper writes the interrupted manifest before re-raising any
+        # crash; emulate that, then raise a non-KI exception.
+        (ws / "jobs-last-run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        raise RuntimeError("wave-1 error re-raised")
+
+    with patch("daily_driver.plugins.job_search.scraper.run", side_effect=boom):
+        rc = app(["--workspace", str(ws), "jobs", "run", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["interrupted"] is True
+    assert payload["new_jobs"] == 1
+
+
+def test_jobs_run_json_list_sources_emits_json_array(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`jobs run --json --list-sources` must emit a JSON array on stdout, not bare
+    source names, so a --json consumer never gets plain text."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    rc = app(["--workspace", str(ws), "jobs", "run", "--json", "--list-sources"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "remoteok" in payload
+    assert "jobspy" not in payload
+
+
 # ---------------------------------------------------------------------------
 # jobs status
 # ---------------------------------------------------------------------------

@@ -245,7 +245,10 @@ def _enriched_from_scraped(job: dict[str, Any]) -> EnrichedJob:  # noqa: F821
     raw = RawScrapedJob.model_validate(
         {
             "company": job.get("company", ""),
-            "role": job.get("role", "") or "(unknown)",
+            # Coerce on STRIPPED content: a whitespace-only role is truthy, so a
+            # bare `or` fallback would keep it, and RawScrapedJob then strips it to
+            # '' and the NonEmptyStr validator raises -- aborting the run.
+            "role": (job.get("role") or "").strip() or "(unknown)",
             "url": job.get("url", ""),
             "source": job.get("source", "") or "unknown",
             "location": job.get("location", ""),
@@ -768,7 +771,11 @@ class _JobSink:
             loc_skip = 0
             new = 0
             for job in jobs:
-                url = job.get("url", "")
+                # Strip the url at the dedup boundary so the in-memory known-set
+                # key matches the stripped value RawScrapedJob writes to disk and
+                # load_existing_jobs seeds back -- otherwise a padded url dedups
+                # unstripped here but stripped on disk, re-appearing as a dup.
+                url = (job.get("url") or "").strip()
                 key = dedup_key(job.get("company", ""), job.get("role", ""))
                 if (url and url in seen_urls) or (key and key in seen_keys):
                     continue  # within-call duplicate -> "other"

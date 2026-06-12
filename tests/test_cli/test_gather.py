@@ -211,6 +211,33 @@ def test_gather_git_search_paths_no_repos_prints_placeholder(
     assert "no git repos discovered" in err
 
 
+def test_gather_git_search_paths_no_repos_json_emits_envelope(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`gather git --json` with a configured-but-empty search path must still emit
+    the JSON envelope (empty commits), not short-circuit to empty stdout."""
+    import json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    empty_root = tmp_path / "empty-root"
+    empty_root.mkdir()
+    config_path = ws / ".dd-config.yaml"
+    text = config_path.read_text()
+    text += f"\ngather:\n  git:\n    search_paths:\n      - {empty_root}\n"
+    config_path.write_text(text)
+
+    rc = app(["--workspace", str(ws), "gather", "git", "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert payload["data"]["count"] == 0
+    assert payload["data"]["commits"] == []
+
+
 def test_gather_bare_prints_usage_returns_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -191,11 +191,14 @@ def _extract_json_payload(raw: str) -> str:
         if body and body[-1].strip().startswith("```"):
             body = body[:-1]
         text = "\n".join(body).strip()
-    if not text.startswith("{"):
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end > start:
-            text = text[start : end + 1]
+    # Always trim to the outermost {...} span, not only when the text fails to
+    # start with a brace: a valid object FOLLOWED by trailing prose (or a
+    # mis-stripped fence) starts with "{" yet still breaks json.loads on the
+    # extra data. The span is a no-op for a clean object.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        text = text[start : end + 1]
     return text or raw
 
 
@@ -1066,22 +1069,26 @@ def _build_fit_plan(
             updates["notes"] = notes_str
         if wrote_remote:
             updates["remote"] = remote
-        if updates:
-            # Validation (or any non-interrupt error) applying one result must
-            # fail only this job, never abort the run — run() has no incremental
-            # flush, so an escape would lose every scraped+enriched job.
-            try:
-                out[idx] = job.with_updates(**updates)
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                stats["failed"] += 1
-                log.warning(
-                    "[enrich-fit-notes] %s: dropping enrichment update (%s)",
-                    company,
-                    exc,
-                )
-                return
+        if not updates:
+            # No cell changed (e.g. a pre-existing fit with an empty-notes reply):
+            # count nothing rather than inflate the enriched total. Mirrors the
+            # company stitch, which also skips the increment on an empty update.
+            return
+        # Validation (or any non-interrupt error) applying one result must
+        # fail only this job, never abort the run — run() has no incremental
+        # flush, so an escape would lose every scraped+enriched job.
+        try:
+            out[idx] = job.with_updates(**updates)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            stats["failed"] += 1
+            log.warning(
+                "[enrich-fit-notes] %s: dropping enrichment update (%s)",
+                company,
+                exc,
+            )
+            return
         stats["enriched"] += 1
         log.debug(
             "[enrich-fit-notes] %s: pre fit=%r notes=%r -> got fit=%r notes=%r "

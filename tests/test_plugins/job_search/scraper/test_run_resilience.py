@@ -89,6 +89,70 @@ def test_append_jobs_for_source_writes_and_updates_dedup(tmp_path: Path) -> None
     assert len(sink.rows) == 3
 
 
+def test_append_source_strips_url_for_dedup_no_cross_run_duplicate(
+    tmp_path: Path,
+) -> None:
+    """A whitespace-padded scraped URL must dedup against its stripped on-disk
+    form. The row is written stripped (RawScrapedJob), and a later run seeds its
+    known set from disk (stripped); the in-memory dedup key must match so the
+    same padded URL is not re-appended as a duplicate."""
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        load_existing_jobs,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink1 = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    padded = "  https://a/1  "
+    sink1.append_source("src", [_scraped(padded, "Acme")])
+    assert [r["Link"] for r in _read_csv(csv_path)] == ["https://a/1"]
+
+    # Second run: seed known set from disk (stripped) and re-scrape the padded URL.
+    known_urls, known_keys, _hdr = load_existing_jobs(csv_path)
+    sink2 = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=known_urls,
+        known_keys=known_keys,
+        plugin=_us_remote_plugin(),
+    )
+    counts = sink2.append_source("src", [_scraped(padded, "AcmeRenamed")])
+    assert counts["known"] == 1  # deduped against the stripped on-disk URL
+    assert counts["new"] == 0
+    assert [r["Link"] for r in _read_csv(csv_path)] == ["https://a/1"]
+
+
+def test_enriched_from_scraped_coerces_whitespace_only_role() -> None:
+    """A whitespace-only role must coerce to '(unknown)', not crash the lift.
+
+    A bare-truthy '   ' skipped the `or '(unknown)'` fallback, then stripped to
+    '' and tripped the NonEmptyStr validator -- a ValidationError that escapes
+    append_source (which only catches ScraperError) and aborts the run."""
+    job = runner._enriched_from_scraped(
+        {
+            "company": "Acme",
+            "role": "   ",
+            "url": "https://a/1",
+            "source": "remoteok",
+            "location": "Remote",
+            "comp": "",
+            "date_found": "2026-06-10",
+        }
+    )
+    assert job.role == "(unknown)"
+
+
 def test_append_source_location_filters_and_drops_urlless(tmp_path: Path) -> None:
     """Per-source append mirrors run()'s funnel: location-skip and url-less drop."""
     from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
