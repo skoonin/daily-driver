@@ -1809,6 +1809,15 @@ class _RunState:
     # The overlap (wave-1) background enrichment thread, exposed so run()'s exit
     # handler can join its in-flight enrichment before the final flush/manifest.
     wave1_thread: threading.Thread | None = None
+    # The run's cooperative stop signal, exposed so the interrupt handler can set
+    # it before joining wave 1 -- the coordinator's completion loop honors it to
+    # cancel pending LLM calls and drain promptly (the bounded join then becomes a
+    # real drain rather than a wait for the full remaining budget).
+    stop_event: threading.Event | None = None
+    # Holds a wave-1 exception relayed from the background thread, so the interrupt
+    # handler can surface it (log, not re-raise -- the interrupt exit code wins)
+    # rather than letting it vanish when the thread is joined off the normal path.
+    wave1_error: list[BaseException] = field(default_factory=list)
     # Wave-1's per-phase stats and whether the normal path already folded them, so
     # the interrupt handler can account wave-1 enrichment in the manifest exactly
     # once (the normal path folds via _accumulate_enrich_stats; the interrupt path
@@ -1928,15 +1937,41 @@ def run(
         # dry-run has no sink, so there is nothing to persist and no manifest to
         # write (a dry-run leaves the previous run's manifest untouched).
         if not dry_run:
-            # Join the overlap (wave-1) background thread before the final flush so
-            # its in-flight enrichment lands on disk instead of being abandoned
-            # (the documented graceful-drain guarantee). The join is BOUNDED so a
-            # second Ctrl-C is never swallowed: if wave 1 does not settle within
-            # the bound, the daemon thread is left to expire on its own
-            # enrich_timeout and the flush proceeds with whatever it had applied.
+            # Cooperatively stop, then JOIN the overlap (wave-1) background thread
+            # before the final flush so its in-flight enrichment lands on disk
+            # instead of being abandoned. Setting stop_event makes the wave-1
+            # enrichment loop cancel its pending LLM calls and drain promptly, so
+            # the BOUNDED join is a real drain in the common case -- not a wait for
+            # the full remaining budget. The bound still caps the wait so a second
+            # Ctrl-C is never swallowed; if wave 1 does not settle within it, the
+            # daemon is left to expire on its own enrich_timeout and we disclose
+            # the under-count below. Set unconditionally -- the scrape-phase
+            # handler may already have set it, and a redundant set is harmless.
+            if state.stop_event is not None:
+                state.stop_event.set()
             wave1_thread = state.wave1_thread
             if wave1_thread is not None and wave1_thread.is_alive():
                 wave1_thread.join(timeout=_WAVE1_INTERRUPT_JOIN_SECONDS)
+                if wave1_thread.is_alive():
+                    # The daemon outlived the bound; its remaining results are not
+                    # in state.wave1_result, so the manifest will under-report and
+                    # the thread may still be flushing rows to jobs.csv. Disclose
+                    # rather than fail silently.
+                    log.warning(
+                        "wave-1 enrichment did not settle within %ss; manifest "
+                        "enrichment counts under-report rows still being written "
+                        "to %s",
+                        _WAVE1_INTERRUPT_JOIN_SECONDS,
+                        state.sink.csv_path if state.sink is not None else "jobs.csv",
+                    )
+            # Surface a relayed wave-1 exception so it does not vanish on this
+            # path. Do NOT re-raise -- the interrupt's exit code wins; the error
+            # only needs to be visible for diagnosis.
+            if state.wave1_error:
+                log.error(
+                    "wave-1 enrichment raised before the interrupt: %s",
+                    state.wave1_error[0],
+                )
             # Fold wave-1's enrichment counts into the manifest unless the normal
             # path already did (guards against double-counting).
             if not state.wave1_accumulated and state.wave1_result:
@@ -2073,6 +2108,9 @@ def _run_impl(
         context_text=context_text,
         known_urls=frozenset(known_urls),
     )
+    # Expose the cooperative stop signal so run()'s interrupt handler can set it
+    # before joining the wave-1 thread (turning the bounded join into a drain).
+    state.stop_event = ctx.stop_event
 
     # Coarse run phase for the manifest (scraping -> detail -> enrichment ->
     # complete), held on ``state`` so the run() wrapper's exit handler reads the
@@ -2202,7 +2240,15 @@ def _run_impl(
         # scrapes; Apple's rows get a second wave afterward. Budgets are SHARED
         # running totals across waves. Enrichment runs on the wave-1 thread here,
         # not the main thread, so the per-enricher SIGINT notifier no-ops (main-
-        # thread only) -- the run-level signal handler covers interrupts instead.
+        # thread only); a child thread never receives the KeyboardInterrupt. On an
+        # interrupt during the overlap, run()'s handler sets ctx.stop_event and
+        # bounded-joins this thread: the coordinator's completion loop honors the
+        # event to cancel pending LLM calls and drain what settled, so the join is
+        # a cooperative drain in the common case rather than a wait for the full
+        # remaining budget. If wave 1 still outlives the bound (a stuck in-flight
+        # call), the handler logs a disclosure that the manifest under-reports and
+        # the daemon may still be flushing -- it is NOT a hard guarantee that every
+        # wave-1 result lands, but it is no longer silently abandoned.
         enrich_cfg = plugin.enrichment
         do_enrich = not (dry_run or no_enrich)
 
@@ -2212,9 +2258,9 @@ def _run_impl(
         # (fit_attempted_urls / product_attempted_companies) so wave 2 can exclude
         # them and size the shared budget by what wave 1 actually attempted.
         # Aliased to state so the run() interrupt handler can fold wave-1 stats
-        # into the manifest after its bounded join.
+        # into the manifest and surface a relayed wave-1 exception after the join.
         wave1_result: dict[str, Any] = state.wave1_result
-        wave1_error: list[BaseException] = []
+        wave1_error: list[BaseException] = state.wave1_error
         wave1_count = [0]  # phase-1 rows handed to wave 1
 
         def _run_wave1(phase1_jobs: list[EnrichedJob]) -> None:
@@ -2258,10 +2304,16 @@ def _run_impl(
             nonlocal enrich_group, wave1_thread
             # Hand the wave the REAL sink.rows, not a copy: the enrichers
             # propagate results by replacing list slots (frozen EnrichedJob), and
-            # only the live sink.rows is what flush() reads. Apple's concurrent
-            # append only ever .extend()s sink.rows, never replacing indices
-            # 0..wave1_count, so wave-1's slot mutations are safe against the tail
-            # append. The lock is held only to read len and pin wave1_count.
+            # only the live sink.rows is what flush() reads. Wave 1 iterates this
+            # LIVE list, so once Apple's concurrent .extend() appends phase-2 rows
+            # it may also touch indices >= wave1_count (any rows present when its
+            # plan/stitch runs). That is harmless: slot replacement on a Python
+            # list is GIL-atomic so it never races Apple's append, and wave 2
+            # dedups by the attempted-identity sets (fit URLs / companies), not by
+            # index, so a phase-2 row wave 1 happened to enrich is simply excluded
+            # from wave 2 rather than re-charged. wave1_count is pinned here only
+            # to size wave 2's "is there leftover work" check, not to bound which
+            # slots wave 1 writes. The lock is held only to read len consistently.
             with sink._rows_lock:
                 phase1_jobs = sink.rows
                 wave1_count[0] = len(phase1_jobs)

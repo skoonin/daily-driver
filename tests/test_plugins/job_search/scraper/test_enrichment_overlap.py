@@ -171,6 +171,96 @@ def test_interrupt_mid_overlap_drains_both_and_reraises_once(
     assert fits, "expected at least one fit applied after interrupt"
 
 
+def test_stop_event_drains_completed_and_skips_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setting ctx.stop_event mid-overlap makes the coordinator drain the already
+    completed results, cancel the pending futures, stitch, and return promptly --
+    so the wave-1 interrupt join is a real cooperative drain, not a 30s wait that
+    lets the daemon spend the full remaining budget.
+
+    The first few calls return fast; later calls block on an event the test never
+    releases. Once enough fast results have landed, the test sets stop_event. The
+    coordinator must return without those blocked calls completing, applying only
+    the results it had in hand.
+    """
+    max_parallel = 4
+    ctx = _ctx(max_parallel=max_parallel)
+    count = [0]
+    count_lock = threading.Lock()
+    block = threading.Event()
+    blocking_started = [0]
+    # Each blocked call is short; the win is that the coordinator only waits out
+    # the calls already in flight at stop (<= max_parallel), not the full budget.
+    block_secs = 0.3
+
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+        with count_lock:
+            count[0] += 1
+            n = count[0]
+        is_fit = "valid JSON" in prompt
+        if n <= max_parallel:
+            return '{"fit": 7, "notes": "ok"}' if is_fit else "Some product"
+        # Pending calls block. If the cooperative drain works, only the calls
+        # already running at stop time keep going -- no NEW ones are started.
+        with count_lock:
+            blocking_started[0] += 1
+        block.wait(timeout=block_secs)
+        return '{"fit": 7, "notes": "ok"}' if is_fit else "Some product"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+
+    # 16 jobs -> 32 calls; the full remaining budget at block_secs each would be
+    # many seconds if the loop ran every future. The drain caps the wait at the
+    # in-flight calls (<= max_parallel) plus one block window.
+    jobs = _jobs(16)
+
+    def trip_stop() -> None:
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            with count_lock:
+                if count[0] >= max_parallel:
+                    break
+            time.sleep(0.01)
+        ctx.stop_event.set()
+
+    threading.Thread(target=trip_stop, daemon=True).start()
+    start = time.time()
+    out, product_stats, fit_stats = enrich_product_and_fit_concurrently(jobs, ctx)
+    elapsed = time.time() - start
+    block.set()
+
+    # Returned after roughly one block window (the in-flight calls), NOT after
+    # draining the whole remaining budget serially through the cap.
+    assert elapsed < 2.0, f"coordinator did not drain promptly ({elapsed:.2f}s)"
+    # No more than the in-flight set ever entered the blocking branch -- pending
+    # work was cancelled, not run.
+    assert blocking_started[0] <= max_parallel, blocking_started[0]
+    # At least the fast results were applied; not every job (we stopped early).
+    applied = sum(1 for j in out if j.product == "Some product" or j.fit == 7)
+    assert applied >= 1
+    assert applied < len(jobs), "expected an early stop, not a full enrichment"
+
+
+def test_stop_event_unset_leaves_normal_path_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the event never set, the coordinator enriches every job as before."""
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda prompt, **k: (
+            '{"fit": 7, "notes": "ok"}' if "valid JSON" in prompt else "Some product"
+        ),
+    )
+    ctx = _ctx(max_parallel=4)
+    out, product_stats, fit_stats = enrich_product_and_fit_concurrently(_jobs(8), ctx)
+    assert all(j.product == "Some product" for j in out)
+    assert all(j.fit == 7 for j in out)
+    assert product_stats["enriched"] == 8
+    assert fit_stats["enriched"] == 8
+
+
 def test_interrupt_restores_previous_sigint_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

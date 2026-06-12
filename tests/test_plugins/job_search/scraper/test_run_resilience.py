@@ -674,6 +674,135 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
     assert manifest["enriched_fit_notes"] >= 1
 
 
+def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When the wave-1 thread does not settle within the (shortened) join bound,
+    the handler must DISCLOSE the under-count with a WARNING rather than fail
+    silently -- and still write the manifest and exit on the interrupt."""
+    import json
+    import logging
+    import threading
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    # Shorten the bound so the test does not wait the real 30s; the stuck call
+    # below outlives it.
+    monkeypatch.setattr(runner, "_WAVE1_INTERRUPT_JOIN_SECONDS", 0.3)
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    wave1_in_flight = threading.Event()
+    release = threading.Event()
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_phase1_done: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", phase1)
+        if on_phase1_done is not None:
+            on_phase1_done(True)
+        wave1_in_flight.wait(timeout=5)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    def fake_invoke(prompt: str, **kw: Any) -> str:
+        # Block well past the shortened join bound so wave 1 is still alive when
+        # the handler gives up. The coordinator's stop_event check cannot cancel a
+        # call already in flight, so this models a stuck in-flight LLM call.
+        wave1_in_flight.set()
+        release.wait(timeout=5)
+        return '{"fit": 6, "notes": "match"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(KeyboardInterrupt):
+            runner.run(
+                _overlap_plugin(budget=10),
+                tmp_path,
+                tmp_path,
+                ai=_serial_ctx().ai,
+                no_enrich=False,
+            )
+    release.set()
+
+    assert any("did not settle within" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
+    # The manifest is still written despite the unsettled wave.
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["interrupted"] is True
+
+
+def test_overlap_interrupt_logs_relayed_wave1_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A wave-1 exception must be surfaced (logged) on the interrupt path, not
+    vanish -- and the interrupt exit code still wins (the error is not re-raised
+    over it)."""
+    import logging
+    import threading
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    wave1_failed = threading.Event()
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_phase1_done: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", phase1)
+        if on_phase1_done is not None:
+            on_phase1_done(True)
+        # Wait for wave 1 to fail, then interrupt the main thread.
+        wave1_failed.wait(timeout=5)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    # A wave-level failure (not a per-result one, which _guarded_consume swallows)
+    # escapes the coordinator and is relayed via _run_wave1's except into
+    # wave1_error. Patch the coordinator to raise so the relay path is exercised.
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def boom_concurrent(*_a: Any, **_kw: Any) -> Any:
+        wave1_failed.set()
+        raise RuntimeError("wave-1 boom")
+
+    monkeypatch.setattr(
+        enrichment_pkg, "enrich_product_and_fit_concurrently", boom_concurrent
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(KeyboardInterrupt):
+            runner.run(
+                _overlap_plugin(budget=10),
+                tmp_path,
+                tmp_path,
+                ai=_serial_ctx().ai,
+                no_enrich=False,
+            )
+
+    assert any(
+        "wave-1 enrichment raised before the interrupt" in r.getMessage()
+        for r in caplog.records
+    ), [r.getMessage() for r in caplog.records]
+
+
 def test_company_phase_labeled_glassdoor_when_product_disabled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
