@@ -1930,3 +1930,28 @@ def test_checkpoint_disk_error_stops_source_at_failure(
 
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
     assert "linkedin" in manifest["sources_failed"]
+
+
+def test_run_completion_line_reports_total_run_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The end-of-run summary names the total wall-clock duration."""
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", [_scraped("https://a/1", "Acme")])
+        return [], [], []
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "Total run time:" in err

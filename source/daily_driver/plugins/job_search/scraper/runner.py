@@ -1327,7 +1327,7 @@ def run_backfill(
     rows, so handing the whole row list to the wave enriches only the empties.
 
     ``limit`` caps LLM spend this invocation by bounding BOTH the product and fit
-    budgets at ``limit`` (``None`` -> 0, the config-cap sentinel; the CLI rejects
+    budgets at ``limit`` (``None`` = the config caps; the CLI rejects
     ``limit < 1``). ``dry_run`` reports the per-phase would-enrich counts and
     makes zero LLM/detail calls and zero writes (no backup either).
 
@@ -1354,6 +1354,7 @@ def run_backfill(
     if not csv_path.exists():
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
+    backfill_started_at = datetime.now(timezone.utc)
     ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
     ai_cfg = ctx.ai
     clear_stale_adjacent_lock(csv_path)
@@ -1543,10 +1544,12 @@ def run_backfill(
                 raise
 
     after = _backfill_needs(jobs, plugin)
+    elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
     Console.success(
         f"Backfill complete: +{needs['product'] - after['product']} Product, "
         f"+{needs['gd'] - after['gd']} GD, "
-        f"+{needs['fit_notes'] - after['fit_notes']} Fit/Notes"
+        f"+{needs['fit_notes'] - after['fit_notes']} Fit/Notes. "
+        f"Total run time: {_fmt_duration(elapsed)}."
     )
     # The rewrite ran (this point is reached only past the no-enrichment early
     # return), so any status spellings it canonicalized are now on disk. Make
@@ -2545,8 +2548,10 @@ def _run_impl(
     assert sink is not None  # dry_run returned above; non-dry-run always has a sink
     written = len(sink.rows)
     skip_note = " (enrichment skipped)" if no_enrich else ""
+    elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
     Console.success(
-        f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note}"
+        f"Scraper complete: {written} new jobs appended to {csv_path}.{skip_note} "
+        f"Total run time: {_fmt_duration(elapsed)}."
     )
 
     # Write the completion manifest BEFORE the final flush, so a final-flush
