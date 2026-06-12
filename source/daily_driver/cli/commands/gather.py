@@ -132,7 +132,9 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
 
             expanded = [Path(p).expanduser() for p in configured]
             repos = discover_repos(expanded)
-            if not repos:
+            if not repos and not args.json:
+                # --json must still emit the envelope below (empty commits); only
+                # the human path short-circuits with a placeholder note.
                 Console.info(
                     "(no git repos discovered under configured search_paths: "
                     f"{', '.join(str(p) for p in expanded)})"

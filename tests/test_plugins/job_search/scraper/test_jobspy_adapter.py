@@ -338,8 +338,10 @@ class TestMergedJobspyScraper:
             self._config(), report=lambda done, total: reports.append((done, total))
         )
         scrape_jobspy(ctx)
-        # One config term x one country -> reported once at (0, 1).
+        # One config term x one country -> reported at the top (0, 1) and a
+        # trailing (1, 1) so the live bar reaches full instead of stalling at 0/1.
         assert reports and reports[0] == (0, 1)
+        assert reports[-1] == (1, 1)
         assert all(total == 1 for _done, total in reports)
 
     def test_checkpoints_each_term_country_unit(

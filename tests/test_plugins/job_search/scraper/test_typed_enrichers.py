@@ -112,6 +112,38 @@ def test_fit_enrich_score_survives_round_trip(
     assert out[0].notes == "k8s"
 
 
+def test_fit_enriched_counter_not_incremented_on_empty_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A job with a pre-existing Fit but blank Notes is eligible; if the model
+    returns the same fit and empty notes, nothing is written — and the enriched
+    counter must NOT increment (it flows to the manifest's enriched_fit_notes)."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda *a, **k: '{"fit": 7, "notes": "", "remote": ""}',
+    )
+    # fit already set, notes blank -> eligible; model gives no new notes.
+    j = _enriched(fit=5, notes="")
+    out, stats = enrich_fit_and_notes([j], ctx, budget=5)
+    assert out[0].fit == 5  # no cell changed
+    assert out[0].notes == ""
+    assert stats["enriched"] == 0  # no write -> not counted as enriched
+
+
 def _fit_ctx(**enrichment: object) -> ScrapeContext:
     base: dict[str, object] = {
         "provider": "ollama",
@@ -369,6 +401,32 @@ def test_fit_parses_prose_wrapped_json(
     assert stats["failed"] == 0
 
 
+def test_fit_parses_leading_brace_with_trailing_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response that opens with a valid JSON object then adds trailing prose
+    must still parse. The span-extraction fallback used to be skipped whenever the
+    text already started with a brace, so json.loads choked on the trailing data."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    chatty = '{"fit": 7, "notes": "strong SRE match"} hope that helps'
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: chatty)
+    j = _enriched(url="https://x/1", description_text="d")
+    out, stats = enrich_fit_and_notes([j], ctx)
+    assert out[0].fit == 7
+    assert stats["failed"] == 0
+
+
 def test_fit_truly_non_json_still_counted_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -550,6 +608,29 @@ def test_enrich_gd_off_writes_product_not_gd() -> None:
     assert "Glassdoor" not in calls[0]  # prompt does not ask for a rating
     assert out[0].product == "Acme builds widgets"
     assert out[0].gd_rating == ""  # never written when gd disabled
+
+
+def test_gd_rating_written_when_product_already_filled() -> None:
+    """Both toggles on, product already filled but GD blank: the fetched rating
+    must be written, not discarded. The product-filled early-skip used to
+    short-circuit the row before the gd write, burning budget every run with no
+    forward progress."""
+    j = _enriched(product="Real product text", gd_rating="")
+    ctx = _company_ctx(enrich_product=True, enrich_gd_rating=True)
+    calls: list[str] = []
+
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        calls.append(prompt)
+        return "Acme builds widgets\n4.2"
+
+    with patch("shutil.which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+            out, stats = enrich_company_descriptions([j], ctx)
+
+    assert len(calls) == 1  # the company is still fetched (gd needed)
+    assert out[0].product == "Real product text"  # existing product untouched
+    assert out[0].gd_rating == "4.2"  # fetched rating now lands
+    assert stats["enriched"] == 1  # counted as real work, not skipped_cached
 
 
 def test_enrich_product_default_writes_both() -> None:

@@ -379,6 +379,12 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
                     )
                     return jobs
 
+    # Every unit completed: report the final count so the live bar reaches
+    # total/total during the run, not total-1/total (the per-iteration report
+    # fires at the TOP of each unit, so the last unit is otherwise never
+    # reported and only Item.finish fills the bar at the very end).
+    ctx.report(done, total)
+
     # An enabled site that contributed nothing all run is the per-board outage
     # signal the merge would otherwise hide; surface it.
     for site, count in rows_per_site.items():

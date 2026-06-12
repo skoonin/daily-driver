@@ -124,10 +124,33 @@ def prune(
                 Console.info(notice)
             warn_unknown_job_statuses([r.get("Status", "") for r in keep + candidates])
 
-        _append_rows(archive_path_for(jobs_csv), header, candidates)
+        _archive_candidates(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
 
     return candidates, len(candidates)
+
+
+def _archive_candidates(
+    archive: Path, header: list[str], candidates: list[dict[str, str]]
+) -> None:
+    """Append pruned rows to the archive, reconciling a drifted header.
+
+    The archive shares jobs.csv's schema, but the schema drifts across releases
+    (e.g. the 0.2.0 Remote-column upgrade reorders/widens the header). A blind
+    append writes the new rows under a header that no longer matches the
+    archive's own header row, shifting every cell so the archived Link becomes
+    unreadable and the triaged job is re-discovered. When the existing archive's
+    header differs from jobs.csv's, rewrite the whole archive under the union of
+    both column sets (jobs.csv order first, then any archive-only columns) so
+    every row — old and new — is keyed correctly. A matching or absent header
+    takes the cheap append.
+    """
+    existing_header, existing_rows = _read_rows(archive)
+    if not existing_header or existing_header == header:
+        _append_rows(archive, header, candidates)
+        return
+    union_header = header + [c for c in existing_header if c not in header]
+    _atomic_write_rows(archive, union_header, existing_rows + candidates)
 
 
 def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:

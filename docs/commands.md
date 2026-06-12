@@ -269,7 +269,7 @@ Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut sh
 
 ### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run]`
 
-Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. Pass `--status active` to nuke stale active rows.
+Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`.
 
 ## Scheduler (macOS)
 

@@ -175,7 +175,8 @@ def add_parser(
         metavar="STATUS",
         help=(
             "Status to prune (repeatable). Default: dropped, rejected, closed. "
-            "Use --status active to nuke stale active rows."
+            "Use --status applied --status interviewing to prune stale "
+            "in-progress rows."
         ),
     )
     p_prune.add_argument(
@@ -246,8 +247,13 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 
     if getattr(args, "list_sources", False):
-        for sid in sorted(SCRAPERS):
-            print(sid)
+        if getattr(args, "json", False):
+            # --json owns stdout for jq; emit the source list as a JSON array
+            # rather than bare lines so a --json consumer never gets plain text.
+            print(json.dumps(sorted(SCRAPERS)))
+        else:
+            for sid in sorted(SCRAPERS):
+                print(sid)
         return 0
 
     sources_override: list[str] | None = None
@@ -311,6 +317,14 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         if emit_json:
             _emit_run_manifest(output_dir)
         return 143 if sigterm else 130
+    except Exception:
+        # A non-interrupt crash also has an interrupted=True manifest on disk
+        # (the run() wrapper writes one on every exit); re-emit it so a --json
+        # consumer gets the documented JSON on stdout instead of nothing, then
+        # re-raise to the cli-level handler (stderr + exit 1).
+        if emit_json:
+            _emit_run_manifest(output_dir)
+        raise
     finally:
         restore_sigterm_handler(sigterm_prev)
 

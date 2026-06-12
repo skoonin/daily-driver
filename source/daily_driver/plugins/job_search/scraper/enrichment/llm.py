@@ -20,7 +20,13 @@ import re
 import shutil
 import threading
 from collections.abc import Callable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -191,11 +197,14 @@ def _extract_json_payload(raw: str) -> str:
         if body and body[-1].strip().startswith("```"):
             body = body[:-1]
         text = "\n".join(body).strip()
-    if not text.startswith("{"):
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end > start:
-            text = text[start : end + 1]
+    # Always trim to the outermost {...} span, not only when the text fails to
+    # start with a brace: a valid object FOLLOWED by trailing prose (or a
+    # mis-stripped fence) starts with "{" yet still breaks json.loads on the
+    # extra data. The span is a no-op for a clean object.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        text = text[start : end + 1]
     return text or raw
 
 
@@ -393,9 +402,15 @@ def _build_company_plan(
     def _stitch() -> None:
         for i, job in enumerate(out):
             # The cached-skip shortcut applies only when product enrichment is
-            # on (product_filled means no further product work). With product
-            # disabled, a product-filled job may still need its gd_rating.
-            if include_product and job.product_filled:
+            # on (product_filled means no further product work) AND there is no
+            # remaining gd work: a product-filled job with a blank gd_rating
+            # still needs the rating written (the company pass serves both
+            # fields and may have fetched it), so fall through to the gd branch.
+            if (
+                include_product
+                and job.product_filled
+                and (not include_gd or job.gd_rating)
+            ):
                 stats["skipped_cached"] += 1
                 continue
             company = job.company.strip()
@@ -403,7 +418,7 @@ def _build_company_plan(
             if not cached:
                 continue
             updates: dict[str, Any] = {}
-            if include_product and cached.get("product"):
+            if include_product and not job.product_filled and cached.get("product"):
                 updates["product"] = cached["product"]
             if cached.get("gd_rating") and not job.gd_rating:
                 updates["gd_rating"] = cached["gd_rating"]
@@ -569,6 +584,11 @@ _CRITERIA_SKIP_VALUES = {"unknown", "n/a"}
 # Warn when an injected context.md exceeds this rough token estimate, since it
 # rides every per-job enrichment prompt and multiplies cost across the run.
 _CONTEXT_WARN_TOKENS = 1500
+
+# How often the overlapped coordinator re-checks ctx.stop_event while waiting on
+# in-flight LLM futures. Short enough that a cooperative stop returns promptly
+# even when every future is mid-call, cheap enough to be a no-op on a normal run.
+_OVERLAP_STOP_POLL_SECONDS = 0.1
 
 
 def _fold_criteria_values(
@@ -1060,22 +1080,26 @@ def _build_fit_plan(
             updates["notes"] = notes_str
         if wrote_remote:
             updates["remote"] = remote
-        if updates:
-            # Validation (or any non-interrupt error) applying one result must
-            # fail only this job, never abort the run — run() has no incremental
-            # flush, so an escape would lose every scraped+enriched job.
-            try:
-                out[idx] = job.with_updates(**updates)
-            except KeyboardInterrupt:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                stats["failed"] += 1
-                log.warning(
-                    "[enrich-fit-notes] %s: dropping enrichment update (%s)",
-                    company,
-                    exc,
-                )
-                return
+        if not updates:
+            # No cell changed (e.g. a pre-existing fit with an empty-notes reply):
+            # count nothing rather than inflate the enriched total. Mirrors the
+            # company stitch, which also skips the increment on an empty update.
+            return
+        # Validation (or any non-interrupt error) applying one result must
+        # fail only this job, never abort the run — run() has no incremental
+        # flush, so an escape would lose every scraped+enriched job.
+        try:
+            out[idx] = job.with_updates(**updates)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            stats["failed"] += 1
+            log.warning(
+                "[enrich-fit-notes] %s: dropping enrichment update (%s)",
+                company,
+                exc,
+            )
+            return
         stats["enriched"] += 1
         log.debug(
             "[enrich-fit-notes] %s: pre fit=%r notes=%r -> got fit=%r notes=%r "
@@ -1435,18 +1459,46 @@ def enrich_product_and_fit_concurrently(
                 futures[pool.submit(fit_plan.fetch, fit_q[fi])] = ("fit", fit_q[fi])
                 fi += 1
 
-        try:
-            for fut in as_completed(futures):
-                _dispatch(fut)
-        except KeyboardInterrupt:
+        def _drain_settled() -> None:
+            # Cancel pending futures and apply the results already in hand, then
+            # stitch. Shared by the KeyboardInterrupt path and the cooperative
+            # stop_event path so both quiesce identically.
             pool.shutdown(wait=False, cancel_futures=True)
             for fut in futures:
                 if fut.done() and not fut.cancelled():
-                    # _dispatch already swallows non-interrupt errors, so KI
-                    # always survives the drain to re-raise below.
+                    # _dispatch swallows non-interrupt errors, so a KI in a
+                    # settled future still survives the drain to re-raise.
                     _dispatch(fut)
             if company_plan is not None:
                 company_plan.stitch()
+
+        try:
+            # Poll with a bounded wait rather than a bare as_completed loop so the
+            # cooperative stop_event is honored even while every in-flight future
+            # is still blocked (a long LLM call): as_completed would not yield --
+            # and so never re-check the event -- until the next completion.
+            pending: set[Future[Any]] = set(futures)
+            while pending:
+                # Cooperative stop: an interrupt during the scrape/enrich overlap
+                # sets ctx.stop_event on the MAIN thread. A child thread never
+                # receives the KeyboardInterrupt, so without this check the loop
+                # would run every submitted future to completion (spending the
+                # full remaining LLM budget) before the caller's bounded join
+                # gives up. On stop, drain what settled and return -- making that
+                # join a real drain. The normal path (event never set) applies
+                # every completion exactly as a plain as_completed loop would.
+                if ctx.stop_event.is_set():
+                    _drain_settled()
+                    return jobs, product_stats, fit_stats
+                done, pending = wait(
+                    pending,
+                    timeout=_OVERLAP_STOP_POLL_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                for fut in done:
+                    _dispatch(fut)
+        except KeyboardInterrupt:
+            _drain_settled()
             raise
         finally:
             _restore_interrupt_handler(previous_handler)
