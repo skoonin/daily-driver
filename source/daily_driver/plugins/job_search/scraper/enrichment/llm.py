@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
-from daily_driver.integrations import ai_provider, claude_cli, ollama_client
+from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
 from daily_driver.plugins.job_search.config import Criterion
 from daily_driver.plugins.job_search.scraper.enrichment._shared import (
@@ -71,16 +71,6 @@ def _reset_ollama_hint() -> None:
     global _ollama_hint_logged
     with _OLLAMA_HINT_LOCK:
         _ollama_hint_logged = False
-
-
-def _reset_ollama_admission(ctx: ScrapeContext) -> None:
-    """Arm the ollama admission pool at max_parallel for an ollama enrich run.
-
-    No-op for the claude provider: admission control is ollama-only (the claude
-    path is rate-limited by the API, not by local server parallelism).
-    """
-    if ctx.plugin.enrichment.provider == "ollama":
-        ollama_client.reset_admission_control(ctx.ai.ollama.max_parallel)
 
 
 def _log_provider_timeout(tag: str, label: str, provider: str, seconds: int) -> None:
@@ -500,7 +490,6 @@ def enrich_company_descriptions(
     """
     if _reset_hint:
         _reset_ollama_hint()
-        _reset_ollama_admission(ctx)
     plan = _build_company_plan(
         jobs, ctx, budget, progress, exclude_companies, on_planned=on_planned
     )
@@ -1200,7 +1189,6 @@ def enrich_fit_and_notes(
     """
     if _reset_hint:
         _reset_ollama_hint()
-        _reset_ollama_admission(ctx)
     plan = _build_fit_plan(
         jobs, ctx, budget, progress, exclude_urls, on_planned=on_planned
     )
@@ -1354,7 +1342,6 @@ def enrich_product_and_fit_concurrently(
     actually attempted (unique companies for product, jobs for fit).
     """
     _reset_ollama_hint()
-    _reset_ollama_admission(ctx)
     # Compose the periodic flush onto each progress callback; a single shared
     # counter spans both enrichers so the flush cadence is per total result, not
     # per enricher.
