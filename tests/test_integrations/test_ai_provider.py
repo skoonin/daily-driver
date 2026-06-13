@@ -31,6 +31,17 @@ def test_claude_route_dispatches_to_claude() -> None:
     assert kwargs["model"] == "sonnet"
 
 
+def test_claude_route_never_touches_ollama_admission_pool() -> None:
+    """The claude path must not acquire an ollama permit: admission control is
+    ollama-only and rate-limited claude calls should never be throttled by it."""
+    with (
+        patch.object(claude_cli, "invoke", return_value="ok"),
+        patch.object(ollama_client._controller, "acquire") as acquire,
+    ):
+        ai_provider.invoke_for("hi", provider="claude", model="sonnet", ai=AIConfig())
+    assert acquire.call_count == 0
+
+
 def test_claude_route_default_model_none() -> None:
     with patch.object(claude_cli, "invoke", return_value="ok") as inv:
         ai_provider.invoke_for("hi", provider="claude", model=None, ai=AIConfig())

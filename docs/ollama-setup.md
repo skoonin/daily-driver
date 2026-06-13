@@ -126,6 +126,8 @@ OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_C
 - `OLLAMA_KV_CACHE_TYPE=q8_0` — roughly halves KV-cache memory with minimal quality cost; the lever that makes `NUM_PARALLEL > 1` fit on one machine.
 - `OLLAMA_MAX_LOADED_MODELS=1` — single-model use; avoid evicting the enrichment model.
 
+If you can't match `OLLAMA_NUM_PARALLEL` to `ai.ollama.max_parallel`, the client adapts on its own. Ollama's response reports the server time spent on each request (`total_duration`), so the client measures how long a call waited in the server-side queue (wall time minus server time) and, when that queue wait is high or a call times out, narrows its own concurrency toward the server's real parallelism for the rest of the run. This stops a too-wide fan-out from burning the whole run on queued-then-timed-out calls. Setting `OLLAMA_NUM_PARALLEL` server-side is still worth it: the client adaptation only avoids self-inflicted queueing — true parallel throughput still comes from the server serving more requests at once.
+
 If the server is down during a scheduled run, enrichment calls fail and are counted, the scrape itself still completes and appends its rows, and a later `jobs backfill` fills the gaps.
 
 ## Doctor output reference
