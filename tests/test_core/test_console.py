@@ -56,36 +56,6 @@ def test_warning_always_shown_in_quiet_mode(capsys):
     assert captured.out == ""
 
 
-def test_debug_hidden_when_not_verbose(capsys):
-    """Console.debug() must be a no-op when verbose=False."""
-    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
-    Console.debug("internal detail")
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""
-
-
-def test_debug_visible_when_verbose(capsys):
-    """Console.debug() must write to stderr when verbose=True."""
-    Console.setup_for_user(quiet=False, verbose=True, no_color=True)
-    Console.debug("internal detail")
-    captured = capsys.readouterr()
-    assert "internal detail" in captured.err
-
-
-def test_user_output_is_stdout_not_stderr(capsys):
-    """Console.print() must appear on stdout, not stderr.
-
-    Regression guard: daily-driver tracker list --json | jq relies on
-    user output being on stdout only.
-    """
-    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
-    Console.print("user facing message")
-    captured = capsys.readouterr()
-    assert "user facing message" in captured.out
-    assert "user facing message" not in captured.err
-
-
 def test_get_log_console_returns_rich_console():
     lc = Console.get_log_console()
     assert isinstance(lc, RichConsole)

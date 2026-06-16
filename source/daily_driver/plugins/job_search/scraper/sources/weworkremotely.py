@@ -30,7 +30,6 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
-    roles = list(ctx.plugin.roles)
     session = _http_session(ctx)
     jobs: list[dict] = []
     seen_urls: set[str] = set()
@@ -47,6 +46,12 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
     total = len(categories)
     done = 0
     for category in categories:
+        # Graceful-stop checkpoint between categories: return what matched so far.
+        if ctx.stop_event.is_set():
+            log.info(
+                "[weworkremotely] stop requested; keeping %d jobs so far", len(jobs)
+            )
+            return jobs
         ctx.report(done, total)
         done += 1
         url = f"https://weworkremotely.com/categories/remote-{category}-jobs.rss"
@@ -71,7 +76,7 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
             else:
                 company, role = "", raw_title
 
-            if not role or not matches_roles(role, roles, ctx.plugin):
+            if not role or not matches_roles(role, ctx.plugin):
                 continue
             if link in seen_urls:
                 continue

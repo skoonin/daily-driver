@@ -11,6 +11,16 @@ from typing import Any
 
 import requests
 
+from daily_driver.core.logging import get_logger
+
+log = get_logger(__name__)
+
+# Fallback model when a route resolves to ollama with no explicit model. Single
+# source of truth so the dispatch layer and both doctor checks can never name
+# different defaults (a mismatch would have doctor green a model the run won't
+# actually use).
+DEFAULT_MODEL = "qwen2.5:14b"
+
 
 class OllamaNotReachableError(RuntimeError):
     """Raised when the Ollama HTTP endpoint cannot be contacted."""
@@ -31,6 +41,35 @@ class OllamaResponseError(RuntimeError):
     """
 
 
+# Ollama's effective context default (OLLAMA_CONTEXT_LENGTH) varies by machine
+# (commonly 4k, scaling up with VRAM) and silently truncates prompts past it,
+# so we size num_ctx per request from the prompt. ~4 chars/token matches the
+# llm.py estimate; +1024 leaves output headroom; floor keeps a sane minimum and
+# the cap bounds the per-request RAM allocation (RAM scales with context).
+_NUM_CTX_FLOOR = 4096
+_NUM_CTX_CAP = 16384
+_OUTPUT_HEADROOM_TOKENS = 1024
+
+
+def _estimate_num_ctx(prompt: str) -> int:
+    """Size options.num_ctx for a prompt: est. tokens + headroom, floored/capped.
+
+    Warns once when the estimate exceeds the cap: the server allocates only the
+    capped window, so the prompt tail past it is truncated silently server-side.
+    Surfacing it here turns a silent quality loss into a visible signal.
+    """
+    prompt_tokens = len(prompt) // 4  # ~4 chars/token, consistent with llm.py
+    sized = prompt_tokens + _OUTPUT_HEADROOM_TOKENS
+    if sized > _NUM_CTX_CAP:
+        log.warning(
+            "prompt needs ~%d context tokens but num_ctx is capped at %d; "
+            "prompt tail will be truncated server-side",
+            sized,
+            _NUM_CTX_CAP,
+        )
+    return max(_NUM_CTX_FLOOR, min(sized, _NUM_CTX_CAP))
+
+
 def generate(
     prompt: str,
     *,
@@ -47,7 +86,12 @@ def generate(
         requests.HTTPError: any other non-2xx response.
         requests.Timeout: request exceeded `timeout` seconds.
     """
-    body: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False}
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"num_ctx": _estimate_num_ctx(prompt)},
+    }
     if format_json:
         body["format"] = "json"
     url = f"{endpoint.rstrip('/')}/api/generate"
@@ -92,12 +136,3 @@ def list_models(endpoint: str, timeout: int = 5) -> list[str]:
     resp.raise_for_status()
     data = resp.json() or {}
     return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
-
-
-def reachable(endpoint: str, timeout: int = 5) -> bool:
-    """True if `GET /api/tags` returns 2xx; False on any connection failure."""
-    try:
-        list_models(endpoint, timeout=timeout)
-    except (OllamaNotReachableError, requests.RequestException):
-        return False
-    return True

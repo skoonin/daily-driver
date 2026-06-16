@@ -17,7 +17,9 @@ import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
+from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import make_enriched
 
 
 @pytest.fixture
@@ -38,15 +40,8 @@ def fake_config() -> ScrapeContext:
     )
 
 
-def _job(url: str, **overrides: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {
-        "company": "Acme",
-        "role": "SRE",
-        "url": url,
-        "source": "test",
-    }
-    base.update(overrides)
-    return base
+def _job(url: str, **overrides: Any) -> EnrichedJob:
+    return make_enriched(company="Acme", url=url, source="test", **overrides)
 
 
 def test_hn_item_url_is_skipped_without_fetch(
@@ -148,7 +143,7 @@ def test_progress_callback_fires_once_per_real_fetch(
             return_value={},
         ),
     ):
-        stats = enrich_job_details(
+        _out, stats = enrich_job_details(
             jobs, fake_config, progress=lambda n, d: calls.append((n, d))
         )
 
@@ -172,11 +167,11 @@ def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
             "daily_driver.plugins.job_search.scraper.enrichment.detail._parse_detail_page"
         ) as parse,
     ):
-        enrich_job_details(jobs, fake_config)
+        out, _ = enrich_job_details(jobs, fake_config)
 
     # Parser must not be invoked when the fetch failed terminally.
     assert parse.call_count == 0
-    assert "comp" not in jobs[0] or not jobs[0].get("comp")
+    assert not out[0].comp
 
 
 def test_session_is_reused_across_jobs(fake_config: ScrapeContext) -> None:

@@ -35,6 +35,12 @@ tracker:
   # ruled-out). Entries still save with the custom status; the warning
   # is a one-time hint. Set to false to silence.
   # warn_unknown_status: true
+  # Extra status values to add to the tracker's recommended set, on top
+  # of the built-ins (open, in-progress, blocked, done, ruled-out). Values
+  # here never trigger the `warn_unknown_status` nudge. Spelling is
+  # normalized (case-folded, underscores -> hyphens), so `ruled_out` and
+  # `ruled-out` are the same status.
+  # extra_statuses: [waiting, snoozed]
   categories:
     task:
       required: [title]
@@ -83,17 +89,13 @@ tracker:
 #   # day and want check-in to land in it.
 #   resume_check_in: false
 
-# Optional: AI provider routing for headless tasks (enrichment, summary).
+# Optional: AI provider routing for the headless `summary` task,
+# plus the shared claude/ollama provider-connection blocks (also
+# consulted by `plugins.job_search.enrichment` routing).
 # Interactive launchers (day-start, check-in, day-end) always use claude —
 # they need session resume / agents / workspace context that Ollama lacks.
-# Omitting the entire block keeps claude defaults for every task.
+# Omitting the entire block keeps claude defaults for summary.
 # ai:
-#   enrichment:
-#     # provider: claude | ollama
-#     provider: claude
-#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
-#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
-#     # model: sonnet
 #   summary:
 #     # provider: claude | ollama
 #     provider: claude
@@ -130,7 +132,6 @@ tracker:
 # plugins:
 #   job_search:
 #     persona: "Senior SRE / Platform Engineer"
-#     home_city: "Vancouver, BC"
 #     roles: []  # ["SRE", "Platform Engineer"]
 #     domain_keywords: []  # ["kubernetes", "observability"]
 #     seniority_keywords: []  # ["senior", "staff", "principal"]
@@ -156,7 +157,7 @@ tracker:
 #       # Apple). When unset, terms are derived from roles and keywords.
 #       search_terms: null
 #       # Worker threads for the parallel (headless) scrape phase.
-#       parallel_workers: 4
+#       parallel_workers: 8
 #       # Pagination / scroll passes per search term (Apple, JobSpy).
 #       max_pages: 3
 #       # Playwright engine for browser-driven sources (Apple). One of
@@ -167,16 +168,25 @@ tracker:
 #     # Glassdoor rating, a fit score, and a Notes summary. Each pass
 #     # costs API calls; the max_* values cap how many run.
 #     enrichment:
+#       # provider: claude | ollama
+#       provider: claude
+#       # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#       # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#       # model: sonnet
 #       # Seconds before a single enrichment LLM call is abandoned.
 #       enrich_timeout: 30
 #       # Cap on company-description lookups per run (bounds API cost).
 #       max_enrich_companies: 50
+#       # Look up a one-line Product/Purpose summary for each company.
+#       enrich_product: true
 #       # Look up each company's Glassdoor rating during enrichment.
 #       enrich_gd_rating: true
 #       # Score each job 1-10 for fit against your persona and locations.
 #       enrich_fit: true
 #       # Generate a one-line Notes summary (tech stack, remote policy, red flags).
 #       enrich_notes: true
+#       # Judge each job remote/hybrid/onsite during the fit/notes pass (no extra LLM call).
+#       enrich_is_remote: true
 #       # Cap on fit/notes LLM calls per run (bounds API cost).
 #       max_enrich_fit: 50
 #       # Pause between detail-page fetches, in seconds, to avoid rate limits.
@@ -217,16 +227,17 @@ tracker:
 #       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
 #
-#       # python-jobspy aggregator. Each site runs as a separate parallel
-#       # scraper (requires `python-jobspy>=1.1.82`, fetched with
-#       # linkedin_fetch_description=True). Glassdoor is intentionally
-#       # excluded — JobSpy's Glassdoor path returns HTTP 400 ("location
-#       # not parsed") on every request as of 2026-04.
-#       jobspy:
+#       # LinkedIn + Indeed (each its own source). Each enabled site
+#       # is fetched separately, under its own progress row. country
+#       # (Indeed only) sets the regional host and is the fallback for
+#       # countries the scraper does not recognize. Requires
+#       # `python-jobspy>=1.1.82`.
+#       linkedin:
 #         enabled: true
-#         linkedin: true
-#         indeed: true
-#         jobs:
-#           results_wanted_per_query: 50
-#           hours_old: 168
-#           country_indeed: USA
+#         results_wanted_per_query: 50
+#         hours_old: 168
+#       indeed:            # indeed.com (country sets the regional host)
+#         enabled: true
+#         results_wanted_per_query: 50
+#         hours_old: 168
+#         country: USA

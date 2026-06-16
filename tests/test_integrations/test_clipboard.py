@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from daily_driver.integrations.clipboard import available, copy, paste
+from daily_driver.integrations.clipboard import available, copy
 
 
 def test_available_true_when_both_present(monkeypatch):
@@ -42,19 +42,6 @@ def test_copy_pipes_text_to_pbcopy(monkeypatch):
     assert captured["args"] == ["pbcopy"]
     assert captured["kw"]["input"] == "hello"
     assert captured["kw"]["check"] is True
-
-
-def test_paste_returns_pbpaste_stdout(monkeypatch):
-    def _run(args, **kw):
-        return subprocess.CompletedProcess(
-            args=args, returncode=0, stdout="clip content\n", stderr=""
-        )
-
-    monkeypatch.setattr("daily_driver.integrations.clipboard.subprocess.run", _run)
-
-    result = paste()
-
-    assert result == "clip content\n"
 
 
 def test_copy_raises_called_process_error_on_nonzero(monkeypatch):

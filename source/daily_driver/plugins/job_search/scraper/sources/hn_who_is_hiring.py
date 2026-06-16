@@ -34,7 +34,6 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
     max_posts = source_toggle(
         ctx.plugin, "hn_who_is_hiring", HackerNewsToggle
     ).hn_max_posts
-    roles = list(ctx.plugin.roles)
     session = _http_session(ctx)
     current_month_str = today().strftime("%B %Y")
 
@@ -42,6 +41,11 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
         "https://hn.algolia.com/api/v1/search_by_date"
         "?tags=story,author_whoishiring&hitsPerPage=12"
     )
+    # Graceful-stop checkpoint before the (story-lookup) fetch: a Ctrl-C/SIGTERM
+    # during scraping sets this on the main thread, so skip it and return empty.
+    if ctx.stop_event.is_set():
+        log.info("[hn_who_is_hiring] stop requested before fetch; keeping 0 jobs")
+        return []
     stories_resp = _api_get(session, stories_url, ctx, label="hn_who_is_hiring")
     if not stories_resp:
         return []
@@ -114,7 +118,7 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
         company = parts[0]
         role = parts[1] if len(parts) > 1 else ""
 
-        if not matches_roles(" ".join(parts), roles, ctx.plugin):
+        if not matches_roles(" ".join(parts), ctx.plugin):
             continue
 
         location = "Remote"

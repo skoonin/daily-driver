@@ -32,7 +32,6 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
-    roles = list(ctx.plugin.roles)
     boards = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle).greenhouse_boards
     session = _http_session(ctx)
     jobs: list[dict] = []
@@ -42,6 +41,10 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     total = len(boards)
     done = 0
     for board in boards:
+        # Graceful-stop checkpoint between boards: return what is matched so far.
+        if ctx.stop_event.is_set():
+            log.info("[greenhouse] stop requested; keeping %d jobs so far", len(jobs))
+            return jobs
         ctx.report(done, total)
         done += 1
         api_url = (
@@ -62,7 +65,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
 
         for entry in board_jobs:
             title = entry.get("title", "")
-            if not title or not matches_roles(title, roles, ctx.plugin):
+            if not title or not matches_roles(title, ctx.plugin):
                 continue
 
             loc = entry.get("location", {})

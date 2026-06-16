@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.scraper.comp import _to_int
 from daily_driver.plugins.job_search.scraper.sources._http import (
     _api_get,
     _http_session,
@@ -16,55 +17,85 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
+# Endpoints queried per run. The unfiltered ``/api`` returns only the newest
+# ~100 listings site-wide, where infra roles are sparse (observed live: 0 of
+# 100), so on its own it routinely collects nothing relevant. The ``?tags=``
+# views into the same listing set surface infra roles directly. Only RemoteOK's
+# real tag slugs are used: ``devops``/``kubernetes``/``aws`` return focused
+# filtered sets, whereas ``sre``/``platform``/``infrastructure`` return empty
+# and ``cloud``/``ops``/``backend`` silently fall back to the unfiltered
+# newest-100 firehose (verified live 2026-06-12). ``matches_roles`` is still the
+# authority on what's kept, so a tag returning off-topic rows costs nothing but
+# a request. The unfiltered endpoint stays first so a brand-new, as-yet-untagged
+# infra posting is still caught.
+_REMOTEOK_ENDPOINTS = (
+    "https://remoteok.com/api",
+    "https://remoteok.com/api?tags=devops",
+    "https://remoteok.com/api?tags=kubernetes",
+    "https://remoteok.com/api?tags=aws",
+)
+
 
 def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     """Fetch jobs from RemoteOK's public JSON API.
 
-    GET https://remoteok.com/api returns all current listings as JSON.
-    No auth or browser required. We filter client-side with matches_roles().
+    Queries the unfiltered listing feed plus a few focused ``?tags=`` views
+    (see ``_REMOTEOK_ENDPOINTS``), dedupes by job id across them, and filters
+    client-side with ``matches_roles()``. No auth or browser required.
     """
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
-    roles = list(ctx.plugin.roles)
     session = _http_session(ctx)
     jobs: list[dict] = []
     seen_ids: set[str] = set()
 
-    resp = _api_get(session, "https://remoteok.com/api", ctx, label="remoteok")
-    if not resp:
-        return jobs
+    total = len(_REMOTEOK_ENDPOINTS)
+    for done, url in enumerate(_REMOTEOK_ENDPOINTS):
+        # Graceful-stop checkpoint between fetches: a Ctrl-C/SIGTERM during
+        # scraping sets this on the main thread; stop issuing further requests
+        # and keep whatever earlier endpoints already collected.
+        if ctx.stop_event.is_set():
+            log.info("[remoteok] stop requested; keeping %d jobs", len(jobs))
+            break
+        ctx.report(done, total)
 
-    for item in resp.json():
-        if "position" not in item:
+        resp = _api_get(session, url, ctx, label="remoteok")
+        if not resp:
             continue
-        role = item["position"]
-        if not matches_roles(role, roles, ctx.plugin):
-            continue
-        job_id = str(item.get("id", ""))
-        if job_id in seen_ids:
-            continue
-        if job_id:
-            seen_ids.add(job_id)
-        sal_min = item.get("salary_min")
-        sal_max = item.get("salary_max")
-        currency = item.get("salary_currency") or "USD"
-        prefix = "$" if currency == "USD" else f"{currency} "
-        comp = (
-            f"{prefix}{int(sal_min):,}-{prefix}{int(sal_max):,}/yr"
-            if sal_min and sal_max
-            else ""
-        )
-        job: dict = {
-            "company": item.get("company", ""),
-            "role": role,
-            "location": item.get("location", "") or "Remote",
-            "url": item.get("url", ""),
-            "source": "RemoteOK",
-            "date_found": today().isoformat(),
-        }
-        if comp:
-            job["comp"] = comp
-        jobs.append(job)
+
+        for item in resp.json():
+            if "position" not in item:
+                continue
+            role = item["position"]
+            if not matches_roles(role, ctx.plugin):
+                continue
+            job_id = str(item.get("id", ""))
+            # Dedupe across endpoints: the same posting appears under multiple
+            # tags and in the unfiltered feed.
+            if job_id and job_id in seen_ids:
+                continue
+            if job_id:
+                seen_ids.add(job_id)
+            sal_min = _to_int(item.get("salary_min"))
+            sal_max = _to_int(item.get("salary_max"))
+            currency = item.get("salary_currency") or "USD"
+            prefix = "$" if currency == "USD" else f"{currency} "
+            comp = (
+                f"{prefix}{sal_min:,}-{prefix}{sal_max:,}/yr"
+                if sal_min is not None and sal_max is not None
+                else ""
+            )
+            job: dict = {
+                "company": item.get("company", ""),
+                "role": role,
+                "location": item.get("location", "") or "Remote",
+                "url": item.get("url", ""),
+                "source": "RemoteOK",
+                "date_found": today().isoformat(),
+            }
+            if comp:
+                job["comp"] = comp
+            jobs.append(job)
 
     log.info("[remoteok] %d jobs matched", len(jobs))
     return jobs

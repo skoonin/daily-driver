@@ -161,12 +161,13 @@ def run(args: argparse.Namespace) -> int:
         else:
             # Ollama (and any future non-claude provider) has no workspace /
             # agent / session concept — send the prompt as-is.
+            summary_cfg = workspace.config.ai.summary
             output = ai_provider.invoke_for(
-                "summary",
                 prompt,
+                provider=summary_cfg.provider,
+                model=summary_cfg.model,
                 ai=workspace.config.ai,
                 timeout=args.timeout,
-                format_json=False,
             )
     except AITimeoutError as exc:
         Console.error(f"{exc.provider} summary timed out after {exc.timeout_seconds}s")

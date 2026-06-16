@@ -16,13 +16,3 @@ def copy(text: str) -> None:
     Raises subprocess.CalledProcessError on non-zero exit.
     """
     subprocess.run(["pbcopy"], input=text, text=True, check=True, capture_output=True)
-
-
-def paste() -> str:
-    """Return pbpaste stdout.
-
-    Raises FileNotFoundError if pbpaste missing.
-    Raises subprocess.CalledProcessError on non-zero exit.
-    """
-    result = subprocess.run(["pbpaste"], capture_output=True, text=True, check=True)
-    return result.stdout

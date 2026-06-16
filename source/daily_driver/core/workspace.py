@@ -5,12 +5,12 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-import jinja2
 from rich.console import Console
 
 import daily_driver
 from daily_driver.core.config import load
 from daily_driver.core.config_models import Config
+from daily_driver.core.console import Console as UserConsole
 from daily_driver.core.logging import get_logger
 
 _logger = get_logger("workspace")
@@ -33,21 +33,42 @@ tracker:
 
 
 def _render_initial_config() -> str:
-    """Render the initial .dd-config.yaml from the bundled Jinja2 template."""
+    """Render the initial .dd-config.yaml from the bundled Jinja2 template.
+
+    A *missing* packaged template means the wheel is broken (it should always
+    ship); that is not a recoverable user condition, so raise WorkspaceError and
+    let init report it and exit non-zero -- the same loud-failure stance the
+    contract check takes for an empty-wheel install, rather than silently
+    scaffolding a half-configured workspace. A *render* error (a malformed
+    template) still degrades to the minimal fallback, but is surfaced on the
+    terminal (not just the log) so the user knows job-search config is absent.
+    """
+    import jinja2
+
+    tmpl_traversable = importlib.resources.files(
+        "daily_driver.resources.templates"
+    ).joinpath(".dd-config.yaml.j2")
     try:
-        tmpl_traversable = importlib.resources.files(
-            "daily_driver.resources.templates"
-        ).joinpath(".dd-config.yaml.j2")
         template_text = tmpl_traversable.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise WorkspaceError(
+            "bundled .dd-config.yaml.j2 template is missing from the installed "
+            "package; the wheel is broken -- reinstall daily-driver"
+        ) from exc
+    try:
         env = jinja2.Environment(autoescape=False, keep_trailing_newline=True)
         return env.from_string(template_text).render()
-    except (FileNotFoundError, jinja2.TemplateError) as exc:
+    except jinja2.TemplateError as exc:
         # The fallback omits the plugins.job_search block, so the workspace will be
-        # missing job-search config — surface it rather than failing later in `jobs run`.
-        _logger.warning(
-            "Could not render .dd-config.yaml.j2 (%s); writing minimal fallback config",
-            exc,
+        # missing job-search config -- surface it on the terminal rather than only
+        # logging, since a degraded scaffold fails later (and silently) in `jobs run`.
+        message = (
+            f"could not render the bundled config template ({exc}); wrote a "
+            "minimal fallback config -- job-search settings are absent. "
+            "Edit .dd-config.yaml or reinstall daily-driver."
         )
+        _logger.warning(message)
+        UserConsole.warning(message)
         return _MINIMAL_CONFIG_FALLBACK
 
 

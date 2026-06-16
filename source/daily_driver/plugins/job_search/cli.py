@@ -9,6 +9,23 @@ from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
+def _positive_limit(value: str) -> int:
+    """Parse ``--limit`` as an integer >= 1.
+
+    A 0 limit would mean "spend nothing" (budget 0 = no calls) -- a pointless
+    backfill better expressed by not running it -- and a negative limit is
+    nonsense, so reject both at the parser. argparse turns the
+    ArgumentTypeError into a clean exit 2.
+    """
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--limit must be >= 1 (got {n})")
+    return n
+
+
 def add_parser(
     subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
     parents: list[argparse.ArgumentParser],
@@ -26,16 +43,35 @@ def add_parser(
         parents=parents,
         help="Run the configured job-board search pipeline",
     )
-    p_run.add_argument(
+    # --dry-run prints a human table to stdout; --json emits machine JSON to
+    # stdout. Both own the stdout channel, and a dry-run writes no manifest, so
+    # combining them would corrupt the JSON contract (table + bare object). Reject
+    # the combination at the parser rather than silently producing junk.
+    p_run_output = p_run.add_mutually_exclusive_group()
+    p_run_output.add_argument(
         "-n",
         "--dry-run",
         action="store_true",
         help="Print results without writing to jobs.csv",
     )
-    p_run.add_argument(
-        "--backfill",
+    p_run_output.add_argument(
+        "-j",
+        "--json",
         action="store_true",
-        help="Re-enrich empty fields in existing jobs.csv rows",
+        default=False,
+        help=(
+            "After the run, emit the run-manifest JSON (jobs-last-run.json) to "
+            "stdout for scripting. Suppresses the live progress block; "
+            "diagnostics still go to stderr. Not combinable with --dry-run."
+        ),
+    )
+    p_run.add_argument(
+        "--no-enrich",
+        action="store_true",
+        help=(
+            "Scrape and append only; skip detail-page and LLM enrichment "
+            "(fill later with 'jobs backfill')"
+        ),
     )
     p_run.add_argument(
         "-S",
@@ -54,6 +90,55 @@ def add_parser(
     )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
+
+    p_backfill = nested.add_parser(
+        "backfill",
+        parents=parents,
+        help="Re-enrich empty fields in existing jobs.csv rows",
+    )
+    p_backfill.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Report what would be enriched (per-phase counts) without making "
+            "LLM calls or writing to jobs.csv"
+        ),
+    )
+    p_backfill.add_argument(
+        "--limit",
+        type=_positive_limit,
+        default=None,
+        metavar="N",
+        help=(
+            "Cap LLM spend this run: bound both the product and fit/notes "
+            "budgets at N (minimum 1; default: the configured per-phase caps)"
+        ),
+    )
+    add_global_flags(p_backfill)
+    p_backfill.set_defaults(func=_run_backfill)
+
+    p_promote = nested.add_parser(
+        "promote",
+        parents=parents,
+        help="Promote a jobs.csv row into a tracker `job` entry",
+    )
+    p_promote.add_argument(
+        "selector",
+        metavar="URL-OR-COMPANY",
+        help=(
+            "Job Link URL (exact match) or an unambiguous case-insensitive "
+            "substring of Company"
+        ),
+    )
+    p_promote.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print what would be created without writing to the tracker",
+    )
+    add_global_flags(p_promote)
+    p_promote.set_defaults(func=_run_promote)
 
     p_status = nested.add_parser(
         "status", parents=parents, help="Show last-run metadata and job counts"
@@ -90,7 +175,8 @@ def add_parser(
         metavar="STATUS",
         help=(
             "Status to prune (repeatable). Default: dropped, rejected, closed. "
-            "Use --status active to nuke stale active rows."
+            "Use --status applied --status interviewing to prune stale "
+            "in-progress rows."
         ),
     )
     p_prune.add_argument(
@@ -106,14 +192,68 @@ def add_parser(
     return parser
 
 
+def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def]
+    """Resolve (plugin, ai, context_text) or return an int exit code on error.
+
+    context.md, when present, rides every fit/notes enrichment prompt so the fit
+    score reflects the candidate's real background (see enrich_fit_and_notes).
+    """
+    plugins = workspace.config.plugins
+    if plugins is None or plugins.job_search is None:
+        Console.error(
+            "no plugins.job_search found in .dd-config.yaml. "
+            "See docs/configuration.md."
+        )
+        return 1
+    context_text = ""
+    context_path = workspace.root / "context.md"
+    if context_path.is_file():
+        context_text = context_path.read_text(encoding="utf-8").strip()
+    return plugins.job_search, workspace.config.ai, context_text
+
+
+def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
+    """Print the run manifest (jobs-last-run.json) to stdout for `jobs run --json`.
+
+    The runner writes the manifest on every exit that has a sink -- a clean
+    completion (``interrupted=False``) or a Ctrl-C / SIGTERM / crash
+    (``interrupted=True``). ``--json`` is mutually exclusive with ``--dry-run``
+    (which writes no manifest), so under ``--json`` a manifest always exists; we
+    read it back and re-emit it so stdout carries the machine-readable result
+    while the runner's diagnostics stayed on stderr.
+
+    If the manifest is unreadable (an I/O error, not the dry-run case) emit an
+    empty object so a scripted consumer still gets valid JSON, and warn on stderr
+    naming the path so "unreadable" is distinguishable from "nothing to report".
+    """
+    manifest_path = output_dir / "jobs-last-run.json"
+    try:
+        payload = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        Console.warning(f"could not read run manifest {manifest_path}: {exc}")
+        print(json.dumps({}))
+        return
+    # Pass the file through as-is so the on-disk manifest and stdout never drift.
+    print(payload.rstrip("\n"))
+
+
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.plugins.job_search.scraper import run as run_scrape
-    from daily_driver.plugins.job_search.scraper import run_backfill
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
     from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 
     if getattr(args, "list_sources", False):
-        for sid in sorted(SCRAPERS):
-            print(sid)
+        if getattr(args, "json", False):
+            # --json owns stdout for jq; emit the source list as a JSON array
+            # rather than bare lines so a --json consumer never gets plain text.
+            print(json.dumps(sorted(SCRAPERS)))
+        else:
+            for sid in sorted(SCRAPERS):
+                print(sid)
         return 0
 
     sources_override: list[str] | None = None
@@ -131,52 +271,146 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             )
             return 2
 
-    plugins = workspace.config.plugins
-    if plugins is None or plugins.job_search is None:
-        Console.error(
-            "no plugins.job_search found in .dd-config.yaml. "
-            "See docs/configuration.md."
-        )
-        return 1
-
-    plugin = plugins.job_search
-    ai = workspace.config.ai
-    # context.md, when present, rides every fit/notes enrichment prompt so the
-    # fit score reflects the candidate's real background (see enrich_fit_and_notes).
-    context_text = ""
-    context_path = workspace.root / "context.md"
-    if context_path.is_file():
-        context_text = context_path.read_text(encoding="utf-8").strip()
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, ai, context_text = resolved
     output_dir = workspace.output_dir
-    csv_path = output_dir / "jobs.csv"
+    ephemeral_dir = workspace.ephemeral_dir
+    emit_json = getattr(args, "json", False)
 
+    # A scheduled run is stopped with SIGTERM; install a run-scoped handler that
+    # routes it through the same graceful drain/flush path as Ctrl-C (it raises
+    # KeyboardInterrupt). Restored in finally so the handler never leaks past the
+    # command.
+    sigterm_prev = install_sigterm_handler()
     try:
-        if args.backfill:
-            run_backfill(plugin, csv_path, ai=ai, context_text=context_text)
-            return 0
-
-        return run_scrape(
+        rc = run_scrape(
             plugin,
             output_dir,
+            ephemeral_dir,
             ai=ai,
             context_text=context_text,
             dry_run=args.dry_run,
+            no_enrich=args.no_enrich,
             sources_override=sources_override,
+            suppress_live=emit_json,
         )
+        if emit_json:
+            _emit_run_manifest(output_dir)
+        return rc
     except KeyboardInterrupt:
-        if args.backfill:
-            # csv_io.backfill already printed the interrupt + backup-path message.
-            return 130
-
-        # SIGINT during a parallel run: pending sources were cancelled by the
-        # orchestrator, but in-flight HTTP requests run to their `timeout`
-        # before their worker threads exit. Exit 130 is the conventional
-        # SIGINT status (128 + signal number).
+        # SIGTERM and SIGINT both unwind here; pick the conventional exit code
+        # (143 = 128 + SIGTERM, 130 = 128 + SIGINT).
+        sigterm = interrupted_by_sigterm()
+        # Pending sources were cancelled by the orchestrator, but in-flight HTTP
+        # requests run to their `timeout` before their worker threads exit.
+        signal_name = "terminated" if sigterm else "interrupted"
         Console.warning(
-            "\ninterrupted; cancelling pending sources "
-            "(in-flight HTTP requests will finish first)."
+            f"\n{signal_name}; cancelling pending sources "
+            "(in-flight HTTP requests will finish first). "
+            "Run jobs backfill to finish enrichment."
         )
-        return 130
+        # The run() wrapper already wrote an interrupted=True manifest before
+        # re-raising; re-emit it so a --json consumer gets the interrupted
+        # manifest JSON on stdout rather than nothing. Exit code is unchanged.
+        if emit_json:
+            _emit_run_manifest(output_dir)
+        return 143 if sigterm else 130
+    except Exception:
+        # A non-interrupt crash also has an interrupted=True manifest on disk
+        # (the run() wrapper writes one on every exit); re-emit it so a --json
+        # consumer gets the documented JSON on stdout instead of nothing, then
+        # re-raise to the cli-level handler (stderr + exit 1).
+        if emit_json:
+            _emit_run_manifest(output_dir)
+        raise
+    finally:
+        restore_sigterm_handler(sigterm_prev)
+
+
+def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from daily_driver.plugins.job_search.scraper import run_backfill
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
+
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, ai, context_text = resolved
+    csv_path = workspace.output_dir / "jobs.csv"
+    ephemeral_dir = workspace.ephemeral_dir
+
+    sigterm_prev = install_sigterm_handler()
+    try:
+        run_backfill(
+            plugin,
+            csv_path,
+            ephemeral_dir,
+            ai=ai,
+            context_text=context_text,
+            dry_run=args.dry_run,
+            limit=args.limit,
+        )
+        return 0
+    except KeyboardInterrupt:
+        # run_backfill already saved partial progress and printed the backup path.
+        sigterm = interrupted_by_sigterm()
+        return 143 if sigterm else 130
+    finally:
+        restore_sigterm_handler(sigterm_prev)
+
+
+def _run_promote(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from rich.markup import escape
+
+    from daily_driver.core.tracker import Tracker
+    from daily_driver.plugins.job_search.promote import PromoteError, promote
+
+    tracker = Tracker(workspace)
+    jobs_csv = workspace.output_dir / "jobs.csv"
+
+    try:
+        result = promote(tracker, jobs_csv, args.selector, dry_run=args.dry_run)
+    except PromoteError as exc:
+        Console.error(str(exc))
+        return 1
+
+    # Console.print parses Rich markup, so escape values built from CSV cells
+    # (a `[applied]` status or a `[bracketed]` title would otherwise be eaten as
+    # a style tag and vanish from the line).
+    title = escape(result.title)
+    status = escape(result.status)
+
+    if not result.created and result.already_promoted_id is not None:
+        Console.success(f"already promoted as {result.already_promoted_id}: {title}")
+        return 0
+
+    # A blank or unrecognized row Status was silently recorded as the fallback;
+    # surface it so the asserted state claim is visible.
+    if result.status_fallback:
+        if result.raw_status:
+            Console.warning(
+                f"row status {result.raw_status!r} not in the job lifecycle; "
+                f"recorded as {result.status!r}"
+            )
+        else:
+            Console.warning(f"row has no status; recorded as {result.status!r}")
+
+    # No Link means promotion fell back to the weaker (company, role) dedup key;
+    # flag it so the looser idempotency guarantee for this entry is visible.
+    no_link_note = "" if result.has_link else " (row has no Link)"
+
+    if args.dry_run:
+        Console.info(f"would create job entry \\[{status}]: {title}{no_link_note}")
+        return 0
+
+    assert result.entry is not None  # created path always carries an entry
+    Console.success(f"Promoted {result.entry.id} \\[{status}]: {title}{no_link_note}")
+    return 0
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
@@ -196,7 +430,9 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         return 2
 
     if args.status:
-        statuses = tuple(s.strip().lower() for s in args.status if s.strip())
+        # Normalization (case-fold, underscores -> hyphens) happens in _is_stale,
+        # so pass the raw user values through and just drop blanks.
+        statuses = tuple(s.strip() for s in args.status if s.strip())
     else:
         statuses = DEFAULT_PRUNE_STATUSES
 
@@ -204,7 +440,11 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     csv_path = output_dir / "jobs.csv"
 
     candidates, archived = prune(
-        csv_path, cutoff=cutoff, statuses=statuses, dry_run=args.dry_run
+        csv_path,
+        workspace.ephemeral_dir,
+        cutoff=cutoff,
+        statuses=statuses,
+        dry_run=args.dry_run,
     )
 
     console = RichConsole(stderr=False)
@@ -262,6 +502,14 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         console.print(f"  Sources OK:     {', '.join(sources_ok) or 'none'}")
         if sources_failed:
             console.print(f"  [red]Sources failed:[/red] {', '.join(sources_failed)}")
+        if last_run.get("interrupted"):
+            # The last run was cut short (Ctrl-C / SIGTERM / crash); point the
+            # user at the resume path so the half-enriched rows get finished.
+            phase = last_run.get("phase_reached", "enrichment")
+            console.print(
+                f"  [yellow]Last run interrupted during {phase} -- "
+                "run jobs backfill to finish enrichment.[/yellow]"
+            )
 
     counts = status["job_counts"]
     if counts:
@@ -285,7 +533,7 @@ def run(args: argparse.Namespace) -> int:
 
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver jobs <action> ...")
-        Console.error("actions: run, status, prune")
+        Console.error("actions: run, backfill, promote, status, prune")
         return 2
 
     try:

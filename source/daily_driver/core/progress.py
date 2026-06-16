@@ -79,10 +79,6 @@ _BAR_FORMAT = "{desc}{desc_pad}{percentage:3.0f}%|{bar}| {count:{len_total}d}/{t
 # Shown before a total is known (or once count reaches total): just desc + count.
 _COUNTER_FORMAT = "{desc}{desc_pad}{count:d}"
 
-# Blank rows pinned at the very bottom of the live block so it sits a little
-# above the terminal's last line rather than flush against it.
-_BOTTOM_MARGIN_ROWS = 2
-
 _OK_COLOR = "green"  # group-header fill (finished-ok children)
 _FAIL_COLOR = "red"  # group-header failed subcounter + a failed source bar
 _SOURCE_BAR_COLOR = "blue"  # per-source progress bar
@@ -113,6 +109,14 @@ class RunProgress:
         self._title_bar: enlighten.StatusBar | None = None
         self._lock = threading.Lock()
         self._closed = False
+        # The title status bar is pinned lazily, on the first seat operation
+        # (reserve() or the first counter). Pinning it up front would set the
+        # scroll region once for the title, then again per counter -- each resize
+        # a separate bottom-row line feed that real terminals (iTerm2, VS Code's
+        # xterm.js) render inconsistently. Seating once, after the block height is
+        # known, collapses that to a single region set.
+        self._title_pending = False
+        self._reserved = False
         # enlighten honours colour names regardless of the app's --no-color flag,
         # so gate colour ourselves to keep --no-color a true no-colour run.
         self._color = not Console._no_color
@@ -121,8 +125,6 @@ class RunProgress:
         if self._tty:
             self._manager = self._start_live()
         if self._manager is not None:
-            # Reserve the bottom margin first so every real bar lands above it.
-            self._pin_bottom_margin()
             # Enlighten anchors every bar to the bottom of the terminal. Printing
             # the title as an ordinary line leaves it where the cursor was (near
             # the top of a fresh terminal), so the whole terminal height shows as
@@ -131,8 +133,13 @@ class RunProgress:
             # top slot of the block (see _add_counter's reversed-order placement)
             # -- sets it flush above the bars; the empty space falls above the
             # block, the normal bottom-anchored look.
-            if self._title:
-                self._title_bar = self._manager.status_bar(self._title, leave=True)
+            #
+            # The title is pinned lazily (on reserve() or the first counter), not
+            # here -- see _title_pending. No blank bottom-margin rows are pinned:
+            # each pinned row grows enlighten's reserved scroll region by one fed
+            # line feed (Manager._set_scroll_area emits '\n' per added offset), so
+            # a cosmetic margin reads as a multi-line blank gap before the block.
+            self._title_pending = bool(self._title)
         elif self._title:
             # Plain mode (non-TTY or unresponsive terminal): one ordinary line.
             self._plain_print(self._title)
@@ -157,23 +164,6 @@ class RunProgress:
             return None
         return manager
 
-    def _pin_bottom_margin(self) -> None:
-        """Pin blank status bars at the lowest positions so the live block sits a
-        couple of rows above the terminal's last line. Each empty status bar
-        holds one row; pinned at positions 1..N they keep those bottom rows
-        blank while every real bar takes a position above them.
-        """
-        manager = self._manager
-        if manager is None:
-            return
-        # enlighten rejects a pinned position greater than the terminal height,
-        # so clamp the margin to what fits and keep at least one row for the bars
-        # -- a 1-row terminal gets no margin rather than a ValueError out of
-        # __enter__ (which would skip __exit__ and leave the scroll region set).
-        rows = min(_BOTTOM_MARGIN_ROWS, max(0, manager.height - 1))
-        for position in range(1, rows + 1):
-            manager.status_bar("", position=position, leave=True)
-
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
@@ -181,8 +171,18 @@ class RunProgress:
         tb: TracebackType | None,
     ) -> None:
         with self._lock:
-            self._closed = True
             manager = self._manager
+            # A run that pinned no counters (e.g. zero sources) still shows its
+            # title: seat it now so it persists. A seat failure during teardown
+            # (e.g. stderr closing on a SIGTERM unwind) must never replace a
+            # propagating exception nor skip stop() -- swallow it so the scroll
+            # region and cursor are always restored below. Seat before clearing
+            # _manager, since _ensure_title_locked reads it.
+            try:
+                self._ensure_title_locked()
+            except Exception:  # noqa: BLE001 -- teardown must always reach stop()
+                pass
+            self._closed = True
             self._manager = None
         # stop() restores the scroll region and cursor; run it outside the lock.
         # _closed is already set and _manager cleared, so no late worker call can
@@ -193,6 +193,55 @@ class RunProgress:
     def group(self, label: str) -> Group:
         """A header progress bar that counts its finished children, plus rows."""
         return Group(self, label)
+
+    def reserve(self, rows: int) -> None:
+        """Pre-size the live block to ``rows`` total lines in one operation.
+
+        Each pinned bar normally grows enlighten's scroll region by one line
+        (a separate ``CSI r`` scroll-region set plus a bottom-row line feed in
+        :meth:`Manager._set_scroll_area`). Spread over a run that is many small
+        region resizes, which iTerm2 and VS Code's xterm.js render
+        inconsistently -- a large blank gap before the block, or a frozen
+        duplicate of the block left in scrollback. Reserving the full height up
+        front collapses that to a single scroll-region set and a single feed,
+        which every terminal renders identically.
+
+        ``rows`` is the total block height, counting the title row. Call once,
+        before creating any group/row, with the known final count
+        (e.g. ``1 title + 1 header + len(sources)``). Idempotent; a no-op in
+        plain mode, after close, or if the block is already seated. Over-reserve
+        is harmless (a row or two of slack above the block); under-reserve falls
+        back to per-bar growth for the overflow.
+        """
+        with self._lock:
+            if self._closed or self._manager is None or self._reserved:
+                return
+            self._reserved = True
+            manager = self._manager
+            term = manager.term
+            # enlighten's scroll offset is (pinned rows + 1); clamp to the
+            # terminal so a block taller than the screen does not over-feed.
+            offset = max(2, min(rows + 1, manager.height))
+            # Scroll existing output up by the block height in one feed (the same
+            # bottom-anchored scroll enlighten does per bar, done once), then pin
+            # the region at its final size so later bars seat without resizing it.
+            manager.stream.write(term.move(max(0, manager.height - 1), 0))
+            manager.stream.write("\n" * (offset - 1))
+            manager.scroll_offset = offset
+            manager._set_scroll_area(force=True)
+            manager._flush_streams()
+            self._ensure_title_locked()
+
+    def _ensure_title_locked(self) -> None:
+        """Pin the title status bar on the first seat operation. Lock held.
+
+        Created before any counter so enlighten's reversed-order placement gives
+        it the top slot of the bottom block (flush above the bars).
+        """
+        if self._manager is None or not self._title_pending:
+            return
+        self._title_pending = False
+        self._title_bar = self._manager.status_bar(self._title, leave=True)
 
     def _plain_print(self, message: str) -> None:
         """Print one plain-mode line, unless quiet mode is suppressing routine
@@ -239,6 +288,9 @@ class RunProgress:
         """
         if self._manager is None:
             return None
+        # Seat the title (top slot) before the first real bar, whether or not
+        # the caller reserved the block first.
+        self._ensure_title_locked()
         counter = self._manager.counter(
             total=total,
             desc=desc,
@@ -452,6 +504,24 @@ class Phase(_Row):
                     self._label, self._total or 1, color=_PHASE_COLOR
                 )
 
+    def set_total(self, total: int) -> None:
+        """Re-base the phase's denominator once the real work count is known.
+
+        A phase is often pinned before its work is planned (the bar must exist
+        when the group renders), so the creation-time total is an upper bound.
+        When the planner resolves the actual count (e.g. a budget cap trims the
+        candidate list), the bar must show that truth -- otherwise it reads as
+        if the cap were ignored and can never fill.
+        """
+        owner = self._owner()
+        with owner._lock:
+            if owner._closed:
+                return
+            self._total = max(total, self.completed, 1)
+            if self._bar is not None:
+                self._bar.total = self._total
+                self._bar.refresh()
+
     def advance(self, n: int = 1, detail: str | None = None) -> None:
         owner = self._owner()
         with owner._lock:
@@ -466,6 +536,11 @@ class Phase(_Row):
                     self._label, self._total or 1, color=_PHASE_COLOR
                 )
             if self._bar is not None:
+                # Surface the item currently being processed (e.g. the company an
+                # LLM enrichment call is on) in the bar label, so a long phase
+                # shows live which work it is doing rather than only a count.
+                if detail:
+                    self._bar.desc = f"{self._label}  {detail}"
                 self._bar.update(n)
 
     def done(self, summary: str | None = None) -> None:

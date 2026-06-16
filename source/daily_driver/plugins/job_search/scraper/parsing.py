@@ -123,7 +123,7 @@ def _parse_detail_page(html: str, url: str) -> dict:
 def parse_jsonld_jobposting(html: str) -> dict:
     """Extract job details from JSON-LD JobPosting blocks in an HTML page.
 
-    Returns a dict with any of: comp, posted_date, employment_type. Returns an
+    Returns a dict with any of: comp, posted_date. Returns an
     empty dict if no JobPosting block is present or all blocks fail to parse —
     callers must treat missing keys as "data not available", not as errors.
     """
@@ -175,12 +175,6 @@ def parse_jsonld_jobposting(html: str) -> dict:
         # Take the date portion of an ISO-8601 timestamp; tolerate "YYYY-MM-DD"
         # already-stripped values.
         out["posted_date"] = posted[:10]
-
-    employment = posting.get("employmentType")
-    if isinstance(employment, str):
-        out["employment_type"] = employment
-    elif isinstance(employment, list) and employment:
-        out["employment_type"] = str(employment[0])
 
     desc_html = posting.get("description", "")
     if desc_html:

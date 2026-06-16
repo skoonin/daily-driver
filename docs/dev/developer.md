@@ -21,7 +21,7 @@ daily_driver/
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
-├── gathers/                 # read-only readers: calendar, git, sessions, notes
+├── gathers/                 # read-only readers: calendar, git
 ├── integrations/            # subprocess + external-service boundary: claude_cli,
 │                            #   ai_provider, ollama_client, clipboard, launchd,
 │                            #   git, icalbuddy, notify
@@ -39,6 +39,7 @@ daily_driver/
 │       ├── scraper_status.py  # last-run metadata
 │       ├── templates/       # PACKAGE DATA — jobs.plist.j2 (Jinja)
 │       └── scraper/         # comp, parsing, csv_io, enrichment, models, runner
+│           ├── enrichment/   # detail-page + LLM enrichers (EnrichedJob in/out)
 │           └── sources/     # one module per source + _http.py shared helpers
 └── resources/               # PACKAGE DATA — bundled into the wheel
     ├── slash_commands/daily-driver/  # shipped slash commands
@@ -52,7 +53,7 @@ daily_driver/
 - **`cli/`** — argparse + Rich only. `add_parser(subparsers, parents)` + `run(args) -> int`. Non-trivial logic belongs in `core/<same-name>.py`. Use `core.console.Console` for user-facing status / errors; reserve bare `print()` for machine-readable stdout payloads (JSON, single resolved paths).
 - **`core/`** — business logic. No subprocess, no TTY, no network. Unit-testable in isolation.
 - **`gathers/`** — typed readers returning plain dataclasses. No YAML, no printing.
-- **`plugins/`** — feature slices wired through the static `PLUGINS` registry (no runtime discovery). Each plugin owns its CLI, config, and optional scheduler / doctor / package-data under `plugins/<name>/`. `job_search` is the reference plugin; its scraper lives at `plugins/job_search/scraper/` — focused modules `comp.py`, `parsing.py`, `csv_io.py`, `enrichment.py`, `models.py`, `runner.py` (orchestration + filters + dedup), and `scraper/sources/<name>.py` (one file per source). `sources/__init__.py` registers each source in the `SCRAPERS` dict. See "Plugins" below and [extending.md](extending.md).
+- **`plugins/`** — feature slices wired through the static `PLUGINS` registry (no runtime discovery). Each plugin owns its CLI, config, and optional scheduler / doctor / package-data under `plugins/<name>/`. `job_search` is the reference plugin; its scraper lives at `plugins/job_search/scraper/` — focused modules `comp.py`, `parsing.py`, `csv_io.py`, `enrichment/` (detail-page + LLM enrichers), `models.py`, `runner.py` (orchestration + filters + dedup), and `scraper/sources/<name>.py` (one file per source). `sources/__init__.py` registers each source in the `SCRAPERS` dict. Past the source-adapter boundary every job is one frozen `EnrichedJob`: adapters emit wire-format dicts, `runner._enriched_from_scraped` lifts each to an `EnrichedJob` once, and enrichers / CSV read-write / backfill all operate on that single representation through one `CANONICAL_HEADER` (derived from `EnrichedJob.CSV_COLUMN_TO_ATTR`). See "Plugins" below and [extending.md](extending.md).
 - **`integrations/`** — the single subprocess + external-service boundary. Every `claude`, `pbcopy`, `launchctl`, `git`, `icalBuddy`, and desktop-notification call goes through here, alongside the `ai_provider` / `ollama_client` adapters. Wrappers raise domain exceptions (e.g. `claude_cli` raises `ClaudeNotFoundError` / `ClaudeInvocationError` / `ClaudeTimeoutError`; `git` raises `GitCommandError`) so callers handle typed failures instead of inspecting return codes. Tests monkeypatch one module instead of many.
 - **`resources/`** — package data only, bundled into the wheel and accessed via `importlib.resources`: `slash_commands/daily-driver/` and `agents/daily-driver/` (shipped `.md`, copied into the workspace `.claude/` tree), `launchd/` (core plist templates), and `templates/` (scaffold + settings Jinja, plus `hooks/`). No importable logic.
 
@@ -72,12 +73,19 @@ Scheduled invocations go through the same entry point. `scheduler install` rende
 
 ## Generate lifecycle
 
-`generate(workspace, force=False)` copies the bundled `resources/slash_commands/` and `resources/agents/` `.md` files into the workspace as `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/`, plus a rendered `settings.local.json`. Only those three workspace paths are ever touched. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus every registered plugin's `package_data_dirs`.
+`generate(workspace, force=False)` writes the full package-managed set into the workspace:
+
+- `.claude/commands/daily-driver/*.md` and `.claude/agents/daily-driver/*.md` from `resources/slash_commands/` and `resources/agents/` (manifest-guarded)
+- `.claude/settings.local.json`, rendered from the template and merged (not manifest-guarded — see below)
+- the rendered contract root templates (`ENTRIES`, e.g. `README.md`) (manifest-guarded)
+- `.claude/hooks/*.sh` from `resources/templates/hooks/` (manifest-guarded)
+
+Those are the only workspace paths generate touches; all other user files are sacred. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus every registered plugin's `package_data_dirs`.
 
 Key invariants:
 
 - **Version stamp written last.** A crash mid-generate leaves the stamp stale; the next invocation re-runs. Idempotent by construction.
-- **SHA-256 manifest guards user edits.** `_copy_package_md` checks the manifest before overwriting any managed `.md` file. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` is the nuclear option that overwrites.
+- **SHA-256 manifest guards user edits.** `_copy_package_md` (the `.md` files), `_render_contract_entries` (root templates), and `_copy_hooks` (the `.sh` hooks) all check the manifest before overwriting and record each written file's hash. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` (`force_overwrite=True`) is the nuclear option that overwrites. `settings.local.json` is the exception — it merges rather than being manifest-guarded.
 - **`settings.local.json` merges instead of overwriting.** Package-managed top-level keys are refreshed from the template; user-added top-level keys are preserved.
 - **Concurrency.** Generate acquires an exclusive `generate.lock` under `ephemeral_dir` and re-checks drift inside the lock (double-checked locking).
 
@@ -102,6 +110,19 @@ Key invariants:
 `.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `generate` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
 
 `ENTRIES` is the authoritative list of package-managed templates rendered into the workspace root (each a `ContractEntry(src, dst)`); `generate()` iterates it, so adding a managed root file means appending one entry and nothing else. To add a contract check beyond those, edit `check()` directly, then run `make test-unit`.
+
+## Output registers
+
+Daily Driver writes to four distinct output registers. Picking the wrong one is the most common output bug (status text on stdout breaks `| jq`; a data payload on stderr is invisible to a pipe). Use this table to choose:
+
+| Register | API | Stream | Purpose | Gated by |
+| --- | --- | --- | --- | --- |
+| Rich Console (user-facing) | `Console.print` (payload) / `Console.info` / `Console.success` / `Console.warning` / `Console.error` | stdout for `print`; stderr for status/warning/error | Human-readable status, summaries, tables, and prompts | `--quiet` mutes `print`/`info`/`success`; `warning`/`error` always show |
+| Logging (diagnostics) | `dd_logging.get_logger(__name__).{debug,info,warning,error}` | stderr | Module-level diagnostic trail for debugging a run after the fact | Log level (`-q`/`-v`/`-vv` map to ERROR/INFO/DEBUG; bare = WARNING) |
+| Live progress block | `core.progress.RunProgress` (Groups / Items / Phases) | stderr (same object the log handler binds) | Pinned, in-place progress for a long run that owns the terminal | TTY-only; suppressed under `--quiet` and forced to plain lines on non-TTY / unresponsive TTY / `jobs run --json` |
+| Machine output (stdout contract) | bare `print(json.dumps(...))` or a single resolved path | stdout | A parseable contract for scripting (`--json`, `paths`) | Never gated -- a stable process contract |
+
+The split keeps stdout a clean data channel: `daily-driver tracker list --json | jq` and `daily-driver jobs run --json` work because only the machine payload reaches stdout, while every status line, log line, and progress bar goes to stderr regardless of verbosity. The live progress block and the logging register deliberately share one underlying `sys.stderr` object so log lines scroll above the pinned bars on one channel.
 
 ## Console and logging
 
@@ -135,13 +156,30 @@ Two separate concerns, one shared Rich color theme.
 | Debug trace | `Console.debug(...)` or `logger.debug(...)` | stderr | not `-vv` |
 | Long-running module log | `dd_logging.get_logger(__name__).info(...)` etc. | stderr | log level |
 
-The split exists so `daily-driver tracker list --json | jq …` and `daily-driver paths daily-plan | xargs $EDITOR` work cleanly: only the data payload hits stdout; every status line goes to stderr regardless of verbosity.
+**`core.progress`** — a domain-neutral, app-wide live-progress foundation built on enlighten; `daily-driver jobs run` is the first consumer.
 
-**`core.progress`** — a domain-neutral, app-wide live-progress foundation built on enlighten. `RunProgress` is a context manager that owns an `enlighten.Manager` (bound to the stderr console's underlying `sys.stderr`, the same object the log handler binds, so bars and logs interleave on one channel and stdout stays a clean data channel) and exposes Groups (a header bar that counts its finished children, with a red `add_subcounter` for failures), Items (one progress bar per source), and Phases (counter sub-rows whose `advance` is a `ProgressCallback` for threading into worker loops). Every row is one `manager.counter` created once and mutated in place (`count`, `total`, `desc`, `color`) through its whole lifecycle — the idiom every enlighten example uses; bars persist (`leave=True`). On finish a row's bar stays pinned at 100% with its result folded into the label (`linkedin  61 found`, recoloured red on failure), so completed sources remain visible. There is no auto-refresh thread and no ticking elapsed timer; liveness comes from real-event updates, and `Item.start(note=...)` sets a one-time expectation note for known-slow sources. A single `threading.Lock` guards facade state and the (non-thread-safe) enlighten calls; the one blocking operation — enlighten's cursor-position query during scroll-area setup — is issued once in `__enter__`, where an unresponsive terminal is detected and downgraded to plain mode rather than stalling later updates. Facade methods are hard no-ops after `__exit__` (a `_closed` flag) so a worker that finishes after a Ctrl-C teardown is safe. `Item.progress(completed, total)` advances a source's bar from a uniform signal: the orchestrator binds a per-source `report(done, total)` onto `ScrapeContext` (`_run_one`), and every scraper calls `ctx.report` against its own natural unit (term×country for JobSpy/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest). One code path for all sources, no library-log parsing. In non-TTY mode (cron, launchd, CI, pipes) — and on an unresponsive TTY — rows print discrete plain lines on finish instead of pinning bars. Designed for reuse across the app; `daily-driver jobs run` is the first consumer.
+- `RunProgress` is a context manager owning an `enlighten.Manager` bound to the stderr console's `sys.stderr` (the same object the log handler binds, so bars and logs interleave on one channel). It exposes Groups (a header bar counting finished children, with a red `add_subcounter` for failures), Items (one bar per source), and Phases (counter sub-rows whose `advance` is a `ProgressCallback` for worker loops).
+- Every row is one `manager.counter` created once and mutated in place (`count`, `total`, `desc`, `color`); bars persist (`leave=True`) and pin at 100% on finish with the result folded into the label (`linkedin  61 found`, red on failure). No auto-refresh thread, no ticking timer — liveness is real-event-driven. `Item.start(note=...)` sets a one-time expectation note for known-slow sources.
+- A single `threading.Lock` guards facade state and the non-thread-safe enlighten calls. The one blocking operation — enlighten's cursor-position query during scroll-area setup — is issued once in `__enter__`, where an unresponsive terminal is detected and downgraded to plain mode. Facade methods are hard no-ops after `__exit__` (a `_closed` flag), so a worker finishing after a Ctrl-C teardown is safe.
+- `Item.progress(completed, total)` advances a bar from a uniform signal: the orchestrator binds a per-source `report(done, total)` onto `ScrapeContext` (`_run_one`), and every scraper calls `ctx.report` against its own natural unit (term×country for JobSpy/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest) — one code path, no library-log parsing.
+- Non-TTY mode (cron, launchd, CI, pipes) and unresponsive TTYs print discrete plain lines on finish instead of pinning bars.
 
 ## Flock model
 
-All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock` and `generate.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping `fcntl.flock`). Read-modify-write patterns acquire the lock **before** opening the data file. Lock files are separate from data files — a crash never corrupts the data. `tracker.lock`, `generate.lock`, and the jobs sentinel `jobs.lock` live under `ephemeral_dir` (`.daily-driver/state/`), not alongside the files they guard.
+
+**Exception — `focus.lock` is lock-as-data by design.** It is intentionally both the flock and its own JSON payload (focus start/end/reason), so it does sit in `ephemeral_dir` next to nothing it guards but itself. Payload writes are atomic (temp file + `os.replace`) so a crash mid-write never leaves a truncated body; `focus status` reads it locklessly by design, keeping the launchd check-in hook's read path cheap.
+
+## `jobs run` resilience
+
+`jobs run` treats `jobs.csv` itself as the run's checkpoint — there is no separate state file. `runner._JobSink` owns the run's growing row list and dedup state and is the only writer:
+
+- **Per-source append (atomic, commit-after-write).** As each source finishes (the `on_source_result` callback off `run_all_scrapers`), `_JobSink.append_source` classifies that source's rows, then — under one held `_rows_lock` + `jobs.lock` critical section — appends them to `jobs.csv` AND extends `rows`. Only after the file write succeeds does it commit the dedup-set growth, the funnel, and the run totals, so the in-memory state never claims rows the disk lacks (no phantom dedup entries). A write failure raises `ScraperError`; the `on_source_result` wrapper in `run()` catches it, marks just that source failed, and lets the remaining sources finish (per-source isolation).
+- **Enrichment as in-place flush.** Enrichers replace row slots in `_JobSink.rows`; `_JobSink.flush()` snapshots `rows` and rewrites the whole file through `csv_io.atomic_write_rows` under one held `_rows_lock` + `jobs.lock`. Unknown / hand-added columns ride along POSITIONALLY via a parallel `row_extras` list (1:1 with `rows`, never keyed by Link — so every row keeps its own extras even with a blank or duplicate Link). The flush is atomic relative to a concurrent append; the lock is held only for the rewrite, never across LLM calls. `flush_periodic()` is the in-loop hook (after each phase, every ~25 LLM results): an `OSError` there is a **PERSISTENCE failure** — sets the sticky `persistence_degraded` flag, logs once, but enrichment continues. At run end `run()` warns if degraded and the final `flush()` propagates its failure loudly (after the completion manifest is written), so a silent disk problem can't masquerade as healthy.
+- **Backfill reuses the driver.** `jobs backfill` shares the same `_JobSink` + `_enrich_wave` driver to resume empty rows. It reads and rewrites jobs.csv ALL inside one `jobs.lock` window held for the whole read -> enrich -> rewrite (it rewrites from a snapshot, so it cannot drop the lock mid-enrichment) and builds the sink with `external_lock_held=True` so the per-flush sections don't re-take the non-reentrant flock. It also sets `skip_flush_if_unchanged` (no rewrite, and a lazy `pre_write_hook` backup, only when content changed) and mirrors `run()`'s degraded-save warning, naming the backup on a final-flush `OSError`.
+- **Scrape/enrich overlap (shared budget by attempted identity).** When an Apple (phase 2) scrape follows phase 1, the phase-1 rows enrich in a background **wave** while Apple still scrapes; Apple's rows get a second wave afterward. The wave-1 thread and the appending coordinator thread serialize on `_JobSink._rows_lock`; slot replacement is GIL-atomic and never overlaps an appended index. Budgets are shared running totals: wave 1 reports the identities it ATTEMPTED (`attempted` out-param of `enrich_product_and_fit_concurrently` — `fit_urls` and the UNIQUE `product_companies`, since the company cap counts companies not jobs), wave 2 excludes those (`exclude_fit_urls` / `exclude_companies`) so an attempted row — success OR failure — is never retried or double-charged, and sizes its budget as `cap − len(attempted)`. Backfill is the retry path for wave-1 failures.
+- **Interrupts.** `SIGTERM` (a scheduled run's stop signal) is routed through the same graceful drain/flush path as Ctrl-C: the CLI installs a run-scoped handler (`enrichment/_shared.install_sigterm_handler`, main-thread-only, like the SIGINT notifier) that raises `KeyboardInterrupt`. The CLI exits `130` for `SIGINT`, `143` for `SIGTERM`. The interrupt-path flush is guarded — an `OSError` there is logged, not allowed to replace the `KeyboardInterrupt` (which would degrade the exit code and skip the manifest).
+- **Manifest on every exit.** `run()` is a thin wrapper around `_run_impl` holding a `_RunState`; ANY exit that escapes — a Ctrl-C/SIGTERM during scraping or the overlap window, the csv-init `OSError`, or any crash — writes `jobs-last-run.json` with `interrupted=True` at the phase reached before re-raising. Clean completion writes `interrupted=False`. The manifest carries `phase_reached` (`scraping` / `detail` / `enrichment` / `complete`) and `interrupted`; `jobs status` prints a recovery line when the last run was cut short. (dry-run writes no manifest — it has no sink and returns before the write.)
 
 ## Extensibility
 

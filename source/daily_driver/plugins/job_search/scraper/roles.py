@@ -8,6 +8,9 @@ runner<->roles edge a single arrow and avoids an import cycle.
 from __future__ import annotations
 
 import re
+import threading
+import weakref
+from dataclasses import dataclass
 
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.config import JobSearchPlugin
@@ -70,63 +73,116 @@ def _role_pattern(role: str) -> re.Pattern[str] | None:
     return re.compile(pattern, re.IGNORECASE)
 
 
-def _role_matches(role: str, title: str, title_lower: str) -> bool:
-    """Uniform check: literal substring or compiled wildcard pattern."""
-    pat = _role_pattern(role)
-    if pat is None:
-        return role.lower() in title_lower
-    return pat.search(title) is not None
+# Tier 2b standalone keywords: precise role names that match without a
+# seniority prefix (the senior-only filter is delegated to config exclusions).
+_TIER_2B_KEYWORDS = frozenset({"sre", "platform engineer", "site reliability engineer"})
 
 
-def matches_roles(
-    title: str, roles: list[str], plugin: JobSearchPlugin | None = None
-) -> bool:
-    """True if the job title is relevant based on configured roles.
+@dataclass(frozen=True)
+class RoleMatcher:
+    """Precompiled role-matching state, built once per run and reused per row.
 
-    Exclusions (entries starting with '!') short-circuit and dominate over
-    every other tier — they reject titles that would otherwise pass Tier 2/2b.
-    Tier 1: literal or wildcarded include match.
-    Tier 2: domain + seniority keywords both present.
-    Tier 2b: standalone SRE / Platform Engineer keyword match.
+    Compiling wildcard patterns and resolving the keyword sets up front avoids
+    redoing that work for every scraped title.
     """
-    include, exclude = _split_roles(roles)
-    title_lower = title.lower()
 
-    for role in exclude:
-        if _role_matches(role, title, title_lower):
+    include_literals: tuple[str, ...]
+    include_patterns: tuple[re.Pattern[str], ...]
+    exclude_literals: tuple[str, ...]
+    exclude_patterns: tuple[re.Pattern[str], ...]
+    domain_keywords: frozenset[str]
+    seniority_keywords: frozenset[str]
+
+    @classmethod
+    def from_plugin(cls, plugin: JobSearchPlugin | None) -> RoleMatcher:
+        roles = list(plugin.roles) if plugin else []
+        include, exclude = _split_roles(roles)
+        inc_lit, inc_pat = cls._partition(include)
+        exc_lit, exc_pat = cls._partition(exclude)
+        d_kws = (
+            frozenset(plugin.domain_keywords)
+            if plugin and plugin.domain_keywords
+            else frozenset(_DEFAULT_DOMAIN_KEYWORDS)
+        )
+        s_kws = (
+            frozenset(plugin.seniority_keywords)
+            if plugin and plugin.seniority_keywords
+            else frozenset(_DEFAULT_SENIORITY_KEYWORDS)
+        )
+        return cls(inc_lit, inc_pat, exc_lit, exc_pat, d_kws, s_kws)
+
+    @staticmethod
+    def _partition(
+        roles: list[str],
+    ) -> tuple[tuple[str, ...], tuple[re.Pattern[str], ...]]:
+        literals: list[str] = []
+        patterns: list[re.Pattern[str]] = []
+        for role in roles:
+            pat = _role_pattern(role)
+            if pat is None:
+                literals.append(role.lower())
+            else:
+                patterns.append(pat)
+        return tuple(literals), tuple(patterns)
+
+    def matches(self, title: str) -> bool:
+        """True if the title is relevant under the configured role tiers.
+
+        Exclusions short-circuit and dominate over every other tier.
+        Tier 1: literal or wildcarded include match.
+        Tier 2: domain + seniority keywords both present.
+        Tier 2b: standalone SRE / Platform Engineer keyword match.
+        """
+        title_lower = title.lower()
+
+        if any(lit in title_lower for lit in self.exclude_literals) or any(
+            pat.search(title) for pat in self.exclude_patterns
+        ):
             return False
 
-    for role in include:
-        if _role_matches(role, title, title_lower):
+        if any(lit in title_lower for lit in self.include_literals) or any(
+            pat.search(title) for pat in self.include_patterns
+        ):
             return True
 
-    d_kws = (
-        set(plugin.domain_keywords)
-        if plugin and plugin.domain_keywords
-        else _DEFAULT_DOMAIN_KEYWORDS
-    )
-    s_kws = (
-        set(plugin.seniority_keywords)
-        if plugin and plugin.seniority_keywords
-        else _DEFAULT_SENIORITY_KEYWORDS
-    )
-    has_domain = any(kw in title_lower for kw in d_kws)
-    has_seniority = any(kw in title_lower for kw in s_kws)
-    if has_domain and has_seniority:
-        return True
+        has_domain = any(kw in title_lower for kw in self.domain_keywords)
+        has_seniority = any(kw in title_lower for kw in self.seniority_keywords)
+        if has_domain and has_seniority:
+            return True
 
-    # SRE, Platform Engineer, and the spelled-out "Site Reliability Engineer"
-    # match without a seniority prefix — they are precise enough as role names
-    # that the senior-only filter is delegated to config exclusions
-    # ("!Junior *", "!*Internship*", "!*Manager*", etc.). Broader terms
-    # (DevOps, Infrastructure) still require a seniority qualifier via Tier 2.
-    if any(
-        kw in title_lower
-        for kw in {"sre", "platform engineer", "site reliability engineer"}
-    ):
-        return True
+        return any(kw in title_lower for kw in _TIER_2B_KEYWORDS)
 
-    return False
+
+# Cache the prepared matcher per plugin instance so each run compiles role
+# patterns once (the same ctx.plugin is threaded to every source). Keyed on
+# id(); a weakref finalizer evicts the entry when the plugin is collected so
+# the cache cannot leak or alias a recycled id within a live run. The lock makes
+# the get/build/set atomic: matches_roles runs on every parallel scrape worker,
+# so an unguarded check-then-set could build the matcher more than once.
+_MATCHER_CACHE: dict[int, RoleMatcher] = {}
+_MATCHER_CACHE_LOCK = threading.Lock()
+
+
+def _matcher_for(plugin: JobSearchPlugin | None) -> RoleMatcher:
+    if plugin is None:
+        return RoleMatcher.from_plugin(None)
+    key = id(plugin)
+    with _MATCHER_CACHE_LOCK:
+        cached = _MATCHER_CACHE.get(key)
+        if cached is None:
+            cached = RoleMatcher.from_plugin(plugin)
+            _MATCHER_CACHE[key] = cached
+            weakref.finalize(plugin, _MATCHER_CACHE.pop, key, None)
+        return cached
+
+
+def matches_roles(title: str, plugin: JobSearchPlugin | None = None) -> bool:
+    """True if the job title is relevant based on the plugin's configured roles.
+
+    Reads roles off ``plugin`` and consults a per-plugin cached ``RoleMatcher``
+    so wildcard patterns and keyword sets are compiled once per run.
+    """
+    return _matcher_for(plugin).matches(title)
 
 
 def _compress_search_terms(roles: list[str]) -> list[str]:

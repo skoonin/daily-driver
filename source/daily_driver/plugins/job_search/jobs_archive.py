@@ -14,13 +14,32 @@ so a concurrent scrape cannot append rows between the read and the rewrite
 
 from __future__ import annotations
 
-import csv
-import os
 from datetime import date
 from pathlib import Path
 
+from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
-from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status
+from daily_driver.plugins.job_search.jobs_lock import (
+    clear_stale_adjacent_lock,
+    jobs_lock_path,
+)
+from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    atomic_write_rows as _atomic_write_rows,
+)
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    canonicalize_status_cells,
+    dedup_sets_from_rows,
+    format_canonicalized_notice,
+)
+from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
+from daily_driver.plugins.job_search.scraper.csv_io import (
+    warn_unknown_job_statuses,
+)
+
+log = get_logger(__name__)
 
 # Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
 # row reaches and never leaves, so prune archives them by default.
@@ -29,49 +48,6 @@ DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
 
 def archive_path_for(jobs_csv: Path) -> Path:
     return jobs_csv.with_name("jobs.archive.csv")
-
-
-def _read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    if not csv_path.exists():
-        return [], []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        header = list(reader.fieldnames or [])
-        rows = [dict(r) for r in reader]
-    return header, rows
-
-
-def _atomic_write_rows(
-    csv_path: Path, header: list[str], rows: list[dict[str, str]]
-) -> None:
-    """Write rows via temp file + os.replace to avoid mid-write torn reads."""
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = csv_path.with_suffix(csv_path.suffix + ".tmp")
-    with open(tmp, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-        )
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, csv_path)
-
-
-def _append_rows(csv_path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
-    if not rows:
-        return
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    fresh = not csv_path.exists()
-    with open(csv_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=header, quoting=csv.QUOTE_MINIMAL, extrasaction="ignore"
-        )
-        if fresh:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
 
 
 def _parse_iso(s: str) -> date | None:
@@ -92,8 +68,9 @@ def _is_stale(
     Falls back to ``Date Found`` when ``Date Last Seen`` is empty — without an
     on-rescan upsert path, existing rows often only have ``Date Found``.
     """
-    status = (row.get("Status") or "").strip().lower()
-    if status not in statuses:
+    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
+    status = normalize_status(row.get("Status") or "")
+    if status not in {normalize_status(s) for s in statuses}:
         return False
     seen = _parse_iso(row.get("Date Last Seen", "")) or _parse_iso(
         row.get("Date Found", "")
@@ -103,6 +80,7 @@ def _is_stale(
 
 def prune(
     jobs_csv: Path,
+    ephemeral_dir: Path,
     *,
     cutoff: date,
     statuses: tuple[str, ...] | frozenset[str] = DEFAULT_PRUNE_STATUSES,
@@ -111,11 +89,12 @@ def prune(
     """Move stale rows from ``jobs_csv`` to ``jobs.archive.csv``.
 
     Returns (candidates, archived_count). ``archived_count`` is 0 in dry-run.
-    Holds an exclusive flock on ``jobs_csv`` for the read, classification,
-    archive, and rewrite so a concurrent scrape can't append rows between the
-    read and the rewrite (which would silently delete them).
+    Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
+    classification, archive, and rewrite so a concurrent scrape can't append
+    rows between the read and the rewrite (which would silently delete them).
     """
-    with file_lock(jobs_lock_path(jobs_csv)):
+    clear_stale_adjacent_lock(jobs_csv)
+    with file_lock(jobs_lock_path(ephemeral_dir)):
         header, rows = _read_rows(jobs_csv)
         if not header:
             return [], 0
@@ -131,34 +110,68 @@ def prune(
         if dry_run or not candidates:
             return candidates, 0
 
-        _append_rows(archive_path_for(jobs_csv), header, candidates)
+        # The whole file is being rewritten anyway, so canonicalize the Status
+        # spelling of every retained/archived row (ruled_out -> ruled-out).
+        # Meaning is never changed. A user did not ask to touch these rows, so
+        # surface the spelling fixes as one notice, and warn once over the union
+        # (not per slice) on any out-of-vocabulary value.
+        if "Status" in header:
+            changes = canonicalize_status_cells(keep) + canonicalize_status_cells(
+                candidates
+            )
+            notice = format_canonicalized_notice(changes)
+            if notice is not None:
+                Console.info(notice)
+            warn_unknown_job_statuses([r.get("Status", "") for r in keep + candidates])
+
+        _archive_candidates(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
 
     return candidates, len(candidates)
 
 
+def _archive_candidates(
+    archive: Path, header: list[str], candidates: list[dict[str, str]]
+) -> None:
+    """Append pruned rows to the archive, reconciling a drifted header.
+
+    The archive shares jobs.csv's schema, but the schema drifts across releases
+    (e.g. the 0.2.0 Remote-column upgrade reorders/widens the header). A blind
+    append writes the new rows under a header that no longer matches the
+    archive's own header row, shifting every cell so the archived Link becomes
+    unreadable and the triaged job is re-discovered. When the existing archive's
+    header differs from jobs.csv's, rewrite the whole archive under the union of
+    both column sets (jobs.csv order first, then any archive-only columns) so
+    every row — old and new — is keyed correctly. A matching or absent header
+    takes the cheap append.
+    """
+    existing_header, existing_rows = _read_rows(archive)
+    if not existing_header or existing_header == header:
+        _append_rows(archive, header, candidates)
+        return
+    union_header = header + [c for c in existing_header if c not in header]
+    _atomic_write_rows(archive, union_header, existing_rows + candidates)
+
+
 def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:
     """Return (urls, dedup_keys) from jobs.archive.csv.
 
-    Empty sets when archive is missing. ``dedup_key`` import is local to avoid
-    a circular dependency on the scraper package at module load time.
+    Empty sets when archive is missing. Reads and extracts dedup state through
+    the shared csv path so jobs.csv and jobs.archive.csv stay in lockstep.
+
+    Loud on a malformed-but-present archive: a non-empty file that yields no
+    URLs (missing/renamed Link column) would silently let archived/rejected
+    jobs be re-discovered, so warn naming the path — the live jobs.csv raises
+    for the same defect.
     """
     archive = archive_path_for(jobs_csv)
-    if not archive.exists():
-        return set(), set()
-
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key
-
-    urls: set[str] = set()
-    keys: set[str] = set()
-    with open(archive, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            link = (row.get("Link") or "").strip()
-            if link:
-                urls.add(link)
-            company = (row.get("Company") or "").strip()
-            role = (row.get("Role") or "").strip()
-            if company or role:
-                keys.add(dedup_key(company, role))
+    header, rows = _read_rows(archive)
+    urls, keys = dedup_sets_from_rows(rows)
+    if rows and not urls:
+        log.warning(
+            "%s has %d rows but no usable Link values (column missing or empty); "
+            "archived jobs may be re-discovered",
+            archive,
+            len(rows),
+        )
     return urls, keys

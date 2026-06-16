@@ -54,6 +54,65 @@ def test_run_one_logs_starting_at_info(caplog) -> None:
     assert all(r.levelno == logging.INFO for r in starting)
 
 
+def test_parallel_workers_knob_drives_phase1_pool_size(caplog, monkeypatch) -> None:
+    """scraper.parallel_workers sets the phase-1 worker count (in the summary).
+
+    The phase-1 summary reports the worker count it sizes the ThreadPoolExecutor
+    with, so a non-default `parallel_workers: 3` surfaces there.
+    """
+    from daily_driver.plugins.job_search.scraper import runner
+
+    caplog.set_level(logging.INFO, logger="daily_driver")
+    fake = lambda _cfg: []  # noqa: E731
+    monkeypatch.setattr(runner, "SCRAPERS", {"remoteok": fake})
+
+    runner.run_all_scrapers(_cfg_with_sources(["remoteok"], workers=3))
+
+    phase1 = [m for m in (r.getMessage() for r in caplog.records) if "[phase1]" in m]
+    assert phase1, "expected a [phase1] summary line"
+    assert "3 workers" in phase1[0], f"worker count not reflected: {phase1[0]}"
+
+
+def test_disabled_source_is_skipped(caplog, monkeypatch) -> None:
+    """A source with `enabled: false` does not run; an enabled sibling does.
+
+    Drives the runner with a mix and asserts the disabled source's scraper is
+    never invoked while the enabled one is.
+    """
+    from daily_driver.plugins.job_search.scraper import runner
+
+    caplog.set_level(logging.INFO, logger="daily_driver")
+    invoked: list[str] = []
+
+    def _make(name: str):
+        def _scraper(_cfg: object) -> list[object]:
+            invoked.append(name)
+            return []
+
+        return _scraper
+
+    monkeypatch.setattr(
+        runner,
+        "SCRAPERS",
+        {"remoteok": _make("remoteok"), "greenhouse": _make("greenhouse")},
+    )
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "scraper": {"enabled": True, "parallel_workers": 2},
+                "sources": {
+                    "remoteok": {"enabled": True},
+                    "greenhouse": {"enabled": False},
+                },
+            }
+        )
+    )
+    runner.run_all_scrapers(ctx)
+
+    assert "remoteok" in invoked
+    assert "greenhouse" not in invoked
+
+
 def test_run_all_scrapers_phase1_summary_lists_source_names(
     caplog, monkeypatch
 ) -> None:
@@ -174,7 +233,9 @@ def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
     ddlog.configure("normal")
     our_handler = ddlog._handler
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"linkedin": lambda _ctx: []})
+    # The jobspy-backed group routes through runner.scrape_jobspy; stub it so no
+    # network call fires while logger adoption is exercised.
+    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
     try:
         runner.run_all_scrapers(
             _cfg_with_sources(["linkedin"], workers=1),
@@ -215,20 +276,20 @@ def test_source_breakdown_segments_maps_funnel_to_colors() -> None:
 
 def test_run_all_scrapers_notes_jobspy_query_count_once(monkeypatch) -> None:
     """The per-board search count is announced once via on_note -- not per
-    JobSpy site -- so two enabled sites don't duplicate the line."""
+    site -- so two enabled sites (linkedin + indeed) don't duplicate the line.
+    The note speaks in site terms; the word "jobspy" must not appear."""
     from daily_driver.plugins.job_search.scraper import runner
 
     notes: list[str] = []
-    monkeypatch.setattr(
-        runner, "SCRAPERS", {"linkedin": lambda _ctx: [], "indeed": lambda _ctx: []}
-    )
+    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
     runner.run_all_scrapers(
         _cfg_with_sources(["linkedin", "indeed"], workers=1),
         sources_override=["linkedin", "indeed"],
         on_note=notes.append,
     )
-    assert len(notes) == 1  # one line for both boards, not one per site
-    assert "searches per JobSpy board" in notes[0]
+    assert len(notes) == 1  # one line for both sites, not one per site
+    assert "searches per site" in notes[0]
+    assert "jobspy" not in notes[0].lower()
 
 
 def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
@@ -367,6 +428,9 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
         on_source_progress=None,
         on_sources_enabled=None,
         on_note=None,
+        on_source_result=None,
+        on_source_checkpoint=None,
+        on_phase1_done=None,
         force_headless=False,
     ):
         if on_sources_enabled is not None:
@@ -393,6 +457,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
 
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
         tmp_path,
         dry_run=True,
     )
@@ -432,6 +497,9 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
         on_source_progress=None,
         on_sources_enabled=None,
         on_note=None,
+        on_source_result=None,
+        on_source_checkpoint=None,
+        on_phase1_done=None,
         force_headless=False,
     ):
         if on_sources_enabled is not None:
@@ -452,6 +520,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
 
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
         tmp_path,
         dry_run=True,
     )
@@ -511,13 +580,14 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "daily_driver.plugins.job_search.scraper.enrichment.enrich_job_details_typed",
+        "daily_driver.plugins.job_search.scraper.enrichment.enrich_job_details",
         interrupt,
     )
 
     with pytest.raises(KeyboardInterrupt):
         runner.run(
             JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            tmp_path,
             tmp_path,
             dry_run=False,
         )

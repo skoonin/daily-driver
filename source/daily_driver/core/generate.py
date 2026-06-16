@@ -4,10 +4,15 @@ Generation is triggered on version drift or via ignore_drift=True. The version s
 is written last so a crash mid-run leaves the stamp stale, ensuring the next invocation
 retries — idempotent by construction.
 
-File ownership boundaries: only .claude/commands/daily-driver/, .claude/agents/daily-driver/,
-and .claude/settings.local.json are ever touched. All other user files are sacred.
-User edits to package-managed .md files are detected via SHA-256 manifest and preserved
-unless force_overwrite=True.
+File ownership boundaries — the full package-managed set generate() writes:
+  - .claude/commands/daily-driver/*.md and .claude/agents/daily-driver/*.md
+    (SHA-256 manifest-guarded)
+  - .claude/settings.local.json (merged, not manifest-guarded: package keys
+    refreshed, user-added top-level keys preserved)
+  - the rendered contract root templates (ENTRIES, e.g. README.md) — manifest-guarded
+  - .claude/hooks/*.sh — manifest-guarded
+All other user files are sacred. Manifest-guarded files where the user changed the
+content (SHA-256 mismatch) are preserved unless force_overwrite=True.
 """
 
 from __future__ import annotations
@@ -66,9 +71,13 @@ class GenerationResult:
     n_preserved: int
 
 
-def _atomic_write_text(dest: Path, content: str) -> None:
+def _atomic_write_text(dest: Path, content: str, *, mode: int | None = None) -> None:
     tmp = dest.with_suffix(dest.suffix + ".tmp")
     tmp.write_text(content, encoding="utf-8")
+    # Set mode on the temp file so content and permissions land in one atomic
+    # rename; a chmod after replace could fail and leave a wrong-mode file live.
+    if mode is not None:
+        tmp.chmod(mode)
     os.replace(tmp, dest)
 
 
@@ -273,7 +282,12 @@ def generate(
             _manifest.record(workspace.state_dir, workspace.root, entry_paths)
 
         _render_settings(workspace)
-        _copy_hooks(workspace)
+        hook_paths, hook_skipped = _copy_hooks(
+            workspace, force_overwrite=force_overwrite
+        )
+        n_preserved += len(hook_skipped)
+        if hook_paths:
+            _manifest.record(workspace.state_dir, workspace.root, hook_paths)
 
         # Stamp written last — crash before here = stamp stays stale = redo on next run.
         version_stamp.write(workspace.state_dir, workspace.version)
@@ -391,19 +405,100 @@ def _render_contract_entries(
     return written
 
 
-def _copy_hooks(workspace: Workspace) -> None:
-    """Copy package-managed hook scripts into <workspace>/.claude/hooks/."""
+def _remove_stale_hooks(
+    dest_dir: Path,
+    pkg_names: set[str],
+    *,
+    workspace_root: Path,
+    state_dir: Path,
+) -> None:
+    """Remove managed *.sh files from dest_dir whose names are absent from pkg_names.
+
+    Mirrors _remove_stale_files for the hooks dest: only files NOT user-edited
+    (per the SHA-256 manifest) are reaped, so a hook the user customized survives
+    even after it is dropped from the package.
+    """
+    if not dest_dir.exists():
+        return
+
+    for existing in dest_dir.iterdir():
+        if not existing.name.endswith(".sh"):
+            continue
+        if existing.name not in pkg_names:
+            rel = str(existing.relative_to(workspace_root))
+            if not _manifest.is_user_edited(workspace_root, state_dir, rel):
+                existing.unlink()
+                _logger.debug("Removed stale package hook: %s", rel)
+
+
+def _copy_hooks(
+    workspace: Workspace, *, force_overwrite: bool
+) -> tuple[list[Path], list[str]]:
+    """Copy package-managed hook scripts into <workspace>/.claude/hooks/.
+
+    Mirrors _copy_package_md's manifest contract: a hook the user has edited
+    (detected via SHA-256 manifest) is preserved unless force_overwrite=True.
+    Stale hooks absent from the package are reaped the same way as managed .md
+    files: force_overwrite wipes the dest for a clean slate, otherwise only
+    non-user-edited stale hooks are removed.
+
+    Returns (written_paths, skipped_rels): written paths so the caller records
+    their hashes, skipped rels so the caller folds them into n_preserved.
+    """
     hooks_dest = workspace.root / ".claude" / "hooks"
-    hooks_dest.mkdir(parents=True, exist_ok=True)
     hooks_pkg = importlib.resources.files("daily_driver.resources.templates").joinpath(
         "hooks"
     )
+
+    pkg_names = {
+        entry.name
+        for entry in hooks_pkg.iterdir()
+        if entry.name.endswith(".sh")
+        and "/" not in entry.name
+        and not entry.name.startswith(".")
+        and ".." not in entry.name
+    }
+
+    if force_overwrite:
+        _wipe_and_recreate(hooks_dest)
+    else:
+        hooks_dest.mkdir(parents=True, exist_ok=True)
+        _remove_stale_hooks(
+            hooks_dest,
+            pkg_names,
+            workspace_root=workspace.root,
+            state_dir=workspace.state_dir,
+        )
+
+    written: list[Path] = []
+    skipped: list[str] = []
     for entry in hooks_pkg.iterdir():
         if not entry.name.endswith(".sh"):
             continue
+        # Guard against tampered package contents with traversal or hidden names.
+        if "/" in entry.name or entry.name.startswith(".") or ".." in entry.name:
+            _logger.warning(
+                "Skipping suspicious hook package-data entry: %r", entry.name
+            )
+            continue
+
         dest = hooks_dest / entry.name
-        dest.write_text(entry.read_text(encoding="utf-8"), encoding="utf-8")
-        dest.chmod(0o755)
+        rel = str(dest.relative_to(workspace.root))
+
+        if not force_overwrite and _manifest.is_user_edited(
+            workspace.root, workspace.state_dir, rel
+        ):
+            _logger.warning(
+                "Preserving user-edited package-managed file: %s (use --reset to overwrite)",
+                rel,
+            )
+            skipped.append(rel)
+            continue
+
+        _atomic_write_text(dest, entry.read_text(encoding="utf-8"), mode=0o755)
+        written.append(dest)
+
+    return written, skipped
 
 
 def _render_settings(workspace: Workspace) -> None:

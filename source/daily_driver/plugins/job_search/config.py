@@ -39,14 +39,6 @@ class Locations(BaseModel):
     )
 
 
-class JobsConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    results_wanted_per_query: int = Field(default=50, description="")
-    hours_old: int = Field(default=168, description="")
-    country_indeed: str = Field(default="USA", description="")
-
-
 class SourceToggle(BaseModel):
     """Per-source enable/disable plus optional source-specific options."""
 
@@ -79,12 +71,30 @@ class HackerNewsToggle(SourceToggle):
     hn_max_posts: int = Field(default=500, description="")
 
 
-class JobspyToggle(SourceToggle):
-    """Per-site enable flags for the JobSpy aggregator plus its query knobs."""
+class LinkedInToggle(SourceToggle):
+    """LinkedIn source toggle plus its query knobs.
 
-    linkedin: bool = Field(default=True, description="")
-    indeed: bool = Field(default=True, description="")
-    jobs: JobsConfig = Field(default=JobsConfig(), description="")
+    LinkedIn and Indeed are fetched via python-jobspy (an implementation
+    detail); the user surface is the site name. ``scrape_jobs`` has no LinkedIn
+    country parameter, so — unlike :class:`IndeedToggle` — there is no
+    ``country`` knob here.
+    """
+
+    results_wanted_per_query: int = Field(default=50, description="")
+    hours_old: int = Field(default=168, description="")
+
+
+class IndeedToggle(SourceToggle):
+    """Indeed source toggle plus its query knobs.
+
+    ``country`` maps to python-jobspy's ``country_indeed`` parameter and lives
+    only here because that is the one ``scrape_jobs`` site it affects. It is the
+    fallback used when a configured ISO country code is not in JobSpy's enum.
+    """
+
+    results_wanted_per_query: int = Field(default=50, description="")
+    hours_old: int = Field(default=168, description="")
+    country: str = Field(default="USA", description="")
 
 
 # Maps a source key to the SourceToggle subclass that carries its per-source
@@ -94,7 +104,8 @@ _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
     "greenhouse": GreenhouseToggle,
     "hn_who_is_hiring": HackerNewsToggle,
     "hn_jobs": HackerNewsToggle,
-    "jobspy": JobspyToggle,
+    "linkedin": LinkedInToggle,
+    "indeed": IndeedToggle,
 }
 
 
@@ -144,7 +155,7 @@ class ScraperConfig(BaseModel):
         default=False, description="", json_schema_extra={"template_skip": True}
     )
     parallel_workers: int = Field(
-        default=4,
+        default=8,
         description="Worker threads for the parallel (headless) scrape phase.",
     )
     max_pages: int = Field(
@@ -187,10 +198,28 @@ class Criterion(BaseModel):
 
 
 class EnrichmentConfig(BaseModel):
-    """Knobs for the post-scrape enrichment passes (comp, fit, notes)."""
+    """Knobs for the post-scrape enrichment passes (comp, fit, notes).
+
+    Owns its own AI provider routing: enrichment is plugin-specific, so the
+    provider/model selection lives here rather than leaking into core's `ai:`
+    block. The provider-connection blocks (parallelism, ollama endpoint /
+    timeout) are still shared core infra under `ai.claude:` / `ai.ollama:`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: Literal["claude", "ollama"] = Field(
+        default="claude",
+        description="provider: claude | ollama",
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
+            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".'
+        ),
+        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
+    )
     enrich_timeout: int = Field(
         default=30,
         description="Seconds before a single enrichment LLM call is abandoned.",
@@ -198,6 +227,10 @@ class EnrichmentConfig(BaseModel):
     max_enrich_companies: int = Field(
         default=50,
         description="Cap on company-description lookups per run (bounds API cost).",
+    )
+    enrich_product: bool = Field(
+        default=True,
+        description="Look up a one-line Product/Purpose summary for each company.",
     )
     enrich_gd_rating: bool = Field(
         default=True,
@@ -211,6 +244,13 @@ class EnrichmentConfig(BaseModel):
         default=True,
         description=(
             "Generate a one-line Notes summary (tech stack, remote policy, red flags)."
+        ),
+    )
+    enrich_is_remote: bool = Field(
+        default=True,
+        description=(
+            "Judge each job remote/hybrid/onsite during the fit/notes pass "
+            "(no extra LLM call)."
         ),
     )
     max_enrich_fit: int = Field(
@@ -258,11 +298,6 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={"template_example": "Senior SRE / Platform Engineer"},
     )
-    home_city: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "Vancouver, BC"},
-    )
     roles: list[str] = Field(
         default=[],
         description="",
@@ -306,15 +341,16 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
                 "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
                 "apple": False,
-                "jobspy": {
+                "linkedin": {
                     "enabled": True,
-                    "linkedin": True,
-                    "indeed": True,
-                    "jobs": {
-                        "results_wanted_per_query": 50,
-                        "hours_old": 168,
-                        "country_indeed": "USA",
-                    },
+                    "results_wanted_per_query": 50,
+                    "hours_old": 168,
+                },
+                "indeed": {
+                    "enabled": True,
+                    "results_wanted_per_query": 50,
+                    "hours_old": 168,
+                    "country": "USA",
                 },
             },
             "template_example_field_comments": {
@@ -328,6 +364,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": "HN curated jobs (YC-funded company posts)",
                 "greenhouse": "Greenhouse boards (configurable list)",
                 "apple": "jobs.apple.com (API intercept)",
+                "indeed": "indeed.com (country sets the regional host)",
             },
             "template_example_block_comments": {
                 "remoteok": (
@@ -340,12 +377,12 @@ class JobSearchPlugin(BaseModel):
                     "Scrapers shipped in this repo (Playwright, needs"
                     " `playwright install`):"
                 ),
-                "jobspy": (
-                    "python-jobspy aggregator. Each site runs as a separate parallel\n"
-                    "scraper (requires `python-jobspy>=1.1.82`, fetched with\n"
-                    "linkedin_fetch_description=True). Glassdoor is intentionally\n"
-                    "excluded — JobSpy's Glassdoor path returns HTTP 400 (\"location\n"
-                    'not parsed") on every request as of 2026-04.'
+                "linkedin": (
+                    "LinkedIn + Indeed (each its own source). Each enabled site\n"
+                    "is fetched separately, under its own progress row. country\n"
+                    "(Indeed only) sets the regional host and is the fallback for\n"
+                    "countries the scraper does not recognize. Requires\n"
+                    "`python-jobspy>=1.1.82`."
                 ),
             },
         },

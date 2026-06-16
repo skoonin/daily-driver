@@ -10,10 +10,13 @@ import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from daily_driver.core import version_stamp
 from daily_driver.core.workspace import Workspace
+
+if TYPE_CHECKING:
+    from daily_driver.core.config_models import Config
 
 Status = Literal["OK", "WARNING", "ERROR"]
 
@@ -187,7 +190,7 @@ def _check_init_contract(workspace: Workspace) -> list[CheckResult]:
     return results
 
 
-def _load_workspace_config(workspace: Workspace):  # type: ignore[no-untyped-def]
+def _load_workspace_config(workspace: Workspace) -> Config | str | Exception:
     """Load `.dd-config.yaml` for a workspace.
 
     Returns the parsed Config on success, the literal string "missing" when
@@ -207,20 +210,22 @@ def _load_workspace_config(workspace: Workspace):  # type: ignore[no-untyped-def
 
 
 def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
-    """Verify Ollama reachability + model presence for any task routed to it.
+    """Verify Ollama reachability + model presence for the summary task.
 
-    Returns None (no row emitted) when every task uses the claude default.
-    Only one row is rendered overall, summarizing all ollama-routed tasks.
+    Returns None (no row emitted) when summary uses the claude default.
+    Enrichment routing is plugin-specific and validated by the job_search
+    plugin's own doctor check, not here (the honest boundary: core knows
+    about summary + the shared provider blocks, not plugin tasks).
     Drift convention: failures are WARNING (exit 0), matching the workspace
     drift / contract checks added in PR #30.
     """
     cfg = _load_workspace_config(workspace)
-    if cfg == "missing":
+    if isinstance(cfg, str):  # "missing" sentinel: no config file present
         return None
     if isinstance(cfg, Exception):
         # User has a broken .dd-config.yaml. Don't silently skip the AI
         # row — that's exactly the failure mode where a misrouted task
-        # (e.g. typo'd `ai.enrichment.provdier: ollama`) would surprise
+        # (e.g. typo'd `ai.summary.provdier: ollama`) would surprise
         # the user with no explanation.
         return CheckResult(
             name="AI providers",
@@ -229,18 +234,16 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             fix_hint="Fix the YAML / schema in .dd-config.yaml.",
         )
 
-    ai_cfg = cfg.ai
-    ollama_tasks: list[tuple[str, str]] = []
-    for task_name in ("enrichment", "summary"):
-        task_cfg = getattr(ai_cfg, task_name)
-        if task_cfg.provider == "ollama":
-            model = task_cfg.model or "qwen2.5:14b"
-            ollama_tasks.append((task_name, model))
-    if not ollama_tasks:
-        return None
-
     from daily_driver.integrations import ollama_client
     from daily_driver.integrations.ollama_client import OllamaNotReachableError
+
+    ai_cfg = cfg.ai
+    ollama_tasks: list[tuple[str, str]] = []
+    if ai_cfg.summary.provider == "ollama":
+        model = ai_cfg.summary.model or ollama_client.DEFAULT_MODEL
+        ollama_tasks.append(("summary", model))
+    if not ollama_tasks:
+        return None
 
     endpoint = ai_cfg.ollama.endpoint
     summary = ", ".join(f"{t}: ollama {m}" for t, m in ollama_tasks)

@@ -122,7 +122,7 @@ def test_quiet_mode_suppresses_plain_output(monkeypatch):
     monkeypatch.setattr(Console, "quiet_mode", True)
     console, buf = _line_console()
     with RunProgress(console, tty=False, title="Job search run") as rp:
-        rp.note("12 searches per JobSpy board")
+        rp.note("12 searches per site")
         g = rp.group("Scraping sources")
         g.item("apple").finish(ok=True, detail="5 jobs")
         g.done("5 found, 5 new")
@@ -210,6 +210,39 @@ def test_live_mode_phase_renders_fill_bar(monkeypatch):
     assert BAR_GLYPH in buf.getvalue()
 
 
+def test_live_mode_phase_advance_detail_shows_in_bar(monkeypatch):
+    """Phase.advance(detail=...) folds the current item (e.g. company) into the
+    bar label so a long phase shows live which work it is doing."""
+    _buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True) as rp:
+        phase = rp.group("Enriching jobs").phase("Fit and notes", total=4)
+        phase.start()
+        phase.advance(1, detail="Acme")
+        assert "Fit and notes" in phase._bar.desc
+        assert "Acme" in phase._bar.desc
+        phase.advance(1, detail="Globex")
+        assert "Globex" in phase._bar.desc
+
+
+def test_live_mode_phase_set_total_rebases_denominator(monkeypatch):
+    """set_total re-bases a phase pinned with an upper-bound total once the
+    planner resolves the real (e.g. budget-capped) work count."""
+    _buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True) as rp:
+        phase = rp.group("Enriching jobs").phase("Fit and notes", total=100)
+        phase.start()
+        phase.set_total(7)
+        assert phase._bar.total == 7
+        # Never below what has already completed (and never zero).
+        phase.advance(3)
+        phase.set_total(1)
+        assert phase._bar.total == 3
+        phase.set_total(0)
+        assert phase._bar.total == 3
+
+
 def test_live_mode_failed_source_uses_red_subcounter(monkeypatch):
     """A failed source advances the header's red subcounter, not the green
     main counter -- so ok vs failed show as coloured segments."""
@@ -232,12 +265,67 @@ def test_live_mode_failed_source_uses_red_subcounter(monkeypatch):
 def test_live_mode_title_pinned_as_status_bar(monkeypatch):
     """In live mode the title is a pinned status bar (top of the bottom block),
     not an ordinary line above the scroll region -- so no terminal-height gap
-    opens between the title and the bars."""
+    opens between the title and the bars. It seats lazily, on the first counter
+    (here, the group header), so the whole block sets the scroll region once."""
     buf, _mgr = _inject_live(monkeypatch)
     console, _ = _line_console()
     with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.group("Scraping sources").item("apple")  # first counter seats the title
         assert rp._title_bar is not None  # pinned, not plain-printed
     assert "Job search run" in buf.getvalue()
+
+
+def test_live_mode_empty_run_still_shows_title(monkeypatch):
+    """A run that pins no counters still shows its title (seated at teardown)."""
+    buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        assert rp._title_bar is None  # not seated until a counter or teardown
+    assert rp._title_bar is not None
+    assert "Job search run" in buf.getvalue()
+
+
+def test_reserve_sets_scroll_region_once(monkeypatch):
+    """reserve() pre-sizes the block so adding bars does not keep resizing the
+    scroll region: a single CSI r (change-scroll-region) reaches the stream for
+    the whole block instead of one per bar."""
+    buf, _mgr = _inject_live(monkeypatch)
+    # A buffer-bound manager renders no ANSI, so drive a real TTY-shaped term to
+    # observe the scroll-region sequence. Count region sets via the manager's own
+    # accounting instead: each grow bumps scroll_offset, so a single reserve to
+    # the final size means scroll_offset never grows again as bars are added.
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.reserve(2 + 3)  # title + header + 3 sources
+        offset_after_reserve = _mgr.scroll_offset
+        g = rp.group("Scraping sources")
+        for name in ("a", "b", "c"):
+            g.item(name).start()
+        # Bars fit inside the reserved region; the region never grew again.
+        assert _mgr.scroll_offset == offset_after_reserve
+    assert "Job search run" in buf.getvalue()
+
+
+def test_reserve_is_idempotent_and_noop_after_first(monkeypatch):
+    """A second reserve() is a no-op (block already seated)."""
+    buf, _mgr = _inject_live(monkeypatch)
+    console, _ = _line_console()
+    with RunProgress(console, tty=True, title="Job search run") as rp:
+        rp.reserve(5)
+        first = _mgr.scroll_offset
+        rp.reserve(20)  # ignored -- already reserved
+        assert _mgr.scroll_offset == first
+
+
+def test_reserve_noop_in_plain_mode():
+    """reserve() does nothing in plain mode and the title still prints."""
+    console, buf = _line_console()
+    with RunProgress(console, tty=False, title="Job search run") as rp:
+        rp.reserve(8)  # must not raise
+        rp.group("Scraping sources").item("apple").finish(ok=True, detail="5 jobs")
+    out = buf.getvalue()
+    assert "Job search run" in out
+    assert "apple: 5 jobs" in out
 
 
 def test_live_mode_show_breakdown_stacks_colored_segments(monkeypatch):
@@ -329,6 +417,38 @@ def test_live_mode_teardown_stops_manager_on_exception(monkeypatch):
             assert rp._manager is manager
             raise RuntimeError("boom")
     # Teardown ran despite the exception: manager cleared and run marked closed.
+    assert rp._manager is None
+    assert rp._closed is True
+
+
+def test_exit_seats_title_failure_still_stops_and_preserves_exception(monkeypatch):
+    """If seating the pending title raises during __exit__ (e.g. stderr closing
+    on a SIGTERM unwind), the manager is still stopped (scroll region/cursor
+    restored) and the in-flight exception is not replaced by the seat failure."""
+
+    stopped = []
+
+    class _FakeManager:
+        enabled = True
+
+        def status_bar(self, *args, **kwargs):  # seating the title fails
+            raise OSError("stderr closed")
+
+        def stop(self):
+            stopped.append(True)
+
+    fake = _FakeManager()
+    monkeypatch.setattr(RunProgress, "_start_live", lambda self: fake)
+    console, _ = _line_console()
+    rp = RunProgress(console, tty=True, title="Job search run")
+
+    # No counter is created, so the title is still pending when __exit__ tries to
+    # seat it. The body's KeyboardInterrupt must survive the seat OSError.
+    with pytest.raises(KeyboardInterrupt):
+        with rp:
+            raise KeyboardInterrupt()
+
+    assert stopped == [True]  # stop() ran despite the seating failure
     assert rp._manager is None
     assert rp._closed is True
 

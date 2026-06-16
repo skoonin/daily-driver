@@ -58,6 +58,8 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `focus status` | `--json` | `-j` |
 | `jobs run` | `--sources` | `-S` |
 | `jobs run` | `--dry-run` | `-n` |
+| `jobs run` | `--json` | `-j` |
+| `jobs promote` | `--dry-run` | `-n` |
 | `jobs status` | `--json` | `-j` |
 | `jobs prune` | `--status` | `-s` |
 | `jobs prune` | `--dry-run` | `-n` |
@@ -99,7 +101,11 @@ Reference command — distinct from argparse `--help` (usage). Prints the subcom
 
 YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `required` field lists are defined in `.dd-config.yaml` under `tracker.categories`. Writes are flock-guarded.
 
-Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge when the value is outside the recommended set (`open`, `in-progress`, `blocked`, `done`, `ruled-out`) and not already used by another entry in the workspace. Set `tracker.warn_unknown_status: false` in `.dd-config.yaml` to silence.
+Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge for a value outside the recommended set that no other entry uses. Spelling is normalized (case-folded, underscores/spaces to hyphens), so `Ruled_Out` and `ruled-out` are one status and neither warns.
+
+- Default recommended set: `open`, `in-progress`, `blocked`, `done`, `ruled-out`.
+- The `job` category uses the job-search lifecycle instead: `found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`.
+- Extend the set with `tracker.extra_statuses`, or silence the nudge with `tracker.warn_unknown_status: false`.
 
 ### `tracker add --category CAT --title TEXT [flags]`
 
@@ -175,7 +181,7 @@ These ship to the workspace `.claude/commands/daily-driver/` tree but are not ex
 
 | Slash command | Purpose |
 | --- | --- |
-| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. Renamed from `/interview-prep`. |
+| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. |
 
 ## Headless Claude commands
 
@@ -207,25 +213,67 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
 
-### `jobs run [-n|--dry-run] [--backfill] [--sources LIST | --list-sources]`
+The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank.
 
-Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via the provider configured under `ai.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). `--dry-run` prints matches without writing. `--backfill` re-enriches empty fields on existing rows. `-S` / `--sources a,b,c` overrides the enabled set in `.dd-config.yaml` for a single run; `--list-sources` prints the available source names and exits.
+- **Spelling is normalized** (case-folded, underscores/spaces to hyphens, so `Ruled_Out` becomes `ruled-out`) — spelling only, never meaning.
+- **Reading never rewrites.** A row's Status is canonicalized only when that row is already being rewritten — i.e. in `jobs backfill` and `jobs prune`, which print a one-line notice when they fix spellings (`Canonicalized 3 status spelling(s) ...`). A normal `jobs run` append leaves pre-existing rows untouched.
+- **Out-of-set statuses log one WARNING** naming the offending values — relevant for hand-edited cells and `backfill`/`prune` over older data, since fresh appends are always `found`.
 
-Available sources: `apple`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `indeed`, `linkedin`, `remoteok`, `weworkremotely`. Run `daily-driver help sources` for the same list at runtime.
+### `jobs run [-n|--dry-run | -j|--json] [--no-enrich] [--sources LIST | --list-sources]`
 
-On a TTY, `jobs run` pins a live progress display at the bottom of the terminal: a `Scraping sources` header bar (green ok / red failed segments) plus one progress bar per source, and an `Enriching jobs` group. Every source is its own bar that fills as it works and stays pinned at its result (`linkedin  61 found`, red on failure); each reports against its natural unit — search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest. When a source finishes, its bar re-colours into a breakdown of what it found — new (green), already in `jobs.csv` (magenta), skipped by location (yellow), and the duplicate/url-less remainder (grey). Known-slow boards show a one-time expectation note (e.g. `linkedin  running -- can take several minutes`) until real progress arrives. It ends with a `Completed:` summary line reconciling totals (found, new, matched location, plus `(N skipped by location)` when rows were dropped for location). The bars render on any TTY at normal and `-v`/`-vv` verbosity; verbosity controls only how much scrolls above them — warnings at normal, INFO heartbeats and per-source timings at `-v`, the full stream at `-vv`. Quiet (`-q`) suppresses the live display and every progress line, leaving only errors. Problems surface live above the bars as they happen, with a terse `Warnings: N (shown above)` line at the end. Non-interactive output (cron, launchd, pipes) — or a terminal that doesn't answer the cursor-position query on entry — falls back to plain lines with no live display. During the serial Apple scrape phase the browser runs headless whenever the live display is active.
+Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)).
+
+- `--dry-run` — print matches without writing.
+- `--no-enrich` — append scraped rows but skip all three enrichment phases (detail pages, company products, fit/notes). Fast and cheap; fill later with `jobs backfill`.
+- `-S` / `--sources a,b,c` — override the enabled set for one run. `--list-sources` prints the names and exits.
+- `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`).
+
+**Resilience.** `jobs run` writes as it works, so an interrupt keeps what finished:
+
+- Each source appends as it completes. LinkedIn and Indeed (the multi-hour sources) checkpoint after every finished search unit (one search term × country), so a crash two hours in loses at most the one in-flight unit. Fast single-call sources (RemoteOK, the HN sources, Greenhouse, WeWorkRemotely, Apple) append once on finish; their loss window is seconds.
+- Enrichment rewrites the file after each phase and periodically within the long LLM phases.
+- Ctrl-C or a scheduled `SIGTERM` drains gracefully: each running source finishes its current unit, its rows are deduped and appended, and the run exits. An interrupt during scraping skips enrichment (fill with `jobs backfill`); during enrichment it loses at most the last save window. A second Ctrl-C quits immediately.
+- Exit codes: `0` when every source succeeded and saves were clean; `1` when any source failed or persistence degraded (even if the final save recovered the data); `130` for `SIGINT`, `143` for `SIGTERM`.
+
+**Sources.** `apple`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `indeed`, `linkedin`, `remoteok`, `weworkremotely`. `linkedin` and `indeed` are site-named selectors (`-S linkedin` or `-S linkedin,indeed`); each enabled site is fetched separately, under its own progress row, retry, and failure isolation. `daily-driver help sources` lists them at runtime.
+
+**Live display.** On a TTY, `jobs run` pins a display at the bottom: a `Scraping sources` header bar (green ok / red failed) with one bar per source, then an `Enriching jobs` group. Details covered once in [usage.md](usage.md#output-and-verbosity); the short version: each source reports against its natural unit, stays pinned at its result, recolours into a found/new/already-in-csv/skipped breakdown on finish, and the run ends with a reconciling `Completed:` line. `-q` suppresses the display; `-v`/`-vv` only change how much scrolls above it. Non-interactive output (cron, launchd, pipes) falls back to plain lines.
+
+> **VS Code integrated terminal**: a frozen copy of the live block left in scrollback is VS Code's DOM renderer mishandling scroll-region repaints, not the program. Set `terminal.integrated.gpuAcceleration` to `"auto"` (or `"on"`) to fix it. iTerm2 and tmux are unaffected.
+
+### `jobs backfill [-n|--dry-run] [--limit N]`
+
+Re-enriches empty fields (Product/Purpose, GD Rating, Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the overlapped product + fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
+
+- Rows already filled — and rows in a skip status — are left untouched. Counts respect the `enrich_product` / `enrich_gd_rating` toggles (Fit and Notes are one combined need, since a single call fills both).
+- `-n` / `--dry-run` — per-phase would-enrich counts, no LLM calls, no writes.
+- `--limit N` — cap LLM spend by bounding both the product and fit/notes budgets at `N` (minimum 1; default: the configured per-phase caps).
+- A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
+- Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).
+
+Unlike `jobs run`, backfill holds the jobs lock across its whole read -> enrich -> rewrite window — it rewrites from an in-memory snapshot, so dropping the lock mid-enrichment would let a concurrent run's appended rows be clobbered.
+
+### `jobs promote URL-OR-COMPANY [-n|--dry-run]`
+
+Promotes a `jobs.csv` row into a tracker `job` entry once it needs active driving (interviews, follow-ups). The tracker drives work (follow-ups, day-start planning); `jobs.csv` is the discovery / triage record; promotion is the explicit, never-automatic bridge.
+
+- **Selector**, resolved in order: exact match on the row's Link URL (primary), then an unambiguous case-insensitive Company substring. No match or more than one lists candidates and exits `1` — pass the full Link URL to disambiguate.
+- **New entry**: category `job`, titled `<Company> -- <Role>`, with the job URL as both `link` and an `extras` key (with `company`, `role`, `source`). The success line names the status (`Promoted job-001 [applied]: ...`).
+- **Status** carries through from the row when it is a recognized job status; a blank or out-of-set status falls back to `applied`, with a one-line warning naming the substitution.
+- **Idempotent**: the `extras` URL is the durable key, so promoting the same URL twice reports `already promoted as <id>` and exits `0`. A row with no Link falls back to a weaker `(company, role)` key, noted in the success line as `(row has no Link)`.
+- **Never mutates `jobs.csv`** — `promote` only writes the tracker. `-n` / `--dry-run` prints the entry that would be created and writes nothing.
 
 ### `jobs status [--json]`
 
-Reads `jobs-last-run.json` and `jobs.csv` metadata.
+Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment.
 
 ### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run]`
 
-Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. Pass `--status active` to nuke stale active rows.
+Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`.
 
 ## Scheduler (macOS)
 
-W8 consolidated the legacy `install-scheduler` / `uninstall-scheduler` top-level commands into a single `scheduler {install,uninstall,status}` group.
+`scheduler {install,uninstall,status}` manages launchd plists.
 
 ### `scheduler install`
 

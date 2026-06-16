@@ -19,13 +19,19 @@ from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import enrichment
+from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import make_enriched
 
 
-def _enrichment_plugin(budget: int) -> JobSearchPlugin:
+def _enrichment_plugin(
+    budget: int, provider: str = "claude", model: str | None = None
+) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "enrichment": {
+                "provider": provider,
+                "model": model,
                 "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
                 "enrich_gd_rating": False,
@@ -37,60 +43,62 @@ def _enrichment_plugin(budget: int) -> JobSearchPlugin:
 
 def _ollama_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
     return ScrapeContext(
-        plugin=_enrichment_plugin(budget),
-        ai=AIConfig.model_validate(
-            {
-                "enrichment": {"provider": "ollama", "model": "qwen2.5:14b"},
-                "ollama": {"max_parallel": max_parallel},
-            }
-        ),
+        plugin=_enrichment_plugin(budget, provider="ollama", model="qwen2.5:14b"),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": max_parallel}}),
     )
 
 
 def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
     return ScrapeContext(
-        plugin=_enrichment_plugin(budget),
-        ai=AIConfig.model_validate(
-            {
-                "enrichment": {"provider": "claude"},
-                "claude": {"max_parallel": max_parallel},
-            }
-        ),
+        plugin=_enrichment_plugin(budget, provider="claude"),
+        ai=AIConfig.model_validate({"claude": {"max_parallel": max_parallel}}),
     )
 
 
-def _job(company: str, idx: int = 0) -> dict[str, Any]:
-    return {"company": company, "role": "SRE", "location": "Remote", "product": ""}
+def _job(company: str, idx: int = 0) -> EnrichedJob:
+    # url unique per company so cross-job identity stays distinct; product "" so
+    # the company enricher treats it as needing a lookup.
+    return make_enriched(
+        company=company, url=f"https://example.com/{company}", product=""
+    )
+
+
+def _fit_job(company: str) -> EnrichedJob:
+    return make_enriched(company=company, url=f"https://example.com/{company}")
 
 
 def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two workers must reach a barrier simultaneously; serial would deadlock."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return "Some product"
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job(f"Co{i}") for i in range(4)]
-    enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
+    out, _ = enrichment.enrich_company_descriptions(
+        jobs, _ollama_config(max_parallel=4)
+    )
 
-    assert all(j["product"] == "Some product" for j in jobs)
+    assert all(j.product == "Some product" for j in out)
 
 
 def test_claude_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
     """Claude must fan out through the pool when claude.max_parallel > 1."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return "Some product"
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job(f"Co{i}") for i in range(4)]
-    enrichment.enrich_company_descriptions(jobs, _claude_config(max_parallel=4))
+    out, _ = enrichment.enrich_company_descriptions(
+        jobs, _claude_config(max_parallel=4)
+    )
 
-    assert all(j["product"] == "Some product" for j in jobs)
+    assert all(j.product == "Some product" for j in out)
 
 
 def test_claude_path_serial_when_max_parallel_one(
@@ -99,7 +107,7 @@ def test_claude_path_serial_when_max_parallel_one(
     """max_parallel=1 keeps claude on the main thread (no pool)."""
     thread_names: list[str] = []
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         thread_names.append(threading.current_thread().name)
         return "Some product"
 
@@ -151,7 +159,7 @@ def test_ollama_budget_respected_under_parallel(
     call_count = 0
     lock = threading.Lock()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         nonlocal call_count
         with lock:
             call_count += 1
@@ -168,24 +176,15 @@ def test_ollama_fit_notes_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> 
     """enrich_fit_and_notes must also fan out under ollama provider."""
     barrier = threading.Barrier(parties=2, timeout=2.0)
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         barrier.wait()
         return '{"fit": 7, "notes": "ok"}'
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(4)
-    ]
-    enrichment.enrich_fit_and_notes(jobs, _ollama_config())
+    jobs = [_fit_job(f"Co{i}") for i in range(4)]
+    out, _ = enrichment.enrich_fit_and_notes(jobs, _ollama_config())
 
-    assert all(j["fit"] == "7/10" for j in jobs)
+    assert all(j.fit == 7 for j in out)
 
 
 def test_fit_notes_progress_callback_fires_per_job(
@@ -195,16 +194,7 @@ def test_fit_notes_progress_callback_fires_per_job(
     monkeypatch.setattr(
         ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
     )
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(4)
-    ]
+    jobs = [_fit_job(f"Co{i}") for i in range(4)]
     advances: list[tuple[int, str | None]] = []
     enrichment.enrich_fit_and_notes(
         jobs,
@@ -221,16 +211,7 @@ def test_fit_notes_emits_progress_heartbeat_at_info(
     monkeypatch.setattr(
         ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "ok"}'
     )
-    jobs = [
-        {
-            "company": f"Co{i}",
-            "role": "SRE",
-            "location": "Remote",
-            "fit": "",
-            "notes": "",
-        }
-        for i in range(10)
-    ]
+    jobs = [_fit_job(f"Co{i}") for i in range(10)]
     with caplog.at_level(
         "INFO", logger="daily_driver.plugins.job_search.scraper.enrichment"
     ):
@@ -245,7 +226,7 @@ def test_worker_log_tag_in_parallel_path(
     """When pool_size > 1, worker log lines carry [enrich wN] tag."""
     import logging
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         raise ai_provider.AIInvocationError(
             "boom", provider="ollama", returncode=1, stdout="", stderr="boom"
         )
@@ -270,7 +251,7 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
     invocation_count = [0]
     count_lock = threading.Lock()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         # Slow first 3 calls so the main thread can interrupt; fast 4th
         # never gets to run because we SIGINT after 3 finish.
         with count_lock:
@@ -299,7 +280,7 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
     with pytest.raises(KeyboardInterrupt):
         enrichment.enrich_company_descriptions(jobs, _ollama_config(max_parallel=4))
 
-    enriched = [j for j in jobs if j["product"].startswith("Product")]
+    enriched = [j for j in jobs if j.product.startswith("Product")]
     assert len(enriched) >= 1, f"expected partial results stitched, got: {jobs}"
 
 
@@ -310,7 +291,7 @@ def test_ollama_interrupt_notifier_uses_user_voice(
     started = threading.Event()
     proceed = threading.Event()
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         started.set()
         proceed.wait(timeout=2.0)
         return "Some product"
@@ -342,7 +323,7 @@ def test_ollama_partial_failure_doesnt_kill_others(
 ) -> None:
     """One worker raising must not abort the others' results."""
 
-    def fake_invoke(task: str, prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(prompt: str, **kwargs: Any) -> str:
         if "BadCo" in prompt:
             raise ai_provider.AIInvocationError(
                 "boom", provider="ollama", returncode=1, stdout="", stderr="boom"
@@ -351,8 +332,39 @@ def test_ollama_partial_failure_doesnt_kill_others(
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     jobs = [_job("GoodA"), _job("BadCo"), _job("GoodB"), _job("GoodC")]
-    stats = enrichment.enrich_company_descriptions(jobs, _ollama_config())
+    out, stats = enrichment.enrich_company_descriptions(jobs, _ollama_config())
 
-    enriched = [j for j in jobs if j["product"] == "Some product"]
+    enriched = [j for j in out if j.product == "Some product"]
     assert len(enriched) == 3, f"expected 3 enriched, got {len(enriched)}: {jobs}"
     assert stats["failed"] >= 1
+
+
+def test_apply_validation_error_fails_one_job_not_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A with_updates failure on one job must not abort the whole company pass.
+
+    Guards the critical finding: run() has no incremental flush, so a
+    ValidationError escaping the result-application loop would lose every job.
+    The bad job increments the failed counter; the others still enrich.
+    """
+    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Some product")
+
+    real_with_updates = EnrichedJob.with_updates
+
+    def flaky_with_updates(self: EnrichedJob, **updates: Any) -> EnrichedJob:
+        if self.company == "BadCo":
+            raise ValueError("simulated validation failure")
+        return real_with_updates(self, **updates)
+
+    monkeypatch.setattr(EnrichedJob, "with_updates", flaky_with_updates)
+    jobs = [_job("GoodA"), _job("BadCo"), _job("GoodC")]
+    out, stats = enrichment.enrich_company_descriptions(
+        jobs, _claude_config(max_parallel=1)
+    )
+
+    enriched = [j for j in out if j.product == "Some product"]
+    assert len(enriched) == 2, f"expected 2 enriched, got {len(enriched)}"
+    assert stats["failed"] >= 1
+    bad = next(j for j in out if j.company == "BadCo")
+    assert bad.product != "Some product"  # update was dropped, not applied

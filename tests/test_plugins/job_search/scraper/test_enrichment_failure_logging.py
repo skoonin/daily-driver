@@ -19,6 +19,7 @@ from daily_driver.integrations.ai_provider import AIInvocationError
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import make_enriched
 
 
 def _config() -> ScrapeContext:
@@ -39,7 +40,7 @@ def test_company_descriptions_warning_includes_stdout(caplog) -> None:
         stdout="Not logged in - Please run /login",
         stderr="",
     )
-    jobs = [{"company": "Acme", "role": "SRE"}]
+    jobs = [make_enriched(company="Acme")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -62,7 +63,7 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
         stdout="Credit balance is too low",
         stderr="",
     )
-    jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/jobs/1"}]
+    jobs = [make_enriched(company="Acme", url="https://example.com/jobs/1")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -79,42 +80,81 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
     assert "stderr=" in matched[0]
 
 
-def test_company_descriptions_routes_to_provider_with_format_false(caplog) -> None:
-    """Site 1 (free-text product description) must request format_json=False."""
-    jobs = [{"company": "Acme", "role": "SRE"}]
+def test_company_descriptions_routes_with_plugin_provider() -> None:
+    """Site 1 (product) resolves its route from the plugin enrichment config."""
+    jobs = [make_enriched(company="Acme")]
     captured: dict = {}
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "phi4", "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
 
-    def fake_invoke(task, prompt, *, ai, timeout, format_json):
-        captured["task"] = task
-        captured["format_json"] = format_json
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        captured["provider"] = provider
+        captured["model"] = model
         return "Acme makes widgets\n4.1\n"
 
-    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            enrichment.enrich_company_descriptions(jobs, _config())
+    with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+        out, _ = enrichment.enrich_company_descriptions(jobs, ctx)
 
-    assert captured["task"] == "enrichment"
-    assert captured["format_json"] is False
-    assert jobs[0]["product"] == "Acme makes widgets"
+    assert captured["provider"] == "ollama"
+    assert captured["model"] == "phi4"
+    assert out[0].product == "Acme makes widgets"
 
 
-def test_fit_and_notes_routes_to_provider_with_format_true(caplog) -> None:
-    """Site 2 (fit/notes JSON) must request format_json=True."""
-    jobs = [{"company": "Acme", "role": "SRE", "url": "https://example.com/j/1"}]
+def test_company_product_scaffolding_only_line_is_failed_not_cached() -> None:
+    """A response that is pure prompt scaffolding (e.g. exactly "Product:")
+    strips to empty; it must be counted as a failed lookup and NOT written as a
+    silent empty product cell, so `jobs backfill` can retry it."""
+    jobs = [make_enriched(company="Acme", product="")]
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "phi4",
+                    "enrich_timeout": 5,
+                    "enrich_product": True,
+                    "enrich_gd_rating": False,
+                }
+            }
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    with patch.object(
+        ai_provider, "invoke_for", side_effect=lambda *a, **k: "Product:"
+    ):
+        out, stats = enrichment.enrich_company_descriptions(jobs, ctx)
+
+    assert out[0].product == ""  # not stitched as a silent empty cell
+    assert stats["failed"] == 1  # counted as a failure, so it shows in summaries
+
+
+def test_fit_and_notes_routes_with_plugin_provider() -> None:
+    """Site 2 (fit/notes JSON) resolves its route from the plugin config."""
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
     captured: dict = {}
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "phi4", "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
 
-    def fake_invoke(task, prompt, *, ai, timeout, format_json):
-        captured["task"] = task
-        captured["format_json"] = format_json
+    def fake_invoke(prompt, *, provider, model, ai, timeout):
+        captured["provider"] = provider
+        captured["model"] = model
         return '{"fit": 7, "notes": "kubernetes-heavy"}'
 
-    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            enrichment.enrich_fit_and_notes(jobs, _config())
+    with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
+        out, _ = enrichment.enrich_fit_and_notes(jobs, ctx)
 
-    assert captured["task"] == "enrichment"
-    assert captured["format_json"] is True
-    assert jobs[0]["fit"] == "7/10"
+    assert captured["provider"] == "ollama"
+    assert captured["model"] == "phi4"
+    assert out[0].fit == 7
 
 
 def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
@@ -126,7 +166,7 @@ def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
         stderr="",
         returncode=500,
     )
-    jobs = [{"company": "Acme", "role": "SRE"}]
+    jobs = [make_enriched(company="Acme")]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=err):
@@ -138,3 +178,171 @@ def test_company_descriptions_logs_ai_invocation_error_stdout(caplog) -> None:
     assert matched, f"expected enrich warning, got: {msgs}"
     assert "stdout=" in matched[0]
     assert "server boom" in matched[0]
+
+
+def test_fit_notes_failed_job_logs_info_one_liner(caplog) -> None:
+    """A failed fit/notes call emits a per-job INFO one-liner (visible at -v),
+    so a single failure is identifiable without dropping to -vv."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_fit_and_notes(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "enrichment failed" in m for m in info_msgs
+    ), f"expected an INFO per-job failure line, got: {info_msgs}"
+
+
+def test_company_failed_lookup_logs_info_one_liner(caplog) -> None:
+    """A failed company-description lookup emits a per-company INFO one-liner."""
+    err = claude_cli.ClaudeInvocationError(
+        1, ["claude", "-p", "..."], stdout="boom", stderr=""
+    )
+    jobs = [make_enriched(company="Acme")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
+            with caplog.at_level(logging.INFO, logger="daily_driver"):
+                enrichment.enrich_company_descriptions(jobs, _config())
+
+    info_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.INFO and "Acme" in r.getMessage()
+    ]
+    assert any(
+        "lookup failed" in m for m in info_msgs
+    ), f"expected an INFO per-company failure line, got: {info_msgs}"
+
+
+# ---------------------------------------------------------------------------
+# Provider-named timeout warnings + ollama queue hint (PART B.2)
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_warning_names_provider_claude(caplog) -> None:
+    """The timeout warning names the provider, e.g. 'claude timed out after 5s'."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
+    err = AITimeoutError(
+        "claude timed out after 5s", provider="claude", timeout_seconds=5
+    )
+    jobs = [make_enriched(company="Acme")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=err):
+            with caplog.at_level(logging.WARNING, logger="daily_driver"):
+                enrichment.enrich_company_descriptions(jobs, _config())
+
+    msgs = [r.getMessage() for r in caplog.records if "[enrich]" in r.getMessage()]
+    matched = [m for m in msgs if "claude timed out after 5s" in m]
+    assert matched, f"expected provider-named timeout, got: {msgs}"
+
+
+def test_ollama_timeout_warning_appends_queue_hint_once(caplog) -> None:
+    """First ollama timeout in a run logs the full queue hint; later ones don't."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
+    err = AITimeoutError(
+        "ollama timed out after 5s", provider="ollama", timeout_seconds=5
+    )
+    jobs = [
+        make_enriched(company="Acme", url="https://example.com/j/1"),
+        make_enriched(company="Beta", url="https://example.com/j/2"),
+    ]
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "phi4", "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    with patch.object(ai_provider, "invoke_for", side_effect=err):
+        with caplog.at_level(logging.WARNING, logger="daily_driver"):
+            enrichment.enrich_fit_and_notes(jobs, ctx)
+
+    # Dedupe identical messages: pytest's caplog can capture a record more than
+    # once via the named-logger handler interaction; the real emission is one
+    # timeout per job plus one hint (verified separately under -s).
+    msgs = {r.getMessage() for r in caplog.records}
+    timeout_msgs = {m for m in msgs if "ollama timed out after 5s" in m}
+    assert len(timeout_msgs) == 2, f"expected a timeout per job, got: {timeout_msgs}"
+    hint_msgs = [m for m in msgs if "OLLAMA_NUM_PARALLEL" in m]
+    assert len(hint_msgs) == 1, f"queue hint must log exactly once, got: {hint_msgs}"
+    assert "queued requests count against the timeout" in hint_msgs[0]
+
+
+def test_fit_notes_timeout_uses_full_tag(caplog) -> None:
+    """Harmonized: the fit/notes phase uses its full [enrich-fit-notes] tag."""
+    from daily_driver.integrations.ai_provider import AITimeoutError
+
+    err = AITimeoutError(
+        "claude timed out after 5s", provider="claude", timeout_seconds=5
+    )
+    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+
+    with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
+        with patch.object(ai_provider, "invoke_for", side_effect=err):
+            with caplog.at_level(logging.WARNING, logger="daily_driver"):
+                enrichment.enrich_fit_and_notes(jobs, _config())
+
+    msgs = [r.getMessage() for r in caplog.records if "timed out" in r.getMessage()]
+    assert msgs
+    assert all("[enrich-fit-notes]" in m for m in msgs)
+
+
+def test_serial_coordinator_arms_queue_hint_once_across_phases() -> None:
+    """A serial run through the coordinator must not re-arm the hint per phase.
+
+    The two sub-enrichers each used to re-arm the once-per-run flag, so a serial
+    run with a timeout in each phase could emit the hint twice. The coordinator
+    arms once and passes _reset_hint=False, so the flag stays latched after the
+    first phase logs it.
+    """
+    from daily_driver.integrations.ai_provider import AITimeoutError
+    from daily_driver.plugins.job_search.scraper.enrichment import llm
+
+    err = AITimeoutError(
+        "ollama timed out after 5s", provider="ollama", timeout_seconds=5
+    )
+    jobs = [
+        make_enriched(
+            company="Acme",
+            url="https://example.com/j/1",
+            product="",
+            description_text="infra",
+        )
+    ]
+    # max_parallel=1 -> the coordinator takes the serial fallback path.
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {"enrichment": {"provider": "ollama", "model": "phi4", "enrich_timeout": 5}}
+        ),
+        ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
+    )
+
+    reset_calls = [0]
+    real_reset = llm._reset_ollama_hint
+
+    def counting_reset() -> None:
+        reset_calls[0] += 1
+        real_reset()
+
+    with patch.object(llm, "_reset_ollama_hint", counting_reset):
+        with patch.object(ai_provider, "invoke_for", side_effect=err):
+            enrichment.enrich_product_and_fit_concurrently(jobs, ctx)
+
+    # The coordinator arms exactly once; the two sub-enrichers must not re-arm.
+    assert reset_calls[0] == 1, f"expected one re-arm, got {reset_calls[0]}"
+    # And the hint stayed latched after the first timeout logged it.
+    assert llm._ollama_hint_logged is True

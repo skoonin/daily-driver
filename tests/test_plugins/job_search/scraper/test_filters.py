@@ -67,42 +67,70 @@ class TestLocationMatches:
 # ---------------------------------------------------------------------------
 
 
+def _roles(*roles: str) -> JobSearchPlugin:
+    """A plugin carrying the given role list for matches_roles(title, plugin)."""
+    return JobSearchPlugin.model_validate({"roles": list(roles)})
+
+
 class TestMatchesRoles:
     def test_literal_role_substring_match(self) -> None:
-        assert matches_roles("Senior SRE", ["SRE"]) is True
-        assert matches_roles("Senior SRE", ["senior sre"]) is True
+        assert matches_roles("Senior SRE", _roles("SRE")) is True
+        assert matches_roles("Senior SRE", _roles("senior sre")) is True
 
     def test_wildcard_role_match(self) -> None:
         """Wildcard pattern matches when prefix aligns."""
-        assert matches_roles("Staff Backend Engineer", ["Staff *"]) is True
+        assert matches_roles("Staff Backend Engineer", _roles("Staff *")) is True
         # "Junior Backend Engineer" doesn't match the wildcard AND has no domain
         # keyword (backend isn't in _DEFAULT_DOMAIN_KEYWORDS), so it falls
         # through all tiers to return False.
-        assert matches_roles("Junior Backend Engineer", ["Staff *"]) is False
+        assert matches_roles("Junior Backend Engineer", _roles("Staff *")) is False
 
     def test_exclusion_short_circuits(self) -> None:
         """Exclusion wins over any include match."""
-        assert matches_roles("Manager of SRE", ["SRE", "!*Manager*"]) is False
+        assert matches_roles("Manager of SRE", _roles("SRE", "!*Manager*")) is False
 
     def test_tier2_domain_plus_seniority(self) -> None:
         """DevOps (domain) + Senior (seniority) both present → match."""
-        assert matches_roles("Senior DevOps Engineer", []) is True
+        assert matches_roles("Senior DevOps Engineer", _roles()) is True
 
     def test_tier2_domain_without_seniority_rejected(self) -> None:
-        assert matches_roles("DevOps Engineer", []) is False
+        assert matches_roles("DevOps Engineer", _roles()) is False
 
     def test_tier2b_sre_matches_alone(self) -> None:
         """SRE / Platform Engineer pass without a seniority qualifier."""
-        assert matches_roles("Site Reliability Engineer", []) is True
-        assert matches_roles("Platform Engineer", []) is True
-        assert matches_roles("SRE III", []) is True
+        assert matches_roles("Site Reliability Engineer", _roles()) is True
+        assert matches_roles("Platform Engineer", _roles()) is True
+        assert matches_roles("SRE III", _roles()) is True
 
     def test_no_match_for_unrelated_title(self) -> None:
-        assert matches_roles("Marketing Intern", ["SRE"]) is False
+        assert matches_roles("Marketing Intern", _roles("SRE")) is False
 
     def test_special_chars_in_role_not_regex_interpreted(self) -> None:
         """Entries like 'CI/CD Engineer' must match literally — no regex surprise."""
-        assert matches_roles("CI/CD Engineer", ["CI/CD Engineer"]) is True
+        assert matches_roles("CI/CD Engineer", _roles("CI/CD Engineer")) is True
+
+    def test_custom_domain_and_seniority_keywords_drive_tier2(self) -> None:
+        """domain_keywords + seniority_keywords REPLACE the built-in tier-2 sets.
+
+        A title built from words outside the defaults (and outside tier-2b) only
+        matches once both custom keyword lists name them; with the default sets
+        the same title falls through every tier to False.
+        """
+        title = "Wizard Robotics Engineer"
+        custom = JobSearchPlugin.model_validate(
+            {"domain_keywords": ["robotics"], "seniority_keywords": ["wizard"]}
+        )
+        assert matches_roles(title, custom) is True
+        # Default keyword sets: "robotics"/"wizard" are not present, so no match.
+        assert matches_roles(title, _plugin()) is False
+
+    def test_custom_domain_without_matching_seniority_rejected(self) -> None:
+        """Custom domain keyword alone is not enough — tier-2 needs both."""
+        custom = JobSearchPlugin.model_validate(
+            {"domain_keywords": ["robotics"], "seniority_keywords": ["wizard"]}
+        )
+        # Domain present, seniority absent => tier-2 fails.
+        assert matches_roles("Robotics Engineer", custom) is False
 
 
 # ---------------------------------------------------------------------------

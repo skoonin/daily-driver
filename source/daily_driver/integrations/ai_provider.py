@@ -1,14 +1,19 @@
 """Provider-dispatch layer for headless AI calls.
 
-`invoke_for(task, prompt, ...)` reads `ai.<task>` off the supplied `AIConfig`
-and routes to either `claude_cli.invoke` (default) or `ollama_client.generate`.
-All backend failures normalize to `AIInvocationError`, which carries
-provider, stdout, and stderr so callers can surface the real upstream
-error message — matching the diagnostic warning shape introduced in
-PR #29 (`stdout=...; stderr=...`).
+`invoke_for(prompt, *, provider, model, ai, ...)` takes a route the caller has
+already resolved — `provider` and `model` — plus the core provider-connection
+blocks (`ai.claude` / `ai.ollama`) for tuning and the ollama endpoint/timeout.
+The caller owns route resolution: core summary reads `ai.summary`, the
+job_search scraper enrichers read `plugins.job_search.enrichment`. Dispatch
+routes to `claude_cli.invoke` or `ollama_client.generate`. All backend failures
+normalize to `AIInvocationError`, which carries provider, stdout, and stderr so
+callers can surface the real upstream error message — matching the diagnostic
+warning shape introduced in PR #29 (`stdout=...; stderr=...`).
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 import requests
 
@@ -61,40 +66,40 @@ class AITimeoutError(AIInvocationError):
 
 
 def invoke_for(
-    task: str,
     prompt: str,
     *,
+    provider: Literal["claude", "ollama"],
+    model: str | None,
     ai: AIConfig,
     timeout: int | None = None,
-    format_json: bool = False,
 ) -> str:
-    """Dispatch a headless prompt to the provider configured for `task`.
+    """Dispatch a headless prompt to the resolved `provider` / `model` route.
 
-    task: "enrichment" | "summary".
+    The caller resolves the route (core summary from `ai.summary`, the scraper
+    enrichers from `plugins.job_search.enrichment`); `ai` supplies the shared
+    provider-connection blocks (`ai.claude` tuning, `ai.ollama` endpoint /
+    timeout).
 
     Failure normalization:
         - All provider errors (auth, rate-limit, HTTP error, model-not-found,
           connection refused, response-error) raise `AIInvocationError`.
         - All timeouts raise `AITimeoutError` (subclass of AIInvocationError)
-          so callers can match on a single type across providers.
+          so callers can match on a single type across providers. The message
+          names the provider (e.g. "ollama timed out after 60s").
 
     Catching `AIInvocationError` alone suffices for the diagnostic-warning
     path (PR #29). Catch `AITimeoutError` first when timeouts deserve a
     distinct message.
     """
     ai_cfg = ai
-    try:
-        task_cfg = getattr(ai_cfg, task)
-    except AttributeError as exc:
-        raise ValueError(f"unknown AI task: {task!r}") from exc
 
-    if task_cfg.provider == "claude":
+    if provider == "claude":
         try:
             return claude_cli.invoke(
                 prompt,
                 headless=True,
                 session_persistence=False,
-                model=task_cfg.model,
+                model=model,
                 timeout=timeout,
             )
         except claude_cli.ClaudeInvocationError as exc:
@@ -112,17 +117,17 @@ def invoke_for(
                 timeout_seconds=timeout,
             ) from exc
 
-    # Pydantic Literal["claude", "ollama"] on AITaskConfig.provider rules out
-    # any other value before we reach here.
+    if provider != "ollama":
+        raise ValueError(f"unknown AI provider: {provider!r}")
+
     effective_timeout = timeout if timeout is not None else ai_cfg.ollama.timeout
-    model = task_cfg.model or "qwen2.5:14b"
+    model = model or ollama_client.DEFAULT_MODEL
     try:
         return ollama_client.generate(
             prompt,
             model=model,
             endpoint=ai_cfg.ollama.endpoint,
             timeout=effective_timeout,
-            format_json=format_json,
         )
     except (
         ollama_client.OllamaNotReachableError,

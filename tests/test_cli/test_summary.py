@@ -137,6 +137,46 @@ def test_summary_default_invokes_claude_headless(
     assert "Summary output" in captured.out
 
 
+def test_summary_provider_ollama_routes_through_ai_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ai.summary.provider: ollama routes summary through ai_provider.invoke_for.
+
+    The configured provider AND model must reach the dispatch call; the claude
+    headless path must NOT be taken.
+    """
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import ai_provider, claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + "\nai:\n  summary:\n    provider: ollama\n    model: phi4\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+    monkeypatch.setattr(
+        claude_cli,
+        "invoke",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("claude must not be used")),
+    )
+
+    seen: dict[str, object] = {}
+
+    def fake_invoke_for(prompt, *, provider, model, ai, timeout=None):
+        seen.update(provider=provider, model=model)
+        return "ollama summary\n"
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke_for)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "today"])
+
+    assert rc == 0
+    assert seen == {"provider": "ollama", "model": "phi4"}
+
+
 def test_summary_copies_to_clipboard_when_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

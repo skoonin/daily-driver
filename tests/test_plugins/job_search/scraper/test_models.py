@@ -9,11 +9,10 @@ from pydantic import ValidationError
 
 from daily_driver.plugins.job_search.scraper.models import (
     EnrichedJob,
-    JobDetails,
-    JobStatus,
     NormalizedJob,
     RawScrapedJob,
     Source,
+    parse_fit,
 )
 
 # --------------------------------------------------------------------------- #
@@ -149,45 +148,9 @@ class TestEnrichedJob:
         with pytest.raises(ValidationError):
             j.fit = 8  # type: ignore[misc]
 
-    def test_with_fit_returns_new_instance(self) -> None:
-        j = _enriched()
-        j2 = j.with_fit(8, "good match")
-        assert j2 is not j
-        assert j2.fit == 8 and j2.notes == "good match"
-        assert j.fit is None
-
-    def test_with_details_only_fills_blanks(self) -> None:
-        j = _enriched(description_text="existing")
-        details = JobDetails(description_text="new", posted_date=dt.date(2026, 1, 1))
-        j2 = j.with_details(details)
-        # Existing description not overwritten.
-        assert j2.description_text == "existing"
-        assert j2.posted_date == dt.date(2026, 1, 1)
-
-    def test_with_details_does_not_overwrite_existing_posted_date(self) -> None:
-        j = _enriched(posted_date=dt.date(2026, 1, 1))
-        details = JobDetails(posted_date=dt.date(2026, 5, 5))
-        j2 = j.with_details(details)
-        assert j2.posted_date == dt.date(2026, 1, 1)
-
-    def test_with_details_does_not_overwrite_known_comp(self) -> None:
-        j = _enriched()  # comp display "$150,000-$200,000"
-        assert j.comp
-        j2 = j.with_details(JobDetails(comp="$300,000-$400,000"))
-        assert j2.comp == j.comp
-
-    def test_with_details_fills_unknown_comp(self) -> None:
-        raw = RawScrapedJob(company="A", role="R", url="u", source="s")
-        j = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
-        assert not j.comp
-        details = JobDetails(comp="$120,000-$140,000")
-        j2 = j.with_details(details)
-        assert j2.comp == "$120,000-$140,000"
-
     def test_fit_bounds_enforced(self) -> None:
         # NB: pydantic v2 skips validation on model_copy(update=...) by default,
-        # so bounds are only enforced at construction time. with_fit goes via
-        # model_copy and is therefore not the right surface to test bounds.
+        # so bounds are only enforced at construction time, not via model_copy.
         raw = RawScrapedJob(company="A", role="R", url="u", source="s")
         n = NormalizedJob.from_raw(raw)
         with pytest.raises(ValidationError):
@@ -212,8 +175,18 @@ class TestEnrichedJob:
         assert j2.comp == j.comp
         assert j2.date_found == j.date_found
 
+    def test_parse_fit_rejects_unicode_digit(self) -> None:
+        """isascii guard: a Unicode digit must return None, not raise (W1.1)."""
+        assert parse_fit("⁷") is None  # superscript seven
+
+    def test_from_csv_row_tolerates_legacy_fit_suffix(self) -> None:
+        """Legacy rows wrote Fit as "7/10"; the reader parses the leading int."""
+        row = _enriched(fit=7).to_csv_row()
+        row["Fit"] = "7/10"
+        assert EnrichedJob.from_csv_row(row).fit == 7
+
     def test_csv_skip_reason_appended_when_skipped(self) -> None:
-        j = _enriched(status=JobStatus.SKIPPED, skip_reason="manually skipped")
+        j = _enriched(status="skipped", skip_reason="manually skipped")
         row = j.to_csv_row()
         assert "manually skipped" in row["Notes"]
 
@@ -235,8 +208,46 @@ def test_source_protocol_runtime_checkable() -> None:
     assert isinstance(fake, Source)
 
 
-def test_jobstatus_dropped_replaces_archived() -> None:
-    """JobStatus.ARCHIVED was renamed to DROPPED; the old value is gone."""
-    assert JobStatus("dropped") is JobStatus.DROPPED
-    with pytest.raises(ValueError):
-        JobStatus("archived")
+def test_status_is_free_text_normalized() -> None:
+    """Status is a normalized free-text string, not a closed enum."""
+    raw = RawScrapedJob(
+        company="Acme", role="SRE", url="https://example.com/j", source="remoteok"
+    )
+    base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
+    # Newly scraped rows default to `found`; underscore/upper variants normalize.
+    assert base.status == "found"
+    assert base.with_updates(status="Ruled_Out").status == "ruled-out"
+    # Any string is accepted (convention, not enforcement) — no ValidationError.
+    assert base.with_updates(status="some-custom").status == "some-custom"
+
+
+def test_scraped_row_defaults_to_found() -> None:
+    """from_normalized is the scraped path; its status defaults to `found`."""
+    raw = RawScrapedJob(
+        company="Acme", role="SRE", url="https://example.com/j", source="remoteok"
+    )
+    assert EnrichedJob.from_normalized(NormalizedJob.from_raw(raw)).status == "found"
+
+
+def test_blank_status_round_trips_blank() -> None:
+    """A deliberately blank Status cell must stay blank on read+rewrite.
+
+    Coercing blank -> `found` would relabel rows the user emptied on purpose
+    when backfill/prune rewrites them. Only the scrape path defaults to found.
+    """
+    j = _enriched(fit=7).with_updates(status="")
+    assert j.status == ""
+    row = j.to_csv_row()
+    assert row["Status"] == ""
+    assert EnrichedJob.from_csv_row(row).status == ""
+    # Whitespace-only cells also normalize to blank, not `found`.
+    assert EnrichedJob.from_csv_row({**row, "Status": "   "}).status == ""
+
+
+def test_closed_is_a_recommended_job_status() -> None:
+    """`closed` is a shipped prune default, so it belongs in the recommended set."""
+    from daily_driver.plugins.job_search.scraper.models import (
+        JOBS_RECOMMENDED_STATUSES,
+    )
+
+    assert "closed" in JOBS_RECOMMENDED_STATUSES

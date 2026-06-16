@@ -51,9 +51,11 @@ def add_parser(
     p_git.add_argument(
         "--since",
         default=None,
-        help="ISO date (default: 24h before now)",
+        help="ISO date (default: start of yesterday)",
     )
-    p_git.add_argument("--until", default=None, help="ISO date (default: now)")
+    p_git.add_argument(
+        "--until", default=None, help="ISO date (default: start of tomorrow)"
+    )
     p_git.add_argument("-j", "--json", action="store_true", help="Emit JSON")
     add_global_flags(p_git)
     p_git.set_defaults(func=_run_git)
@@ -130,7 +132,9 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
 
             expanded = [Path(p).expanduser() for p in configured]
             repos = discover_repos(expanded)
-            if not repos:
+            if not repos and not args.json:
+                # --json must still emit the envelope below (empty commits); only
+                # the human path short-circuits with a placeholder note.
                 Console.info(
                     "(no git repos discovered under configured search_paths: "
                     f"{', '.join(str(p) for p in expanded)})"

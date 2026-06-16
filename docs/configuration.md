@@ -67,52 +67,61 @@ Injected into Claude sessions as context.
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
-| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. `job` category → `found, skipped, applied, rejected, dropped`. All other categories → `open, in-progress, blocked, done, ruled-out`. Set `false` to silence. |
+| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
+| `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
 
 ## `ai`
 
-Routes headless AI tasks (enrichment, summary) to either the `claude` CLI
-or a local [Ollama](https://ollama.com) server. Interactive launchers
-(day-start, check-in, day-end) always use `claude`; the `ai` block does
-not affect them.
+Routes the headless `summary` task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. Those provider blocks are also consulted by the job_search plugin's own enrichment routing (`plugins.job_search.enrichment.provider`) — enrichment routing itself lives with the plugin, not here. Interactive launchers (day-start, check-in, day-end) always use `claude`; the `ai` block does not affect them.
 
-Default (omitting the block entirely): `claude` for every task. Existing
-workspaces need no migration.
+Default (omitting the block entirely): `claude` for summary. Existing workspaces using the old `ai.enrichment` block must move that routing under `plugins.job_search.enrichment` (see the migration note below) — `ai.enrichment` is now rejected.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `enrichment.provider` | `claude` \| `ollama` | `claude` | Used by `jobs run --backfill` |
-| `enrichment.model` | string or null | null | Provider-specific identifier |
 | `summary.provider` | `claude` \| `ollama` | `claude` | Used by `summary --range` |
 | `summary.model` | string or null | null | Provider-specific identifier |
-| `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
+| `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
 | `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
 | `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
-| `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs run --backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
+| `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
 
-Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`,
-`haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`,
-`llama3.2:3b`). `null` lets each provider pick its own default.
+Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`, `haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`, `llama3.2:3b`). `null` lets each provider pick its own default.
 
-`max_parallel` raises enrichment throughput only — it does not change the
-`plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many
-jobs get enriched) or the per-call timeout.
+`max_parallel` raises enrichment throughput only — it does not change the `plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many jobs get enriched) or the per-call timeout.
 
-See [`docs/ollama-setup.md`](ollama-setup.md) for installation and the
-`doctor` reachability check.
+See [`docs/ollama-setup.md`](ollama-setup.md) for installation, tuning, and the `doctor` reachability check.
 
-Example: route enrichment to a local model, keep summary on claude:
+Example: route enrichment to a local model, keep summary on claude. Enrichment provider/model now live under the plugin; the shared `ollama:` connection block stays here:
 
 ```yaml
+ai:
+  ollama:
+    endpoint: http://localhost:11434
+    timeout: 90
+plugins:
+  job_search:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
+```
+
+Migration from the pre-split config — the routing moved off `ai:` onto the plugin:
+
+```yaml
+# Before (rejected):
 ai:
   enrichment:
     provider: ollama
     model: qwen2.5:14b
-  ollama:
-    endpoint: http://localhost:11434
-    timeout: 90
+
+# After:
+plugins:
+  job_search:
+    enrichment:
+      provider: ollama
+      model: qwen2.5:14b
 ```
 
 ## `scheduler`
@@ -192,7 +201,7 @@ Transport / retry knobs shared by every source.
 | `user_agent` | string | Firefox/128 UA |
 | `timeout` | int | 30 |
 | `search_terms` | list[string] or null | null |
-| `parallel_workers` | int | 4 |
+| `parallel_workers` | int | 8 |
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
 
@@ -204,20 +213,26 @@ checks for the configured engine and `doctor --fix` installs it.
 
 ### `enrichment` (`EnrichmentConfig`)
 
-Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, fit, notes).
+Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, product/Glassdoor, fit, notes), plus the AI provider routing for those passes. The provider/model live here (enrichment is plugin-specific); the shared connection/tuning lives in the core `ai.claude:` / `ai.ollama:` blocks.
 
 The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
 
-| Key | Type | Default |
-|-----|------|---------|
-| `enrich_timeout` | int | 30 |
-| `max_enrich_companies` | int | 50 |
-| `enrich_gd_rating` | bool | true |
-| `enrich_fit` | bool | true |
-| `enrich_notes` | bool | true |
-| `max_enrich_fit` | int | 50 |
-| `detail_delay_seconds` | float | 0.5 |
-| `criteria` | list of `{label, assess}` | `[]` |
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `provider` | `claude` \| `ollama` | `claude` | Which backend runs the enrichment LLM calls |
+| `model` | string or null | null | Provider-specific identifier (e.g. `sonnet`, `qwen2.5:14b`) |
+| `enrich_timeout` | int | 30 | |
+| `max_enrich_companies` | int | 50 | |
+| `enrich_product` | bool | true | Fill the Product/Purpose one-liner per company |
+| `enrich_gd_rating` | bool | true | Fill the Glassdoor rating per company |
+| `enrich_fit` | bool | true | |
+| `enrich_notes` | bool | true | |
+| `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
+| `max_enrich_fit` | int | 50 | |
+| `detail_delay_seconds` | float | 0.5 | |
+| `criteria` | list of `{label, assess}` | `[]` | |
+
+`enrich_product` and `enrich_gd_rating` share one LLM call per company. With both off, the company pass is skipped entirely; with only one on, the prompt asks for and writes only that field.
 
 #### `criteria` — the criteria scanner
 
@@ -255,16 +270,22 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
-| `jobspy` | `JobspyToggle` | per-site flags (`linkedin`/`indeed`) + `jobs` (`JobsConfig`) |
+| `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
+| `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
 | any other | `SourceToggle` | (enable/disable only) |
 
-`jobspy.jobs` (jobspy aggregator query settings):
+`linkedin` and `indeed` are the two site-named sources fetched via the
+`python-jobspy` library (an implementation detail). Their query knobs:
 
-| Key | Type | Default |
-|-----|------|---------|
-| `results_wanted_per_query` | int | 50 |
-| `hours_old` | int | 168 (7 days) |
-| `country_indeed` | string | `USA` |
+| Key | Type | Default | On |
+|-----|------|---------|----|
+| `results_wanted_per_query` | int | 50 | both |
+| `hours_old` | int | 168 (7 days) | both |
+| `country` | string | `USA` | indeed only |
+
+`country` sets Indeed's regional host and is the fallback used when a configured
+country code is not one the scraper recognizes. LinkedIn takes no country
+parameter, so it has no `country` knob.
 
 ```yaml
 sources:
@@ -274,15 +295,22 @@ sources:
   greenhouse:
     enabled: true
     greenhouse_boards: [anthropic, stripe]
-  jobspy:
+  linkedin:
     enabled: true
-    linkedin: true
-    indeed: true     # google/glassdoor excluded: broken/unsupported in JobSpy
-    jobs:
-      results_wanted_per_query: 25
+    results_wanted_per_query: 50
+    hours_old: 168
+  indeed:
+    enabled: true
+    results_wanted_per_query: 50
+    hours_old: 168
+    country: USA
 ```
 
-Each enabled JobSpy site runs as its own parallel scraper. Omitted sub-flags default to `true`.
+When `linkedin` and `indeed` are both enabled, each is fetched separately, under
+its own progress row, with its own retry and failure isolation — so a slow or
+failing LinkedIn scrape never blocks or fails the fast Indeed one. The live
+progress row and the `Source` column are site-named. (Glassdoor and Google for
+Jobs are excluded: broken or unsupported upstream.)
 
 ## Example
 

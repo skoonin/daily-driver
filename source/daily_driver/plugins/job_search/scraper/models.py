@@ -11,7 +11,6 @@ stage's instance.
 from __future__ import annotations
 
 import datetime as dt
-from enum import Enum
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -29,25 +28,103 @@ from pydantic import (
     field_validator,
 )
 
+from daily_driver.core.logging import get_logger
+from daily_driver.core.statuses import normalize_status
+
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
+log = get_logger(__name__)
 
-class JobStatus(str, Enum):
-    FOUND = "found"
-    SKIPPED = "skipped"
-    APPLIED = "applied"
-    REJECTED = "rejected"
-    DROPPED = "dropped"
+# Fit scores are bounded 1-10 at the model (EnrichedJob.fit). Out-of-range
+# values from a sloppy provider or a hand-edited cell are clamped here, never
+# raised, so one bad value cannot abort a whole backfill/run.
+FIT_MIN = 1
+FIT_MAX = 10
+
+
+def clamp_fit(score: int) -> int:
+    """Clamp a fit score into the model's 1-10 bound."""
+    return max(FIT_MIN, min(score, FIT_MAX))
+
+
+# The job_search lifecycle vocabulary. jobs.csv Status values and tracker
+# `job`-category statuses share the same normalization/warning machinery
+# (core.statuses), but each domain owns its own recommended set — these need
+# not match the tracker's generic set. `found` is the default for a freshly
+# scraped row.
+JOBS_DEFAULT_STATUS = "found"
+JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
+    "found",
+    "skipped",
+    "applied",
+    "interviewing",
+    "rejected",
+    "dropped",
+    # `closed` is a shipped jobs_archive.DEFAULT_PRUNE_STATUSES target, so it
+    # must be recognized or every prune would warn about the tool's own default.
+    "closed",
+)
 
 
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
 # passes (fit/notes/product): kept for visibility, not worth spending
 # enrichment calls on.
-ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({JobStatus.SKIPPED.value})
+ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({"skipped"})
 
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+# Product/Purpose default for un-enriched rows. Both fresh scraped jobs and
+# blank CSV cells carry this, so enrichment can tell "needs fill" from a real
+# value without a separate flag.
+_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
+
+
+def parse_fit(value: Any) -> int | None:
+    """Coerce a stored fit cell to a bare int, or None when unparseable.
+
+    The Fit column holds a bare integer (the ratified contract). Readers stay
+    tolerant of legacy ``"7/10"`` cells by parsing the leading integer, so old
+    rows normalize on the next backfill rewrite.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        leading = value.strip().split("/", 1)[0].strip()
+        # isascii guard: bare .isdigit() accepts Unicode digits (e.g. superscript
+        # "⁷") that int() then rejects with ValueError.
+        if leading.isascii() and leading.isdigit():
+            return int(leading)
+    return None
+
+
+def parse_fit_cell(value: Any, *, company: str = "unknown") -> int | None:
+    """Read a stored Fit cell into a bounded int, never raising.
+
+    Wraps ``parse_fit`` for the CSV read path: a non-empty cell that fails to
+    parse logs a warning and yields ``None`` (the W1.1 dropped-Fit warning,
+    re-homed from the deleted ``_dict_to_row``); an out-of-range value is
+    clamped to 1-10 with a warning so a legacy or hand-edited ``"15"`` cell can
+    never abort a backfill at construction time.
+    """
+    fit = parse_fit(value)
+    if fit is None:
+        raw = value if isinstance(value, str) else ""
+        if raw.strip():
+            log.warning("dropping unparseable Fit cell %r for %s", raw, company)
+        return None
+    clamped = clamp_fit(fit)
+    if clamped != fit:
+        log.warning(
+            "Fit %d out of range [1,10] for %s, clamped to %d",
+            fit,
+            company,
+            clamped,
+        )
+    return clamped
 
 
 def _parse_k_salary(s: str) -> int | None:
@@ -138,13 +215,6 @@ class NormalizedJob(BaseModel):
         )
 
 
-class JobDetails(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    comp: str = ""
-    posted_date: dt.date | None = None
-    description_text: str = ""
-
-
 class EnrichedJob(BaseModel):
     """``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
 
@@ -153,6 +223,10 @@ class EnrichedJob(BaseModel):
     company: str
     role: NonEmptyStr
     location: str
+    # "remote" | "hybrid" | "onsite" | "". Free-text on purpose: hand-entered
+    # cells (any string) are preserved verbatim on read; the heuristic and LLM
+    # tiers only ever write the four canonical values.
+    remote: str = ""
     url: str
     source: NonEmptyStr
     source_canonical: NonEmptyStr
@@ -160,37 +234,76 @@ class EnrichedJob(BaseModel):
     comp: str = ""
     date_found: dt.date
 
-    product: str = "(auto-scraped -- needs fill)"
+    product: str = _PLACEHOLDER_PRODUCT
     gd_rating: str = ""
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
     posted_date: dt.date | None = None
     description_text: str = ""
 
-    status: JobStatus = JobStatus.FOUND
+    # Free-text on purpose (shares the tracker's "convention, not enforcement"
+    # stance): any string is accepted and preserved, but the spelling is
+    # normalized (case-folded, underscores -> hyphens) so `ruled_out` and
+    # `ruled-out` never diverge. The CSV write path warns once per run on
+    # values outside JOBS_RECOMMENDED_STATUSES. Default is blank: a deliberately
+    # empty cell must round-trip blank rather than being relabelled; only the
+    # scrape path (from_normalized) sets JOBS_DEFAULT_STATUS.
+    status: str = ""
     skip_reason: str = ""
     date_applied: dt.date | None = None
+    # Drives `jobs prune --older-than`. Defaults to Date Found on write when
+    # unset (no upsert-on-rescan path yet), so prune ages from first-discovery.
+    date_last_seen: dt.date | None = None
 
+    # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
+    # derived from this map's key order and must stay byte-for-byte identical to
+    # existing jobs.csv files.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
-        "Notes": "notes",
         "Company": "company",
-        "Location": "location",
         "Role": "role",
         "Fit": "fit",
         "Comp": "comp",
+        "Location": "location",
+        "Remote": "remote",
+        "GD Rating": "gd_rating",
+        "Notes": "notes",
+        "Product/Purpose": "product",
         "Date Found": "date_found",
         "Date Applied": "date_applied",
+        "Date Last Seen": "date_last_seen",
         "Link": "url",
-        "Product/Purpose": "product",
-        "GD Rating": "gd_rating",
         "Source": "source",
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, v: Any) -> str:
+        # Spelling only: blank stays blank (never coerced to a default), so a
+        # deliberately empty cell survives a backfill/prune rewrite unchanged.
+        return normalize_status(v if isinstance(v, str) else str(v))
+
+    @property
+    def product_filled(self) -> bool:
+        """Whether Product/Purpose holds a real value (not the scrape placeholder).
+
+        Fresh scraped rows and blank CSV cells both surface as the placeholder
+        default, so company enrichment treats the placeholder as "still empty".
+        """
+        return bool(self.product) and self.product != _PLACEHOLDER_PRODUCT
+
+    @property
+    def product_or_blank(self) -> str:
+        """Product text for prompts, blanked when it is only the placeholder."""
+        return self.product if self.product_filled else ""
+
     @classmethod
     def from_normalized(cls, n: NormalizedJob) -> EnrichedJob:
         return cls(
+            # Scraped path: a fresh listing is `found`. (The read path leaves a
+            # blank cell blank; the field default is "".)
+            status=JOBS_DEFAULT_STATUS,
             company=n.company,
             role=n.role,
             location=n.location,
@@ -202,42 +315,41 @@ class EnrichedJob(BaseModel):
             date_found=n.date_found,
         )
 
-    def with_details(self, details: JobDetails) -> EnrichedJob:
-        updates: dict[str, Any] = {}
-        if details.comp and not self.comp:
-            updates["comp"] = details.comp
-        if details.posted_date and self.posted_date is None:
-            updates["posted_date"] = details.posted_date
-        if details.description_text and not self.description_text:
-            updates["description_text"] = details.description_text
-        return self.model_copy(update=updates)
+    def with_updates(self, **updates: Any) -> EnrichedJob:
+        """Return a copy with ``updates`` applied through full pydantic validation.
 
-    def with_fit(self, score: int, notes: str) -> EnrichedJob:
-        return self.model_copy(update={"fit": score, "notes": notes})
+        ``model_copy(update=...)`` bypasses validators, so field constraints
+        (e.g. ``fit`` ``ge=1``) go unenforced — the W1.1 fit-bounds finding.
+        Routing every update through ``model_validate`` keeps constraints live.
+        """
+        return type(self).model_validate({**self.model_dump(), **updates})
 
     def to_csv_row(self) -> dict[str, str]:
         notes = self.notes
-        if self.status is JobStatus.SKIPPED and self.skip_reason:
+        if self.status in ENRICH_SKIP_STATUSES and self.skip_reason:
             notes = (
                 f"{self.notes} | {self.skip_reason}".strip(" |")
                 if self.notes
                 else self.skip_reason
             )
         return {
-            "Status": self.status.value,
-            "Notes": notes,
+            "Status": self.status,
             "Company": self.company,
-            "Location": self.location,
             "Role": self.role,
             "Fit": "" if self.fit is None else str(self.fit),
             "Comp": self.comp,
+            "Location": self.location,
+            "Remote": self.remote,
+            "GD Rating": self.gd_rating,
+            "Notes": notes,
+            "Product/Purpose": self.product,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
             ),
+            # Seed from Date Found on insert so prune ages from first-discovery.
+            "Date Last Seen": (self.date_last_seen or self.date_found).isoformat(),
             "Link": self.url,
-            "Product/Purpose": self.product,
-            "GD Rating": self.gd_rating,
             "Source": self.source,
         }
 
@@ -247,10 +359,6 @@ class EnrichedJob(BaseModel):
             s = (s or "").strip()
             return dt.date.fromisoformat(s) if s else None
 
-        def _opt_int(s: str) -> int | None:
-            s = (s or "").strip()
-            return int(s) if s.isdigit() else None
-
         source = row.get("Source", "").strip() or "unknown"
         if source.startswith("Greenhouse (") and source.endswith(")"):
             canonical = "greenhouse"
@@ -259,18 +367,29 @@ class EnrichedJob(BaseModel):
             canonical = source.split("/")[0].lower() or "unknown"
             board = ""
         return cls(
-            status=JobStatus(row.get("Status", "found") or "found"),
+            # The validator normalizes spelling (e.g. `ruled_out` -> `ruled-out`).
+            # A blank/missing cell stays blank — never relabelled to a default.
+            status=row.get("Status", ""),
             notes=row.get("Notes", ""),
             company=row.get("Company", ""),
             location=row.get("Location", ""),
+            # Old 14-column files lack a Remote column; .get default keeps the
+            # read tolerant (blank). Hand-entered strings pass through verbatim.
+            remote=row.get("Remote", ""),
             role=row.get("Role", "") or "(unknown)",
-            fit=_opt_int(row.get("Fit", "")),
+            fit=parse_fit_cell(
+                row.get("Fit", ""), company=row.get("Company", "") or "unknown"
+            ),
             comp=row.get("Comp", ""),
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
+            date_last_seen=_opt_date(row.get("Date Last Seen", "")),
             url=row.get("Link", ""),
-            product=(row.get("Product/Purpose", "") or "(auto-scraped -- needs fill)"),
+            # Preserve a blank Product cell as blank (do not substitute the
+            # placeholder) so a backfill rewrite is byte-identical for unenriched
+            # rows; product_filled treats blank and placeholder alike.
+            product=row.get("Product/Purpose", ""),
             gd_rating=row.get("GD Rating", ""),
             source=source,
             source_canonical=canonical,
@@ -296,9 +415,10 @@ class Source(Protocol):
 
 
 __all__ = [
+    "ENRICH_SKIP_STATUSES",
     "EnrichedJob",
-    "JobDetails",
-    "JobStatus",
+    "JOBS_DEFAULT_STATUS",
+    "JOBS_RECOMMENDED_STATUSES",
     "NonEmptyStr",
     "NormalizedJob",
     "RawScrapedJob",

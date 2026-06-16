@@ -14,7 +14,6 @@ from daily_driver.plugins.job_search import jobs_archive
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
 from daily_driver.plugins.job_search.scraper import csv_io, runner
-from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
 def _write_jobs_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -54,6 +53,24 @@ def _row(*, company: str, link: str, status: str = "found") -> dict[str, str]:
     }
 
 
+def _stub_detail_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 0,
+            "enriched": 0,
+            "failed": 0,
+            "skipped": len(jobs),
+            "skip_reasons": {},
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+
+
 def test_backfill_keyboard_interrupt_saves_partial_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -65,28 +82,26 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
             _row(company="Bravo", link="https://example.com/2"),
         ],
     )
+    _stub_detail_noop(monkeypatch)
 
-    from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def interrupting_enrich_company(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["product"] = "Saved before interrupt"
-        jobs[0]["gd_rating"] = "4.2"
+    def interrupting_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        # Replace slot 0 in place (mirrors the real enricher) before raising so
+        # backfill's interrupt handler can persist the partial result.
+        jobs[0] = jobs[0].with_updates(
+            product="Saved before interrupt", gd_rating="4.2"
+        )
         raise KeyboardInterrupt
 
-    def should_not_run(*_a: Any, **_kw: Any) -> dict[str, int]:
-        raise AssertionError("fit+notes enricher must not run after interrupt")
-
     monkeypatch.setattr(
-        enrichment,
-        "enrich_company_descriptions",
-        interrupting_enrich_company,
+        enrichment_pkg,
+        "enrich_product_and_fit_concurrently",
+        interrupting_concurrent,
     )
-    monkeypatch.setattr(enrichment, "enrich_fit_and_notes", should_not_run)
 
     with pytest.raises(KeyboardInterrupt):
-        csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
+        runner.run_backfill(JobSearchPlugin(), csv_path, tmp_path)
 
     rows = _read_jobs_csv(csv_path)
     assert rows[0]["Product/Purpose"] == "Saved before interrupt"
@@ -110,6 +125,7 @@ def test_backfill_uses_shared_jobs_lock_path(
 ) -> None:
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(csv_path, [_row(company="Acme", link="https://example.com/1")])
+    _stub_detail_noop(monkeypatch)
 
     lock_calls: list[Path] = []
 
@@ -118,29 +134,28 @@ def test_backfill_uses_shared_jobs_lock_path(
         lock_calls.append(path)
         yield
 
-    from daily_driver.plugins.job_search.scraper.enrichment import llm as enrichment
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def enrich_company(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["product"] = "Acme product"
-        jobs[0]["gd_rating"] = "unknown"
-        return {"enriched": 1, "skipped_cached": 0, "failed": 0}
+    def enrich_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        jobs[0] = jobs[0].with_updates(
+            product="Acme product", gd_rating="unknown", fit=7, notes="Saved"
+        )
+        return (
+            jobs,
+            {"enriched": 1, "skipped_cached": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+        )
 
-    def enrich_fit_notes(
-        jobs: list[dict[str, Any]], ctx: Any = None, *, budget: int = 0
-    ) -> dict[str, int]:
-        jobs[0]["fit"] = "7"
-        jobs[0]["notes"] = "Saved"
-        return {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
+    monkeypatch.setattr(runner, "file_lock", fake_file_lock)
+    monkeypatch.setattr(
+        enrichment_pkg, "enrich_product_and_fit_concurrently", enrich_concurrent
+    )
 
-    monkeypatch.setattr(csv_io, "file_lock", fake_file_lock)
-    monkeypatch.setattr(enrichment, "enrich_company_descriptions", enrich_company)
-    monkeypatch.setattr(enrichment, "enrich_fit_and_notes", enrich_fit_notes)
+    runner.run_backfill(JobSearchPlugin(), csv_path, tmp_path)
 
-    csv_io.backfill(ScrapeContext(plugin=JobSearchPlugin()), csv_path)
-
-    assert lock_calls == [jobs_lock_path(csv_path)]
+    # The sentinel lock is taken exactly once: backfill holds it across the whole
+    # read -> enrich -> rewrite window (the sink does NOT re-take it per flush).
+    assert lock_calls == [jobs_lock_path(tmp_path)]
     # Exactly one .bak per backfill run (taken at the start, before mutations).
     backups_dir = tmp_path / "backups"
     backups = [p for p in backups_dir.iterdir() if p.name.startswith("jobs.csv.bak.")]
@@ -167,11 +182,12 @@ def test_run_uses_shared_jobs_lock_path(
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
         tmp_path,
+        tmp_path,
         dry_run=True,
     )
 
     assert rc == 0
-    assert lock_calls == [jobs_lock_path(tmp_path / "jobs.csv")]
+    assert lock_calls == [jobs_lock_path(tmp_path)]
 
 
 def test_prune_uses_shared_jobs_lock_path(
@@ -198,6 +214,6 @@ def test_prune_uses_shared_jobs_lock_path(
 
     monkeypatch.setattr(jobs_archive, "file_lock", fake_file_lock)
 
-    jobs_archive.prune(csv_path, cutoff=date(2026, 5, 1), dry_run=False)
+    jobs_archive.prune(csv_path, tmp_path, cutoff=date(2026, 5, 1), dry_run=False)
 
-    assert lock_calls == [jobs_lock_path(csv_path)]
+    assert lock_calls == [jobs_lock_path(tmp_path)]

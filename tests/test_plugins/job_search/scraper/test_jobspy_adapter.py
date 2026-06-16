@@ -14,8 +14,6 @@ from daily_driver.plugins.job_search.scraper.sources.jobspy import (
     jobspy_row_to_raw,
     normalize_jobspy_row,
     scrape_jobspy,
-    scrape_jobspy_indeed,
-    scrape_jobspy_linkedin,
 )
 
 
@@ -148,68 +146,187 @@ def test_url_stripped_at_boundary(bad_url: str) -> None:
     assert raw.url == "https://x"
 
 
-class TestPerSiteScrapers:
-    """The thin per-site wrappers forward the correct ``site_name`` list."""
+class TestMergedJobspyScraper:
+    """``scrape_jobspy(ctx, sites=[...])`` requests the given sites in one
+    ``scrape_jobs`` call, reading per-site query knobs off the top-level
+    ``linkedin`` / ``indeed`` source toggles. The runner always hands a
+    single-site list (one row per enabled site); the adapter still accepts a
+    multi-site list, which these tests exercise directly."""
 
     @staticmethod
-    def _config() -> ScrapeContext:
-        return ScrapeContext(
-            plugin=JobSearchPlugin.model_validate(
-                {
-                    "roles": ["software engineer"],
-                    "locations": {"countries": ["US"]},
-                    "scraper": {
-                        "enabled": True,
-                        "search_terms": ["software engineer"],
-                    },
-                }
-            )
-        )
+    def _config(countries: list[str] | None = None, **sources: object) -> ScrapeContext:
+        cfg: dict[str, object] = {
+            "roles": ["software engineer"],
+            "locations": {"countries": countries or ["US"]},
+            "scraper": {
+                "enabled": True,
+                "search_terms": ["software engineer"],
+            },
+        }
+        # Default both sites enabled when the test does not specify otherwise.
+        cfg["sources"] = sources or {"linkedin": True, "indeed": True}
+        return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))
 
     @staticmethod
-    def _install_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    def _install_mock(
+        monkeypatch: pytest.MonkeyPatch, frame: object | None = None
+    ) -> dict[str, object]:
         import pandas as pd
 
         calls: dict[str, object] = {}
 
-        def fake(**kwargs: object) -> pd.DataFrame:
+        def fake(**kwargs: object) -> object:
             calls.update(kwargs)
-            return pd.DataFrame()
+            return frame if frame is not None else pd.DataFrame()
 
         import jobspy as jobspy_pkg
 
         monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
         return calls
 
-    def test_scrape_jobspy_linkedin_calls_correct_site(
+    def test_default_requests_both_sites_in_one_call(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         calls = self._install_mock(monkeypatch)
-        scrape_jobspy_linkedin(self._config())
-        assert calls["site_name"] == ["linkedin"]
-
-    def test_scrape_jobspy_indeed_calls_correct_site(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy_indeed(self._config())
-        assert calls["site_name"] == ["indeed"]
-
-    def test_scrape_jobspy_sites_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config(), sites=["indeed"])
-        assert calls["site_name"] == ["indeed"]
-
-    def test_scrape_jobspy_default_uses_both_sites(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        calls = self._install_mock(monkeypatch)
-        scrape_jobspy(self._config())
+        scrape_jobspy(self._config(), sites=["linkedin", "indeed"])
         assert calls["site_name"] == ["linkedin", "indeed"]
 
-    def test_scrape_jobspy_reports_progress_per_term_country(
+    def test_indeed_country_knob_used_as_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The indeed `country` knob is the fallback for ISO codes JobSpy's enum
+        # lacks; "XX" is not a JobSpy country, so the configured value is sent.
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(
+            self._config(
+                countries=["XX"], indeed={"enabled": True, "country": "Canada"}
+            ),
+            sites=["indeed"],
+        )
+        assert calls["site_name"] == ["indeed"]
+        assert calls["country_indeed"] == "Canada"
+
+    def test_single_site_passes_only_that_site(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(self._config(), sites=["linkedin"])
+        assert calls["site_name"] == ["linkedin"]
+
+    def test_results_wanted_and_hours_old_knobs_reach_scrape_jobs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """results_wanted_per_query / hours_old propagate to the scrape_jobs call.
+
+        A single enabled site keeps the per-site toggle unambiguous.
+        """
+        calls = self._install_mock(monkeypatch)
+        scrape_jobspy(
+            self._config(
+                linkedin={
+                    "enabled": True,
+                    "results_wanted_per_query": 17,
+                    "hours_old": 72,
+                }
+            ),
+            sites=["linkedin"],
+        )
+        assert calls["results_wanted"] == 17
+        assert calls["hours_old"] == 72
+
+    def test_search_terms_override_reaches_scrape_jobs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """scraper.search_terms overrides the query term sent to scrape_jobs."""
+        calls = self._install_mock(monkeypatch)
+        cfg = ScrapeContext(
+            plugin=JobSearchPlugin.model_validate(
+                {
+                    "roles": ["ignored role"],
+                    "locations": {"countries": ["US"]},
+                    "scraper": {
+                        "enabled": True,
+                        "search_terms": ["platform engineer"],
+                    },
+                    "sources": {"linkedin": True},
+                }
+            )
+        )
+        scrape_jobspy(cfg, sites=["linkedin"])
+        assert calls["search_term"] == "platform engineer"
+
+    def test_empty_sites_skips_the_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = self._install_mock(monkeypatch)
+        out = scrape_jobspy(self._config(), sites=[])
+        assert out == []
+        assert calls == {}  # scrape_jobs never invoked
+
+    @staticmethod
+    def _row(site: str, url: str) -> dict[str, object]:
+        return {
+            "company": "Acme",
+            "title": "Software Engineer",
+            "location": "Remote",
+            "job_url": url,
+            "site": site,
+            "description": "infra",
+            "min_amount": None,
+            "max_amount": None,
+            "currency": None,
+            "interval": None,
+        }
+
+    def test_merged_call_raise_retries_each_site_and_keeps_good_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The installed jobspy has no per-site isolation: one site raising kills
+        the merged DataFrame. Our wrapper must retry each enabled site alone so
+        the healthy site's rows survive (here: linkedin raises, indeed recovers)."""
+        import jobspy as jobspy_pkg
+        import pandas as pd
+
+        def fake(**kwargs: object) -> object:
+            site_name = kwargs["site_name"]
+            assert isinstance(site_name, list)
+            if site_name == ["linkedin", "indeed"]:
+                raise RuntimeError("linkedin blew up the merged call")
+            if site_name == ["linkedin"]:
+                raise RuntimeError("linkedin still down")
+            if site_name == ["indeed"]:
+                return pd.DataFrame([self._row("indeed", "https://indeed.com/job/1")])
+            return pd.DataFrame()
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        out = scrape_jobspy(self._config())
+        assert len(out) == 1
+        assert out[0]["source"] == "indeed"  # healthy site's rows kept
+
+    def test_zero_row_enabled_site_warns(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An enabled site that contributes zero rows all run must warn (the merge
+        otherwise hides a single-board outage behind the other site's results)."""
+        import logging
+
+        import pandas as pd
+
+        # Merged frame carries only indeed rows; linkedin contributes nothing.
+        frame = pd.DataFrame([self._row("indeed", "https://indeed.com/job/1")])
+        self._install_mock(monkeypatch, frame=frame)
+        with caplog.at_level(
+            logging.WARNING,
+            logger="daily_driver.plugins.job_search.scraper.sources.jobspy",
+        ):
+            scrape_jobspy(self._config())
+        warns = {
+            r.getMessage()
+            for r in caplog.records
+            if "returned 0 rows across all searches" in r.getMessage()
+        }
+        assert any("linkedin" in m for m in warns), warns
+        assert not any("indeed" in m for m in warns), "indeed contributed, no warn"
+
+    def test_reports_progress_per_term_country(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Each (term x country) pair advances the live progress reporter."""
@@ -220,7 +337,39 @@ class TestPerSiteScrapers:
         ctx = replace(
             self._config(), report=lambda done, total: reports.append((done, total))
         )
-        scrape_jobspy_linkedin(ctx)
-        # One config term x one country -> reported once at (0, 1).
+        scrape_jobspy(ctx)
+        # One config term x one country -> reported at the top (0, 1) and a
+        # trailing (1, 1) so the live bar reaches full instead of stalling at 0/1.
         assert reports and reports[0] == (0, 1)
+        assert reports[-1] == (1, 1)
         assert all(total == 1 for _done, total in reports)
+
+    def test_checkpoints_each_term_country_unit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each finished (term x country) unit's matched rows are handed to
+        ``ctx.checkpoint`` as the unit completes, so a crash mid-scrape keeps the
+        completed units. Two countries -> two checkpoint batches."""
+        from dataclasses import replace
+
+        import jobspy as jobspy_pkg
+        import pandas as pd
+
+        # A distinct row per country so each unit's batch is identifiable.
+        def fake(**kwargs: object) -> object:
+            location = kwargs["location"]
+            url = f"https://indeed.com/job/{location}"
+            return pd.DataFrame([self._row("indeed", url)])
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        batches: list[list[dict]] = []
+        ctx = replace(
+            self._config(countries=["US", "CA"], indeed=True),
+            checkpoint=lambda batch: batches.append(list(batch)),
+        )
+        out = scrape_jobspy(ctx, sites=["indeed"])
+        # One unit per country -> two checkpoint batches, each with that unit's row.
+        assert len(batches) == 2
+        assert all(len(b) == 1 for b in batches)
+        # The full list is still returned for the manifest/results path.
+        assert len(out) == 2

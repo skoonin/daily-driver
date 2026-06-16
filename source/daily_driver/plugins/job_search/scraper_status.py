@@ -30,6 +30,8 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
 
     Missing or unreadable csv returns an empty dict rather than raising.
     """
+    from daily_driver.core.statuses import normalize_status
+
     if not csv_path.exists():
         return {}
     counts: dict[str, int] = {}
@@ -37,7 +39,12 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
         with open(csv_path, newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
             for row in reader:
-                state = (row.get("status") or "").strip().lower() or "unknown"
+                # The canonical jobs.csv column is "Status" (capitalized, per
+                # EnrichedJob.CSV_COLUMN_TO_ATTR); a lowercase key never matches,
+                # so every row would fall through to "unknown". normalize_status
+                # (not bare .lower()) maps underscores/spaces to hyphens so a
+                # hand-edited `Ruled_Out` groups with the canonical `ruled-out`.
+                state = normalize_status(row.get("Status") or "") or "unknown"
                 counts[state] = counts.get(state, 0) + 1
     except OSError:
         return {}
