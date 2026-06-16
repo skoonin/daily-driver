@@ -1954,4 +1954,6 @@ def test_run_completion_line_reports_total_run_time(
     rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
     assert rc == 0
     err = capsys.readouterr().err
-    assert "Total run time:" in err
+    # Collapse whitespace: the completion line embeds the (long) csv path, so on
+    # a narrow console the Rich-wrapped output can split "Total run time:".
+    assert "Total run time:" in " ".join(err.split())
