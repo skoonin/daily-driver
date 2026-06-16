@@ -2,8 +2,6 @@
 
 Personal productivity assistant. A durable data layer for daily planning, tracking, and job search with a Claude-powered conversational layer on top.
 
-> **Status: v0.1.0.** Pure-Python CLI installable from source (macOS arm64).
-
 ## What it does
 
 Daily Driver keeps the unglamorous parts of a focused workweek out of your head and in structured files:
@@ -21,7 +19,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 Requires Python 3.11+ and macOS. See [docs/install.md](docs/install.md) for the full prerequisites and Playwright notes.
 
 ```bash
-pip install 'git+https://github.com/skoonin/daily-driver.git@v0.1.0'
+pip install 'git+https://github.com/skoonin/daily-driver.git@v0.2.0'
 daily-driver --version
 ```
 
@@ -85,7 +83,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and commit conventions.
 
 ## Platform
 
-macOS only for v0.1.0. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
+macOS only for v0.2.0. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
 
 ## License
 
