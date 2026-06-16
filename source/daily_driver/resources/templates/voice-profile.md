@@ -2,7 +2,7 @@
 
 This file captures your writing style for cover letters, professional
 communications, and AI-assisted drafts. Add approved samples and annotations
-below. Use `/voice-update` to extract patterns from new samples.
+below. Use `/daily-driver:voice-update` to extract patterns from new samples.
 
 ## Language patterns
 

@@ -1,12 +1,12 @@
 """check-in subcommand: interactive mid-day review session via `claude`.
 
 When `claude.resume_check_in` is enabled in `.dd-config.yaml` AND today's daily
-state has a `last_day_start_session_id`, /check-in attempts
+state has a `last_day_start_session_id`, /daily-driver:check-in attempts
 `claude --resume <uuid>` so the morning's planning context is already loaded.
 On any resume failure (ClaudeInvocationError from the integrations seam), we
 fall back to a fresh session and log a warning — never silently fail.
 
-After the session exits 0, `last_check_in_at` is recorded so the next /check-in
+After the session exits 0, `last_check_in_at` is recorded so the next /daily-driver:check-in
 can bound `gather sessions` / `gather git` since the prior check-in (#35).
 """
 
@@ -36,7 +36,7 @@ from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
 from daily_driver.integrations import claude_cli
 
-_SLASH_COMMAND = "/check-in"
+_SLASH_COMMAND = "/daily-driver:check-in"
 _SESSION_PREFIX = "check-in"
 
 _log = get_logger(__name__)
@@ -49,7 +49,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "check-in",
         parents=parents,
-        help="Interactive mid-day check-in session (runs /check-in via claude)",
+        help="Interactive mid-day check-in session (runs /daily-driver:check-in via claude)",
     )
     add_session_args(parser)
     parser.add_argument(

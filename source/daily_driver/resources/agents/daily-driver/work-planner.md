@@ -263,7 +263,7 @@ Read `<output>/voice-profile.md`. If the file is missing or empty, note it and c
    conventions, and explicit avoidances
 3. If no voice profile exists, proceed but note it is missing
 4. After the user approves or substantially edits a draft, remind
-   them to run `/voice-update` with this file to keep the voice
+   them to run `/daily-driver:voice-update` with this file to keep the voice
    profile current.
 
 The voice profile is the source of truth for tone and style. Do not

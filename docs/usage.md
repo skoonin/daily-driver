@@ -45,7 +45,7 @@ daily-driver status
 daily-driver day-start
 ```
 
-Spawns a `claude` session with the `work-planner` agent and your workspace attached, then runs `/day-start` — it reads your tracker, recent commits, and calendar, and helps draft the day's plan into `<workspace>/<YYYY>/<MM>/<DD>/plan.md`.
+Spawns a `claude` session with the `work-planner` agent and your workspace attached, then runs `/daily-driver:day-start` — it reads your tracker, recent commits, and calendar, and helps draft the day's plan into `<workspace>/<YYYY>/<MM>/<DD>/plan.md`.
 
 ### 5. Check in at mid-day
 
@@ -119,9 +119,9 @@ Three thin wrappers around `claude` that spawn a workspace-aware session with th
 
 | Command | Slash command | Typical time |
 |---|---|---|
-| `day-start` | `/day-start` | morning |
-| `check-in` | `/check-in` | midday |
-| `day-end` | `/day-end` | evening |
+| `day-start` | `/daily-driver:day-start` | morning |
+| `check-in` | `/daily-driver:check-in` | midday |
+| `day-end` | `/daily-driver:day-end` | evening |
 
 Shared flags: `--session-name NAME`, `--agent NAME` (default `work-planner`), `--model {sonnet,opus,haiku}`. `check-in` adds `--no-resume` to force a fresh session; the default is governed by `claude.resume_check_in`.
 
@@ -131,7 +131,7 @@ These ship to `.claude/commands/daily-driver/` but are not CLI subcommands — i
 
 | Slash command | What it does |
 |---|---|
-| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/day-start`, or run standalone. |
+| `/daily-driver:daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/daily-driver:day-start`, or run standalone. |
 
 ## Jobs
 

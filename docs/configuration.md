@@ -392,15 +392,18 @@ Place a markdown file at `.claude/commands/my-command.md` (any path outside `dai
 
 Place a markdown file at `.claude/agents/my-reviewer.md`. Invoke with `claude --agent my-reviewer ...`.
 
-### Override a shipped command
+### Customize a shipped command
 
-Do not edit a file under `.claude/commands/daily-driver/` — your edit will survive `--fix` but be lost on `--reset`. Instead, copy the file up one level:
+The launchers invoke the namespaced commands directly — `daily-driver day-start` runs `/daily-driver:day-start`, which maps to `.claude/commands/daily-driver/day-start.md`. To change what a launcher runs, you must edit that managed file in place.
 
-```bash
-cp .claude/commands/daily-driver/day-start.md .claude/commands/day-start.md
-```
+Be aware of how `doctor` treats your edits:
 
-Edit the top-level copy. Claude Code resolves top-level before namespaced, so your version wins.
+- `doctor --fix` preserves them. Edits are detected via the SHA-256 manifest, so version drift will not clobber a file you have changed.
+- `doctor --reset` overwrites them. It force-rewrites every managed file under `.claude/*/daily-driver/` from the shipped package data, discarding your customizations.
+
+So a customization here is durable against routine repair but lost on a reset. Keep an out-of-tree copy of any command you have edited if you want to restore it after `--reset`.
+
+Copying the file up one level (`.claude/commands/day-start.md`) does not override the launcher: that path is a separate, unnamespaced command (`/day-start`) that doctor never touches, but the launchers keep invoking the namespaced `/daily-driver:day-start`. Use a top-level copy only for commands you invoke by hand inside a session.
 
 ### Custom tracker categories
 

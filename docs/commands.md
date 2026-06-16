@@ -167,9 +167,9 @@ Spawn a nested `claude` session with the `work-planner` agent, the workspace as 
 
 | Command | Slash command |
 | --- | --- |
-| `day-start` | `/day-start` |
-| `check-in` | `/check-in` |
-| `day-end` | `/day-end` |
+| `day-start` | `/daily-driver:day-start` |
+| `check-in` | `/daily-driver:check-in` |
+| `day-end` | `/daily-driver:day-end` |
 
 Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--session-name NAME`.
 
@@ -181,7 +181,7 @@ These ship to the workspace `.claude/commands/daily-driver/` tree but are not ex
 
 | Slash command | Purpose |
 | --- | --- |
-| `/daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/day-start`; can also be run standalone. |
+| `/daily-driver:daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design — and other topics over time). Rotates focus by day of week, avoids repeating recent topics, appends a short practice log to `<output>/interview-practice/<date>.md`. Offered as an optional step inside `/daily-driver:day-start`; can also be run standalone. |
 
 ## Headless Claude commands
 

@@ -46,7 +46,11 @@ def test_idempotent_no_double_handlers() -> None:
     configure("normal")
     configure("verbose")
     logger = _daily_driver_logger()
-    assert len(logger.handlers) == 1
+    # configure()'s contract is that its own handler never stacks; it leaves
+    # foreign handlers (e.g. one another test leaked onto this logger) in place,
+    # so assert on the WarnCounting count rather than the total.
+    warn_handlers = [h for h in logger.handlers if isinstance(h, _WarnCountingHandler)]
+    assert len(warn_handlers) == 1
 
 
 def test_get_logger_namespace() -> None:

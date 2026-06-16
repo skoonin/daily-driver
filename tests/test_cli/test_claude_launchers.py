@@ -29,9 +29,9 @@ def _init_workspace(tmp_path: Path) -> Path:
 @pytest.mark.parametrize(
     ("command", "slash", "session_prefix"),
     [
-        ("day-start", "/day-start", "day-cycle"),
-        ("day-end", "/day-end", "day-end"),
-        ("check-in", "/check-in", "check-in"),
+        ("day-start", "/daily-driver:day-start", "day-cycle"),
+        ("day-end", "/daily-driver:day-end", "day-end"),
+        ("check-in", "/daily-driver:check-in", "check-in"),
     ],
 )
 def test_interactive_launcher_invokes_claude_with_slash_command(
@@ -63,6 +63,29 @@ def test_interactive_launcher_invokes_claude_with_slash_command(
     assert captured["agent"] == "work-planner"
     assert captured["add_dirs"] == [ws]
     assert captured["session_name"].startswith(f"{session_prefix}-")
+
+
+def test_launcher_slash_prefix_matches_install_namespace() -> None:
+    """The launchers' ``/daily-driver:`` prefix is hardcoded but the namespace
+    is *derived* from where ``generate`` installs the command files
+    (``commands/<namespace>``). Nothing else couples the two, so pin them: if
+    the install-path leaf ever changes, the launchers would silently invoke a
+    command that no longer resolves.
+    """
+    from daily_driver.cli.commands import check_in, day_start
+    from daily_driver.core.generate import _CORE_PACKAGE_DATA
+
+    commands_dir = next(
+        entry.dest
+        for entry in _CORE_PACKAGE_DATA
+        if entry.source_package == "daily_driver.resources.slash_commands"
+    )
+    parent, _, namespace = commands_dir.partition("/")
+    assert parent == "commands"
+    expected_prefix = f"/{namespace}:"
+
+    assert day_start._SLASH_COMMAND.startswith(expected_prefix)
+    assert check_in._SLASH_COMMAND.startswith(expected_prefix)
 
 
 def test_day_start_overrides_agent_model_and_session(

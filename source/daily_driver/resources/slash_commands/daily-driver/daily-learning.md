@@ -178,4 +178,4 @@ Keep it tight. The log is for the next session to read in step 2 — it should h
 
 ## 7. Hand Back
 
-Return control to the user. If this was invoked from `/day-start`, they will continue with the plan-save step.
+Return control to the user. If this was invoked from `/daily-driver:day-start`, they will continue with the plan-save step.
