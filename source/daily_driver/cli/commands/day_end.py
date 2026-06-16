@@ -14,8 +14,8 @@ def add_parser(
     return register_interactive_launcher(
         subparsers,
         cmd_name="day-end",
-        slash_command="/day-end",
-        help_text="Interactive end-of-day review session (runs /day-end via claude)",
+        slash_command="/daily-driver:day-end",
+        help_text="Interactive end-of-day review session (runs /daily-driver:day-end via claude)",
         session_prefix="day-end",
         parents=parents,
     )

@@ -13,7 +13,7 @@ description: Mid-day check-in - review progress against plan and update status
 >
 > > Note: no day-start plan recorded for today. Continuing without a plan baseline.
 >
-> Then proceed normally — the user decides whether to abort and run /day-start.
+> Then proceed normally — the user decides whether to abort and run /daily-driver:day-start.
 
 Mid-day check-in session. Follow these steps in order.
 

@@ -6,7 +6,7 @@ Pre-launch the program writes:
   2. the day's state YAML with a freshly-minted `session_id` (UUID) and
      `last_day_start_at`.
 
-Then `claude --session-id <uuid>` is launched so /check-in (F3) can resume the
+Then `claude --session-id <uuid>` is launched so /daily-driver:check-in (F3) can resume the
 same conversation later in the day.
 """
 
@@ -37,7 +37,7 @@ from daily_driver.core.daily_state import (
 from daily_driver.core.workspace import Workspace
 from daily_driver.integrations import claude_cli
 
-_SLASH_COMMAND = "/day-start"
+_SLASH_COMMAND = "/daily-driver:day-start"
 _SESSION_PREFIX = "day-cycle"
 
 
@@ -48,7 +48,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "day-start",
         parents=parents,
-        help="Interactive morning planning session (runs /day-start via claude)",
+        help="Interactive morning planning session (runs /daily-driver:day-start via claude)",
     )
     add_session_args(parser)
     add_global_flags(parser)

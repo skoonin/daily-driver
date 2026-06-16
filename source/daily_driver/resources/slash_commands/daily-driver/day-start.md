@@ -132,7 +132,7 @@ Before saving the plan, offer interview practice as a short opt-in:
 
 If the user accepts, point them at the slash command rather than chaining inline — it keeps the plan-save flow clean and lets them run it as a focused session:
 
-> Run `/daily-learning` next. When it finishes, come back and we'll save the plan.
+> Run `/daily-driver:daily-learning` next. When it finishes, come back and we'll save the plan.
 
 If the user declines or skips, continue immediately to step 8. Do not press the question, do not re-prompt. This is a single optional offer, not a multi-step procedure.
 
