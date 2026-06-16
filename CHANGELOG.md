@@ -4,6 +4,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-16
+
 ### Added
 
 - **Total run time in the completion summary**: `jobs run` and `jobs backfill` end with the wall-clock duration (e.g. `Total run time: 4h 16m.`), so a long run's cost is visible at a glance. (0d953ae)
