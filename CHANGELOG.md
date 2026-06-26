@@ -6,14 +6,14 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
-- **`tracker update` can now edit title, link, and due date**: the `update` action gained `-T`/`--title`, `-l`/`--link`, and `-d`/`--due` flags, matching `tracker add`, so these fields no longer require hand-editing `tracker.yaml`.
-- **`paths tracker`**: resolves and prints the workspace `tracker.yaml` path, and the path is included in the `paths --json` payload under the `tracker` key.
-- **`help statuses` shows the job lifecycle**: the statuses reference now lists the `job`-category recommended statuses (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`) alongside the general recommended set, in both text and `--json` output.
+- **`tracker update` can now edit title, link, and due date**: the `update` action gained `-T`/`--title`, `-l`/`--link`, and `-d`/`--due` flags, matching `tracker add`, so these fields no longer require hand-editing `tracker.yaml`. (#115)
+- **`paths tracker`**: resolves and prints the workspace `tracker.yaml` path, and the path is included in the `paths --json` payload under the `tracker` key. (#115)
+- **`help statuses` shows the job lifecycle**: the statuses reference now lists the `job`-category recommended statuses (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`) alongside the general recommended set, in both text and `--json` output. (#115)
 - **AshbyHQ board source**: a new `ashby` scraper source pulls postings from any company's AshbyHQ board via the public Job Posting API (`jobs.ashbyhq.com/<slug>`). List the company slugs under `plugins.job_search.sources.ashby.ashby_boards` (slugs are case-sensitive, e.g. `Notion`); each board is fetched in one request and filtered to your configured roles, mirroring the Greenhouse source. Enable it with `enabled: true`, or select it on a single run with `jobs run -S ashby`. (#111)
 
 ### Changed
 
-- **`tracker follow-ups` hides finished work**: entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, `closed`) are excluded from `follow-ups` even when they still carry a next action, so the list reflects only work that can still progress.
+- **`tracker follow-ups` hides finished work**: entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, `closed`) are excluded from `follow-ups` even when they still carry a next action, so the list reflects only work that can still progress. (#115)
 
 ### Fixed
 
