@@ -553,3 +553,66 @@ def test_voice_update_missing_voice_profile_creates_it(
     assert rc == 0
     assert profile_path.exists()
     assert profile_path.read_text(encoding="utf-8") == "# Created profile\n"
+
+
+def test_voice_update_rejects_shrunk_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A model meta-summary far shorter than the profile is refused end-to-end,
+    leaving the original profile intact (the data-loss fix)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "x.md", "text")
+    profile_path = ws / "voice-profile.md"
+    original = "# Voice Profile\n" + ("an existing observation line.\n" * 40)
+    profile_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(
+        claude_cli,
+        "invoke",
+        lambda **kw: "Voice profile updated in append mode; all content preserved.",
+    )
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "smaller" in captured.err.lower()
+    # The original profile must survive verbatim.
+    assert profile_path.read_text(encoding="utf-8") == original
+
+
+def test_voice_update_write_failure_exits_1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A backup/lock/write OSError surfaces as a friendly message, not a traceback."""
+    from daily_driver.cli.cli import app
+    from daily_driver.cli.commands import voice_update as vu
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "x.md", "text")
+    (ws / "voice-profile.md").write_text("# Original profile\n", encoding="utf-8")
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# New profile content\n")
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    def boom(*a: object, **kw: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vu, "apply_update", boom)
+
+    rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "original left unchanged" in captured.err.lower()

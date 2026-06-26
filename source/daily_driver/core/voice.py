@@ -122,14 +122,21 @@ def apply_update(
     *,
     new_content: str,
     mode: str,
+    current_profile: str = "",
     dry_run: bool = False,
 ) -> None:
-    """Write new_content to profile_path, creating a .bak for replace mode.
+    """Write new_content to profile_path, backing up any existing profile.
 
     Refuses empty/whitespace-only content (raises VoiceUpdateError) so a
-    failed `claude` call cannot blank the profile. The write is atomic:
+    failed `claude` call cannot blank the profile. In append mode it also
+    refuses content materially smaller than `current_profile`: at the file
+    layer append and replace both fully overwrite (os.replace), so a model that
+    returns a short meta-summary instead of the full document would silently
+    clobber the profile — the shrink check rejects that. The write is atomic:
     content lands in a same-directory tempfile and is moved into place via
-    os.replace, so a mid-write crash leaves the original intact.
+    os.replace, so a mid-write crash leaves the original intact. A `.bak` is
+    written whenever a profile already exists, regardless of mode, since the
+    overwrite is full either way.
 
     In dry_run mode the file is not modified.
     """
@@ -142,9 +149,20 @@ def apply_update(
             "content must not be empty or whitespace-only"
         )
 
+    if (
+        mode == "append"
+        and current_profile
+        and len(new_content) < 0.8 * len(current_profile)
+    ):
+        raise VoiceUpdateError(
+            f"append output is smaller than the current profile "
+            f"({len(new_content)} < {len(current_profile)} chars); refusing — "
+            "the model likely returned a summary instead of the full profile"
+        )
+
     profile_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if mode == "replace" and profile_path.exists():
+    if profile_path.exists():
         bak = profile_path.with_suffix(profile_path.suffix + ".bak")
         shutil.copy2(profile_path, bak)
 
