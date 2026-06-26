@@ -136,22 +136,37 @@ def _enrichment_cfg(workspace: Workspace):  # type: ignore[no-untyped-def]
 def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
     """Verify Ollama reachability + model presence when enrichment routes to it.
 
-    Enrichment routing lives in `plugins.job_search.enrichment` (provider +
-    model); the shared connection block (`ai.ollama.endpoint`) is core infra.
-    Returns None when enrichment uses the claude default. WARNING on failure,
-    matching the core drift convention.
+    Enrichment routing lives in `plugins.job_search.enrichment` (a domain
+    default plus per-phase `company_info` / `fit_notes` overrides); the shared
+    connection block (`ai.ollama.endpoint`) is core infra. Each phase is
+    resolved through the routing chain; returns None when neither resolves to
+    ollama. WARNING on failure, matching the core drift convention.
     """
     from daily_driver.core.doctor import CheckResult
+    from daily_driver.integrations import ai_provider
 
     enrichment = _enrichment_cfg(workspace)
-    if enrichment is None or enrichment.provider != "ollama":
+    if enrichment is None:
+        return None
+    ai_cfg = getattr(getattr(workspace, "config", None), "ai", None)
+    if ai_cfg is None:
         return None
 
     from daily_driver.integrations import ollama_client
     from daily_driver.integrations.ollama_client import OllamaNotReachableError
 
-    endpoint = workspace.config.ai.ollama.endpoint
-    model = enrichment.model or ollama_client.DEFAULT_MODEL
+    ollama_phases: list[tuple[str, str]] = []
+    for phase in ("company_info", "fit_notes"):
+        provider, model = ai_provider.resolve_route(
+            ai_cfg, task=phase, domain_cfg=enrichment
+        )
+        if provider == "ollama":
+            ollama_phases.append((phase, model or ollama_client.DEFAULT_MODEL))
+    if not ollama_phases:
+        return None
+
+    endpoint = ai_cfg.ollama.endpoint
+    routed = ", ".join(f"{phase}: ollama {model}" for phase, model in ollama_phases)
 
     try:
         pulled = ollama_client.list_models(endpoint, timeout=5)
@@ -159,7 +174,7 @@ def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
         return CheckResult(
             name="Enrichment provider",
             status="WARNING",
-            detail=f"ollama at {endpoint} not reachable (enrichment: ollama {model})",
+            detail=f"ollama at {endpoint} not reachable (enrichment: {routed})",
             fix_hint="Start the server: ollama serve",
         )
     except Exception as exc:  # noqa: BLE001
@@ -170,34 +185,50 @@ def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
             fix_hint="Verify `ollama serve` is healthy on the configured endpoint.",
         )
 
-    if model not in pulled:
+    missing = [(phase, model) for phase, model in ollama_phases if model not in pulled]
+    if missing:
+        miss_models = ", ".join(sorted({model for _, model in missing}))
+        first_missing = missing[0][1]
         return CheckResult(
             name="Enrichment provider",
             status="WARNING",
-            detail=f"ollama reachable at {endpoint}; model not pulled: {model}",
-            fix_hint=f"Pull the model: ollama pull {model}",
+            detail=f"ollama reachable at {endpoint}; model(s) not pulled: {miss_models}",
+            fix_hint=f"Pull the model: ollama pull {first_missing}",
         )
     return CheckResult(
         name="Enrichment provider",
         status="OK",
-        detail=f"enrichment routes to ollama {model} at {endpoint} (reachable)",
+        detail=f"enrichment routes to ollama at {endpoint} ({routed}, reachable)",
     )
 
 
 def _check_ollama_num_parallel(workspace: Workspace) -> CheckResult | None:
     """Hint that OLLAMA_NUM_PARALLEL must be set server-side for parallel calls.
 
-    NUM_PARALLEL is not detectable via the Ollama API, so when enrichment
-    routes to ollama with `ai.ollama.max_parallel > 1` we surface an INFO row
-    spelling out the per-platform set commands. Without a matching server-side
-    NUM_PARALLEL, parallel calls queue and count against the per-call timeout.
+    NUM_PARALLEL is not detectable via the Ollama API, so when any enrichment
+    phase resolves to ollama with `ai.ollama.max_parallel > 1` we surface an
+    INFO row spelling out the per-platform set commands. Without a matching
+    server-side NUM_PARALLEL, parallel calls queue and count against the
+    per-call timeout. Phases route independently, so resolve each rather than
+    reading the raw `enrichment.provider` field.
     """
     from daily_driver.core.doctor import CheckResult
+    from daily_driver.integrations import ai_provider
 
     enrichment = _enrichment_cfg(workspace)
-    if enrichment is None or enrichment.provider != "ollama":
+    if enrichment is None:
         return None
-    max_parallel = workspace.config.ai.ollama.max_parallel
+    ai_cfg = getattr(getattr(workspace, "config", None), "ai", None)
+    if ai_cfg is None:
+        return None
+    any_ollama = any(
+        ai_provider.resolve_route(ai_cfg, task=phase, domain_cfg=enrichment)[0]
+        == "ollama"
+        for phase in ("company_info", "fit_notes")
+    )
+    if not any_ollama:
+        return None
+    max_parallel = ai_cfg.ollama.max_parallel
     if max_parallel <= 1:
         return None
     return CheckResult(

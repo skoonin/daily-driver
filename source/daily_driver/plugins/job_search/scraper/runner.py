@@ -1214,16 +1214,33 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
     here at run start rather than per enricher. One cheap ``list_models`` GET on
     a short fixed timeout (:data:`_OLLAMA_PREFLIGHT_TIMEOUT`) stands in for N
     per-call timeouts on a down server. Reuses the doctor reachability + pulled-
-    model logic. Returns True (proceed) for the claude provider untouched.
+    model logic.
+
+    Each enrichment phase routes independently (a global `ai.provider: ollama`
+    reaches enrichment even with the enrichment block unset), so the resolved
+    route per phase — not the raw `enrichment.provider` — decides whether to
+    probe. Returns True (proceed) when no enabled phase resolves to ollama.
     """
+    from daily_driver.integrations import ai_provider, ollama_client
+
     cfg = plugin.enrichment
-    if cfg.provider != "ollama":
+    # A phase is probed only when its own toggles are on AND it resolves to
+    # ollama: a disabled phase makes no LLM calls, so its route is moot.
+    phase_enabled = {
+        "company_info": cfg.enrich_product or cfg.enrich_gd_rating,
+        "fit_notes": cfg.enrich_fit or cfg.enrich_notes,
+    }
+    ollama_models: list[str] = []
+    for phase, enabled in phase_enabled.items():
+        if not enabled:
+            continue
+        provider, model = ai_provider.resolve_route(ai, task=phase, domain_cfg=cfg)
+        if provider == "ollama":
+            ollama_models.append(model or ollama_client.DEFAULT_MODEL)
+    if not ollama_models:
         return True
 
-    from daily_driver.integrations import ollama_client
-
     endpoint = ai.ollama.endpoint
-    model = cfg.model or ollama_client.DEFAULT_MODEL
     try:
         pulled = ollama_client.list_models(endpoint, timeout=_OLLAMA_PREFLIGHT_TIMEOUT)
     except ollama_client.OllamaNotReachableError:
@@ -1240,7 +1257,10 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
         )
         return False
 
-    if model not in pulled:
+    # Preserve insertion order while de-duping (both phases may share a model).
+    missing = [m for m in dict.fromkeys(ollama_models) if m not in pulled]
+    if missing:
+        model = missing[0]
         Console.warning(
             f"ollama model {model!r} not pulled at {endpoint} -- LLM enrichment "
             f"skipped this run; pull it (ollama pull {model}) and run jobs "
