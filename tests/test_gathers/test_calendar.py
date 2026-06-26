@@ -26,6 +26,23 @@ Team Sync
 UNPARSEABLE BLOCK WITH NO DATE OR TIME AT ALL
 """
 
+# All-day event: a bare ISO date line with no time. Should anchor start at midnight.
+_ALL_DAY_OUTPUT = """\
+Company Holiday
+    2026-04-21
+    location: Everywhere
+"""
+
+# A date-like string buried in a URL (not a genuine date line) must not become
+# the current date for a later time-only event.
+_URL_DIGITS_OUTPUT = """\
+Retro Notes
+    notes: https://example.com/2025-01-01-retro-archive
+
+Quick Sync
+    14:00
+"""
+
 _USAGE_TEXT = """\
 USAGE: icalBuddy  [options]  <command>
 
@@ -103,6 +120,47 @@ def test_gather_events_skips_malformed_block(monkeypatch):
 
     assert len(events) == 1
     assert events[0].title == "Team Sync"
+
+
+def test_gather_events_parses_all_day_event(monkeypatch):
+    """A bare-date line (no time) is an all-day event; start anchors at midnight."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_ALL_DAY_OUTPUT),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    assert len(events) == 1
+    assert events[0].title == "Company Holiday"
+    assert events[0].start == datetime(2026, 4, 21, 0, 0, 0)
+    assert events[0].location == "Everywhere"
+
+
+def test_gather_events_url_digits_do_not_corrupt_date(monkeypatch):
+    """Date-like digits inside a URL must not become the current date for a
+    later time-only event (gap 6 date-scan anchor)."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_URL_DIGITS_OUTPUT),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    # "Retro Notes" has no genuine date/time line, so it is skipped. "Quick Sync"
+    # is time-only and must inherit the since-window date (2026-04-20), NOT the
+    # 2025-01-01 buried in the URL above it.
+    assert len(events) == 1
+    assert events[0].title == "Quick Sync"
+    assert events[0].start == datetime(2026, 4, 20, 14, 0, 0)
 
 
 def test_gather_events_invocation_uses_joined_to_arg(monkeypatch):

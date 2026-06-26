@@ -14,6 +14,12 @@ log = get_logger(__name__)
 _DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})")
 # Matches standalone HH:MM time lines (for icalBuddy's "-tf %H:%M" output)
 _TIME_RE = re.compile(r"^\s*(\d{2}:\d{2})\s*(?:-\s*(\d{2}:\d{2}))?\s*$")
+# Matches a bare ISO date line (no time) — an all-day event
+_BARE_DATE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*$")
+# Matches a line that is only an ISO date, optionally with a time. Used to track
+# the current day from genuine date lines, so digits embedded in a URL or title
+# can't masquerade as a date for later events.
+_DATE_LINE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})(?:\s*$|[T ]\d{2}:\d{2})")
 
 # Markers that strongly suggest icalBuddy printed its usage banner instead of
 # parseable event data. "USAGE:" is anchored to the very start of output
@@ -67,6 +73,16 @@ def _parse_event_block(block: str, event_date: str) -> CalendarEvent | None:
                     end = parsed
             except ValueError:
                 pass
+            continue
+
+        # Bare date line (no time) — an all-day event; anchor start at midnight.
+        bd = _BARE_DATE_RE.match(line)
+        if bd:
+            if start is None:
+                try:
+                    start = datetime.strptime(bd.group(1), "%Y-%m-%d")
+                except ValueError:
+                    pass
             continue
 
         # Time-only line — combine with the block's date context
@@ -131,10 +147,14 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
             # date_header detected; current_date updated via ISO match below
             pass
 
-        # Pick up "2026-04-20" anywhere in the block to track current day
-        iso_date = re.search(r"(\d{4}-\d{2}-\d{2})", block)
-        if iso_date:
-            current_date = iso_date.group(1)
+        # Track the current day only from a genuine date line (bare date or
+        # date+time at the start of a line), never from digits embedded in a
+        # URL or title elsewhere in the block.
+        for line in block.splitlines():
+            date_line = _DATE_LINE_RE.match(line)
+            if date_line:
+                current_date = date_line.group(1)
+                break
 
         try:
             event = _parse_event_block(block, current_date)
