@@ -96,11 +96,41 @@ tracker:
 # they need session resume / agents / workspace context that Ollama lacks.
 # Omitting the entire block keeps claude defaults for summary.
 # ai:
+#   # Global default provider for every routable AI task (summary,
+#   # voice_update, and the job_search enrichment passes). This is the
+#   # terminal fallback of the resolution chain — set it to `ollama` to
+#   # route the whole app to ollama in one line. Per-task / per-phase
+#   # blocks still override it.
+#   provider: claude
+#   # Global default model for routable AI tasks when neither the task
+#   # block nor a domain default names one. Provider-specific (claude:
+#   # "sonnet"; ollama: a pulled tag like "qwen2.5:14b"). A model applies
+#   # regardless of which provider a task resolves to (provider and model
+#   # are chosen independently), so a global model paired with a per-task
+#   # provider override must be compatible with that provider.
+#   # model: sonnet
 #   summary:
-#     # provider: claude | ollama
+#     # provider: claude | ollama. Unset (the default) means inherit from
+#     # the resolution chain (domain default -> global `ai.provider` ->
+#     # claude); set it to pin this task to a specific provider.
 #     provider: claude
 #     # Provider-specific model identifier. For claude: "sonnet", "haiku",
-#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model
+#     # applies regardless of which provider this task resolves to (provider
+#     # and model are chosen independently), so do not leave a claude model
+#     # set on a task you route to ollama, or vice versa.
+#     # model: sonnet
+#   # Provider / model routing for the `voice-update` task.
+#   voice_update:
+#     # provider: claude | ollama. Unset (the default) means inherit from
+#     # the resolution chain (domain default -> global `ai.provider` ->
+#     # claude); set it to pin this task to a specific provider.
+#     provider: claude
+#     # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#     # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model
+#     # applies regardless of which provider this task resolves to (provider
+#     # and model are chosen independently), so do not leave a claude model
+#     # set on a task you route to ollama, or vice versa.
 #     # model: sonnet
 #   # Only consulted when a task is routed to the claude provider.
 #   claude:
@@ -168,11 +198,39 @@ tracker:
 #     # Glassdoor rating, a fit score, and a Notes summary. Each pass
 #     # costs API calls; the max_* values cap how many run.
 #     enrichment:
-#       # provider: claude | ollama
+#       # Domain default provider for both enrichment passes. Unset inherits
+#       # the global `ai.provider`, then claude. Per-phase blocks override it.
 #       provider: claude
 #       # Provider-specific model identifier. For claude: "sonnet", "haiku",
-#       # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".
+#       # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model
+#       # applies regardless of which provider a phase resolves to (provider
+#       # and model are chosen independently), so a domain model paired with a
+#       # per-phase provider override must be compatible with that provider.
 #       # model: sonnet
+#       # Route override for the company-info pass (product summary +
+#       # Glassdoor rating, one call per company).
+#       company_info:
+#         # provider: claude | ollama. Unset inherits the enrichment domain
+#         # default, then the global `ai.provider`, then claude.
+#         provider: claude
+#         # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#         # etc. For ollama: a pulled tag like "qwen2.5:7b" or "phi4". A model
+#         # applies regardless of which provider this phase resolves to (provider
+#         # and model are chosen independently), so do not leave a claude model
+#         # set on a phase you route to ollama, or vice versa.
+#         # model: sonnet
+#       # Route override for the fit/notes pass (fit score, notes, remote,
+#       # criteria, one call per job).
+#       fit_notes:
+#         # provider: claude | ollama. Unset inherits the enrichment domain
+#         # default, then the global `ai.provider`, then claude.
+#         provider: claude
+#         # Provider-specific model identifier. For claude: "sonnet", "haiku",
+#         # etc. For ollama: a pulled tag like "qwen2.5:7b" or "phi4". A model
+#         # applies regardless of which provider this phase resolves to (provider
+#         # and model are chosen independently), so do not leave a claude model
+#         # set on a phase you route to ollama, or vice versa.
+#         # model: sonnet
 #       # Seconds before a single enrichment LLM call is abandoned.
 #       enrich_timeout: 30
 #       # Cap on company-description lookups per run (bounds API cost).

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+from typing import Literal
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._claude_session import (
@@ -19,18 +21,24 @@ from daily_driver.core.logging import get_logger
 log = get_logger(__name__)
 
 
-def _summary_provider(workspace_root) -> str:  # type: ignore[no-untyped-def]
-    """Return the configured provider for the summary task ("claude" default).
+def _resolve_summary_route(
+    workspace_root: Path, *, cli_model: str | None = None
+) -> tuple[Literal["claude", "ollama"], str | None]:
+    """Resolve the (provider, model) route for the summary task.
 
-    Missing config file → "claude" (default). Parse / validation errors
-    propagate so the user sees the real cause; silent fallback to claude
-    on a typo'd `ai.summary.provider: ollama` would route the request
-    through the wrong backend without warning.
+    Missing config file → the claude default (empty AIConfig). Parse /
+    validation errors propagate so the user sees the real cause; silent
+    fallback to claude on a typo'd `ai.summary.provider: ollama` would route
+    the request through the wrong backend without warning. Resolving here
+    (not just `ai.summary.provider`) fixes the gap-10 bug: the claude path now
+    honors `ai.summary.model` because provider and model are walked together.
     """
+    from daily_driver.core.config_models import AIConfig
+    from daily_driver.integrations import ai_provider
+
     cfg_path = workspace_root / ".dd-config.yaml"
-    if not cfg_path.is_file():
-        return "claude"
-    return load_config(cfg_path).ai.summary.provider
+    ai = load_config(cfg_path).ai if cfg_path.is_file() else AIConfig()
+    return ai_provider.resolve_route(ai, task="summary", cli_model=cli_model)
 
 
 def add_parser(
@@ -147,7 +155,7 @@ def run(args: argparse.Namespace) -> int:
             detail=args.detail,
             match=match,
         )
-        provider = _summary_provider(workspace.root)
+        provider, model = _resolve_summary_route(workspace.root, cli_model=args.model)
         if provider == "claude":
             require_claude_available()
             output = launch_headless(
@@ -155,17 +163,16 @@ def run(args: argparse.Namespace) -> int:
                 workspace=workspace,
                 session_name=default_session_name("summary", args.session_name),
                 agent=args.agent,
-                model=args.model,
+                model=model,
                 timeout=args.timeout,
             )
         else:
             # Ollama (and any future non-claude provider) has no workspace /
             # agent / session concept — send the prompt as-is.
-            summary_cfg = workspace.config.ai.summary
             output = ai_provider.invoke_for(
                 prompt,
-                provider=summary_cfg.provider,
-                model=summary_cfg.model,
+                provider=provider,
+                model=model,
                 ai=workspace.config.ai,
                 timeout=args.timeout,
             )

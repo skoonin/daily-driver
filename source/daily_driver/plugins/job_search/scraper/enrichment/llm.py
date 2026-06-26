@@ -117,11 +117,14 @@ def _fetch_company_info(
             "Answer with the number only, or 'unknown' if unsure. No preamble."
         )
     enrichment_cfg = ctx.plugin.enrichment
+    provider, model = ai_provider.resolve_route(
+        ctx.ai, task="company_info", domain_cfg=enrichment_cfg
+    )
     try:
         stdout = ai_provider.invoke_for(
             prompt,
-            provider=enrichment_cfg.provider,
-            model=enrichment_cfg.model,
+            provider=provider,
+            model=model,
             ai=ctx.ai,
             timeout=timeout,
         )
@@ -312,7 +315,8 @@ def _build_company_plan(
     if not include_product and not include_gd:
         log.debug("[enrich] product and gd_rating both disabled via config")
         return None
-    if cfg.provider == "claude" and shutil.which("claude") is None:
+    provider, _ = ai_provider.resolve_route(ctx.ai, task="company_info", domain_cfg=cfg)
+    if provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich] claude CLI not found on PATH, skipping product lookup")
         return None
 
@@ -834,11 +838,14 @@ def _fetch_fit_notes_for_job(
     )
 
     enrichment_cfg = ctx.plugin.enrichment
+    provider, model = ai_provider.resolve_route(
+        ctx.ai, task="fit_notes", domain_cfg=enrichment_cfg
+    )
     try:
         stdout = ai_provider.invoke_for(
             prompt,
-            provider=enrichment_cfg.provider,
-            model=enrichment_cfg.model,
+            provider=provider,
+            model=model,
             ai=ctx.ai,
             timeout=timeout,
         )
@@ -976,7 +983,8 @@ def _build_fit_plan(
     # periodically, so partial results survive).
     out = jobs
     cfg = ctx.plugin.enrichment
-    if cfg.provider == "claude" and shutil.which("claude") is None:
+    provider, _ = ai_provider.resolve_route(ctx.ai, task="fit_notes", domain_cfg=cfg)
+    if provider == "claude" and shutil.which("claude") is None:
         log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
         return None
 

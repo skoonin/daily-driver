@@ -560,8 +560,13 @@ def test_ai_config_defaults_to_claude_everywhere():
     from daily_driver.core.config_models import AIConfig
 
     ai = AIConfig()
-    assert ai.summary.provider == "claude"
+    # The global default is the terminal fallback and keeps "claude"; per-task
+    # provider defaults are now None ("unset") so the global can win the chain.
+    assert ai.provider == "claude"
+    assert ai.model is None
+    assert ai.summary.provider is None
     assert ai.summary.model is None
+    assert ai.voice_update.provider is None
     assert ai.ollama.endpoint == "http://localhost:11434"
     assert ai.ollama.timeout == 60
 
@@ -612,8 +617,11 @@ def test_ollama_config_rejects_extra_keys():
 def test_root_config_omitting_ai_block_uses_defaults():
     """Backwards-compat: omitting `ai:` keeps claude-only behavior."""
     c = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
-    assert c.ai.summary.provider == "claude"
-    assert EnrichmentConfig().provider == "claude"
+    # Unset per-task/domain providers default to None; the global terminal
+    # fallback ("claude") is what makes all-unset resolve to claude at runtime.
+    assert c.ai.provider == "claude"
+    assert c.ai.summary.provider is None
+    assert EnrichmentConfig().provider is None
 
 
 def test_every_field_has_description():
@@ -685,7 +693,8 @@ def test_core_ai_config_keeps_summary_and_providers():
     from daily_driver.core.config_models import AIConfig
 
     m = AIConfig()
-    assert m.summary.provider == "claude"
+    assert m.summary.provider is None
+    assert m.provider == "claude"
     assert m.claude.max_parallel == 4
     assert m.ollama.endpoint == "http://localhost:11434"
 
@@ -702,7 +711,7 @@ def test_core_summary_can_route_to_ollama():
 def test_plugin_enrichment_gains_provider_and_model():
     """EnrichmentConfig now carries its own provider/model routing."""
     m = EnrichmentConfig()
-    assert m.provider == "claude"
+    assert m.provider is None
     assert m.model is None
     routed = EnrichmentConfig.model_validate(
         {"provider": "ollama", "model": "qwen2.5:14b"}

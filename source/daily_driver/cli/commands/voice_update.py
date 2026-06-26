@@ -97,6 +97,12 @@ def add_parser(
 
 
 def run(args: argparse.Namespace) -> int:
+    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations.ai_provider import (
+        AIInvocationError,
+        AITimeoutError,
+    )
+
     source_paths = [Path(p) for p in args.sources]
     mode = args.mode or "append"
 
@@ -108,9 +114,15 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         workspace = resolve_workspace(args)
-        require_claude_available()
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
+
+    # voice-update is a routable task: claude (the default) keeps its workspace
+    # / session / agent context via launch_headless; any other provider has no
+    # such concept and goes through the plain dispatch layer.
+    provider, model = ai_provider.resolve_route(
+        workspace.config.ai, task="voice_update", cli_model=args.model
+    )
 
     profile_path = workspace.output_dir / "voice-profile.md"
     current_profile = (
@@ -120,18 +132,40 @@ def run(args: argparse.Namespace) -> int:
     prompt = build_prompt(source_files, current_profile=current_profile, mode=mode)
 
     if args.dry_run:
-        Console.info(f"dry-run: would invoke claude with {len(prompt)} char prompt")
+        Console.info(f"dry-run: would invoke {provider} with {len(prompt)} char prompt")
         Console.info(f"dry-run: would write to {profile_path}")
         return 0
 
     try:
-        new_content = launch_headless(
-            slash_command=prompt,
-            workspace=workspace,
-            session_name=default_session_name("voice-update", args.session_name),
-            model=args.model,
-            timeout=args.timeout,
+        if provider == "claude":
+            require_claude_available()
+            new_content = launch_headless(
+                slash_command=prompt,
+                workspace=workspace,
+                session_name=default_session_name("voice-update", args.session_name),
+                model=model,
+                timeout=args.timeout,
+            )
+        else:
+            new_content = ai_provider.invoke_for(
+                prompt,
+                provider=provider,
+                model=model,
+                ai=workspace.config.ai,
+                timeout=args.timeout,
+            )
+    except AITimeoutError as exc:
+        Console.error(
+            f"{exc.provider} voice-update timed out after {exc.timeout_seconds}s"
         )
+        return 1
+    except AIInvocationError as exc:
+        msg = f"{exc.provider} voice-update failed: {exc}"
+        tail = (exc.stderr or exc.stdout or "").strip()[-200:]
+        if tail:
+            msg = f"{msg}\n{tail}"
+        Console.error(msg)
+        return 1
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
 

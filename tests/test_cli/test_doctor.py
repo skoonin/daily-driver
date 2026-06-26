@@ -448,6 +448,35 @@ def test_doctor_ai_row_ok_when_ollama_reachable_with_model(
     assert "ollama" in combined.lower()
 
 
+def test_doctor_ai_row_flags_voice_update_routed_to_ollama(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """voice_update routed to an un-pulled ollama model is flagged at doctor time."""
+    from daily_driver.core.doctor import run_checks
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import ollama_client
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+    _set_ai_config(
+        ws,
+        "ai:\n  voice_update:\n    provider: ollama\n    model: qwen2.5:14b\n",
+    )
+
+    monkeypatch.setattr(
+        ollama_client, "list_models", lambda endpoint, timeout=5: ["phi4:latest"]
+    )
+
+    results = run_checks(Workspace.discover_or_fail(override=ws))
+    ai_rows = [r for r in results if r.name == "AI providers"]
+    assert len(ai_rows) == 1
+    row = ai_rows[0]
+    assert row.status == "WARNING"
+    assert "voice_update" in row.detail
+    assert "qwen2.5:14b" in row.detail
+
+
 def test_doctor_ai_row_warning_when_ollama_not_reachable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

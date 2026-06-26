@@ -16,12 +16,24 @@ def _enrich_pool_size(ctx: ScrapeContext) -> int:
     """Worker count for enrichment, keyed off the active provider; 1 = serial.
 
     Each provider carries its own max_parallel: ollama is bounded by local RAM,
-    claude by API rate limits. Parallelism only raises throughput — it does not
-    change the max_enrich_* budget (which still caps how many jobs are enriched)
-    or the per-call timeout.
+    claude by API rate limits. The phases route independently (a global
+    `ai.provider: ollama` reaches enrichment even with the enrichment block
+    unset), so resolve each phase rather than reading the raw provider field:
+    use ollama's width if any phase resolves to ollama (the RAM-bound, more
+    constrained case), else claude's. Parallelism only raises throughput — it
+    does not change the max_enrich_* budget (which still caps how many jobs are
+    enriched) or the per-call timeout.
     """
+    from daily_driver.integrations import ai_provider
+
     ai_cfg = ctx.ai
-    if ctx.plugin.enrichment.provider == "ollama":
+    enrichment = ctx.plugin.enrichment
+    any_ollama = any(
+        ai_provider.resolve_route(ai_cfg, task=phase, domain_cfg=enrichment)[0]
+        == "ollama"
+        for phase in ("company_info", "fit_notes")
+    )
+    if any_ollama:
         return max(1, ai_cfg.ollama.max_parallel)
     return max(1, ai_cfg.claude.max_parallel)
 

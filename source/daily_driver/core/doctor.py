@@ -210,12 +210,13 @@ def _load_workspace_config(workspace: Workspace) -> Config | str | Exception:
 
 
 def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
-    """Verify Ollama reachability + model presence for the summary task.
+    """Verify Ollama reachability + model presence for core routable tasks.
 
-    Returns None (no row emitted) when summary uses the claude default.
+    Covers the core tasks `summary` and `voice_update` (each resolved through
+    the routing chain), returning None when neither resolves to ollama.
     Enrichment routing is plugin-specific and validated by the job_search
     plugin's own doctor check, not here (the honest boundary: core knows
-    about summary + the shared provider blocks, not plugin tasks).
+    about its own tasks + the shared provider blocks, not plugin tasks).
     Drift convention: failures are WARNING (exit 0), matching the workspace
     drift / contract checks added in PR #30.
     """
@@ -234,14 +235,15 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
             fix_hint="Fix the YAML / schema in .dd-config.yaml.",
         )
 
-    from daily_driver.integrations import ollama_client
+    from daily_driver.integrations import ai_provider, ollama_client
     from daily_driver.integrations.ollama_client import OllamaNotReachableError
 
     ai_cfg = cfg.ai
     ollama_tasks: list[tuple[str, str]] = []
-    if ai_cfg.summary.provider == "ollama":
-        model = ai_cfg.summary.model or ollama_client.DEFAULT_MODEL
-        ollama_tasks.append(("summary", model))
+    for task in ("summary", "voice_update"):
+        provider, model = ai_provider.resolve_route(ai_cfg, task=task)
+        if provider == "ollama":
+            ollama_tasks.append((task, model or ollama_client.DEFAULT_MODEL))
     if not ollama_tasks:
         return None
 
