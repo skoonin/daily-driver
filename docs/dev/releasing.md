@@ -6,7 +6,7 @@ Single-command release workflow. `make release` handles pre-flight, build, CHANG
 
 - **`dev`** is the integration trunk. Feature branches branch off `dev` and merge back to `dev`. On `dev`, `__version__` carries the next release's `-dev` working marker (e.g. `0.3.0-dev`). Install the latest in-progress build with `pip install 'git+https://github.com/skoonin/daily-driver.git@dev'`.
 - **`main`** holds only released, tagged states; it never carries a `-dev` version between releases.
-- **Cutting a release**: merge `dev` → `main`, run `make release VERSION=X.Y.Z` on `main` (this strips the `-dev` suffix to `X.Y.Z` and tags `vX.Y.Z`), `make release-push`, then bump `dev`'s `__version__` to the next `X.Y.Z-dev` marker.
+- **Cutting a release**: create a `release/X.Y.Z` branch from `dev`, run `make release VERSION=X.Y.Z` on it (strips the `-dev` suffix to `X.Y.Z`, rewrites the CHANGELOG, commits, and tags `vX.Y.Z`), then open a PR `release/X.Y.Z` → `main` and `make release-push`. `main` is only ever updated through a `release/*` PR — never a direct `dev` → `main` merge. After the release lands, bump `dev`'s `__version__` to the next `X.Y.Z-dev` marker. (`make release` runs on any branch except `dev`, so the `release/*` branch is the place to cut it.)
 
 ## Version source of truth
 
