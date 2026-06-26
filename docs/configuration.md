@@ -269,6 +269,7 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 |-----------|--------|---------------------------|
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
+| `ashby` | `AshbyToggle` | `ashby_boards` (`[]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
 | `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
 | `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
@@ -295,6 +296,9 @@ sources:
   greenhouse:
     enabled: true
     greenhouse_boards: [anthropic, stripe]
+  ashby:
+    enabled: true
+    ashby_boards: [ramp, linear]  # slugs are case-sensitive (e.g. Notion)
   linkedin:
     enabled: true
     results_wanted_per_query: 50

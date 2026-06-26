@@ -60,6 +60,21 @@ def test_greenhouse_source_split() -> None:
     assert norm.source == "Greenhouse (acme-corp)"
 
 
+def test_ashby_source_split() -> None:
+    raw = RawScrapedJob(
+        company="Acme",
+        role="SRE",
+        url="https://example.com/j",
+        source="Ashby (acme-corp)",
+    )
+    norm = NormalizedJob.from_raw(raw)
+    # Mirrors greenhouse: the "Ashby (<board>)" string unifies under a single
+    # canonical source so multi-board Ashby rows don't fragment when grouped.
+    assert norm.source_canonical == "ashby"
+    assert norm.source_board == "acme-corp"
+    assert norm.source == "Ashby (acme-corp)"
+
+
 def test_from_raw_is_pure() -> None:
     raw = RawScrapedJob(company="A", role="R", url="u", source="s", location="LOC")
     norm1 = NormalizedJob.from_raw(raw)

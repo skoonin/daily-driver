@@ -4,6 +4,10 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+### Added
+
+- **AshbyHQ board source**: a new `ashby` scraper source pulls postings from any company's AshbyHQ board via the public Job Posting API (`jobs.ashbyhq.com/<slug>`). List the company slugs under `plugins.job_search.sources.ashby.ashby_boards` (slugs are case-sensitive, e.g. `Notion`); each board is fetched in one request and filtered to your configured roles, mirroring the Greenhouse source. Enable it with `enabled: true`, or select it on a single run with `jobs run -S ashby`. (#111)
+
 ## [0.2.0] — 2026-06-16
 
 ### Added
