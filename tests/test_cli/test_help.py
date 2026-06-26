@@ -113,6 +113,29 @@ def test_help_statuses_includes_in_use_when_workspace_present(
     assert "open" in data["statuses"]["recommended"]
 
 
+def test_help_statuses_surfaces_job_lifecycle(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The job-category lifecycle statuses appear in the statuses topic."""
+    Workspace.init(tmp_path)
+    rc = app(["--workspace", str(tmp_path), "help", "statuses", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    for s in ("found", "applied", "interviewing", "rejected", "closed"):
+        assert s in data["statuses"]["job_recommended"]
+
+
+def test_help_statuses_job_lifecycle_in_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Workspace.init(tmp_path)
+    rc = app(["--workspace", str(tmp_path), "help", "statuses"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for s in ("found", "applied", "interviewing"):
+        assert s in out
+
+
 def test_help_categories_uses_workspace_config(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

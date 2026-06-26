@@ -209,6 +209,26 @@ def test_follow_ups_overdue_filter(workspace: Workspace) -> None:
     assert len(all_with_next_action) == 4
 
 
+def test_follow_ups_excludes_terminal_status(workspace: Workspace) -> None:
+    """Entries whose status is terminal (done, closed, ...) are dropped from
+    follow-ups even when they still carry a next_action."""
+    tracker = Tracker(workspace)
+
+    tracker.add(category="task", title="Active", status="open", next_action="Ping")
+    tracker.add(category="task", title="Finished", status="done", next_action="Ping")
+    tracker.add(
+        category="task", title="Ruled out", status="ruled-out", next_action="Ping"
+    )
+    tracker.add(category="job", title="Closed job", status="closed", next_action="Ping")
+
+    follow = tracker.follow_ups()
+    assert {e.title for e in follow} == {"Active"}
+
+    # The terminal exclusion also applies under the overdue filter.
+    overdue = tracker.follow_ups(overdue=True)
+    assert all(e.title == "Active" for e in overdue)
+
+
 # ---------------------------------------------------------------------------
 # 8. stats() counts by category and status
 # ---------------------------------------------------------------------------

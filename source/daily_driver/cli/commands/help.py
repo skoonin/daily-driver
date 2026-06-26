@@ -102,7 +102,11 @@ def _resolve_workspace(args: argparse.Namespace) -> Any | None:
 
 
 def _statuses(workspace: Any | None) -> dict[str, Any]:
-    from daily_driver.core.tracker import RECOMMENDED_STATUSES, Tracker
+    from daily_driver.core.tracker import (
+        JOB_RECOMMENDED_STATUSES,
+        RECOMMENDED_STATUSES,
+        Tracker,
+    )
 
     in_use: list[str] = []
     if workspace is not None:
@@ -118,6 +122,7 @@ def _statuses(workspace: Any | None) -> dict[str, Any]:
             in_use = []
     return {
         "recommended": list(RECOMMENDED_STATUSES),
+        "job_recommended": list(JOB_RECOMMENDED_STATUSES),
         "in_use": in_use,
         "consumers": ["tracker add --status", "tracker update --status"],
     }
@@ -245,6 +250,7 @@ def _render_topic(
     elif topic == "statuses":
         s = payload["statuses"]
         console.print(f"{indent}recommended: {', '.join(s['recommended'])}")
+        console.print(f"{indent}job:         {', '.join(s['job_recommended'])}")
         if s["in_use"]:
             console.print(f"{indent}in-use:      {', '.join(s['in_use'])}")
         elif not full:

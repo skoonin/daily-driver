@@ -89,6 +89,9 @@ def _update_args(
         next_action=kwargs.get("next_action", None),
         tags=kwargs.get("tags", None),
         extra=kwargs.get("extra", None),
+        title=kwargs.get("title", None),
+        link=kwargs.get("link", None),
+        due=kwargs.get("due", None),
     )
 
 
@@ -563,3 +566,57 @@ def test_update_extra_merges_not_replaces(workspace: Workspace) -> None:
 
     updated = Tracker(workspace).list(category="task")[0]
     assert updated.extras == {"alpha": "1", "beta": "2", "gamma": "3"}
+
+
+# ---------------------------------------------------------------------------
+# tracker update --title/--link/--due edit those fields
+# ---------------------------------------------------------------------------
+
+
+def test_update_title_changes_title(workspace: Workspace) -> None:
+    from daily_driver.core.tracker import Tracker
+
+    assert run(_add_args(workspace.root, title="Old title", category="task")) == 0
+    entry_id = Tracker(workspace).list(category="task")[0].id
+
+    assert run(_update_args(workspace.root, entry_id, title="New title")) == 0
+
+    updated = Tracker(workspace).list(category="task")[0]
+    assert updated.title == "New title"
+
+
+def test_update_link_changes_link(workspace: Workspace) -> None:
+    from daily_driver.core.tracker import Tracker
+
+    assert run(_add_args(workspace.root, title="Linkable", category="task")) == 0
+    entry_id = Tracker(workspace).list(category="task")[0].id
+
+    assert run(_update_args(workspace.root, entry_id, link="https://example.com")) == 0
+
+    updated = Tracker(workspace).list(category="task")[0]
+    assert updated.link == "https://example.com"
+
+
+def test_update_due_changes_due(workspace: Workspace) -> None:
+    from datetime import date
+
+    from daily_driver.core.tracker import Tracker
+
+    assert run(_add_args(workspace.root, title="Datable", category="task")) == 0
+    entry_id = Tracker(workspace).list(category="task")[0].id
+
+    assert run(_update_args(workspace.root, entry_id, due="2026-12-31")) == 0
+
+    updated = Tracker(workspace).list(category="task")[0]
+    assert updated.due == date(2026, 12, 31)
+
+
+def test_update_due_invalid_exits_1(workspace: Workspace) -> None:
+    from daily_driver.core.tracker import Tracker
+
+    assert run(_add_args(workspace.root, title="Bad due", category="task")) == 0
+    entry_id = Tracker(workspace).list(category="task")[0].id
+
+    with pytest.raises(SystemExit) as exc:
+        run(_update_args(workspace.root, entry_id, due="not-a-date"))
+    assert exc.value.code == 1

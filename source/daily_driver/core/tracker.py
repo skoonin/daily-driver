@@ -385,7 +385,12 @@ class Tracker:
     # mypy resolves a bare `list` in this return annotation to that method rather
     # than the builtin. typing.List dodges the shadow cleanly.
     def follow_ups(self, *, overdue: bool = False) -> List[TrackerEntry]:
-        entries = [e for e in self.load().entries if e.next_action is not None]
+        entries = [
+            e
+            for e in self.load().entries
+            if e.next_action is not None
+            and normalize_status(e.status) not in TERMINAL_STATUSES
+        ]
         if overdue:
             cutoff = today()
             entries = [e for e in entries if e.due is not None and e.due < cutoff]

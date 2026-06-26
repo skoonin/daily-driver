@@ -18,6 +18,7 @@ _CHOICES = (
     "output",
     "state",
     "ephemeral",
+    "tracker",
     "daily",
     "daily-plan",
     "daily-notes",
@@ -74,12 +75,15 @@ def run(args: argparse.Namespace) -> int:
         raise SystemExit(f"error: invalid --date: {args.date}") from exc
 
     if getattr(args, "json", False):
+        from daily_driver.core.tracker import Tracker
+
         daily = _daily_dir(workspace, when)
         payload = {
             "root": str(workspace.root),
             "output_dir": str(workspace.output_dir),
             "state_dir": str(workspace.state_dir),
             "ephemeral_dir": str(workspace.ephemeral_dir),
+            "tracker": str(Tracker(workspace).path),
             "daily": str(daily),
             "daily_plan": str(daily / f"{when.isoformat()}-plan.md"),
             "daily_notes": str(daily / f"{when.isoformat()}-notes.md"),
@@ -96,6 +100,10 @@ def run(args: argparse.Namespace) -> int:
         print(workspace.state_dir)
     elif args.kind == "ephemeral":
         print(workspace.ephemeral_dir)
+    elif args.kind == "tracker":
+        from daily_driver.core.tracker import Tracker
+
+        print(Tracker(workspace).path)
     elif args.kind == "daily":
         print(_daily_dir(workspace, when))
     elif args.kind == "daily-plan":
