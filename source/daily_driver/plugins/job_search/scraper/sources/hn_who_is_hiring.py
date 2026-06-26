@@ -50,15 +50,24 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
     if not stories_resp:
         return []
 
+    # Prefer the exact "<Month> <Year>" thread; fall back to the most-recent
+    # "who is hiring?" story (Algolia returns hits date-descending) so a stale
+    # clock or a not-yet-titled new thread still yields the latest open thread.
     thread_id: str | None = None
-    expected_substrings = ("who is hiring?", current_month_str.lower())
+    fallback_id: str | None = None
     for hit in stories_resp.json().get("hits", []):
         title = (hit.get("title") or "").lower()
-        if all(s in title for s in expected_substrings):
-            object_id = hit.get("objectID")
-            if object_id:
-                thread_id = str(object_id)
-                break
+        object_id = hit.get("objectID")
+        if not object_id or "who is hiring?" not in title:
+            continue
+        if fallback_id is None:
+            fallback_id = str(object_id)
+        if current_month_str.lower() in title:
+            thread_id = str(object_id)
+            break
+
+    if thread_id is None:
+        thread_id = fallback_id
 
     if not thread_id:
         log.warning(
