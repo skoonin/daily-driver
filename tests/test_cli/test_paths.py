@@ -98,6 +98,36 @@ def test_paths_daily_state_with_explicit_date(
     )
 
 
+def test_paths_tracker_prints_tracker_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(["--workspace", str(ws), "paths", "tracker"])
+
+    out = capsys.readouterr().out.strip()
+    assert rc == 0
+    assert Path(out) == ws.resolve() / "tracker.yaml"
+
+
+def test_paths_json_includes_tracker(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json as _json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(["--workspace", str(ws), "paths", "tracker", "--json"])
+    assert rc == 0
+    payload = _json.loads(capsys.readouterr().out)["data"]
+    assert "tracker" in payload
+    assert payload["tracker"].endswith("/tracker.yaml")
+
+
 def test_paths_json_includes_daily_state(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

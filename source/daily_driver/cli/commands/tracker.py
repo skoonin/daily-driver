@@ -89,11 +89,28 @@ def add_parser(
     )
     p_update.add_argument("id", metavar="ID", help="Entry ID to update")
     p_update.add_argument(
+        "-T",
+        "--title",
+        default=None,
+        metavar="TEXT",
+        help="New title",
+    )
+    p_update.add_argument(
         "-s",
         "--status",
         default=None,
         metavar="STATUS",
         help="New status",
+    )
+    p_update.add_argument(
+        "-l", "--link", default=None, metavar="URL", help="New related URL"
+    )
+    p_update.add_argument(
+        "-d",
+        "--due",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="New due date (ISO format)",
     )
     p_update.add_argument(
         "-N", "--note", default=None, metavar="TEXT", help="Append note"
@@ -332,8 +349,14 @@ def _run_add(args: argparse.Namespace, tracker: Any) -> int:
 
 def _run_update(args: argparse.Namespace, tracker: Any) -> int:
     changes: dict[str, Any] = {}
+    if args.title is not None:
+        changes["title"] = args.title
     if args.status is not None:
         changes["status"] = args.status
+    if args.link is not None:
+        changes["link"] = args.link
+    if args.due is not None:
+        changes["due"] = _parse_due(args.due)
     if args.next_action is not None:
         changes["next_action"] = args.next_action
     if args.tags is not None:

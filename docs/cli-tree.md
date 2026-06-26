@@ -97,7 +97,7 @@ daily-driver/
 │       ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed)
 │       └── -n, --dry-run
 ├── paths
-│   ├── [kind: root|output|state|ephemeral|daily|daily-plan|daily-notes|daily-state]
+│   ├── [kind: root|output|state|ephemeral|tracker|daily|daily-plan|daily-notes|daily-state]
 │   ├── -d, --date YYYY-MM-DD
 │   └── -j, --json
 ├── gather
