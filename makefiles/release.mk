@@ -22,7 +22,13 @@ release: ## Cut a release (usage: make release VERSION=X.Y.Z)
 	@echo "  Release v$(VERSION)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@echo "[1/6] Verifying clean working tree..."
+	@echo "[1/6] Verifying release branch and clean working tree..."
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$branch" = "dev" ]; then \
+		echo "ERROR: don't cut a release from the dev trunk (it carries the -dev marker)." >&2; \
+		echo "       Merge dev -> main and run 'make release' from main." >&2; \
+		exit 1; \
+	fi
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "ERROR: working tree is dirty. Commit or stash first." >&2; \
 		git status --short >&2; \
@@ -32,7 +38,7 @@ release: ## Cut a release (usage: make release VERSION=X.Y.Z)
 		echo "ERROR: tag v$(VERSION) already exists." >&2; \
 		exit 1; \
 	fi
-	@echo "  OK: clean tree, tag v$(VERSION) does not exist"
+	@echo "  OK: on $$(git rev-parse --abbrev-ref HEAD), clean tree, tag v$(VERSION) does not exist"
 	@echo ""
 	@echo "[2/6] Running test suite on py311 + py312..."
 	@$(TOX) -e py311,py312

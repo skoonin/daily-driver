@@ -92,9 +92,15 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
 
 ## Release
 
-- `make release VERSION=X.Y.Z` — verify clean tree, run py311+py312, run
-  install smoke, build wheel/sdist, rewrite CHANGELOG `[Unreleased]` →
-  `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
+- **Branches:** `dev` is the integration trunk — feature branches cut off `dev`
+  and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker
+  (`pip install 'git+https://github.com/skoonin/daily-driver.git@dev'` to test).
+  `main` holds only tagged releases. Cut a release by merging `dev` → `main` and
+  running `make release` from `main` (it refuses to run on `dev`). Full flow in
+  `docs/dev/releasing.md`.
+- `make release VERSION=X.Y.Z` — verify release branch + clean tree, run
+  py311+py312, run install smoke, build wheel/sdist, rewrite CHANGELOG
+  `[Unreleased]` → `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
 - `make release-push` — push commit + tag (separate deliberate step).
 - `release.yaml` CI fires on tag, builds and attaches artifacts to the
   GitHub Release.
