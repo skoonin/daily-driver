@@ -99,16 +99,64 @@ def test_thread_id_resolved_from_algolia_stories(monkeypatch: Any) -> None:
     assert jobs[0]["company"] == "Acme"
 
 
-def test_returns_empty_when_no_matching_thread(monkeypatch: Any) -> None:
-    """If Algolia has no matching thread for the current month, return []."""
+def test_falls_back_to_most_recent_when_no_exact_match(monkeypatch: Any) -> None:
+    """When no story matches the current month exactly, fall back to the
+    most-recent 'who is hiring?' story (Algolia returns hits date-descending)."""
+    captured_urls: list[str] = []
+
+    def fake_api_get(session: Any, url: str, config: Any, **kwargs: Any) -> MagicMock:
+        captured_urls.append(url)
+        if "author_whoishiring" in url:
+            return _stories_response(
+                [
+                    {
+                        "title": "Ask HN: Who wants to be hired? (April 2026)",
+                        "objectID": "111",
+                    },
+                    {
+                        "title": "Ask HN: Who is hiring? (April 2026)",
+                        "objectID": "444",
+                    },
+                    {
+                        "title": "Ask HN: Who is hiring? (March 2026)",
+                        "objectID": "555",
+                    },
+                ]
+            )
+        if "story_444" in url:
+            return _comments_response(
+                [
+                    {
+                        "objectID": "c1",
+                        "comment_text": "Acme | SRE | Remote\nDetails here",
+                    }
+                ]
+            )
+        return None
+
+    monkeypatch.setattr(hn_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(hn_module, "_http_session", lambda cfg: MagicMock())
+    monkeypatch.setattr(hn_module, "today", lambda: date(2026, 5, 9))
+
+    jobs = hn_module.scrape_hn_who_is_hiring(_config())
+
+    assert any(
+        "story_444" in u for u in captured_urls
+    ), "must fall back to the most-recent 'who is hiring?' story (April, id 444)"
+    assert len(jobs) == 1
+    assert jobs[0]["company"] == "Acme"
+
+
+def test_returns_empty_when_no_whoishiring_story(monkeypatch: Any) -> None:
+    """If Algolia returns no 'who is hiring?' stories at all, return []."""
 
     def fake_api_get(session: Any, url: str, config: Any, **kwargs: Any) -> MagicMock:
         if "author_whoishiring" in url:
             return _stories_response(
                 [
                     {
-                        "title": "Ask HN: Who is hiring? (April 2026)",
-                        "objectID": "333",
+                        "title": "Ask HN: Who wants to be hired? (April 2026)",
+                        "objectID": "111",
                     }
                 ]
             )
