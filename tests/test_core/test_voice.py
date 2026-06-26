@@ -148,12 +148,38 @@ def test_apply_update_replace_mode_creates_backup(tmp_path: Path) -> None:
     assert profile.read_text(encoding="utf-8") == "updated"
 
 
-def test_apply_update_append_mode_skips_backup(tmp_path: Path) -> None:
+def test_apply_update_append_mode_creates_backup(tmp_path: Path) -> None:
     profile = tmp_path / "voice-profile.md"
     profile.write_text("original", encoding="utf-8")
 
-    voice.apply_update(profile, new_content="updated", mode="append")
+    # Append writes a full file (os.replace) just like replace, so it must back
+    # up the original too — the asymmetry was the data-loss root cause.
+    voice.apply_update(
+        profile, new_content="original plus new observations", mode="append"
+    )
 
+    bak = profile.with_suffix(profile.suffix + ".bak")
+    assert bak.read_text(encoding="utf-8") == "original"
+    assert profile.read_text(encoding="utf-8") == "original plus new observations"
+
+
+def test_apply_update_append_rejects_shrunk_output(tmp_path: Path) -> None:
+    profile = tmp_path / "voice-profile.md"
+    original = "x" * 200
+    profile.write_text(original, encoding="utf-8")
+
+    # A model meta-summary ("Voice profile updated…") is far shorter than the
+    # profile it claims to preserve; append mode must refuse it and leave the
+    # original untouched (no write, no .bak).
+    with pytest.raises(VoiceUpdateError, match="smaller"):
+        voice.apply_update(
+            profile,
+            new_content="Voice profile updated; all existing content preserved.",
+            mode="append",
+            current_profile=original,
+        )
+
+    assert profile.read_text(encoding="utf-8") == original
     assert not profile.with_suffix(profile.suffix + ".bak").exists()
 
 

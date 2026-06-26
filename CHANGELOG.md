@@ -10,6 +10,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **`voice-update` no longer risks clobbering your voice profile**: the default `--append` mode now backs up the existing `voice-profile.md` to `.bak` before writing (previously only `--replace` did), and it refuses to write when the model returns content materially shorter than the current profile — the failure mode that silently replaced a full profile with a short summary. A backup, lock, or write error now reports a clear message and leaves the original profile untouched, instead of surfacing a raw traceback. (#114)
 - **HN "Who is hiring?" source falls back to the most-recent thread**: when no thread title matches the current month exactly (e.g. the new month's thread is not yet titled, or the clock is off), the source now uses the most-recent "who is hiring?" story instead of returning nothing. The exact month match still wins when present. (#113)
 - **Calendar all-day events are no longer dropped**: an all-day event (a bare date line with no time, from icalBuddy) now records a start at midnight instead of being skipped as unparseable. (#113)
 - **Calendar date tracking ignores stray digits**: the per-day date context now reads only genuine date lines (a bare date or date+time at the start of a line), so digits inside a URL or title can no longer corrupt the date of later events. (#113)

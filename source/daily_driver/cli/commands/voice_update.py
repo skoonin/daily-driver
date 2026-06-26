@@ -50,7 +50,10 @@ def add_parser(
         action="store_const",
         const="append",
         default="append",
-        help="Append new observations to the existing profile (default).",
+        help=(
+            "Append new observations to the existing profile (default). "
+            "Backs up the original as voice-profile.md.bak."
+        ),
     )
     mode_group.add_argument(
         "--replace",
@@ -140,9 +143,21 @@ def run(args: argparse.Namespace) -> int:
         # os.replace, which would sever a lock held on the original inode and
         # break mutual exclusion between concurrent runs.
         with file_lock(profile_path.with_suffix(".md.lock")):
-            apply_update(profile_path, new_content=normalized, mode=mode)
+            apply_update(
+                profile_path,
+                new_content=normalized,
+                mode=mode,
+                current_profile=current_profile,
+            )
     except VoiceUpdateError as exc:
         Console.error(str(exc))
+        return 1
+    except (OSError, TimeoutError) as exc:
+        # Backup (shutil.copy2), lock acquisition, or the atomic write can fail
+        # with OSError/TimeoutError. The original profile is left intact on every
+        # such path (backup precedes the overwrite; the write is atomic), so
+        # surface a clear message instead of a raw traceback.
+        Console.error(f"could not write voice profile (original left unchanged): {exc}")
         return 1
 
     log.debug("voice-profile.md updated at %s", profile_path)
