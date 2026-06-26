@@ -10,9 +10,9 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
-- **HN "Who is hiring?" source falls back to the most-recent thread**: when no thread title matches the current month exactly (e.g. the new month's thread is not yet titled, or the clock is off), the source now uses the most-recent "who is hiring?" story instead of returning nothing. The exact month match still wins when present.
-- **Calendar all-day events are no longer dropped**: an all-day event (a bare date line with no time, from icalBuddy) now records a start at midnight instead of being skipped as unparseable.
-- **Calendar date tracking ignores stray digits**: the per-day date context now reads only genuine date lines (a bare date or date+time at the start of a line), so digits inside a URL or title can no longer corrupt the date of later events.
+- **HN "Who is hiring?" source falls back to the most-recent thread**: when no thread title matches the current month exactly (e.g. the new month's thread is not yet titled, or the clock is off), the source now uses the most-recent "who is hiring?" story instead of returning nothing. The exact month match still wins when present. (#113)
+- **Calendar all-day events are no longer dropped**: an all-day event (a bare date line with no time, from icalBuddy) now records a start at midnight instead of being skipped as unparseable. (#113)
+- **Calendar date tracking ignores stray digits**: the per-day date context now reads only genuine date lines (a bare date or date+time at the start of a line), so digits inside a URL or title can no longer corrupt the date of later events. (#113)
 
 ## [0.2.0] — 2026-06-16
 
