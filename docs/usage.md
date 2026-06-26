@@ -243,7 +243,7 @@ daily-driver voice-update --from ~/exports/slack.txt -n        # diff only
 daily-driver voice-update --from ~/exports/slack.txt --replace
 ```
 
-Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` prints the diff without writing.
+Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` validates the sources and prints the target path without calling the model or writing (it does not preview the generated profile).
 
 > Run this on writing you actually produced, not AI-generated text — the profile captures your voice, not Claude's.
 
