@@ -95,9 +95,10 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
 - **Branches:** `dev` is the integration trunk — feature branches cut off `dev`
   and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker
   (`pip install 'git+https://github.com/skoonin/daily-driver.git@dev'` to test).
-  `main` holds only tagged releases. Cut a release by merging `dev` → `main` and
-  running `make release` from `main` (it refuses to run on `dev`). Full flow in
-  `docs/dev/releasing.md`.
+  `main` holds only tagged releases. Cut a release from a `release/X.Y.Z` branch
+  off `dev` (run `make release` there — it refuses to run on `dev`), then PR
+  `release/X.Y.Z` → `main`; `main` is only ever updated through a `release/*`
+  PR, never a direct `dev` → `main` merge. Full flow in `docs/dev/releasing.md`.
 - `make release VERSION=X.Y.Z` — verify release branch + clean tree, run
   py311+py312, run install smoke, build wheel/sdist, rewrite CHANGELOG
   `[Unreleased]` → `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
