@@ -199,6 +199,9 @@ class NormalizedJob(BaseModel):
         if src.startswith("Greenhouse (") and src.endswith(")"):
             canonical = "greenhouse"
             board = src[len("Greenhouse (") : -1]
+        elif src.startswith("Ashby (") and src.endswith(")"):
+            canonical = "ashby"
+            board = src[len("Ashby (") : -1]
         else:
             canonical = src.split("/")[0].lower()
             board = ""
@@ -363,6 +366,9 @@ class EnrichedJob(BaseModel):
         if source.startswith("Greenhouse (") and source.endswith(")"):
             canonical = "greenhouse"
             board = source[len("Greenhouse (") : -1]
+        elif source.startswith("Ashby (") and source.endswith(")"):
+            canonical = "ashby"
+            board = source[len("Ashby (") : -1]
         else:
             canonical = source.split("/")[0].lower() or "unknown"
             board = ""

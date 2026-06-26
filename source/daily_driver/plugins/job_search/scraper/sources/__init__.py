@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.logging import get_logger
 
 from .apple import scrape_apple
+from .ashby import scrape_ashby
 from .greenhouse import scrape_greenhouse
 from .hn_jobs import scrape_hn_jobs
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
@@ -33,6 +34,7 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "hn_who_is_hiring": scrape_hn_who_is_hiring,
     "hn_jobs": scrape_hn_jobs,
     "greenhouse": scrape_greenhouse,
+    "ashby": scrape_ashby,
     "linkedin": partial(scrape_jobspy, sites=["linkedin"]),
     "indeed": partial(scrape_jobspy, sites=["indeed"]),
     "apple": scrape_apple,

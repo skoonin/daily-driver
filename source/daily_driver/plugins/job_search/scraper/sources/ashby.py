@@ -1,0 +1,93 @@
+"""AshbyHQ source: public Job Posting API."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from daily_driver.core.clock import today
+from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.scraper.sources._http import (
+    _api_get,
+    _http_session,
+)
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+log = get_logger(__name__)
+
+
+def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
+    """Scrape jobs from the AshbyHQ Job Posting API (public, no auth required).
+
+    Reads board slugs from config at
+    job_search.sources.ashby.ashby_boards (default: []). Each slug maps to
+    https://api.ashbyhq.com/posting-api/job-board/{slug} which returns all
+    listed postings with plain-text descriptions in a single request.
+
+    Unlike Greenhouse, the Ashby posting API carries no per-job company field
+    (top-level keys are only ``jobs`` and ``apiVersion``), so the company name
+    is derived from the board slug.
+    """
+    from daily_driver.plugins.job_search.config import AshbyToggle
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+
+    boards = source_toggle(ctx.plugin, "ashby", AshbyToggle).ashby_boards
+    session = _http_session(ctx)
+    jobs: list[dict] = []
+
+    # Live progress unit: one board (reported at loop-top so a skipped board
+    # still advances the bar).
+    total = len(boards)
+    done = 0
+    for board in boards:
+        # Graceful-stop checkpoint between boards: return what is matched so far.
+        if ctx.stop_event.is_set():
+            log.info("[ashby] stop requested; keeping %d jobs so far", len(jobs))
+            return jobs
+        ctx.report(done, total)
+        done += 1
+        api_url = f"https://api.ashbyhq.com/posting-api/job-board/{board}"
+        resp = _api_get(session, api_url, ctx, label=f"ashby/{board}")
+        if not resp:
+            continue
+        data = resp.json()
+
+        board_jobs = data.get("jobs", [])
+        # No per-job company field in the Ashby response; derive from the slug.
+        company_name = board.replace("-", " ").title()
+
+        for entry in board_jobs:
+            # Ashby still returns de-listed postings; skip them explicitly.
+            if entry.get("isListed") is False:
+                continue
+            title = entry.get("title", "")
+            if not title or not matches_roles(title, ctx.plugin):
+                continue
+
+            jobs.append(
+                {
+                    "company": company_name,
+                    "role": title,
+                    # Ashby `location` is a plain string (Greenhouse nests it).
+                    "location": entry.get("location", "") or "Remote",
+                    "url": entry.get("jobUrl", ""),
+                    "source": f"Ashby ({board})",
+                    "date_found": today().isoformat(),
+                    # Ashby ships plain text directly; no HTML stripping needed.
+                    "description_text": entry.get("descriptionPlain", ""),
+                }
+            )
+
+        log.info(
+            "[ashby] %s: %d jobs matched out of %d returned",
+            board,
+            sum(1 for j in jobs if j["source"] == f"Ashby ({board})"),
+            len(board_jobs),
+        )
+
+    return jobs
+
+
+__all__ = ["scrape_ashby"]

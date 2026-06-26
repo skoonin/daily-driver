@@ -173,6 +173,7 @@ Full field reference: [configuration.md](configuration.md#pluginsjob_search).
 | `hn_who_is_hiring` | Hacker News monthly thread |
 | `hn_jobs` | YC-funded jobs |
 | `greenhouse` | One row per `greenhouse_boards` entry |
+| `ashby` | One row per `ashby_boards` entry (AshbyHQ public API) |
 | `linkedin` | LinkedIn via JobSpy |
 | `indeed` | Indeed via JobSpy |
 | `apple` | Apple careers (requires Playwright) |
