@@ -210,6 +210,40 @@ class Criterion(BaseModel):
         return cleaned
 
 
+class PhaseRoute(BaseModel):
+    """Per-phase AI provider/model override for one enrichment pass.
+
+    A local 2-field mirror of core's `AITaskConfig`, defined here rather than
+    imported: `core/config_models.py` eagerly imports the plugin config chain
+    before `AITaskConfig` is bound, so importing it from core would raise an
+    ImportError at startup. Plugins never import core (see module docstring of
+    `plugins/config.py`). Both fields default to None (= "inherit from the
+    resolution chain"); the resolver supplies the terminal claude fallback.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["claude", "ollama"] | None = Field(
+        default=None,
+        description=(
+            "provider: claude | ollama. Unset inherits the enrichment domain\n"
+            "default, then the global `ai.provider`, then claude."
+        ),
+        json_schema_extra={"template_example": "claude"},
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
+            'etc. For ollama: a pulled tag like "qwen2.5:7b" or "phi4". A model\n'
+            "applies regardless of which provider this phase resolves to (provider\n"
+            "and model are chosen independently), so do not leave a claude model\n"
+            "set on a phase you route to ollama, or vice versa."
+        ),
+        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
+    )
+
+
 class EnrichmentConfig(BaseModel):
     """Knobs for the post-scrape enrichment passes (comp, fit, notes).
 
@@ -217,21 +251,45 @@ class EnrichmentConfig(BaseModel):
     provider/model selection lives here rather than leaking into core's `ai:`
     block. The provider-connection blocks (parallelism, ollama endpoint /
     timeout) are still shared core infra under `ai.claude:` / `ai.ollama:`.
+    The two LLM passes — `company_info` (product + Glassdoor lookup) and
+    `fit_notes` (fit / notes / remote / criteria) — each take an optional
+    per-phase route block that overrides these domain defaults.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] = Field(
-        default="claude",
-        description="provider: claude | ollama",
+    provider: Literal["claude", "ollama"] | None = Field(
+        default=None,
+        description=(
+            "Domain default provider for both enrichment passes. Unset inherits\n"
+            "the global `ai.provider`, then claude. Per-phase blocks override it."
+        ),
+        json_schema_extra={"template_example": "claude"},
     )
     model: str | None = Field(
         default=None,
         description=(
             'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
-            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".'
+            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model\n'
+            "applies regardless of which provider a phase resolves to (provider\n"
+            "and model are chosen independently), so a domain model paired with a\n"
+            "per-phase provider override must be compatible with that provider."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
+    )
+    company_info: PhaseRoute = Field(
+        default=PhaseRoute(),
+        description=(
+            "Route override for the company-info pass (product summary +\n"
+            "Glassdoor rating, one call per company)."
+        ),
+    )
+    fit_notes: PhaseRoute = Field(
+        default=PhaseRoute(),
+        description=(
+            "Route override for the fit/notes pass (fit score, notes, remote,\n"
+            "criteria, one call per job)."
+        ),
     )
     enrich_timeout: int = Field(
         default=30,

@@ -13,7 +13,7 @@ warning shape introduced in PR #29 (`stdout=...; stderr=...`).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 import requests
 
@@ -63,6 +63,50 @@ class AITimeoutError(AIInvocationError):
     ) -> None:
         super().__init__(message, provider=provider, stderr=message)
         self.timeout_seconds = timeout_seconds
+
+
+def resolve_route(
+    ai: AIConfig,
+    *,
+    task: str,
+    domain_cfg: object | None = None,
+    cli_provider: str | None = None,
+    cli_model: str | None = None,
+) -> tuple[Literal["claude", "ollama"], str | None]:
+    """Resolve the (provider, model) route for a routable AI task.
+
+    Provider and model are walked INDEPENDENTLY, most-specific to most-general:
+
+        task/phase override -> domain default -> global ai default -> claude
+
+    - Core tasks pass `task` naming a sub-block on `ai` (e.g. "summary",
+      "voice_update") and leave `domain_cfg` None.
+    - Plugin domains (enrichment) pass `domain_cfg` (the domain config, e.g.
+      `EnrichmentConfig`) and `task` naming a per-phase block on it
+      ("company_info" / "fit_notes"); `domain_cfg` itself supplies the domain
+      default.
+
+    `cli_provider` / `cli_model` outrank all config. Provider's terminal
+    fallback is the literal "claude"; model has no hardcoded default and may
+    resolve to None (the backend then picks its own default).
+    """
+    if domain_cfg is not None:
+        override = getattr(domain_cfg, task, None)
+    else:
+        override = getattr(ai, task, None)
+
+    def _walk(attr: str) -> str | None:
+        for source in (override, domain_cfg, ai):
+            if source is None:
+                continue
+            value = getattr(source, attr, None)
+            if value is not None:
+                return cast("str", value)
+        return None
+
+    provider = cli_provider or _walk("provider") or "claude"
+    model = cli_model or _walk("model")
+    return cast('Literal["claude", "ollama"]', provider), model
 
 
 def invoke_for(

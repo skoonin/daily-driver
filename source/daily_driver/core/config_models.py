@@ -254,15 +254,23 @@ class AITaskConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] = Field(
-        default="claude",
-        description="provider: claude | ollama",
+    provider: Literal["claude", "ollama"] | None = Field(
+        default=None,
+        description=(
+            "provider: claude | ollama. Unset (the default) means inherit from\n"
+            "the resolution chain (domain default -> global `ai.provider` ->\n"
+            "claude); set it to pin this task to a specific provider."
+        ),
+        json_schema_extra={"template_example": "claude"},
     )
     model: str | None = Field(
         default=None,
         description=(
             'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
-            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4".'
+            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model\n'
+            "applies regardless of which provider this task resolves to (provider\n"
+            "and model are chosen independently), so do not leave a claude model\n"
+            "set on a task you route to ollama, or vice versa."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
@@ -316,7 +324,33 @@ class AIConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: Literal["claude", "ollama"] = Field(
+        default="claude",
+        description=(
+            "Global default provider for every routable AI task (summary,\n"
+            "voice_update, and the job_search enrichment passes). This is the\n"
+            "terminal fallback of the resolution chain — set it to `ollama` to\n"
+            "route the whole app to ollama in one line. Per-task / per-phase\n"
+            "blocks still override it."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Global default model for routable AI tasks when neither the task\n"
+            "block nor a domain default names one. Provider-specific (claude:\n"
+            '"sonnet"; ollama: a pulled tag like "qwen2.5:14b"). A model applies\n'
+            "regardless of which provider a task resolves to (provider and model\n"
+            "are chosen independently), so a global model paired with a per-task\n"
+            "provider override must be compatible with that provider."
+        ),
+        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
+    )
     summary: AITaskConfig = Field(default=AITaskConfig(), description="")
+    voice_update: AITaskConfig = Field(
+        default=AITaskConfig(),
+        description="Provider / model routing for the `voice-update` task.",
+    )
     claude: ClaudeProviderConfig = Field(
         default=ClaudeProviderConfig(),
         description="Only consulted when a task is routed to the claude provider.",

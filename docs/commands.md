@@ -206,7 +206,7 @@ Rewrites `voice-profile.md` from writing samples via headless `claude`.
 | --- | --- |
 | `--from PATH` | Required; repeatable; files or directories |
 | `--append` / `--replace` | Default `--append` |
-| `-n`, `--dry-run` | Print diff only |
+| `-n`, `--dry-run` | Validate sources + print target path; no model call or write |
 | `--no-clipboard`, `--timeout`, `--model`, `--session-name` | As above |
 
 ## Job search plugin

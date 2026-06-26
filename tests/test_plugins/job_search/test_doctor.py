@@ -195,6 +195,38 @@ def test_enrichment_check_warns_when_unreachable(monkeypatch):
     assert "ollama serve" in (row.fix_hint or "")
 
 
+def _ws_with_enrichment_dict(enrichment_data: dict, max_parallel: int = 4):
+    """Workspace stand-in built from raw enrichment config (per-phase blocks)."""
+    from daily_driver.core.config_models import AIConfig
+    from daily_driver.plugins.job_search.config import EnrichmentConfig, JobSearchPlugin
+
+    enrichment = EnrichmentConfig.model_validate(enrichment_data)
+    job_search = JobSearchPlugin(enrichment=enrichment, sources={})
+    ai = AIConfig.model_validate({"ollama": {"max_parallel": max_parallel}})
+    config = SimpleNamespace(ai=ai, plugins=SimpleNamespace(job_search=job_search))
+    return SimpleNamespace(config=config, output_dir=Path("/nonexistent-ws/output"))
+
+
+def test_enrichment_check_flags_phase_override_to_ollama(monkeypatch):
+    """A per-phase override routing one pass to an un-pulled ollama model warns.
+
+    Domain stays claude; only fit_notes routes to ollama via its phase block.
+    """
+    from daily_driver.integrations import ollama_client
+
+    monkeypatch.setattr(
+        ollama_client, "list_models", lambda endpoint, timeout=5: ["phi4:latest"]
+    )
+    ws = _ws_with_enrichment_dict(
+        {"fit_notes": {"provider": "ollama", "model": "qwen2.5:14b"}}
+    )
+    row = doctor._check_enrichment_provider(ws)
+    assert row is not None
+    assert row.status == "WARNING"
+    assert "qwen2.5:14b" in row.detail
+    assert "ollama pull qwen2.5:14b" in (row.fix_hint or "")
+
+
 def test_enrichment_check_warns_when_model_not_pulled(monkeypatch):
     from daily_driver.integrations import ollama_client
 
