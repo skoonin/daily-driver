@@ -67,7 +67,10 @@ def add_parser(
         "--dry-run",
         action="store_true",
         default=False,
-        help="Show what would be written without modifying any files.",
+        help=(
+            "Validate sources and print the target path without calling the "
+            "model or writing (does not preview the generated profile)."
+        ),
     )
     parser.add_argument(
         "--no-clipboard",

@@ -14,7 +14,7 @@ voice over time.
 - Mode (optional, default `--append`):
   - `--append`: preserve existing profile; add new observations from the samples.
   - `--replace`: regenerate from scratch; previous profile saved as `.bak`.
-- `--dry-run`: print the proposed new profile to stdout without writing.
+- `--dry-run`: validate the sources and print the target path without calling the model or writing. It does NOT preview the generated profile (that would cost a model call).
 
 ## Workflow
 
@@ -24,15 +24,18 @@ Ask the user to confirm the source paths before running. Call out any
 paths that look risky (binaries, very large files, unrelated drafts).
 Files >500KB and binaries are silently skipped by the CLI.
 
-### 2. Preview with --dry-run
+### 2. Validate with --dry-run (optional)
 
-Run a dry-run first so the user can review what would be written:
+Run a dry-run first to confirm the sources are accepted and see the target
+path. It validates the prompt and prints the target path only — it does NOT
+call the model or preview the generated profile (that would cost a model call):
 
 ```bash
 daily-driver voice-update --from <path>... --dry-run
 ```
 
-Relay the output to the user and ask whether to proceed.
+Relay the validation output to the user. To actually generate and review the
+profile, run without `--dry-run` (the result is also copied to the clipboard).
 
 ### 3. Apply
 
