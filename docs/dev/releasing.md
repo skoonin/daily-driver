@@ -2,6 +2,12 @@
 
 Single-command release workflow. `make release` handles pre-flight, build, CHANGELOG rewrite, version bump, commit, and tag. Pushing is a separate deliberate step.
 
+## Branches
+
+- **`dev`** is the integration trunk. Feature branches branch off `dev` and merge back to `dev`. On `dev`, `__version__` carries the next release's `-dev` working marker (e.g. `0.3.0-dev`). Install the latest in-progress build with `pip install 'git+https://github.com/skoonin/daily-driver.git@dev'`.
+- **`main`** holds only released, tagged states; it never carries a `-dev` version between releases.
+- **Cutting a release**: merge `dev` → `main`, run `make release VERSION=X.Y.Z` on `main` (this strips the `-dev` suffix to `X.Y.Z` and tags `vX.Y.Z`), `make release-push`, then bump `dev`'s `__version__` to the next `X.Y.Z-dev` marker.
+
 ## Version source of truth
 
 ```
@@ -21,6 +27,7 @@ __version__ = "0.1.0"
 | Commit message | `release: vX.Y.Z` | `release: v0.2.0` |
 | CHANGELOG header | `[X.Y.Z] - YYYY-MM-DD` | `[0.2.0] - 2026-05-01` |
 | Pre-release | PEP 440 `X.Y.ZrcN` | `0.2.0rc1` |
+| `dev` trunk marker | `X.Y.Z-dev` | `0.3.0-dev` |
 
 ## `make release`
 
@@ -59,7 +66,7 @@ Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push, builds 
 
 Maintain `[Unreleased]` as you work. `make release` rewrites the header to `[X.Y.Z] - YYYY-MM-DD` and inserts a fresh `[Unreleased]` section. Use `### Added`, `### Fixed`, `### Changed`, `### Removed` subsections.
 
-There is no `-dev` suffix convention on the default branch. Unreleased changes are signaled solely by the `[Unreleased]` section.
+On the `dev` trunk, `__version__` carries the next release's `-dev` working marker (e.g. `0.3.0-dev`); `make release` strips it to `X.Y.Z` when cutting from `main`. Unreleased changelog entries live under `[Unreleased]` regardless of branch.
 
 ## Hotfix / rollback
 
@@ -88,6 +95,7 @@ v0.1.0 ships macOS arm64 only, installed from git:
 ```bash
 pip install git+https://github.com/skoonin/daily-driver.git
 pip install git+https://github.com/skoonin/daily-driver.git@v0.1.0
+pip install 'git+https://github.com/skoonin/daily-driver.git@dev'  # latest in-progress build
 ```
 
 No PyPI publish in v0.1.0.

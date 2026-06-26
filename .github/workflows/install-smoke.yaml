@@ -2,9 +2,9 @@ name: Install smoke test
 
 on:
   pull_request:
-    branches: [main, "release/**"]
+    branches: [main, dev, "release/**"]
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ["v*"]
   workflow_dispatch: {}
 
