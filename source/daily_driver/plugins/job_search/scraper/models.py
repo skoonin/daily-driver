@@ -205,6 +205,9 @@ class NormalizedJob(BaseModel):
         elif src.startswith("Workable (") and src.endswith(")"):
             canonical = "workable"
             board = src[len("Workable (") : -1]
+        elif src.startswith("Workday (") and src.endswith(")"):
+            canonical = "workday"
+            board = src[len("Workday (") : -1]
         else:
             canonical = src.split("/")[0].lower()
             board = ""
@@ -375,6 +378,9 @@ class EnrichedJob(BaseModel):
         elif source.startswith("Workable (") and source.endswith(")"):
             canonical = "workable"
             board = source[len("Workable (") : -1]
+        elif source.startswith("Workday (") and source.endswith(")"):
+            canonical = "workday"
+            board = source[len("Workday (") : -1]
         else:
             canonical = source.split("/")[0].lower() or "unknown"
             board = ""

@@ -1,0 +1,163 @@
+"""Workday source: public CXS job-search API (paginated POST)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from daily_driver.core.clock import today
+from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.scraper.sources._http import (
+    _api_post,
+    _http_session,
+)
+
+if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+log = get_logger(__name__)
+
+# Workday returns a fixed page size; 20 is the size its own career sites request.
+_PAGE_SIZE = 20
+# Hard ceiling on pages per board so a misreported `total` (or an endpoint that
+# keeps returning postings) cannot spin the fetch loop forever.
+_MAX_PAGES = 200
+
+
+def scrape_workday(ctx: ScrapeContext) -> list[dict]:
+    """Scrape jobs from a Workday careers site's public CXS API (no auth).
+
+    Reads board identifiers from config at
+    job_search.sources.workday.workday_boards (default: []). Each board names
+    the three parts of a Workday URL — ``tenant``, ``host``, ``site`` — which
+    map to the search endpoint
+    ``https://{tenant}.{host}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs``.
+
+    Unlike the single-GET board sources, Workday paginates: the endpoint is a
+    POST taking ``{limit, offset}`` and returns ``{total, jobPostings[]}``, so
+    each board is walked offset by offset until ``total`` is reached. The
+    postings carry no company field (the tenant is the company) and no
+    description, so the company is taken from the board's ``company`` override
+    or derived from the tenant, and ``description_text`` is emitted empty.
+    """
+    from daily_driver.plugins.job_search.config import WorkdayToggle
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+
+    boards = source_toggle(ctx.plugin, "workday", WorkdayToggle).workday_boards
+    session = _http_session(ctx)
+    jobs: list[dict] = []
+
+    # Live progress unit: one board (reported at loop-top so a skipped board
+    # still advances the bar). Pagination happens within a board.
+    total_boards = len(boards)
+    done = 0
+    for board in boards:
+        # Graceful-stop checkpoint between boards: return what is matched so far.
+        if ctx.stop_event.is_set():
+            log.info("[workday] stop requested; keeping %d jobs so far", len(jobs))
+            return jobs
+        ctx.report(done, total_boards)
+        done += 1
+
+        base = f"https://{board.tenant}.{board.host}.myworkdayjobs.com"
+        api_url = f"{base}/wday/cxs/{board.tenant}/{board.site}/jobs"
+        company_name = board.company or board.tenant.replace("-", " ").title()
+        label = f"workday/{board.tenant}"
+        matched_before = len(jobs)
+
+        offset = 0
+        seen = 0
+        total: int | None = None
+        partial = False
+        for page in range(_MAX_PAGES):
+            # Interrupt promptly even mid-board on a large, many-page tenant.
+            if ctx.stop_event.is_set():
+                log.info("[workday] stop requested; keeping %d jobs so far", len(jobs))
+                return jobs
+            body = {
+                "limit": _PAGE_SIZE,
+                "offset": offset,
+                "searchText": "",
+                "appliedFacets": {},
+            }
+            resp = _api_post(session, api_url, ctx, json=body, label=label)
+            if not resp:
+                # Mid-pagination HTTP failure: keep what we have, but flag it.
+                # A paginated board can otherwise return a partial set that
+                # looks identical to a complete, healthy scrape.
+                partial = True
+                break
+            data = resp.json()
+            if page == 0:
+                # `total` is fixed for the board; read it once. Treat its
+                # absence as a malformed shape, not a "stop now" sentinel —
+                # a defaulted 0 would silently cap every board at page 1.
+                total = data.get("total")
+                if total is None:
+                    log.warning(
+                        "[workday] %s: response missing 'total'; paginating"
+                        " until an empty page",
+                        board.tenant,
+                    )
+            postings = data.get("jobPostings", [])
+            if not postings:
+                break
+            seen += len(postings)
+
+            for entry in postings:
+                title = entry.get("title", "")
+                if not title or not matches_roles(title, ctx.plugin):
+                    continue
+                # externalPath is site-relative; the public posting lives under
+                # the localized careers path.
+                path = entry.get("externalPath", "")
+                url = f"{base}/en-US/{board.site}{path}" if path else ""
+                jobs.append(
+                    {
+                        "company": company_name,
+                        "role": title,
+                        "location": entry.get("locationsText", "") or "Remote",
+                        "url": url,
+                        "source": f"Workday ({board.tenant})",
+                        "date_found": today().isoformat(),
+                        # CXS list payload carries no per-job description text.
+                        "description_text": "",
+                    }
+                )
+
+            offset += _PAGE_SIZE
+            if total is not None and offset >= total:
+                break
+        else:
+            log.warning(
+                "[workday] %s: hit the %d-page ceiling; some postings may be"
+                " unfetched",
+                board.tenant,
+                _MAX_PAGES,
+            )
+
+        matched = len(jobs) - matched_before
+        if partial:
+            # Loud, not green: this board's result is incomplete by HTTP failure.
+            log.warning(
+                "[workday] %s: fetch failed at offset %d; %d matched from %d"
+                " postings seen (PARTIAL board)",
+                board.tenant,
+                offset,
+                matched,
+                seen,
+            )
+        else:
+            # Keep the "out of N returned" denominator: it distinguishes
+            # "fetched N, matched 0" from a renamed field returning nothing.
+            log.info(
+                "[workday] %s: %d matched out of %d returned",
+                board.tenant,
+                matched,
+                seen,
+            )
+
+    return jobs
+
+
+__all__ = ["scrape_workday"]

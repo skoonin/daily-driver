@@ -1,4 +1,4 @@
-"""Tests for `_api_get` retry behavior on 429/503 (rate-limit handling)."""
+"""Tests for `_api_get` / `_api_post` retry behavior on 429/503 (rate limits)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import requests
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-from daily_driver.plugins.job_search.scraper.sources._http import _api_get
+from daily_driver.plugins.job_search.scraper.sources._http import _api_get, _api_post
 
 
 def _fake_response(status: int, headers: dict[str, str] | None = None) -> MagicMock:
@@ -232,3 +232,46 @@ def test_backoff_is_capped() -> None:
     )
 
     assert all(s <= _MAX_BACKOFF_SECONDS for s in sleeps)
+
+
+def test_api_post_sends_json_body_and_succeeds() -> None:
+    """_api_post routes through session.post with the JSON body and timeout."""
+    session = MagicMock(spec=requests.Session)
+    session.post.return_value = _fake_response(200)
+
+    body = {"limit": 20, "offset": 0}
+    resp = _api_post(
+        session,
+        "https://x",
+        _config_with_timeout(max_retries=0),
+        json=body,
+        label="t",
+        sleep=lambda _s: None,
+    )
+
+    assert resp is not None
+    assert session.post.call_count == 1
+    assert session.post.call_args.kwargs["json"] == body
+    assert session.post.call_args.kwargs["timeout"] == 1
+    # The GET path must not be touched on a POST.
+    assert session.get.call_count == 0
+
+
+def test_api_post_retries_on_503() -> None:
+    """_api_post shares the GET retry/backoff path (429/503)."""
+    session = MagicMock(spec=requests.Session)
+    session.post.side_effect = [_fake_response(503), _fake_response(200)]
+    sleeps: list[float] = []
+
+    resp = _api_post(
+        session,
+        "https://x",
+        _config_with_timeout(),
+        json={"k": "v"},
+        label="t",
+        sleep=sleeps.append,
+    )
+
+    assert resp is not None
+    assert session.post.call_count == 2
+    assert len(sleeps) == 1

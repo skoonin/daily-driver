@@ -28,6 +28,13 @@ _WORKABLE_ACCOUNTS_DESC = (
     "apply.workable.com/<slug>). Each account's full posting list is fetched\n"
     "in one request; add the companies you are targeting (e.g. huggingface)."
 )
+_WORKDAY_BOARDS_DESC = (
+    "Workday careers sites to scrape, each named by the three parts of its\n"
+    "URL. For crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is\n"
+    "{tenant: crowdstrike, host: wd5, site: crowdstrikecareers}. Each board is\n"
+    "paginated through Workday's public search API; set the optional `company`\n"
+    "to override the display name (defaults to the title-cased tenant)."
+)
 
 
 class Locations(BaseModel):
@@ -86,6 +93,37 @@ class WorkableToggle(SourceToggle):
     )
 
 
+class WorkdayBoard(BaseModel):
+    """One Workday careers site, named by the three parts of its URL.
+
+    For ``crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers`` that is
+    ``tenant=crowdstrike``, ``host=wd5``, ``site=crowdstrikecareers``. The
+    Workday payload has no company field (the tenant is the company), so
+    ``company`` is an optional display-name override; it defaults to the
+    title-cased tenant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tenant: str = Field(description="The <tenant> in <tenant>.<host>.myworkdayjobs.com")
+    host: str = Field(description="The <host> data-center segment, e.g. wd5")
+    site: str = Field(
+        description="The careers-site path segment, e.g. crowdstrikecareers"
+    )
+    company: str | None = Field(
+        default=None,
+        description="Display name for the company; defaults to the title-cased tenant.",
+    )
+
+
+class WorkdayToggle(SourceToggle):
+    """Workday source toggle plus its per-source list of careers sites."""
+
+    workday_boards: list[WorkdayBoard] = Field(
+        default=[], description=_WORKDAY_BOARDS_DESC
+    )
+
+
 class HackerNewsToggle(SourceToggle):
     """HN source toggle plus its per-source post cap.
 
@@ -129,6 +167,7 @@ _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
     "greenhouse": GreenhouseToggle,
     "ashby": AshbyToggle,
     "workable": WorkableToggle,
+    "workday": WorkdayToggle,
     "hn_who_is_hiring": HackerNewsToggle,
     "hn_jobs": HackerNewsToggle,
     "linkedin": LinkedInToggle,
@@ -427,6 +466,17 @@ class JobSearchPlugin(BaseModel):
                 "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
                 "ashby": {"enabled": False, "ashby_boards": []},
                 "workable": {"enabled": False, "workable_accounts": []},
+                "workday": {
+                    "enabled": False,
+                    "workday_boards": [
+                        {
+                            "tenant": "crowdstrike",
+                            "host": "wd5",
+                            "site": "crowdstrikecareers",
+                            "company": "CrowdStrike",
+                        }
+                    ],
+                },
                 "apple": False,
                 "linkedin": {
                     "enabled": True,
@@ -445,6 +495,7 @@ class JobSearchPlugin(BaseModel):
                 "greenhouse": {"greenhouse_boards": _GREENHOUSE_BOARDS_DESC},
                 "ashby": {"ashby_boards": _ASHBY_BOARDS_DESC},
                 "workable": {"workable_accounts": _WORKABLE_ACCOUNTS_DESC},
+                "workday": {"workday_boards": _WORKDAY_BOARDS_DESC},
             },
             "template_example_inline_comments": {
                 "remoteok": "remoteok.com RSS",
@@ -454,6 +505,7 @@ class JobSearchPlugin(BaseModel):
                 "greenhouse": "Greenhouse boards (configurable list)",
                 "ashby": "AshbyHQ boards (configurable list)",
                 "workable": "Workable accounts (configurable list)",
+                "workday": "Workday careers sites (configurable list)",
                 "apple": "jobs.apple.com (API intercept)",
                 "indeed": "indeed.com (country sets the regional host)",
             },

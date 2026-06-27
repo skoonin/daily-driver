@@ -46,20 +46,23 @@ def _retry_after_seconds(resp: requests.Response) -> float | None:
         return None
 
 
-def _api_get(
+def _api_request(
     session: requests.Session,
+    method: str,
     url: str,
     ctx: ScrapeContext,
     *,
+    json: Any = None,
     label: str = "",
     max_retries: int | None = None,
     sleep: Any = time.sleep,
 ) -> requests.Response | None:
-    """GET a URL with retry on 429/503; log + return None on terminal failure.
+    """Issue an HTTP request with retry on 429/503; log + return None on failure.
 
-    `max_retries` defaults to `scraper.max_retries` from config (3). Honors
-    `Retry-After` header when present; otherwise applies exponential backoff
-    (1.5s, 3s, 6s, ... capped at 30s). `sleep` is a seam for tests.
+    Shared by `_api_get` / `_api_post`. `max_retries` defaults to
+    `scraper.max_retries` from config (3). Honors `Retry-After` when present;
+    otherwise applies exponential backoff (1.5s, 3s, 6s, ... capped at 30s).
+    `json`, when given, is sent as the request body. `sleep` is a seam for tests.
     """
     timeout = ctx.plugin.scraper.timeout
     retries = ctx.plugin.scraper.max_retries if max_retries is None else max_retries
@@ -67,7 +70,10 @@ def _api_get(
 
     for attempt in range(retries + 1):
         try:
-            resp = session.get(url, timeout=timeout)
+            if method == "POST":
+                resp = session.post(url, json=json, timeout=timeout)
+            else:
+                resp = session.get(url, timeout=timeout)
         except requests.RequestException as exc:
             last_exc = exc
             if attempt >= retries:
@@ -103,6 +109,44 @@ def _api_get(
     if last_exc is not None:
         log.warning("[%s] request failed for %s: %s", label, url, last_exc)
     return None
+
+
+def _api_get(
+    session: requests.Session,
+    url: str,
+    ctx: ScrapeContext,
+    *,
+    label: str = "",
+    max_retries: int | None = None,
+    sleep: Any = time.sleep,
+) -> requests.Response | None:
+    """GET a URL with retry on 429/503; log + return None on terminal failure."""
+    return _api_request(
+        session, "GET", url, ctx, label=label, max_retries=max_retries, sleep=sleep
+    )
+
+
+def _api_post(
+    session: requests.Session,
+    url: str,
+    ctx: ScrapeContext,
+    *,
+    json: Any,
+    label: str = "",
+    max_retries: int | None = None,
+    sleep: Any = time.sleep,
+) -> requests.Response | None:
+    """POST a JSON body with retry on 429/503; log + return None on failure."""
+    return _api_request(
+        session,
+        "POST",
+        url,
+        ctx,
+        json=json,
+        label=label,
+        max_retries=max_retries,
+        sleep=sleep,
+    )
 
 
 def _has_playwright() -> bool:
@@ -163,7 +207,9 @@ __all__ = [
     "HTTPError",
     "HTTPTimeout",
     "_http_session",
+    "_api_request",
     "_api_get",
+    "_api_post",
     "_has_playwright",
     "_playwright_browser",
 ]
