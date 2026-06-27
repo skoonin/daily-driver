@@ -2,18 +2,46 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 _ACCEPTED_SUFFIXES = {".md", ".txt"}
 _MAX_FILE_BYTES = 500_000
 _BINARY_SNIFF_BYTES = 512
 
+# A markdown heading line (1-6 leading '#'), capturing the heading text.
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.*?)\s*$")
+
+
+class _Segment(TypedDict):
+    """A profile region: a heading line (None for the leading preamble), its
+    normalized heading text for matching, and the body lines beneath it."""
+
+    heading: str | None
+    norm: str | None
+    body: list[str]
+
 
 class VoiceUpdateError(RuntimeError):
     """Raised for user-facing errors in voice-update processing."""
+
+
+@dataclass(frozen=True)
+class Observation:
+    """A single new voice observation to merge into the profile.
+
+    `section` names the target heading (matched case-insensitively against the
+    existing profile, or created if absent); `bullet` is the one-line text.
+    """
+
+    section: str
+    bullet: str
 
 
 def _is_binary(path: Path) -> bool:
@@ -72,38 +100,40 @@ def build_prompt(
     current_profile: str,
     mode: str,
 ) -> str:
-    """Assemble the headless claude prompt for updating the voice profile.
+    """Assemble the headless model prompt for updating the voice profile.
 
-    The prompt instructs claude to analyze the provided writing samples and
-    return a complete updated voice-profile.md — either appending new
-    observations or fully replacing the content based on mode.
+    Append mode asks for a JSON array of new, non-redundant observations (so the
+    existing document is never regenerated — it is merged in deterministically by
+    `merge_observations`). Replace mode asks for a complete rewritten profile.
     """
     samples_block = ""
     for f in source_files:
         content = f.read_text(encoding="utf-8", errors="replace")
         samples_block += f"\n### {f.name}\n\n{content}\n"
 
-    mode_instruction = (
-        "Append new observations to the existing profile. "
-        "Preserve all existing content exactly; only add new, non-redundant observations."
-        if mode == "append"
-        else "Replace the profile content with an updated version that synthesizes "
-        "the existing profile with new observations from the samples."
+    profile_block = (
+        current_profile
+        if current_profile.strip()
+        else "(empty — there is no existing profile yet)"
     )
 
-    prompt = f"""\
-You are updating a writing voice profile for a professional communications system.
+    if mode == "append":
+        return f"""\
+You are extending a writing voice profile for a professional communications system.
 
 ## Task
 
-Analyze the writing samples below and update the voice profile accordingly.
+Analyze the writing samples below and identify NEW, non-redundant voice
+observations not already captured in the current profile. Do NOT restate or
+rewrite existing observations.
 
-Mode: {mode}
-Instruction: {mode_instruction}
+For each new observation, choose a target `section`: reuse the exact heading
+text of an existing section when the observation fits one, otherwise name a
+concise new section. Write `bullet` as a single, self-contained sentence.
 
 ## Current Voice Profile
 
-{current_profile if current_profile.strip() else "(empty — create a new profile from the samples)"}
+{profile_block}
 
 ## Writing Samples
 
@@ -111,10 +141,169 @@ Instruction: {mode_instruction}
 
 ## Output
 
-Return ONLY the complete updated voice-profile.md content — no preamble, no explanation.
-The output will be written directly to voice-profile.md.
+Return ONLY a JSON array of objects, each with "section" and "bullet" string
+keys — no preamble, no code fences, no explanation. Return an empty array `[]`
+if the samples reveal no new observations. Example:
+
+[{{"section": "Tone", "bullet": "Opens with one line of context, no greeting."}}]
 """
-    return prompt
+
+    return f"""\
+You are rewriting a writing voice profile for a professional communications system.
+
+## Task
+
+Synthesize the existing profile with new observations from the writing samples
+into a complete, updated voice-profile.md.
+
+## Current Voice Profile
+
+{profile_block}
+
+## Writing Samples
+
+{samples_block}
+
+## Output
+
+Return ONLY the complete updated voice-profile.md content — no preamble, no
+explanation. The output will be written directly to voice-profile.md.
+"""
+
+
+def parse_observations(raw: str) -> list[Observation]:
+    """Parse a model response into observations for append-mode merging.
+
+    Tolerates a surrounding ```json fence or stray prose around the array. An
+    empty array is a valid "no new observations" result (returns []); output
+    that is not a recoverable JSON array raises VoiceUpdateError rather than
+    silently yielding nothing (which would mask a model/contract failure).
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match is None:
+            raise VoiceUpdateError(
+                "could not parse observations from model output (expected a "
+                "JSON array of {section, bullet} objects)"
+            )
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise VoiceUpdateError(
+                f"could not parse observations JSON from model output: {exc}"
+            ) from exc
+
+    if not isinstance(data, list):
+        raise VoiceUpdateError("expected a JSON array of observations")
+
+    observations: list[Observation] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        section = str(item.get("section", "")).strip()
+        bullet = str(item.get("bullet", "")).strip()
+        if section and bullet:
+            observations.append(Observation(section=section, bullet=bullet))
+
+    # A genuinely empty array is the model's "nothing new" signal. But a
+    # NON-empty array that yields zero usable items means the model returned
+    # observations in the wrong shape (e.g. keys other than section/bullet) —
+    # a contract break that must fail loud, not masquerade as "no new
+    # observations" and silently leave the profile unchanged.
+    if data and not observations:
+        raise VoiceUpdateError(
+            "model returned observation items but none had usable 'section' "
+            "and 'bullet' fields (contract violation)"
+        )
+    return observations
+
+
+def _normalize_heading(text: str) -> str:
+    return text.strip().lower().rstrip(":").strip()
+
+
+def _bullet_line(bullet: str) -> str:
+    # Accept bullets with or without a leading marker; emit a single "- " form.
+    # Strip only one leading "- "/"* " marker so inline emphasis like *word* in
+    # the text itself is preserved.
+    return "- " + re.sub(r"^[-*]\s+", "", bullet.strip())
+
+
+def merge_observations(current_profile: str, observations: list[Observation]) -> str:
+    """Merge observations into the profile by section, preserving existing text.
+
+    Each observation's `section` is matched case-insensitively against existing
+    headings; its bullet is appended to that section's body (skipping exact
+    duplicates). Observations whose section has no existing heading are grouped
+    into new `##` sections appended at the end. Existing content is never
+    rewritten — only added to.
+    """
+    if not observations:
+        return current_profile
+
+    # Segment the profile by heading. The first segment (heading=None) holds any
+    # title / preamble before the first heading.
+    segments: list[_Segment] = [{"heading": None, "norm": None, "body": []}]
+    for line in current_profile.splitlines():
+        match = _HEADING_RE.match(line)
+        if match:
+            segments.append(
+                {
+                    "heading": line,
+                    "norm": _normalize_heading(match.group(1)),
+                    "body": [],
+                }
+            )
+        else:
+            segments[-1]["body"].append(line)
+
+    # New sections are keyed by normalized name (matching the case-insensitive
+    # section matching), so "Tone" and "tone" in one batch collapse into one.
+    new_sections: dict[str, list[str]] = {}
+    new_display: dict[str, str] = {}
+    new_order: list[str] = []
+    for obs in observations:
+        line = _bullet_line(obs.bullet)
+        target = _normalize_heading(obs.section)
+        seg = next((s for s in segments if s["norm"] == target), None)
+        if seg is None:
+            if target not in new_sections:
+                new_sections[target] = []
+                new_display[target] = obs.section.strip()
+                new_order.append(target)
+            if line not in new_sections[target]:
+                new_sections[target].append(line)
+            continue
+        body = seg["body"]
+        if line in body:
+            continue
+        # Insert before the section's trailing blank lines so spacing is kept.
+        end = len(body)
+        while end > 0 and body[end - 1].strip() == "":
+            end -= 1
+        body.insert(end, line)
+
+    out: list[str] = []
+    for seg in segments:
+        heading = seg["heading"]
+        if heading is not None:
+            out.append(heading)
+        out.extend(seg["body"])
+    for key in new_order:
+        if out and out[-1].strip() != "":
+            out.append("")
+        out.append(f"## {new_display[key]}")
+        out.append("")
+        out.extend(new_sections[key])
+
+    return "\n".join(out)
 
 
 def apply_update(
@@ -130,9 +319,12 @@ def apply_update(
     Refuses empty/whitespace-only content (raises VoiceUpdateError) so a
     failed `claude` call cannot blank the profile. In append mode it also
     refuses content materially smaller than `current_profile`: at the file
-    layer append and replace both fully overwrite (os.replace), so a model that
-    returns a short meta-summary instead of the full document would silently
-    clobber the profile — the shrink check rejects that. The write is atomic:
+    layer append and replace both fully overwrite (os.replace), so a short
+    meta-summary passed as the full document would silently clobber the profile
+    — the shrink check rejects that. Since the redesign, the CLI's append path
+    merges new observations onto the verbatim profile (always growing), so this
+    check is a defensive backstop for direct callers rather than the live path.
+    The write is atomic:
     content lands in a same-directory tempfile and is moved into place via
     os.replace, so a mid-write crash leaves the original intact. A `.bak` is
     written whenever a profile already exists, regardless of mode, since the

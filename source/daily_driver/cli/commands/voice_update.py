@@ -20,6 +20,8 @@ from daily_driver.core.voice import (
     apply_update,
     build_prompt,
     collect_source_files,
+    merge_observations,
+    parse_observations,
 )
 from daily_driver.integrations import clipboard
 
@@ -171,6 +173,21 @@ def run(args: argparse.Namespace) -> int:
         return 1
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
+
+    # Append mode: the model returns only new observations; merge them into the
+    # existing document here (it is never regenerated). Replace mode takes the
+    # model's full rewritten profile verbatim.
+    if mode == "append":
+        try:
+            observations = parse_observations(new_content)
+        except VoiceUpdateError as exc:
+            Console.error(str(exc))
+            return 1
+        merged = merge_observations(current_profile, observations)
+        if not observations or merged.strip() == current_profile.strip():
+            Console.info("no new observations found; voice profile unchanged")
+            return 0
+        new_content = merged
 
     # Normalize to a single trailing newline for consistent file formatting.
     normalized = new_content.strip() + "\n"

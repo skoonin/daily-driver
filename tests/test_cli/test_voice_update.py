@@ -110,15 +110,18 @@ class TestBuildPrompt:
         )
         assert "MY PROFILE CONTENT" in prompt
 
-    def test_mode_append_included(self, tmp_path: Path) -> None:
+    def test_mode_append_requests_json_observations(self, tmp_path: Path) -> None:
         f = _make_sample(tmp_path, "x.md", "x")
         prompt = self.build_prompt([f], current_profile="", mode="append")
-        assert "append" in prompt.lower()
+        # Append mode asks for a JSON array of {section, bullet} observations,
+        # not a full rewritten document.
+        assert "JSON array" in prompt
+        assert "section" in prompt and "bullet" in prompt
 
-    def test_mode_replace_included(self, tmp_path: Path) -> None:
+    def test_mode_replace_returns_full_document(self, tmp_path: Path) -> None:
         f = _make_sample(tmp_path, "x.md", "x")
         prompt = self.build_prompt([f], current_profile="", mode="replace")
-        assert "replace" in prompt.lower()
+        assert "complete updated voice-profile.md content" in prompt
 
     def test_multiple_files_all_included(self, tmp_path: Path) -> None:
         f1 = _make_sample(tmp_path, "a.md", "CONTENT_A_XYZ")
@@ -239,16 +242,24 @@ def test_voice_update_append_calls_claude_headless(
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
     # voice-profile.md in output_dir
     profile_path = ws / "voice-profile.md"
-    profile_path.write_text("# Existing profile\n", encoding="utf-8")
+    profile_path.write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Updated profile\n")
+    # Append mode: the model returns JSON observations, merged into the profile.
+    monkeypatch.setattr(
+        claude_cli,
+        "invoke",
+        lambda **kw: '[{"section": "Tone", "bullet": "Direct and concise."}]',
+    )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
 
     assert rc == 0
-    assert profile_path.read_text(encoding="utf-8") == "# Updated profile\n"
+    updated = profile_path.read_text(encoding="utf-8")
+    # Existing content preserved; the new bullet merged under the Tone section.
+    assert "- Warm." in updated
+    assert "- Direct and concise." in updated
 
 
 def test_voice_update_dry_run_does_not_write(
@@ -342,10 +353,12 @@ def test_voice_update_no_clipboard_suppresses_copy(
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
-    (ws / "voice-profile.md").write_text("# p\n", encoding="utf-8")
+    (ws / "voice-profile.md").write_text("## Tone\n\n- p\n", encoding="utf-8")
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# new\n")
+    monkeypatch.setattr(
+        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "new"}]'
+    )
     monkeypatch.setattr(clipboard, "available", lambda: True)
 
     copies: list[str] = []
@@ -375,10 +388,12 @@ def test_voice_update_copies_to_clipboard(
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
-    (ws / "voice-profile.md").write_text("# p\n", encoding="utf-8")
+    (ws / "voice-profile.md").write_text("## Tone\n\n- old\n", encoding="utf-8")
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# new profile\n")
+    monkeypatch.setattr(
+        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "fresh"}]'
+    )
     monkeypatch.setattr(clipboard, "available", lambda: True)
 
     copies: list[str] = []
@@ -387,7 +402,9 @@ def test_voice_update_copies_to_clipboard(
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
 
     assert rc == 0
-    assert copies == ["# new profile"]
+    # The clipboard receives the full merged profile, not the raw model output.
+    assert len(copies) == 1
+    assert "- old" in copies[0] and "- fresh" in copies[0]
 
 
 def test_voice_update_directory_source(
@@ -408,7 +425,7 @@ def test_voice_update_directory_source(
 
     def fake_invoke(**kw):
         captured_prompts.append(kw.get("prompt", ""))
-        return "# updated\n"
+        return '[{"section": "Tone", "bullet": "updated"}]'
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(claude_cli, "invoke", fake_invoke)
@@ -545,37 +562,41 @@ def test_voice_update_missing_voice_profile_creates_it(
     assert not profile_path.exists()
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Created profile\n")
+    # Append to a non-existent profile: observations seed new sections.
+    monkeypatch.setattr(
+        claude_cli,
+        "invoke",
+        lambda **kw: '[{"section": "Tone", "bullet": "Warm and direct."}]',
+    )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
 
     assert rc == 0
     assert profile_path.exists()
-    assert profile_path.read_text(encoding="utf-8") == "# Created profile\n"
+    created = profile_path.read_text(encoding="utf-8")
+    assert "## Tone" in created and "- Warm and direct." in created
 
 
-def test_voice_update_rejects_shrunk_append(
+def test_voice_update_append_unparseable_output_leaves_profile_intact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A model meta-summary far shorter than the profile is refused end-to-end,
-    leaving the original profile intact (the data-loss fix)."""
+    """In append mode, model output that is not a JSON observations array is
+    rejected (rc 1) and the existing profile is left untouched."""
     from daily_driver.cli.cli import app
     from daily_driver.integrations import claude_cli, clipboard
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     profile_path = ws / "voice-profile.md"
-    original = "# Voice Profile\n" + ("an existing observation line.\n" * 40)
+    original = "## Tone\n\n- Warm.\n"
     profile_path.write_text(original, encoding="utf-8")
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli,
-        "invoke",
-        lambda **kw: "Voice profile updated in append mode; all content preserved.",
+        claude_cli, "invoke", lambda **kw: "Sorry, I could not produce observations."
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -583,9 +604,36 @@ def test_voice_update_rejects_shrunk_append(
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "smaller" in captured.err.lower()
-    # The original profile must survive verbatim.
+    assert "parse" in captured.err.lower()
     assert profile_path.read_text(encoding="utf-8") == original
+
+
+def test_voice_update_append_no_new_observations_is_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty observations array reports a no-op and leaves the profile and
+    its .bak untouched (no needless rewrite)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "x.md", "text")
+    profile_path = ws / "voice-profile.md"
+    original = "## Tone\n\n- Warm.\n"
+    profile_path.write_text(original, encoding="utf-8")
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "[]")
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
+
+    assert rc == 0
+    assert profile_path.read_text(encoding="utf-8") == original
+    assert not (ws / "voice-profile.md.bak").exists()
+    assert "no new observations" in capsys.readouterr().err.lower()
 
 
 def test_voice_update_write_failure_exits_1(
@@ -603,7 +651,9 @@ def test_voice_update_write_failure_exits_1(
     (ws / "voice-profile.md").write_text("# Original profile\n", encoding="utf-8")
 
     monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# New profile content\n")
+    monkeypatch.setattr(
+        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "x"}]'
+    )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     def boom(*a: object, **kw: object) -> None:
