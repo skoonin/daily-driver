@@ -289,6 +289,31 @@ class OllamaConfig(BaseModel):
     max_parallel: int = Field(default=4, ge=1, description="")
 
 
+class InteractiveAIConfig(BaseModel):
+    """Model selection for the claude-only interactive launchers.
+
+    Distinct from AITaskConfig (which carries a `provider`): the interactive
+    launchers always run on the claude CLI, so a `provider` here would be inert.
+    Omitting it from the model — with `extra="forbid"` — means a stray
+    `ai.interactive.provider:` is rejected loudly at config-load rather than
+    accepted and silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(
+        default=None,
+        description=(
+            'Provider-specific claude model identifier ("sonnet", "haiku",\n'
+            '"opus"). Unset (the default) lets the claude CLI pick its own\n'
+            "default. A `--model` flag on the command overrides this."
+        ),
+        # Rendered active (not commented) as the block's sole field, so the
+        # generated example parses as a mapping rather than an empty key.
+        json_schema_extra={"template_example": "sonnet"},
+    )
+
+
 class ClaudeProviderConfig(BaseModel):
     """Settings consulted when a task is routed to the claude provider.
 
@@ -350,6 +375,16 @@ class AIConfig(BaseModel):
     voice_update: AITaskConfig = Field(
         default=AITaskConfig(),
         description="Provider / model routing for the `voice-update` task.",
+    )
+    interactive: InteractiveAIConfig = Field(
+        default=InteractiveAIConfig(),
+        description=(
+            "Default claude model for the interactive launchers (day-start,\n"
+            "day-end, check-in). These always run on the claude CLI (they need\n"
+            "session / agent / workspace context ollama lacks), so this block is\n"
+            "model-only — there is no `provider` knob. A `--model` flag on the\n"
+            "command overrides it."
+        ),
     )
     claude: ClaudeProviderConfig = Field(
         default=ClaudeProviderConfig(),
