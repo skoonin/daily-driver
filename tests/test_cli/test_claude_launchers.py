@@ -126,6 +126,92 @@ def test_day_start_overrides_agent_model_and_session(
     assert captured["session_name"] == "my-session"
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["day-start", "day-end", "check-in"],
+)
+def test_interactive_launcher_uses_config_model_default(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ai.interactive.model is passed to claude when no --model flag is given."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli
+
+    ws = _init_workspace(tmp_path)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text(encoding="utf-8")
+        + "\nai:\n  interactive:\n    model: sonnet\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_spawn(prompt=None, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    rc = app(["--workspace", str(ws), command])
+
+    assert rc == 0
+    assert captured["model"] == "sonnet"
+
+
+def test_interactive_cli_model_overrides_config_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit --model flag wins over the ai.interactive.model default."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli
+
+    ws = _init_workspace(tmp_path)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text(encoding="utf-8")
+        + "\nai:\n  interactive:\n    model: sonnet\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+
+    captured: dict[str, object] = {}
+
+    def fake_spawn(prompt=None, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+
+    rc = app(["--workspace", str(ws), "day-start", "--model", "opus"])
+
+    assert rc == 0
+    assert captured["model"] == "opus"
+
+
+def test_resolve_interactive_model_ignores_global_ai_model(
+    tmp_path: Path,
+) -> None:
+    """The resolver must not fall back to the provider-agnostic global ai.model:
+    that field can hold an ollama tag the claude CLI cannot run."""
+    from daily_driver.cli.commands._claude_session import resolve_interactive_model
+    from daily_driver.core.workspace import Workspace
+
+    ws_root = _init_workspace(tmp_path)
+    cfg_path = ws_root / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text(encoding="utf-8") + "\nai:\n  model: llama3.1\n",
+        encoding="utf-8",
+    )
+    workspace = Workspace.discover_or_fail(override=ws_root)
+
+    # No interactive default and no CLI flag → None, never the global ai.model.
+    assert resolve_interactive_model(workspace, None) is None
+    # A CLI flag still wins.
+    assert resolve_interactive_model(workspace, "opus") == "opus"
+
+
 def test_interactive_launcher_missing_claude_exits_1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

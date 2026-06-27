@@ -41,7 +41,7 @@ def _build_run(
                 workspace=workspace,
                 session_name=default_session_name(session_prefix, args.session_name),
                 agent=args.agent,
-                model=args.model,
+                model=resolve_interactive_model(workspace, args.model),
             )
         except Exception as exc:  # noqa: BLE001
             return handle_launch_exception(exc)
@@ -86,6 +86,20 @@ def default_session_name(command: str, override: str | None = None) -> str:
     if override:
         return override
     return f"{command}-{date.today().isoformat()}"
+
+
+def resolve_interactive_model(
+    workspace: Workspace, cli_model: str | None
+) -> str | None:
+    """Resolve which claude model an interactive launcher should use.
+
+    Interactive launchers (day-start, day-end, check-in) are claude-only, so
+    this resolves a *model* only — never a provider. A `--model` CLI flag wins;
+    otherwise the `ai.interactive.model` config default applies. Deliberately
+    does NOT fall back to the global `ai.model`: that field is provider-agnostic
+    and may hold an ollama tag, which the claude CLI cannot use.
+    """
+    return cli_model or workspace.config.ai.interactive.model
 
 
 def launch_interactive(

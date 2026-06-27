@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from daily_driver.core.config_models import (
     Config,
     DailyDriverConfig,
+    InteractiveAIConfig,
     PluginsConfig,
     RecurringTask,
     TrackerCategoryConfig,
@@ -39,6 +40,26 @@ def test_daily_driver_config_custom():
 def test_daily_driver_config_rejects_extra():
     with pytest.raises(ValidationError):
         DailyDriverConfig(output_dir=".", bogus_field=True)
+
+
+# ---------------------------------------------------------------------------
+# InteractiveAIConfig (model-only; provider must be rejected, not ignored)
+# ---------------------------------------------------------------------------
+
+
+def test_interactive_ai_config_defaults_model_none():
+    assert InteractiveAIConfig().model is None
+
+
+def test_interactive_ai_config_accepts_model():
+    assert InteractiveAIConfig(model="sonnet").model == "sonnet"
+
+
+def test_interactive_ai_config_rejects_provider():
+    # The launchers are claude-only, so a provider knob would be inert; the
+    # model rejects it loudly rather than accepting-and-ignoring it.
+    with pytest.raises(ValidationError):
+        InteractiveAIConfig(provider="ollama")
 
 
 # ---------------------------------------------------------------------------

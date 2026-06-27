@@ -76,7 +76,7 @@ Injected into Claude sessions as context.
 
 Routes every **routable** AI task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. The routable tasks are the headless `summary` (`ai.summary`), `voice-update` (`ai.voice_update`), and the job_search plugin's two enrichment passes (`plugins.job_search.enrichment.company_info` / `fit_notes`). The shared provider blocks are consulted by whichever provider a task resolves to.
 
-**Routable vs. interactive.** Only the headless tasks above route through a provider. The interactive launchers (`day-start`, `check-in`, `day-end`) always use the `claude` CLI directly — they rely on Claude Code session / agent / workspace-context features Ollama has no equivalent for — so the `ai` block's provider routing does not affect them.
+**Routable vs. interactive.** Only the headless tasks above route through a provider. The interactive launchers (`day-start`, `check-in`, `day-end`) always use the `claude` CLI directly — they rely on Claude Code session / agent / workspace-context features Ollama has no equivalent for — so the `ai` block's provider routing does not affect them. They do honor one model-only knob, `ai.interactive.model`, as the default claude model (a `--model` flag still wins). The block is model-only by design — there is no `provider` field, so setting `ai.interactive.provider` is rejected at config-load rather than silently ignored — and it deliberately does not inherit the global `ai.model`, which may name an ollama tag the claude CLI cannot run.
 
 ### Resolution chain
 
@@ -104,6 +104,7 @@ Default (omitting the block entirely): `claude` for every routable task. Existin
 | `summary.model` | string or null | null | Provider-specific identifier for `summary` |
 | `voice_update.provider` | `claude` \| `ollama` \| null | null (→ claude) | Per-task override for `voice-update` |
 | `voice_update.model` | string or null | null | Provider-specific identifier for `voice-update` |
+| `interactive.model` | string or null | null | Default claude model for the interactive launchers (`day-start`, `day-end`, `check-in`). Model-only block — these are claude-only, so there is no `provider` field (setting `interactive.provider` is a config error), and it never falls back to the global `ai.model` (which may name an ollama tag). A `--model` flag on the command wins |
 | `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
 | `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
 | `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |

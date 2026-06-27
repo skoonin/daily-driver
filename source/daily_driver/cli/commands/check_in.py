@@ -23,6 +23,7 @@ from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
     require_claude_available,
+    resolve_interactive_model,
 )
 from daily_driver.core import clock
 from daily_driver.core.console import Console
@@ -99,7 +100,7 @@ def run(args: argparse.Namespace) -> int:
                 agent=args.agent,
                 session_name=session_name,
                 add_dirs=[workspace.root],
-                model=args.model,
+                model=resolve_interactive_model(workspace, args.model),
                 resume_session_id=resume_id,
             )
         except claude_cli.ClaudeInvocationError as exc:
@@ -119,7 +120,7 @@ def run(args: argparse.Namespace) -> int:
                 agent=args.agent,
                 session_name=session_name,
                 add_dirs=[workspace.root],
-                model=args.model,
+                model=resolve_interactive_model(workspace, args.model),
             )
 
         if rc == 0:
