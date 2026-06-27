@@ -26,6 +26,23 @@ Team Sync
 UNPARSEABLE BLOCK WITH NO DATE OR TIME AT ALL
 """
 
+# Real icalBuddy 1.10.x format with the app's flags: title at column 0,
+# properties indented, and crucially NO blank line between events. The previous
+# blank-line splitter collapsed all of these into a single block (1 event). The
+# third event carries a wrapped multi-line location (indented continuation, not
+# blank-separated) — the Gap 6 cause-2 shape, which must stay part of one event.
+_REAL_FORMAT_NO_BLANKS = """\
+Standup
+    2026-04-20 09:30
+    location: Zoom
+Doctor Appointment
+    2026-04-22 14:00
+Onsite Interview
+    2026-04-23 11:00
+    location: 1234 Long Street, Suite 500,
+    Big City, Province
+"""
+
 # All-day event: a bare ISO date line with no time. Should anchor start at midnight.
 _ALL_DAY_OUTPUT = """\
 Company Holiday
@@ -104,6 +121,29 @@ def test_gather_events_parses_valid_output(monkeypatch):
     for e in events:
         assert isinstance(e, CalendarEvent)
         assert isinstance(e.start, datetime)
+
+
+def test_gather_events_parses_real_format_without_blank_lines(monkeypatch):
+    """Regression: icalBuddy 1.10.x separates events by an unindented title
+    line, not blank lines. All events must parse — not collapse into one."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_REAL_FORMAT_NO_BLANKS),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    assert len(events) == 3
+    titles = {e.title for e in events}
+    assert titles == {"Standup", "Doctor Appointment", "Onsite Interview"}
+    # The wrapped multi-line location stays attached to its event (one event,
+    # not split by the indented continuation line).
+    onsite = next(e for e in events if e.title == "Onsite Interview")
+    assert onsite.location is not None and "Long Street" in onsite.location
 
 
 def test_gather_events_skips_malformed_block(monkeypatch):
