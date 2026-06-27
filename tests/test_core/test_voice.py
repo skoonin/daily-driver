@@ -94,25 +94,25 @@ def test_build_prompt_embeds_sample_filename_and_content(tmp_path: Path) -> None
     assert "the quick brown fox" in prompt
 
 
-def test_build_prompt_append_mode_instruction() -> None:
+def test_build_prompt_append_mode_requests_json_observations() -> None:
     prompt = voice.build_prompt([], current_profile="old", mode="append")
 
-    assert "Mode: append" in prompt
-    assert "Append new observations" in prompt
-    assert "Preserve all existing content" in prompt
+    assert "JSON array" in prompt
+    assert '"section"' in prompt and '"bullet"' in prompt
+    # Append must NOT ask the model to regenerate the whole document.
+    assert "complete updated voice-profile.md content" not in prompt
 
 
-def test_build_prompt_replace_mode_instruction() -> None:
+def test_build_prompt_replace_mode_returns_full_document() -> None:
     prompt = voice.build_prompt([], current_profile="old", mode="replace")
 
-    assert "Mode: replace" in prompt
-    assert "Replace the profile content" in prompt
+    assert "complete updated voice-profile.md content" in prompt
 
 
 def test_build_prompt_empty_profile_uses_placeholder() -> None:
     prompt = voice.build_prompt([], current_profile="   ", mode="append")
 
-    assert "create a new profile from the samples" in prompt
+    assert "no existing profile yet" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +198,122 @@ def test_apply_update_creates_parent_dirs(tmp_path: Path) -> None:
     voice.apply_update(profile, new_content="fresh", mode="replace")
 
     assert profile.read_text(encoding="utf-8") == "fresh"
+
+
+# ---------------------------------------------------------------------------
+# parse_observations
+# ---------------------------------------------------------------------------
+
+
+def test_parse_observations_plain_array() -> None:
+    raw = '[{"section": "Tone", "bullet": "Direct."}]'
+    obs = voice.parse_observations(raw)
+    assert obs == [voice.Observation(section="Tone", bullet="Direct.")]
+
+
+def test_parse_observations_strips_code_fence() -> None:
+    raw = '```json\n[{"section": "Tone", "bullet": "Direct."}]\n```'
+    obs = voice.parse_observations(raw)
+    assert obs == [voice.Observation(section="Tone", bullet="Direct.")]
+
+
+def test_parse_observations_recovers_array_amid_prose() -> None:
+    raw = 'Here are the observations:\n[{"section": "A", "bullet": "b"}]\nDone.'
+    obs = voice.parse_observations(raw)
+    assert obs == [voice.Observation(section="A", bullet="b")]
+
+
+def test_parse_observations_empty_array_is_valid() -> None:
+    assert voice.parse_observations("[]") == []
+
+
+def test_parse_observations_skips_incomplete_items() -> None:
+    raw = (
+        '[{"section": "A", "bullet": "b"}, {"section": "", "bullet": "x"}, {"bad": 1}]'
+    )
+    obs = voice.parse_observations(raw)
+    assert obs == [voice.Observation(section="A", bullet="b")]
+
+
+def test_parse_observations_all_malformed_items_raises() -> None:
+    # A non-empty array whose items all use the wrong keys is a contract break,
+    # not a "no new observations" no-op — it must fail loud.
+    with pytest.raises(VoiceUpdateError):
+        voice.parse_observations('[{"observation": "x"}, {"text": "y"}]')
+
+
+def test_parse_observations_non_array_raises() -> None:
+    with pytest.raises(VoiceUpdateError):
+        voice.parse_observations('{"section": "A", "bullet": "b"}')
+
+
+def test_parse_observations_unparseable_raises() -> None:
+    with pytest.raises(VoiceUpdateError):
+        voice.parse_observations("not json at all")
+
+
+# ---------------------------------------------------------------------------
+# merge_observations
+# ---------------------------------------------------------------------------
+
+_PROFILE = "# Voice Profile\n\nIntro.\n\n## Tone\n\n- Warm.\n\n## Cadence\n\n- Short.\n"
+
+
+def test_merge_no_observations_returns_profile_unchanged() -> None:
+    assert voice.merge_observations(_PROFILE, []) == _PROFILE
+
+
+def test_merge_appends_to_existing_section_case_insensitively() -> None:
+    merged = voice.merge_observations(
+        _PROFILE, [voice.Observation(section="tone", bullet="Uses em-dashes.")]
+    )
+    # Inserted under the existing Tone heading, after its current bullet.
+    tone = merged.split("## Tone")[1].split("##")[0]
+    assert "- Warm." in tone and "- Uses em-dashes." in tone
+    # Existing sections preserved.
+    assert "## Cadence" in merged and "- Short." in merged
+
+
+def test_merge_creates_new_section_for_unmatched() -> None:
+    merged = voice.merge_observations(
+        _PROFILE, [voice.Observation(section="Vocabulary", bullet="Plain words.")]
+    )
+    assert "## Vocabulary" in merged
+    assert "- Plain words." in merged.split("## Vocabulary")[1]
+
+
+def test_merge_skips_duplicate_bullet() -> None:
+    merged = voice.merge_observations(
+        _PROFILE, [voice.Observation(section="Tone", bullet="Warm.")]
+    )
+    assert merged.count("- Warm.") == 1
+
+
+def test_merge_normalizes_bullet_marker() -> None:
+    merged = voice.merge_observations(
+        _PROFILE, [voice.Observation(section="Tone", bullet="- already marked")]
+    )
+    assert "- already marked" in merged
+    assert "- - already marked" not in merged
+
+
+def test_merge_preserves_inline_emphasis_in_bullet() -> None:
+    # Only a leading list marker is stripped, not inline *emphasis* text.
+    merged = voice.merge_observations(
+        _PROFILE, [voice.Observation(section="Tone", bullet="*emphasizes* key words")]
+    )
+    assert "- *emphasizes* key words" in merged
+
+
+def test_merge_case_variant_new_sections_collapse_to_one() -> None:
+    merged = voice.merge_observations(
+        _PROFILE,
+        [
+            voice.Observation(section="Vocabulary", bullet="Plain words."),
+            voice.Observation(section="vocabulary", bullet="Avoids jargon."),
+        ],
+    )
+    # One new section (first-seen casing), not two near-duplicates.
+    assert merged.count("## Vocabulary") == 1
+    assert "## vocabulary" not in merged
+    assert "- Plain words." in merged and "- Avoids jargon." in merged
