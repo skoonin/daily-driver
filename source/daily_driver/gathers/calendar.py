@@ -112,6 +112,34 @@ def _parse_event_block(block: str, event_date: str) -> CalendarEvent | None:
     return CalendarEvent(title=title, start=start, end=end, location=location)
 
 
+def _split_event_blocks(stdout: str) -> list[str]:
+    """Group icalBuddy output into one block per event.
+
+    With the flags this app uses (`-b ""`), icalBuddy 1.10.x prints each event
+    as a title at column 0 followed by indented (`datetime`, `location`)
+    property lines, with NO blank line between events — so the previous
+    blank-line split (`\\n{2,}`) collapsed the whole calendar into a single
+    block. Group by the unindented title line instead: a non-blank line at
+    column 0 starts a new event; indented lines (and skipped blank lines) belong
+    to the current one. This also handles the older blank-line-separated format,
+    where titles are still at column 0.
+    """
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in stdout.splitlines():
+        if not line.strip():
+            continue
+        if line[:1] not in (" ", "\t"):
+            if current:
+                blocks.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
 def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     """Read macOS Calendar via icalBuddy. Returns [] if icalBuddy is missing."""
     log_query_window(log, "calendar", since, until)
@@ -130,22 +158,24 @@ def gather_events(since: datetime, until: datetime) -> list[CalendarEvent]:
     events: list[CalendarEvent] = []
     current_date = since.strftime("%Y-%m-%d")
 
-    # icalBuddy separates events with blank lines
-    blocks = re.split(r"\n{2,}", stdout)
+    # One block per event (icalBuddy groups by an unindented title line, not by
+    # blank lines — see _split_event_blocks).
+    blocks = _split_event_blocks(stdout)
     for block in blocks:
         block = block.strip()
         if not block:
             continue
 
-        # Track date headers icalBuddy may emit (e.g. "Monday, April 20, 2026:")
-        date_header = re.match(
-            r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s+\w+\s+\d{1,2},?\s+(\d{4})\s*:?$",
+        # A standalone date header (e.g. "Monday, April 20, 2026:") is not an
+        # event; skip it rather than logging it as an unparseable block. (These
+        # flags don't emit headers, but tolerate them if a future flag does.)
+        if re.match(
+            r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*,?\s+\w+\s+\d{1,2},?\s+\d{4}\s*:?$",
             block,
             re.IGNORECASE,
-        )
-        if date_header:
-            # date_header detected; current_date updated via ISO match below
-            pass
+        ):
+            log.debug("calendar: skipping date-header block: %r", block[:80])
+            continue
 
         # Track the current day only from a genuine date line (bare date or
         # date+time at the start of a line), never from digits embedded in a
