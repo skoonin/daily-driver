@@ -75,6 +75,21 @@ def test_ashby_source_split() -> None:
     assert norm.source == "Ashby (acme-corp)"
 
 
+def test_workable_source_split() -> None:
+    raw = RawScrapedJob(
+        company="Acme",
+        role="SRE",
+        url="https://example.com/j",
+        source="Workable (acme-corp)",
+    )
+    norm = NormalizedJob.from_raw(raw)
+    # Mirrors greenhouse/ashby: "Workable (<slug>)" unifies under one canonical
+    # source so multi-account Workable rows don't fragment when grouped.
+    assert norm.source_canonical == "workable"
+    assert norm.source_board == "acme-corp"
+    assert norm.source == "Workable (acme-corp)"
+
+
 def test_from_raw_is_pure() -> None:
     raw = RawScrapedJob(company="A", role="R", url="u", source="s", location="LOC")
     norm1 = NormalizedJob.from_raw(raw)

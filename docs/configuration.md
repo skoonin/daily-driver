@@ -332,6 +332,9 @@ sources:
   ashby:
     enabled: true
     ashby_boards: [ramp, linear]  # slugs are case-sensitive (e.g. Notion)
+  workable:
+    enabled: true
+    workable_accounts: [huggingface]  # the <slug> in apply.workable.com/<slug>
   linkedin:
     enabled: true
     results_wanted_per_query: 50
