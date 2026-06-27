@@ -6,7 +6,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
-- **Workable board source**: a new `workable` scraper source pulls postings from any company's Workable account via the public widget API (`apply.workable.com/<slug>`). List the company slugs under `plugins.job_search.sources.workable.workable_accounts` (e.g. `huggingface`); each account is fetched in one request and filtered to your configured roles, mirroring the Greenhouse and Ashby sources. Enable it with `enabled: true`, or select it on a single run with `jobs run -S workable`. (#PR)
+- **Workable board source**: a new `workable` scraper source pulls postings from any company's Workable account via the public widget API (`apply.workable.com/<slug>`). List the company slugs under `plugins.job_search.sources.workable.workable_accounts` (e.g. `huggingface`); each account is fetched in one request and filtered to your configured roles, mirroring the Greenhouse and Ashby sources. Enable it with `enabled: true`, or select it on a single run with `jobs run -S workable`. (#120)
 
 - **`ai.interactive.model` sets the default model for the interactive launchers**: `day-start`, `day-end`, and `check-in` now read a default claude model from `ai.interactive.model`, so you no longer have to pass `--model` every time. It is a model-only block — these commands are claude-only, so there is no `provider` field (setting `ai.interactive.provider` is rejected at config-load rather than silently ignored) — and it deliberately does not inherit the global `ai.model` (which may name an ollama tag the claude CLI cannot run). A `--model` flag on the command still wins. (#119)
 
