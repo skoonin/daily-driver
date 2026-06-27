@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import threading
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from daily_driver.core.locking import file_lock as core_file_lock
 from daily_driver.plugins.job_search import jobs_archive
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
@@ -217,3 +219,62 @@ def test_prune_uses_shared_jobs_lock_path(
     jobs_archive.prune(csv_path, tmp_path, cutoff=date(2026, 5, 1), dry_run=False)
 
     assert lock_calls == [jobs_lock_path(tmp_path)]
+
+
+def test_run_emits_contention_notice_to_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second jobs command hitting a held sentinel prints a visible stderr
+    notice instead of hanging silently; stdout stays clean."""
+    from daily_driver.plugins.job_search.jobs_lock import (
+        workspace_busy_notice as real_notice,
+    )
+
+    monkeypatch.setattr(runner, "run_all_scrapers", lambda *_a, **_kw: ([], [], []))
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    lock_path = jobs_lock_path(tmp_path)
+    holder_ready = threading.Event()
+    release = threading.Event()
+
+    def _hold() -> None:
+        # Real cross-fd flock contention: this holder and run()'s acquire open
+        # the sentinel on separate descriptors, so flock genuinely conflicts.
+        with core_file_lock(lock_path):
+            holder_ready.set()
+            release.wait(timeout=10)
+
+    holder = threading.Thread(target=_hold)
+    holder.start()
+    assert holder_ready.wait(timeout=5), "holder never acquired the lock"
+
+    # Deterministic handoff: the contention notice fires (on run()'s thread)
+    # before the blocking wait, so releasing the holder FROM the notice itself
+    # guarantees run() genuinely contended -- no timer that could free the lock
+    # before run() ever reaches it.
+    def _release_on_notice() -> None:
+        release.set()
+        real_notice()
+
+    monkeypatch.setattr(runner, "workspace_busy_notice", _release_on_notice)
+    try:
+        rc = runner.run(
+            JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            tmp_path,
+            tmp_path,
+            dry_run=True,
+            suppress_live=True,
+        )
+    finally:
+        release.set()
+        holder.join(timeout=5)
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    # Substring kept short so Rich soft-wrapping the line can't split the match.
+    assert "Another jobs command is writing the workspace" in captured.err
+    # The notice must never leak onto stdout (keeps `--json` output valid).
+    assert "Another jobs command is writing the workspace" not in captured.out

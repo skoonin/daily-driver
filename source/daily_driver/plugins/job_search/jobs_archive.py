@@ -14,6 +14,7 @@ so a concurrent scrape cannot append rows between the read and the rewrite
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from datetime import date
 from pathlib import Path
 
@@ -22,8 +23,12 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status
 from daily_driver.plugins.job_search.jobs_lock import (
+    LOCK_GIVEUP_MESSAGE,
+    LOCK_WAIT_TIMEOUT_SECONDS,
+    JobsLockTimeout,
     clear_stale_adjacent_lock,
     jobs_lock_path,
+    workspace_busy_notice,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
 from daily_driver.plugins.job_search.scraper.csv_io import (
@@ -94,7 +99,18 @@ def prune(
     rows between the read and the rewrite (which would silently delete them).
     """
     clear_stale_adjacent_lock(jobs_csv)
-    with file_lock(jobs_lock_path(ephemeral_dir)):
+    lock_stack = ExitStack()
+    try:
+        lock_stack.enter_context(
+            file_lock(
+                jobs_lock_path(ephemeral_dir),
+                timeout=LOCK_WAIT_TIMEOUT_SECONDS,
+                on_contention=workspace_busy_notice,
+            )
+        )
+    except TimeoutError:
+        raise JobsLockTimeout(LOCK_GIVEUP_MESSAGE) from None
+    try:
         header, rows = _read_rows(jobs_csv)
         if not header:
             return [], 0
@@ -126,6 +142,8 @@ def prune(
 
         _archive_candidates(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
+    finally:
+        lock_stack.close()
 
     return candidates, len(candidates)
 

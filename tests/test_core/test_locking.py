@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import threading
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,88 @@ def test_timeout_raises(tmp_path: Path) -> None:
         if proc.is_alive():
             proc.terminate()
             proc.join(timeout=3)
+
+
+def test_on_contention_not_called_on_uncontended_acquire(tmp_path: Path) -> None:
+    lock_path = tmp_path / "free.lock"
+    calls: list[int] = []
+
+    with file_lock(lock_path, on_contention=lambda: calls.append(1)):
+        pass
+
+    assert calls == []
+
+
+def test_on_contention_fires_once_then_times_out(tmp_path: Path) -> None:
+    lock_path = tmp_path / "contended.lock"
+    ready = multiprocessing.Event()
+    release = multiprocessing.Event()
+    proc = multiprocessing.Process(
+        target=_hold_until_signaled, args=(lock_path, ready, release)
+    )
+    proc.start()
+    assert ready.wait(timeout=10), "subprocess never acquired the lock"
+
+    calls: list[int] = []
+    try:
+        with pytest.raises(TimeoutError, match="Could not acquire lock"):
+            with file_lock(
+                lock_path, timeout=0.3, on_contention=lambda: calls.append(1)
+            ):
+                pass
+    finally:
+        release.set()
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=3)
+
+    # The callback fires exactly once per acquire, before the wait — never per
+    # poll iteration.
+    assert calls == [1]
+
+
+def test_on_contention_fires_once_then_blocks_until_released(tmp_path: Path) -> None:
+    """timeout=None + on_contention: notice once, then block until acquired."""
+    lock_path = tmp_path / "blocking.lock"
+    calls: list[int] = []
+    notice_seen = threading.Event()
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def _holder() -> None:
+        with file_lock(lock_path):
+            holder_ready.set()
+            release.wait(timeout=10)
+
+    holder_ready = threading.Event()
+    holder = threading.Thread(target=_holder)
+    holder.start()
+    assert holder_ready.wait(timeout=5), "holder never acquired the lock"
+
+    def _notice() -> None:
+        calls.append(1)
+        notice_seen.set()
+
+    def _waiter() -> None:
+        with file_lock(lock_path, on_contention=_notice):
+            acquired.set()
+
+    waiter = threading.Thread(target=_waiter)
+    waiter.start()
+    try:
+        # The notice fires before the blocking wait, so it is observable while the
+        # lock is still held.
+        assert notice_seen.wait(timeout=5), "on_contention never fired"
+        assert not acquired.is_set(), "acquired while the lock was still held"
+        release.set()
+        assert acquired.wait(timeout=5), "never acquired after release"
+    finally:
+        release.set()
+        holder.join(timeout=5)
+        waiter.join(timeout=5)
+
+    assert calls == [1]
 
 
 def test_sequential_locks_work(tmp_path: Path) -> None:

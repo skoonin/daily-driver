@@ -11,7 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,8 +32,11 @@ from daily_driver.plugins.job_search.config import (
     SourceToggle,
 )
 from daily_driver.plugins.job_search.jobs_lock import (
+    LOCK_GIVEUP_MESSAGE,
+    LOCK_WAIT_TIMEOUT_SECONDS,
     clear_stale_adjacent_lock,
     jobs_lock_path,
+    workspace_busy_notice,
 )
 from daily_driver.plugins.job_search.scraper.countries import country_names
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
@@ -718,7 +721,10 @@ class _JobSink:
         """
         if self._external_lock_held:
             return nullcontext()
-        return file_lock(self.lock_path)
+        # Notice-only (no timeout): a mid-run flush must never abort a healthy
+        # run on a slow peer. The non-blocking-first acquire keeps the notice
+        # silent unless a flush genuinely contends with another command.
+        return file_lock(self.lock_path, on_contention=workspace_busy_notice)
 
     def append_source(
         self, source_id: str, jobs: list[dict[str, Any]]
@@ -1417,7 +1423,21 @@ def run_backfill(
     fit_budget = limit
 
     tty = Console.is_tty() and not Console.quiet_mode
-    with file_lock(lock_path):
+    # Announce-then-wait on contention, with a bounded give-up so a wedged peer
+    # can't hang backfill forever. ExitStack lets the give-up branch return
+    # before the lock body without re-indenting the whole lifecycle block.
+    lock_stack = ExitStack()
+    try:
+        lock_stack.enter_context(
+            file_lock(
+                lock_path,
+                timeout=LOCK_WAIT_TIMEOUT_SECONDS,
+                on_contention=workspace_busy_notice,
+            )
+        )
+    except TimeoutError:
+        raise ScraperError(LOCK_GIVEUP_MESSAGE) from None
+    try:
         # READ INSIDE THE LOCK: the snapshot the rewrite is built from must be
         # consistent with the lock window, or a concurrent run's append between
         # an out-of-lock read and the rewrite would be lost.
@@ -1562,6 +1582,8 @@ def run_backfill(
                     f"at {backup_name}"
                 )
                 raise
+    finally:
+        lock_stack.close()
 
     after = _backfill_needs(jobs, plugin)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
@@ -2062,7 +2084,22 @@ def _run_impl(
 
     from daily_driver.plugins.job_search.jobs_archive import load_archive_dedup
 
-    with file_lock(lock_path):
+    # Announce-then-wait on contention, with a bounded give-up. Returning a clean
+    # non-zero here (rather than raising) avoids the run() wrapper writing a
+    # misleading interrupted=True manifest for a run that never started.
+    lock_stack = ExitStack()
+    try:
+        lock_stack.enter_context(
+            file_lock(
+                lock_path,
+                timeout=LOCK_WAIT_TIMEOUT_SECONDS,
+                on_contention=workspace_busy_notice,
+            )
+        )
+    except TimeoutError:
+        Console.error(LOCK_GIVEUP_MESSAGE)
+        return 1
+    try:
         known_urls, known_keys, header = load_existing_jobs(csv_path)
         # Captured under the same lock as the dedup seed: the sink's flush
         # rewrites the WHOLE file, so it must carry these rows through
@@ -2114,6 +2151,8 @@ def _run_impl(
                         interrupted=True,
                     )
                     return 1
+    finally:
+        lock_stack.close()
 
     log.info(
         "Loaded %d existing URLs, %d existing keys from %s",
