@@ -175,6 +175,7 @@ Full field reference: [configuration.md](configuration.md#pluginsjob_search).
 | `greenhouse` | One row per `greenhouse_boards` entry |
 | `ashby` | One row per `ashby_boards` entry (AshbyHQ public API) |
 | `workable` | One row per `workable_accounts` entry (Workable widget API) |
+| `workday` | Paginated Workday careers site; one `workday_boards` entry per company |
 | `linkedin` | LinkedIn via JobSpy |
 | `indeed` | Indeed via JobSpy |
 | `apple` | Apple careers (requires Playwright) |

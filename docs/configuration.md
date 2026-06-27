@@ -335,6 +335,11 @@ sources:
   workable:
     enabled: true
     workable_accounts: [huggingface]  # the <slug> in apply.workable.com/<slug>
+  workday:
+    enabled: true
+    # Each board names the 3 parts of a Workday URL; `company` is optional.
+    workday_boards:
+      - {tenant: crowdstrike, host: wd5, site: crowdstrikecareers, company: CrowdStrike}
   linkedin:
     enabled: true
     results_wanted_per_query: 50

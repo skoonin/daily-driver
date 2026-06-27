@@ -17,6 +17,7 @@ from .jobspy import scrape_jobspy
 from .remoteok import scrape_remoteok
 from .weworkremotely import scrape_weworkremotely
 from .workable import scrape_workable
+from .workday import scrape_workday
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -37,6 +38,7 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "greenhouse": scrape_greenhouse,
     "ashby": scrape_ashby,
     "workable": scrape_workable,
+    "workday": scrape_workday,
     "linkedin": partial(scrape_jobspy, sites=["linkedin"]),
     "indeed": partial(scrape_jobspy, sites=["indeed"]),
     "apple": scrape_apple,

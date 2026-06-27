@@ -90,6 +90,21 @@ def test_workable_source_split() -> None:
     assert norm.source == "Workable (acme-corp)"
 
 
+def test_workday_source_split() -> None:
+    raw = RawScrapedJob(
+        company="Acme",
+        role="SRE",
+        url="https://example.com/j",
+        source="Workday (acme-corp)",
+    )
+    norm = NormalizedJob.from_raw(raw)
+    # Mirrors the other ATS sources: "Workday (<tenant>)" unifies under one
+    # canonical source so multi-board Workday rows don't fragment when grouped.
+    assert norm.source_canonical == "workday"
+    assert norm.source_board == "acme-corp"
+    assert norm.source == "Workday (acme-corp)"
+
+
 def test_from_raw_is_pure() -> None:
     raw = RawScrapedJob(company="A", role="R", url="u", source="s", location="LOC")
     norm1 = NormalizedJob.from_raw(raw)

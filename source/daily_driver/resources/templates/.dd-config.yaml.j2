@@ -304,6 +304,18 @@ tracker:
 #         # apply.workable.com/<slug>). Each account's full posting list is fetched
 #         # in one request; add the companies you are targeting (e.g. huggingface).
 #         workable_accounts: []
+#       workday:            # Workday careers sites (configurable list)
+#         enabled: false
+#         # Workday careers sites to scrape, each named by the three parts of its
+#         # URL. For crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is
+#         # {tenant: crowdstrike, host: wd5, site: crowdstrikecareers}. Each board is
+#         # paginated through Workday's public search API; set the optional `company`
+#         # to override the display name (defaults to the title-cased tenant).
+#         workday_boards:
+#         - tenant: crowdstrike
+#           host: wd5
+#           site: crowdstrikecareers
+#           company: CrowdStrike
 #
 #       # Scrapers shipped in this repo (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
