@@ -23,6 +23,11 @@ _ASHBY_BOARDS_DESC = (
     "one request; add the companies you are targeting. Slugs are\n"
     "case-sensitive (e.g. Notion)."
 )
+_WORKABLE_ACCOUNTS_DESC = (
+    'Workable account slugs to scrape (the "<slug>" in\n'
+    "apply.workable.com/<slug>). Each account's full posting list is fetched\n"
+    "in one request; add the companies you are targeting (e.g. huggingface)."
+)
 
 
 class Locations(BaseModel):
@@ -73,6 +78,14 @@ class AshbyToggle(SourceToggle):
     ashby_boards: list[str] = Field(default=[], description=_ASHBY_BOARDS_DESC)
 
 
+class WorkableToggle(SourceToggle):
+    """Workable source toggle plus its per-source account slug list."""
+
+    workable_accounts: list[str] = Field(
+        default=[], description=_WORKABLE_ACCOUNTS_DESC
+    )
+
+
 class HackerNewsToggle(SourceToggle):
     """HN source toggle plus its per-source post cap.
 
@@ -115,6 +128,7 @@ _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
     "weworkremotely": WeWorkRemotelyToggle,
     "greenhouse": GreenhouseToggle,
     "ashby": AshbyToggle,
+    "workable": WorkableToggle,
     "hn_who_is_hiring": HackerNewsToggle,
     "hn_jobs": HackerNewsToggle,
     "linkedin": LinkedInToggle,
@@ -412,6 +426,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
                 "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
                 "ashby": {"enabled": False, "ashby_boards": []},
+                "workable": {"enabled": False, "workable_accounts": []},
                 "apple": False,
                 "linkedin": {
                     "enabled": True,
@@ -429,6 +444,7 @@ class JobSearchPlugin(BaseModel):
                 "weworkremotely": {"wwr_categories": _WWR_CATEGORIES_DESC},
                 "greenhouse": {"greenhouse_boards": _GREENHOUSE_BOARDS_DESC},
                 "ashby": {"ashby_boards": _ASHBY_BOARDS_DESC},
+                "workable": {"workable_accounts": _WORKABLE_ACCOUNTS_DESC},
             },
             "template_example_inline_comments": {
                 "remoteok": "remoteok.com RSS",
@@ -437,6 +453,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": "HN curated jobs (YC-funded company posts)",
                 "greenhouse": "Greenhouse boards (configurable list)",
                 "ashby": "AshbyHQ boards (configurable list)",
+                "workable": "Workable accounts (configurable list)",
                 "apple": "jobs.apple.com (API intercept)",
                 "indeed": "indeed.com (country sets the regional host)",
             },
