@@ -234,7 +234,7 @@ def enrich_job_details(
         job = out[idx]
         updates: dict[str, Any] = {}
         comp = details.get("comp", "") or ""
-        if comp:
+        if comp and not job.comp:
             updates["comp"] = comp
             enriched_count += 1
         posted = details.get("posted_date")

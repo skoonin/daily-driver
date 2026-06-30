@@ -1632,10 +1632,18 @@ def run_backfill(
                     Console.get_log_console(), tty=tty, title="Job backfill"
                 ) as rp,
             ):
-                # title + "Enriching jobs" header + 2 phase rows (detail,
-                # fit/notes) -- reserve the block in one scroll-region set, as
-                # run() does, to avoid the per-bar resize gap.
-                rp.reserve(2 + 2)
+                # title + "Enriching jobs" header + the phase rows the wave will
+                # render -- reserve the block in one scroll-region set, as run()
+                # does, to avoid the per-bar resize gap. Phases: detail (always),
+                # fit/notes (when enabled), and LinkedIn descriptions (when fit/
+                # notes runs and the toggle is on).
+                enrich_cfg = plugin.enrichment
+                phase_rows = 1
+                if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+                    phase_rows += 1
+                    if enrich_cfg.fetch_linkedin_descriptions:
+                        phase_rows += 1
+                rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
                     plugin,
@@ -1864,9 +1872,18 @@ def _enrich_wave(
     # A disabled pass renders NO bar: pinning one with a placeholder total for
     # work that will never run reads as a stuck/ignored toggle.
     enrich_cfg = plugin.enrichment
+    fit_enabled = enrich_cfg.enrich_fit and enrich_cfg.enrich_notes
     fit_phase: Phase | None = None
-    if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+    if fit_enabled:
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
+    # LinkedIn description backfill rides between detail and fit/notes so the
+    # descriptions it fills feed Fit/Notes in the same wave. Only meaningful when
+    # fit/notes runs (it has no other consumer) and the toggle is on.
+    linkedin_phase: Phase | None = None
+    if fit_enabled and enrich_cfg.fetch_linkedin_descriptions:
+        linkedin_phase = enrich_group.phase(
+            f"LinkedIn descriptions{wave_label}", total=total
+        )
 
     if set_phase is not None:
         set_phase("detail")
@@ -1876,6 +1893,29 @@ def _enrich_wave(
     # Persist detail comp/posted_date before the LLM phase; a disk error here
     # degrades rather than aborting (the final flush retries and propagates).
     sink.flush_periodic()
+
+    if linkedin_phase is not None:
+        from daily_driver.plugins.job_search.scraper.enrichment.linkedin import (
+            fetch_linkedin_descriptions,
+            render_linkedin_summary,
+        )
+        from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+            fit_notes_target_indices,
+        )
+
+        # Same slice the fit/notes pass will enrich this wave, so the two never
+        # drift: fill descriptions for exactly those rows, not the full backlog.
+        target_idx = fit_notes_target_indices(
+            jobs, fit_budget, enrich_cfg, exclude_fit_urls, force=force
+        )
+        linkedin_phase.start()
+        linkedin_phase.set_total(len(target_idx))
+        _, linkedin_stats = fetch_linkedin_descriptions(
+            jobs, ctx, target_idx, progress=linkedin_phase.advance
+        )
+        linkedin_phase.done(render_linkedin_summary(linkedin_stats))
+        sink.flush_periodic()
+
     if set_phase is not None:
         set_phase("enrichment")
 

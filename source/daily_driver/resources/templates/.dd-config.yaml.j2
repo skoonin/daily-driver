@@ -260,6 +260,12 @@ tracker:
 #       max_enrich_fit: 50
 #       # Pause between detail-page fetches, in seconds, to avoid rate limits.
 #       detail_delay_seconds: 0.5
+#       # Fetch login-free LinkedIn job pages during enrichment to fill
+#       # missing job descriptions, so the fit/notes pass can write Notes for
+#       # LinkedIn rows. Bounded by max_enrich_fit, fill-missing-only, and
+#       # politely throttled. Anonymous fetches are often redirected to a
+#       # signup wall, so coverage is good-but-partial by nature.
+#       fetch_linkedin_descriptions: false
 #       # Extra things to assess in each job description. Each becomes a
 #       # "Label: value" segment appended to Notes. `assess` is a
 #       # natural-language instruction the LLM reasons about, not a

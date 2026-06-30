@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
-from daily_driver.plugins.job_search.config import Criterion
+from daily_driver.plugins.job_search.config import Criterion, EnrichmentConfig
 from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _enrich_pool_size,
     _enrich_tag,
@@ -506,6 +506,31 @@ def _fit_notes_eligible(job: EnrichedJob, *, force: bool = False) -> bool:
     return not (job.fit and job.notes)
 
 
+def fit_notes_target_indices(
+    jobs: list[EnrichedJob],
+    budget: int | None,
+    cfg: EnrichmentConfig,
+    exclude_urls: frozenset[str] = frozenset(),
+    *,
+    force: bool = False,
+) -> list[int]:
+    """Input-order indices of rows the fit/notes pass will process this wave.
+
+    Single source of truth shared by ``_build_fit_plan`` and the LinkedIn
+    description fetch so the two never select a different slice of rows.
+    ``budget`` of ``None`` means the config cap (``max_enrich_fit``); an explicit
+    ``0`` selects none. Order is preserved so budget truncation matches the
+    first-N-by-position behavior.
+    """
+    resolved = max(0, cfg.max_enrich_fit if budget is None else budget)
+    eligible = [
+        i
+        for i, j in enumerate(jobs)
+        if _fit_notes_eligible(j, force=force) and j.url not in exclude_urls
+    ]
+    return eligible[:resolved]
+
+
 @dataclass
 class _FitPlan:
     """Resolved work for the fit/notes enricher.
@@ -614,7 +639,7 @@ def _build_fit_plan(
             no_desc,
         )
 
-    target_idx = eligible_idx[:budget]
+    target_idx = fit_notes_target_indices(out, budget, cfg, exclude_urls, force=force)
     # Report the PLANNED call count (post-budget) so the caller's progress bar
     # shows the real denominator, not the whole eligible count.
     if on_planned is not None:
