@@ -46,7 +46,6 @@ def _job(**overrides: Any) -> EnrichedJob:
     )
     base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw)).model_copy(
         update={
-            "product": "",
             "description_text": "We run Kubernetes at scale and sponsor visas.",
         }
     )

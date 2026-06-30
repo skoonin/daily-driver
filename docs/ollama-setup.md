@@ -23,7 +23,7 @@ All three listen on `http://localhost:11434`.
 | 3 | Verify | `ollama list` | The model should appear in the output |
 | 4 | Edit `.dd-config.yaml` | See [config block](#config-block) | Sets `plugins.job_search.enrichment.provider: ollama` |
 | 5 | Confirm | `daily-driver doctor` | The `Enrichment provider` row should report `OK` |
-| 6 | Smoke test | `daily-driver jobs backfill` | Populates product / fit / notes via ollama |
+| 6 | Smoke test | `daily-driver jobs backfill` | Populates fit / notes via ollama |
 
 ## Test the model
 
@@ -37,18 +37,18 @@ ollama run qwen2.5:14b "In one sentence, what does Stripe build?"
 
 Expect a single-sentence answer. First invocation is slow (model loads into RAM); subsequent runs are fast.
 
-**2. HTTP API test** — the call shape daily-driver uses for free-text enrichment (`enrich_company_descriptions`):
+**2. HTTP API test** — confirms the server answers a plain-text generate call over HTTP:
 
 ```
 curl -s http://localhost:11434/api/generate \
   -d '{
     "model": "qwen2.5:14b",
-    "prompt": "Answer in exactly 2 lines, no preamble:\nLine 1: What does Stripe build? (max 12 words)\nLine 2: Glassdoor rating (e.g. 4.1), or '\''unknown'\'' if unsure.",
+    "prompt": "Answer in one line, no preamble: What does Stripe build? (max 12 words)",
     "stream": false
   }' | jq -r .response
 ```
 
-You should see two short lines back. An empty `response` or an `error` field means the model loaded but rejected the prompt — try a different model.
+You should see a short line back. An empty `response` or an `error` field means the model loaded but rejected the prompt — try a different model.
 
 **3. JSON-mode test** — the call shape for structured enrichment (`enrich_fit_and_notes`). The `"format": "json"` flag forces valid JSON:
 
@@ -148,7 +148,7 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
 
   Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or returned an empty string. `-v` alone gives startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
 - **`connection refused on 11434`** — `ollama serve` not running.
-- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the start of enrichment; if the server is unreachable or the model is not pulled, it skips the product / fit / notes passes (one warning naming the endpoint or model) instead of burning a per-call timeout on every job. Detail pages still run. Start the server (or `ollama pull <model>`), then `jobs backfill` to fill the empty rows.
+- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the start of enrichment; if the server is unreachable or the model is not pulled, it skips the fit / notes pass (one warning naming the endpoint or model) instead of burning a per-call timeout on every job. Detail pages still run. Start the server (or `ollama pull <model>`), then `jobs backfill` to fill the empty rows.
 - **First request is slow** — Ollama loads the model into RAM on demand; subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep it warm between sessions.
 - **Output quality below claude path** — try a larger model, or keep `summary` on claude and route only enrichment to ollama.
 - **Tune resource use (optional)** — see [Tuning](#tuning) for the server-side environment variables. The client-side counterpart is `ai.ollama.max_parallel` (default 4); raise it only after raising server-side `OLLAMA_NUM_PARALLEL`, or set it to `1` for serial enrichment.

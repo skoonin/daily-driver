@@ -24,7 +24,7 @@ def make_enriched(
     """Build an EnrichedJob for tests that used to hand-roll a working dict.
 
     ``overrides`` are applied via ``model_copy`` so callers can seed enrichment
-    fields (product, fit, notes, description_text, status, ...) directly.
+    fields (fit, notes, description_text, status, ...) directly.
     """
     raw = RawScrapedJob(
         company=company,

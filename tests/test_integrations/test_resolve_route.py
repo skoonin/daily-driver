@@ -109,16 +109,10 @@ def test_enrichment_phase_override_beats_domain() -> None:
         {
             "provider": "ollama",
             "model": "phi4",
-            "company_info": {"model": "qwen2.5:7b"},
             "fit_notes": {"provider": "claude", "model": "sonnet"},
         }
     )
-    ci_provider, ci_model = ai_provider.resolve_route(
-        AIConfig(), task="company_info", domain_cfg=enrichment
-    )
-    assert ci_provider == "ollama"  # provider falls back to domain
-    assert ci_model == "qwen2.5:7b"  # phase override
-
+    # The fit_notes phase override wins over the domain default.
     fn_provider, fn_model = ai_provider.resolve_route(
         AIConfig(), task="fit_notes", domain_cfg=enrichment
     )
@@ -130,14 +124,14 @@ def test_enrichment_falls_through_to_global_then_claude() -> None:
     # Enrichment domain unset, but a global ai default exists.
     ai = AIConfig.model_validate({"provider": "ollama", "model": "phi4"})
     provider, model = ai_provider.resolve_route(
-        ai, task="company_info", domain_cfg=EnrichmentConfig()
+        ai, task="fit_notes", domain_cfg=EnrichmentConfig()
     )
     assert provider == "ollama"
     assert model == "phi4"
 
     # Nothing set anywhere -> claude terminal fallback.
     provider, model = ai_provider.resolve_route(
-        AIConfig(), task="company_info", domain_cfg=EnrichmentConfig()
+        AIConfig(), task="fit_notes", domain_cfg=EnrichmentConfig()
     )
     assert provider == "claude"
     assert model is None

@@ -68,17 +68,11 @@ JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
 
 
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
-# passes (fit/notes/product): kept for visibility, not worth spending
-# enrichment calls on.
+# pass (fit/notes): kept for visibility, not worth spending enrichment calls on.
 ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({"skipped"})
 
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
-# Product/Purpose default for un-enriched rows. Both fresh scraped jobs and
-# blank CSV cells carry this, so enrichment can tell "needs fill" from a real
-# value without a separate flag.
-_PLACEHOLDER_PRODUCT = "(auto-scraped -- needs fill)"
 
 
 def parse_fit(value: Any) -> int | None:
@@ -243,8 +237,6 @@ class EnrichedJob(BaseModel):
     comp: str = ""
     date_found: dt.date
 
-    product: str = _PLACEHOLDER_PRODUCT
-    gd_rating: str = ""
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
     posted_date: dt.date | None = None
@@ -275,9 +267,7 @@ class EnrichedJob(BaseModel):
         "Comp": "comp",
         "Location": "location",
         "Remote": "remote",
-        "GD Rating": "gd_rating",
         "Notes": "notes",
-        "Product/Purpose": "product",
         "Date Found": "date_found",
         "Date Applied": "date_applied",
         "Date Last Seen": "date_last_seen",
@@ -292,20 +282,6 @@ class EnrichedJob(BaseModel):
         # Spelling only: blank stays blank (never coerced to a default), so a
         # deliberately empty cell survives a backfill/prune rewrite unchanged.
         return normalize_status(v if isinstance(v, str) else str(v))
-
-    @property
-    def product_filled(self) -> bool:
-        """Whether Product/Purpose holds a real value (not the scrape placeholder).
-
-        Fresh scraped rows and blank CSV cells both surface as the placeholder
-        default, so company enrichment treats the placeholder as "still empty".
-        """
-        return bool(self.product) and self.product != _PLACEHOLDER_PRODUCT
-
-    @property
-    def product_or_blank(self) -> str:
-        """Product text for prompts, blanked when it is only the placeholder."""
-        return self.product if self.product_filled else ""
 
     @classmethod
     def from_normalized(cls, n: NormalizedJob) -> EnrichedJob:
@@ -349,9 +325,7 @@ class EnrichedJob(BaseModel):
             "Comp": self.comp,
             "Location": self.location,
             "Remote": self.remote,
-            "GD Rating": self.gd_rating,
             "Notes": notes,
-            "Product/Purpose": self.product,
             "Date Found": self.date_found.isoformat(),
             "Date Applied": (
                 "" if self.date_applied is None else self.date_applied.isoformat()
@@ -404,11 +378,6 @@ class EnrichedJob(BaseModel):
             date_applied=_opt_date(row.get("Date Applied", "")),
             date_last_seen=_opt_date(row.get("Date Last Seen", "")),
             url=row.get("Link", ""),
-            # Preserve a blank Product cell as blank (do not substitute the
-            # placeholder) so a backfill rewrite is byte-identical for unenriched
-            # rows; product_filled treats blank and placeholder alike.
-            product=row.get("Product/Purpose", ""),
-            gd_rating=row.get("GD Rating", ""),
             source=source,
             source_canonical=canonical,
             source_board=board,

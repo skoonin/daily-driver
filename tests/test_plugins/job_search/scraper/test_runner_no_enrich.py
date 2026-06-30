@@ -1,6 +1,6 @@
 """``run(no_enrich=True)`` skips all enrichment and appends unenriched rows.
 
-The flag must short-circuit every enrichment phase: zero detail/product/fit
+The flag must short-circuit every enrichment phase: zero detail/fit
 enricher invocations, zero enrichment counters in the run manifest, and the
 end-of-run summary visibly notes the skip. The default path (no flag) must
 still run enrichment — guarded here so the skip can't silently leak.
@@ -71,14 +71,12 @@ def test_no_enrich_appends_rows_with_zero_enricher_calls(
 
     def boom_concurrent(*_a: Any, **_kw: Any) -> Any:
         calls.append("concurrent")
-        raise AssertionError("product/fit enrichment must not run with no_enrich")
+        raise AssertionError("fit enrichment must not run with no_enrich")
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", boom_detail)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", boom_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom_concurrent)
 
     rc = runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
@@ -92,16 +90,14 @@ def test_no_enrich_appends_rows_with_zero_enricher_calls(
     rows = _read_csv(tmp_path / "jobs.csv")
     assert len(rows) == 1
     assert rows[0]["Company"] == "Acme"
-    # Unenriched: no LLM-derived fit, and the product column carries the
-    # lifted-but-unenriched placeholder rather than a real product description.
+    # Unenriched: no LLM-derived fit.
     assert rows[0]["Fit"] == ""
-    assert "needs fill" in rows[0]["Product/Purpose"]
 
 
 def test_no_enrich_manifest_records_zero_enrichment_counters(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """jobs-last-run.json reports zero enriched_fit_notes / enriched_product."""
+    """jobs-last-run.json reports zero enriched_fit_notes."""
     _stub_scrapers(monkeypatch, [_scraped_job()])
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
@@ -110,7 +106,7 @@ def test_no_enrich_manifest_records_zero_enrichment_counters(
         raise AssertionError("enrichment must not run with no_enrich")
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", boom)
-    monkeypatch.setattr(enrichment_pkg, "enrich_product_and_fit_concurrently", boom)
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom)
 
     runner.run(
         JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
@@ -122,7 +118,7 @@ def test_no_enrich_manifest_records_zero_enrichment_counters(
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
     assert manifest["new_jobs"] == 1
     assert manifest["enriched_fit_notes"] == 0
-    assert manifest["enriched_product"] == 0
+    assert "enriched_product" not in manifest
 
 
 def test_no_enrich_summary_notes_skip(
@@ -140,7 +136,7 @@ def test_no_enrich_summary_notes_skip(
     )
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("no enrich")),
     )
 
@@ -172,25 +168,21 @@ def test_default_path_still_enriches(
             "fetched": 0,
         }
 
-    def fake_concurrent(
+    def fake_fit_notes(
         jobs: list[Any],
         ctx: Any,
         *,
-        product_budget: int = 0,
-        fit_budget: int = 0,
-        product_progress: Any = None,
-        fit_progress: Any = None,
+        budget: int = 0,
+        progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
         **_kw: Any,
     ) -> Any:
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
             {
                 "enriched": 0,
                 "skipped_budget": 0,
-                "skipped_no_desc": 0,
                 "failed": 0,
             },
         )
@@ -198,9 +190,7 @@ def test_default_path_still_enriches(
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
     # Keep detail's own module attr aligned in case of direct reference.
     monkeypatch.setattr(detail_mod, "enrich_job_details", fake_detail)
 

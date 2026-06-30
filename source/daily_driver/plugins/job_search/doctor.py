@@ -137,10 +137,10 @@ def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
     """Verify Ollama reachability + model presence when enrichment routes to it.
 
     Enrichment routing lives in `plugins.job_search.enrichment` (a domain
-    default plus per-phase `company_info` / `fit_notes` overrides); the shared
-    connection block (`ai.ollama.endpoint`) is core infra. Each phase is
-    resolved through the routing chain; returns None when neither resolves to
-    ollama. WARNING on failure, matching the core drift convention.
+    default plus a per-phase `fit_notes` override); the shared connection block
+    (`ai.ollama.endpoint`) is core infra. The phase is resolved through the
+    routing chain; returns None when it does not resolve to ollama. WARNING on
+    failure, matching the core drift convention.
     """
     from daily_driver.core.doctor import CheckResult
     from daily_driver.integrations import ai_provider
@@ -156,12 +156,11 @@ def _check_enrichment_provider(workspace: Workspace) -> CheckResult | None:
     from daily_driver.integrations.ollama_client import OllamaNotReachableError
 
     ollama_phases: list[tuple[str, str]] = []
-    for phase in ("company_info", "fit_notes"):
-        provider, model = ai_provider.resolve_route(
-            ai_cfg, task=phase, domain_cfg=enrichment
-        )
-        if provider == "ollama":
-            ollama_phases.append((phase, model or ollama_client.DEFAULT_MODEL))
+    provider, model = ai_provider.resolve_route(
+        ai_cfg, task="fit_notes", domain_cfg=enrichment
+    )
+    if provider == "ollama":
+        ollama_phases.append(("fit_notes", model or ollama_client.DEFAULT_MODEL))
     if not ollama_phases:
         return None
 
@@ -221,10 +220,9 @@ def _check_ollama_num_parallel(workspace: Workspace) -> CheckResult | None:
     ai_cfg = getattr(getattr(workspace, "config", None), "ai", None)
     if ai_cfg is None:
         return None
-    any_ollama = any(
-        ai_provider.resolve_route(ai_cfg, task=phase, domain_cfg=enrichment)[0]
+    any_ollama = (
+        ai_provider.resolve_route(ai_cfg, task="fit_notes", domain_cfg=enrichment)[0]
         == "ollama"
-        for phase in ("company_info", "fit_notes")
     )
     if not any_ollama:
         return None

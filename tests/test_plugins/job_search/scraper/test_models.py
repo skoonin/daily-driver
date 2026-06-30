@@ -166,7 +166,7 @@ class TestEnrichedJob:
         j = _enriched(fit=7, notes="hello")
         row = j.to_csv_row()
         j2 = EnrichedJob.from_csv_row(row)
-        # Lossy: source_canonical/source_board re-derived; product default if blank
+        # Lossy: source_canonical/source_board are re-derived from Source on read
         assert j2.company == j.company
         assert j2.role == j.role
         assert j2.url == j.url

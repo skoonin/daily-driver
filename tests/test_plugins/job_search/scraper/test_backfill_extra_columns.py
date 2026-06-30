@@ -1,6 +1,6 @@
 """Backfill must carry through unknown / hand-added jobs.csv columns (review fix 1).
 
-EnrichedJob knows only the 15 canonical columns. A user who hand-adds a column
+EnrichedJob knows only the 13 canonical columns. A user who hand-adds a column
 (e.g. "Priority") must keep both its header label and every cell value across a
 backfill rewrite. The carry-through lives in the _JobSink flush rewrite path.
 """
@@ -24,7 +24,6 @@ def _plugin() -> JobSearchPlugin:
         {
             "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
             "enrichment": {
-                "max_enrich_companies": 0,
                 "max_enrich_fit": 0,
                 "detail_delay_seconds": 0,
             },
@@ -48,17 +47,14 @@ def _stub_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
             "skip_reasons": {},
         }
 
-    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
 
 def _write_with_extra(csv_path: Path) -> list[str]:
@@ -66,7 +62,7 @@ def _write_with_extra(csv_path: Path) -> list[str]:
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=header, quoting=csv.QUOTE_MINIMAL)
         w.writeheader()
-        # Row 1 needs enrichment (blank Product/Fit/Notes/GD) so backfill runs.
+        # Row 1 needs enrichment (blank Fit/Notes) so backfill runs.
         row = {c: "" for c in header}
         row.update(
             {

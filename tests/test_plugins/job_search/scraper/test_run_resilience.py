@@ -267,9 +267,7 @@ def _enrich_plugin(budget: int = 50) -> JobSearchPlugin:
             "scraper": {"enabled": True},
             "enrichment": {
                 "provider": "claude",
-                "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
-                "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             },
         }
@@ -287,11 +285,11 @@ def _serial_ctx(budget: int = 50) -> ScrapeContext:
 def test_concurrent_enrichment_flushes_every_n_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The coordinator calls the flush hook every ``flush_every`` applied results.
+    """The fit pass calls the flush hook every ``flush_every`` applied results.
 
     With 7 fit jobs and flush_every=3, flush fires after results 3 and 6 inside
-    the loop, then once on phase completion by the caller -- but the coordinator
-    itself triggers at the 3-result boundaries.
+    the loop, then once on phase completion by the caller -- but the pass itself
+    triggers at the 3-result boundaries.
     """
     from daily_driver.integrations import ai_provider
     from daily_driver.plugins.job_search.scraper import enrichment
@@ -303,14 +301,13 @@ def test_concurrent_enrichment_flushes_every_n_results(
     )
     jobs = [make_enriched(company=f"Co{i}", url=f"https://x/{i}") for i in range(7)]
     flush_calls: list[int] = []
-    enrichment.enrich_product_and_fit_concurrently(
+    enrichment.enrich_fit_and_notes(
         jobs,
         _serial_ctx(),
         flush=lambda: flush_calls.append(1),
         flush_every=3,
     )
-    # 7 fit results -> flush at 3 and 6 (the company pass writes products too,
-    # but the fit pass alone guarantees at least the two boundary flushes).
+    # 7 fit results -> flush at 3 and 6.
     assert len(flush_calls) >= 2
 
 
@@ -358,9 +355,8 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
 
     A serial provider applies fit results in order, one per call; the stub
     raises on the second call. run() must flush the partial progress before the
-    interrupt propagates, so the first row's Fit survives. Product enrichment is
-    off so only the fit pass runs (its serial path applies each result as the
-    call settles, before the next fetch).
+    interrupt propagates, so the first row's Fit survives. The fit pass's serial
+    path applies each result as the call settles, before the next fetch.
     """
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
@@ -372,8 +368,6 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
             "enrichment": {
                 "provider": "claude",
                 "max_enrich_fit": 50,
-                "enrich_product": False,
-                "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             },
         }
@@ -420,9 +414,7 @@ def _overlap_plugin(budget: int) -> JobSearchPlugin:
             "scraper": {"enabled": True},
             "enrichment": {
                 "provider": "claude",
-                "max_enrich_companies": budget,
                 "max_enrich_fit": budget,
-                "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             },
         }
@@ -437,11 +429,10 @@ def _overlap_run(
     phase1: list[dict[str, Any]],
     apple: list[dict[str, Any]],
     wave1_fit_attempted: set[str],
-    wave1_companies_attempted: set[str],
 ) -> list[dict[str, Any]]:
-    """Drive run() through a two-wave overlap with a coordinator stub that records
-    each wave's (n, budgets, exclusions) and reports the given wave-1 attempted
-    identities, mimicking the real coordinator's attempted out-param."""
+    """Drive run() through a two-wave overlap with a fit-pass stub that records
+    each wave's (n, budget, exclusions) and reports the given wave-1 attempted
+    fit URLs, mimicking the real fit pass's attempted out-param."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
@@ -467,56 +458,46 @@ def _overlap_run(
     waves: list[dict[str, Any]] = []
     call = [0]
 
-    def fake_concurrent(
+    def fake_fit_notes(
         jobs: list[Any],
         ctx: Any,
         *,
-        product_budget: int = 0,
-        fit_budget: int = 0,
-        product_progress: Any = None,
-        fit_progress: Any = None,
+        budget: int = 0,
+        progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
-        exclude_fit_urls: frozenset[str] = frozenset(),
-        exclude_companies: frozenset[str] = frozenset(),
+        exclude_urls: frozenset[str] = frozenset(),
         attempted: dict[str, set[str]] | None = None,
-        on_product_planned: Any = None,
-        on_fit_planned: Any = None,
+        on_planned: Any = None,
+        _reset_hint: bool = True,
     ) -> Any:
         call[0] += 1
         eligible = [
-            j for j in jobs if j.url not in exclude_fit_urls and not (j.fit and j.notes)
+            j for j in jobs if j.url not in exclude_urls and not (j.fit and j.notes)
         ]
         waves.append(
             {
                 "n": len(jobs),
-                "fit_budget": fit_budget,
-                "product_budget": product_budget,
-                "exclude_fit_urls": set(exclude_fit_urls),
-                "exclude_companies": set(exclude_companies),
+                "fit_budget": budget,
+                "exclude_fit_urls": set(exclude_urls),
                 "eligible": len(eligible),
             }
         )
         if call[0] == 1 and attempted is not None:
-            # Mimic the real coordinator filling the attempted out-param.
+            # Mimic the real fit pass filling the attempted out-param.
             attempted["fit_urls"] = set(wave1_fit_attempted)
-            attempted["product_companies"] = set(wave1_companies_attempted)
         return (
             jobs,
-            {"enriched": len(eligible), "skipped_cached": 0, "failed": 0},
             {
                 "enriched": len(eligible),
                 "skipped_budget": 0,
-                "skipped_no_desc": 0,
                 "failed": 0,
             },
         )
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
     rc = runner.run(
         _overlap_plugin(budget=budget),
@@ -543,7 +524,6 @@ def test_overlap_two_waves_share_fit_budget(
         phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
         apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(5)],
         wave1_fit_attempted=phase1_urls,
-        wave1_companies_attempted={f"P1Co{i}" for i in range(7)},
     )
     assert len(waves) == 2
     # Wave 1 enriches the LIVE sink.rows (not a copy) so its slot mutations reach
@@ -779,17 +759,15 @@ def test_overlap_interrupt_logs_relayed_wave1_exception(
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
 
     # A wave-level failure (not a per-result one, which _guarded_consume swallows)
-    # escapes the coordinator and is relayed via _run_wave1's except into
-    # wave1_error. Patch the coordinator to raise so the relay path is exercised.
+    # escapes the fit pass and is relayed via _run_wave1's except into
+    # wave1_error. Patch the fit pass to raise so the relay path is exercised.
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def boom_concurrent(*_a: Any, **_kw: Any) -> Any:
+    def boom_fit_notes(*_a: Any, **_kw: Any) -> Any:
         wave1_failed.set()
         raise RuntimeError("wave-1 boom")
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", boom_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom_fit_notes)
 
     with caplog.at_level(logging.ERROR):
         with pytest.raises(KeyboardInterrupt):
@@ -807,13 +785,14 @@ def test_overlap_interrupt_logs_relayed_wave1_exception(
     ), [r.getMessage() for r in caplog.records]
 
 
-def test_company_phase_labeled_glassdoor_when_product_disabled(
+def test_disabled_passes_render_no_bars(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """With enrich_product=false the company pass runs gd-only; the phase row
-    must say so, or the run reads as if the product toggle were ignored."""
+    """A pass disabled by config gets NO phase row at all -- a pinned bar with
+    a placeholder total for work that never runs reads as a stuck toggle. With
+    fit/notes off, only the Detail pages bar renders."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
@@ -830,14 +809,18 @@ def test_company_phase_labeled_glassdoor_when_product_disabled(
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
     from daily_driver.integrations import ai_provider
 
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "4.2")
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("no LLM call expected with fit/notes off")
+        ),
+    )
     plugin = JobSearchPlugin.model_validate(
         {
             "scraper": {"enabled": True},
             "enrichment": {
                 "provider": "claude",
-                "enrich_product": False,
-                "enrich_gd_rating": True,
                 "enrich_fit": False,
                 "enrich_notes": False,
                 "enrich_timeout": 5,
@@ -847,56 +830,8 @@ def test_company_phase_labeled_glassdoor_when_product_disabled(
     rc = runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
     assert rc == 0
     err = capsys.readouterr().err
-    assert "Glassdoor ratings" in err
-    assert "Company products" not in err
-
-
-def test_disabled_passes_render_no_bars(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A pass disabled by config gets NO phase row at all -- a pinned bar with
-    a placeholder total for work that never runs reads as a stuck toggle
-    (owner-observed: "Glassdoor ratings 0/1875" with both company toggles off)."""
-    monkeypatch.setattr(
-        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
-    )
-    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
-
-    def fake_scrape(
-        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
-    ) -> Any:
-        if on_source_result is not None:
-            on_source_result("remoteok", jobs)
-        return jobs, [], [("remoteok", jobs)]
-
-    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
-
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
-    )
-    plugin = JobSearchPlugin.model_validate(
-        {
-            "scraper": {"enabled": True},
-            "enrichment": {
-                "provider": "claude",
-                "enrich_product": False,
-                "enrich_gd_rating": False,
-                "enrich_fit": True,
-                "enrich_notes": True,
-                "enrich_timeout": 5,
-            },
-        }
-    )
-    rc = runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
-    assert rc == 0
-    err = capsys.readouterr().err
-    assert "Fit and notes" in err
-    assert "Company products" not in err
-    assert "Glassdoor ratings" not in err
+    assert "Detail pages" in err
+    assert "Fit and notes" not in err
 
 
 def test_overlap_wave2_budget_exhausted_gets_zero_not_one(
@@ -912,11 +847,9 @@ def test_overlap_wave2_budget_exhausted_gets_zero_not_one(
         phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
         apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
         wave1_fit_attempted=phase1_urls,
-        wave1_companies_attempted={f"P1Co{i}" for i in range(7)},
     )
     assert len(waves) == 2
     assert waves[1]["fit_budget"] == 0
-    assert waves[1]["product_budget"] == 0
 
 
 def test_overlap_failed_wave1_row_not_reattempted_in_wave2(
@@ -934,14 +867,12 @@ def test_overlap_failed_wave1_row_not_reattempted_in_wave2(
         apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
         # All 4 phase-1 rows were attempted (say 1 failed) -> all excluded.
         wave1_fit_attempted=phase1_urls,
-        wave1_companies_attempted={f"P1Co{i}" for i in range(4)},
     )
     # Wave 2 excludes all 4 attempted rows (incl. the failed one) -> 3 eligible.
     assert waves[1]["exclude_fit_urls"] == phase1_urls
     assert waves[1]["eligible"] == 3
     # Budget reduced by the 4 attempted (not re-charged): 10 - 4 = 6.
     assert waves[1]["fit_budget"] == 6
-    assert waves[1]["product_budget"] == 6
 
 
 # ── Stage 4: SIGTERM, manifest fields, status recovery line ──────────────────
@@ -996,8 +927,6 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
             "enrichment": {
                 "provider": "claude",
                 "max_enrich_fit": 50,
-                "enrich_product": False,
-                "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             },
         }
@@ -1057,16 +986,14 @@ def test_status_prints_recovery_line_when_interrupted(tmp_path: Path) -> None:
 # ── Review fixes: manifest on all exits, atomicity, persistence failures ─────
 
 
-def _enrich_plugin_no_product() -> JobSearchPlugin:
-    # fit-only so the serial fit pass applies results incrementally (one per call).
+def _enrich_plugin_serial() -> JobSearchPlugin:
+    # The serial fit pass applies results incrementally (one per call).
     return JobSearchPlugin.model_validate(
         {
             "scraper": {"enabled": True},
             "enrichment": {
                 "provider": "claude",
                 "max_enrich_fit": 50,
-                "enrich_product": False,
-                "enrich_gd_rating": False,
                 "enrich_timeout": 5,
             },
         }
@@ -1447,9 +1374,7 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
         flaky_atomic,
     )
 
-    rc = runner.run(
-        _enrich_plugin_no_product(), tmp_path, tmp_path, ai=_serial_ctx().ai
-    )
+    rc = runner.run(_enrich_plugin_serial(), tmp_path, tmp_path, ai=_serial_ctx().ai)
     assert rc == 1  # degraded run exits non-zero even though the final flush recovered
     # Final flush retried and succeeded: enrichment is on disk.
     rows = _read_csv(tmp_path / "jobs.csv")
@@ -1498,7 +1423,7 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
 
     # The KeyboardInterrupt must survive the flush failure on the interrupt path.
     with pytest.raises(KeyboardInterrupt):
-        runner.run(_enrich_plugin_no_product(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+        runner.run(_enrich_plugin_serial(), tmp_path, tmp_path, ai=_serial_ctx().ai)
 
     # Manifest still written despite the flush failure.
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))

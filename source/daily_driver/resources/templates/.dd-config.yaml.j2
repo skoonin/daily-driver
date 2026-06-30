@@ -204,12 +204,12 @@ tracker:
 #       # firefox, chromium, webkit. The chosen engine must be installed
 #       # (`playwright install <engine>`).
 #       browser: firefox
-#     # Post-scrape enrichment: optional LLM passes that add Product,
-#     # Glassdoor rating, a fit score, and a Notes summary. Each pass
-#     # costs API calls; the max_* values cap how many run.
+#     # Post-scrape enrichment: an optional LLM pass that adds a fit score
+#     # and a Notes summary. The pass costs API calls; max_enrich_fit caps
+#     # how many run.
 #     enrichment:
-#       # Domain default provider for both enrichment passes. Unset inherits
-#       # the global `ai.provider`, then claude. Per-phase blocks override it.
+#       # Domain default provider for the enrichment pass. Unset inherits
+#       # the global `ai.provider`, then claude. The per-phase block overrides it.
 #       provider: claude
 #       # Provider-specific model identifier. For claude: "sonnet", "haiku",
 #       # etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model
@@ -217,18 +217,6 @@ tracker:
 #       # and model are chosen independently), so a domain model paired with a
 #       # per-phase provider override must be compatible with that provider.
 #       # model: sonnet
-#       # Route override for the company-info pass (product summary +
-#       # Glassdoor rating, one call per company).
-#       company_info:
-#         # provider: claude | ollama. Unset inherits the enrichment domain
-#         # default, then the global `ai.provider`, then claude.
-#         provider: claude
-#         # Provider-specific model identifier. For claude: "sonnet", "haiku",
-#         # etc. For ollama: a pulled tag like "qwen2.5:7b" or "phi4". A model
-#         # applies regardless of which provider this phase resolves to (provider
-#         # and model are chosen independently), so do not leave a claude model
-#         # set on a phase you route to ollama, or vice versa.
-#         # model: sonnet
 #       # Route override for the fit/notes pass (fit score, notes, remote,
 #       # criteria, one call per job).
 #       fit_notes:
@@ -243,12 +231,6 @@ tracker:
 #         # model: sonnet
 #       # Seconds before a single enrichment LLM call is abandoned.
 #       enrich_timeout: 30
-#       # Cap on company-description lookups per run (bounds API cost).
-#       max_enrich_companies: 50
-#       # Look up a one-line Product/Purpose summary for each company.
-#       enrich_product: true
-#       # Look up each company's Glassdoor rating during enrichment.
-#       enrich_gd_rating: true
 #       # Score each job 1-10 for fit against your persona and locations.
 #       enrich_fit: true
 #       # Generate a one-line Notes summary (tech stack, remote policy, red flags).

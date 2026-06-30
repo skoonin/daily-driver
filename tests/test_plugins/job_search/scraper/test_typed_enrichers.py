@@ -7,15 +7,12 @@ contract: new frozen instances out, immutable inputs, skipped-status handling.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
 from daily_driver.core.config_models import AIConfig
 from daily_driver.integrations import ai_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
-    enrich_company_descriptions,
     enrich_fit_and_notes,
     enrich_job_details,
 )
@@ -43,37 +40,26 @@ def _enriched(**overrides: object) -> EnrichedJob:
 @pytest.fixture
 def fake_config() -> ScrapeContext:
     # Budget contract: budget=None -> use the config cap; budget=0 -> no calls.
-    # Both config caps are zeroed here so the enrichers make no provider calls
-    # even when a test leaves budget=None (which falls back to the cap). Without
+    # The config cap is zeroed here so the enricher makes no provider calls even
+    # when a test leaves budget=None (which falls back to the cap). Without
     # max_enrich_fit=0 the fit enricher makes real claude CLI calls on dev
     # machines where `claude` is on PATH.
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
                 "scraper": {"enabled": True},
-                "enrichment": {"max_enrich_companies": 0, "max_enrich_fit": 0},
+                "enrichment": {"max_enrich_fit": 0},
             }
         )
     )
 
 
-def test_enrichers_return_enriched_job_list(fake_config: ScrapeContext) -> None:
-    """Company enrich returns a list of EnrichedJob (frozen-model invariant)."""
+def test_fit_enrich_returns_enriched_job_list(fake_config: ScrapeContext) -> None:
+    """Fit enrich returns a list of EnrichedJob (frozen-model invariant)."""
     j = _enriched()
-    out, _stats = enrich_company_descriptions([j], fake_config)
+    out, _stats = enrich_fit_and_notes([j], fake_config, budget=0)
     assert len(out) == 1
     assert isinstance(out[0], EnrichedJob)
-
-
-def test_company_enrich_passes_through_when_no_claude(
-    fake_config: ScrapeContext,
-) -> None:
-    j = _enriched()
-    with patch("shutil.which", return_value=None):
-        out, stats = enrich_company_descriptions([j], fake_config)
-    assert stats == {"enriched": 0, "skipped_cached": 0, "failed": 0}
-    # No mutation to product when claude is absent.
-    assert out[0].product == j.product
 
 
 def test_fit_enrich_passes_through_with_zero_budget(
@@ -265,33 +251,6 @@ def test_fit_budget_zero_makes_no_calls_despite_config_cap(
     assert all(o.fit == j.fit for o, j in zip(out, jobs))
 
 
-def test_company_budget_zero_makes_no_calls_despite_config_cap(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ctx = ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "enrichment": {
-                    "provider": "ollama",
-                    "max_enrich_companies": 5,
-                    "enrich_timeout": 5,
-                }
-            }
-        ),
-        ai=AIConfig(),
-    )
-    calls: list[str] = []
-    monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
-        lambda *a, **k: calls.append("x") or "Builds widgets",
-    )
-    jobs = [_enriched(url=f"https://x/{i}") for i in range(2)]
-    out, stats = enrich_company_descriptions(jobs, ctx, budget=0)
-    assert calls == []
-    assert stats["enriched"] == 0
-
-
 def test_fit_budget_none_uses_config_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -477,31 +436,6 @@ def test_fit_on_planned_reports_budget_capped_count(
     assert planned == [2]
 
 
-def test_company_on_planned_reports_budget_capped_count(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ctx = ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "enrichment": {
-                    "provider": "ollama",
-                    "max_enrich_companies": 1,
-                    "enrich_timeout": 5,
-                }
-            }
-        ),
-        ai=AIConfig(),
-    )
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: "Builds widgets")
-    planned: list[int] = []
-    jobs = [
-        _enriched(url="https://x/1", company="A"),
-        _enriched(url="https://x/2", company="B"),
-    ]
-    enrich_company_descriptions(jobs, ctx, on_planned=planned.append)
-    assert planned == [1]
-
-
 def test_job_details_short_circuits_when_description_present(
     fake_config: ScrapeContext,
 ) -> None:
@@ -528,227 +462,3 @@ def test_enrichers_handle_skipped_status(fake_config: ScrapeContext) -> None:
     j = _enriched(status="skipped", skip_reason="manually skipped")
     out, _stats = enrich_job_details([j], fake_config)
     assert out[0].status == "skipped"
-
-
-# ---------------------------------------------------------------------------
-# enrich_product toggle: gate product vs gd_rating writes independently.
-# ---------------------------------------------------------------------------
-
-
-def _company_ctx(**enrichment: object) -> ScrapeContext:
-    base = {"max_enrich_companies": 50, "enrich_fit": False, "enrich_notes": False}
-    base.update(enrichment)
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {"scraper": {"enabled": True}, "enrichment": base}
-        ),
-        ai=AIConfig.model_validate({"claude": {"max_parallel": 1}}),
-    )
-
-
-def test_enrich_product_off_skips_product_write_keeps_gd() -> None:
-    """enrich_product=False writes no product, gd_rating still fills."""
-    j = _enriched(comp_display="")
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
-    calls: list[str] = []
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        calls.append(prompt)
-        return "4.3"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, _stats = enrich_company_descriptions([j], ctx)
-
-    assert len(calls) == 1  # one call per company (gd only)
-    assert "Glassdoor" in calls[0] and "build or do" not in calls[0]
-    assert out[0].product == j.product  # unchanged (not written)
-    assert out[0].gd_rating == "4.3"
-
-
-def test_both_product_and_gd_off_skips_phase_entirely() -> None:
-    """Both toggles off => no company-phase LLM calls at all."""
-    j = _enriched()
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=False)
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        raise AssertionError("no company call expected when both toggles off")
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, stats = enrich_company_descriptions([j], ctx)
-
-    assert out[0].product == j.product
-    assert stats == {"enriched": 0, "skipped_cached": 0, "failed": 0}
-
-
-def test_enrich_gd_off_writes_product_not_gd() -> None:
-    """enrich_product=true + enrich_gd_rating=false: product written, gd never.
-
-    Mirror of test_enrich_product_off_skips_product_write_keeps_gd for the
-    opposite toggle pairing, pinning combination (c) of the toggle matrix: a
-    product-only company pass writes the Product cell and leaves GD Rating
-    untouched even if the model volunteers a rating line.
-    """
-    j = _enriched(comp_display="", gd_rating="")
-    ctx = _company_ctx(enrich_product=True, enrich_gd_rating=False)
-    calls: list[str] = []
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        calls.append(prompt)
-        # Model returns a second line that looks like a rating; with GD off it
-        # must be ignored, not parsed into gd_rating.
-        return "Acme builds widgets\n4.1"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, _stats = enrich_company_descriptions([j], ctx)
-
-    assert len(calls) == 1  # one product-only company call
-    assert "Glassdoor" not in calls[0]  # prompt does not ask for a rating
-    assert out[0].product == "Acme builds widgets"
-    assert out[0].gd_rating == ""  # never written when gd disabled
-
-
-def test_gd_rating_written_when_product_already_filled() -> None:
-    """Both toggles on, product already filled but GD blank: the fetched rating
-    must be written, not discarded. The product-filled early-skip used to
-    short-circuit the row before the gd write, burning budget every run with no
-    forward progress."""
-    j = _enriched(product="Real product text", gd_rating="")
-    ctx = _company_ctx(enrich_product=True, enrich_gd_rating=True)
-    calls: list[str] = []
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        calls.append(prompt)
-        return "Acme builds widgets\n4.2"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, stats = enrich_company_descriptions([j], ctx)
-
-    assert len(calls) == 1  # the company is still fetched (gd needed)
-    assert out[0].product == "Real product text"  # existing product untouched
-    assert out[0].gd_rating == "4.2"  # fetched rating now lands
-    assert stats["enriched"] == 1  # counted as real work, not skipped_cached
-
-
-def test_enrich_product_default_writes_both() -> None:
-    """Default (both on) writes product and gd_rating from one 2-line response."""
-    j = _enriched(comp_display="")
-    ctx = _company_ctx()
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        return "Acme builds widgets\n4.1"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, _stats = enrich_company_descriptions([j], ctx)
-
-    assert out[0].product == "Acme builds widgets"
-    assert out[0].gd_rating == "4.1"
-
-
-def test_enrichment_model_and_timeout_reach_company_call() -> None:
-    """enrichment.model + enrich_timeout propagate to the provider invocation.
-
-    The company enricher dispatches through ai_provider.invoke_for; the
-    configured model identifier and per-call timeout must land in that call so
-    a user's `model: sonnet` / `enrich_timeout: 12` actually take effect.
-    """
-    j = _enriched(comp_display="")
-    ctx = _company_ctx(model="sonnet", enrich_timeout=12)
-    seen: list[dict[str, object]] = []
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        seen.append({"provider": provider, "model": model, "timeout": timeout})
-        return "Acme builds widgets\n4.1"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            enrich_company_descriptions([j], ctx)
-
-    assert seen and seen[0]["model"] == "sonnet"
-    assert seen[0]["timeout"] == 12
-    assert seen[0]["provider"] == "claude"
-
-
-# ---------------------------------------------------------------------------
-# GD parse miss: log the miss, and in GD-only mode count it as a failure
-# (finding 2). GD-only enriched stat counts any written field (finding 3).
-# ---------------------------------------------------------------------------
-
-
-def test_gd_parse_miss_logged(caplog) -> None:
-    """A non-empty, non-'unknown' line that yields no rating logs the miss."""
-    import logging
-
-    j = _enriched(comp_display="")
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        return "I am not able to determine that"  # no float, no [0-5].[0-9]
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            with caplog.at_level(logging.INFO, logger="daily_driver"):
-                out, _stats = enrich_company_descriptions([j], ctx)
-
-    misses = [
-        r.getMessage()
-        for r in caplog.records
-        if "gd rating" in r.getMessage().lower() and "Acme" in r.getMessage()
-    ]
-    assert misses, f"expected a GD parse-miss log, got: {caplog.records}"
-    assert out[0].gd_rating == ""  # nothing usable extracted
-
-
-def test_gd_only_parse_miss_counts_as_failure() -> None:
-    """In GD-only mode, a parse miss produced nothing useful -> stats.failed."""
-    j = _enriched(comp_display="")
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        return "no idea, sorry"  # no parseable rating
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            _out, stats = enrich_company_descriptions([j], ctx)
-
-    assert stats["failed"] == 1
-    assert stats["enriched"] == 0
-
-
-def test_gd_only_unknown_is_not_a_failure() -> None:
-    """An honest 'unknown' is a valid answer, not a failure."""
-    j = _enriched(comp_display="")
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        return "unknown"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, stats = enrich_company_descriptions([j], ctx)
-
-    assert stats["failed"] == 0
-    assert out[0].gd_rating == "unknown"
-
-
-def test_gd_only_successful_rating_counts_as_enriched() -> None:
-    """A working GD-only run reports enriched == number of companies (finding 3)."""
-    jobs = [
-        _enriched(company="Acme", url="https://example.com/a", comp_display=""),
-        _enriched(company="Beta", url="https://example.com/b", comp_display=""),
-    ]
-    ctx = _company_ctx(enrich_product=False, enrich_gd_rating=True)
-
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
-        return "4.2"
-
-    with patch("shutil.which", return_value="/usr/bin/claude"):
-        with patch.object(ai_provider, "invoke_for", side_effect=fake_invoke):
-            out, stats = enrich_company_descriptions(jobs, ctx)
-
-    assert stats["enriched"] == 2
-    assert all(j.gd_rating == "4.2" for j in out)

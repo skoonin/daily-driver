@@ -224,7 +224,7 @@ The `jobs.csv` `Status` column shares the tracker's status machinery. The recomm
 Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)).
 
 - `--dry-run` — print matches without writing.
-- `--no-enrich` — append scraped rows but skip all three enrichment phases (detail pages, company products, fit/notes). Fast and cheap; fill later with `jobs backfill`.
+- `--no-enrich` — append scraped rows but skip enrichment (detail pages and fit/notes). Fast and cheap; fill later with `jobs backfill`.
 - `-S` / `--sources a,b,c` — override the enabled set for one run. `--list-sources` prints the names and exits.
 - `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`).
 
@@ -243,11 +243,11 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 
 ### `jobs backfill [-n|--dry-run] [--limit N]`
 
-Re-enriches empty fields (Product/Purpose, GD Rating, Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the overlapped product + fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
+Re-enriches empty fields (Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
 
-- Rows already filled — and rows in a skip status — are left untouched. Counts respect the `enrich_product` / `enrich_gd_rating` toggles (Fit and Notes are one combined need, since a single call fills both).
-- `-n` / `--dry-run` — per-phase would-enrich counts, no LLM calls, no writes.
-- `--limit N` — cap LLM spend by bounding both the product and fit/notes budgets at `N` (minimum 1; default: the configured per-phase caps).
+- Rows already filled — and rows in a skip status — are left untouched. Fit and Notes are one combined need, since a single call fills both.
+- `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
+- `--limit N` — cap LLM spend by bounding the fit/notes budget at `N` (minimum 1; default: the configured per-phase cap).
 - A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
 - Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).
 

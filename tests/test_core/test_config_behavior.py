@@ -87,11 +87,10 @@ _BEHAVIOR_UNTESTED: dict[str, str] = {
     "recurring_tasks.day": "validator-only; covered in test_config_models.py",
 }
 
-# Budget caps (max_enrich_companies / max_enrich_fit) are NOT in the ledger:
-# their behavior is covered in test_typed_enrichers.py (config-default vs
-# 0=no-calls), and the fix/enrich-budget-boundary work owns the budget-param
-# boundary semantics. They pass this guard via name reference; no duplicate cap
-# tests are added here.
+# The budget cap (max_enrich_fit) is NOT in the ledger: its behavior is covered
+# in test_typed_enrichers.py (config-default vs 0=no-calls), and the
+# fit-enrich-budget-boundary work owns the budget-param boundary semantics. It
+# passes this guard via name reference; no duplicate cap tests are added here.
 #
 # scraper.headless is NOT in the ledger either: although orchestrator-overridden
 # in production, test_playwright_browser.py asserts the flag reaches the launch

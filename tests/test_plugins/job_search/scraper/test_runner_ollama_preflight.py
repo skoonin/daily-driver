@@ -125,9 +125,7 @@ def test_preflight_unreachable_skips_llm_but_runs_detail(
     def boom_concurrent(*_a: Any, **_kw: Any) -> Any:
         raise AssertionError("LLM enrichment must not run when ollama is unreachable")
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", boom_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom_concurrent)
 
     rc = runner.run(
         _ollama_plugin(), tmp_path, tmp_path, ai=_ollama_ai(), no_enrich=False
@@ -163,7 +161,7 @@ def test_preflight_unreachable_manifest_zero_enrichment(
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not run")),
     )
 
@@ -172,7 +170,7 @@ def test_preflight_unreachable_manifest_zero_enrichment(
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
     assert manifest["new_jobs"] == 1
     assert manifest["enriched_fit_notes"] == 0
-    assert manifest["enriched_product"] == 0
+    assert "enriched_product" not in manifest
 
 
 def test_preflight_model_missing_skips_with_warning(
@@ -187,7 +185,7 @@ def test_preflight_model_missing_skips_with_warning(
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("must not run")),
     )
 
@@ -209,39 +207,34 @@ def test_preflight_reachable_runs_enrichment_no_warning(
     _spy_list_models(monkeypatch, returns=["qwen2.5:14b"])
     _stub_detail(monkeypatch, [])
 
-    concurrent_calls: list[int] = []
+    fit_calls: list[int] = []
 
-    def fake_concurrent(
+    def fake_fit_notes(
         jobs: list[Any],
         ctx: Any,
         *,
-        product_budget: int = 0,
-        fit_budget: int = 0,
-        product_progress: Any = None,
-        fit_progress: Any = None,
+        budget: int = 0,
+        progress: Any = None,
         flush: Any = None,
         flush_every: int = 25,
         **_kw: Any,
     ) -> Any:
-        concurrent_calls.append(len(jobs))
+        fit_calls.append(len(jobs))
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
     rc = runner.run(
         _ollama_plugin(), tmp_path, tmp_path, ai=_ollama_ai(), no_enrich=False
     )
 
     assert rc == 0
-    assert concurrent_calls == [1]
+    assert fit_calls == [1]
     err = capsys.readouterr().err
     assert "not reachable" not in err.lower()
 
@@ -258,11 +251,10 @@ def test_preflight_uses_short_fixed_timeout(
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (
             _a[0],
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         ),
     )
 
@@ -321,11 +313,10 @@ def test_no_preflight_ping_for_claude_provider(
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (
             _a[0],
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         ),
     )
 
@@ -349,11 +340,10 @@ def test_no_preflight_ping_when_llm_toggles_off(
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
+        "enrich_fit_and_notes",
         lambda *_a, **_kw: (
             _a[0],
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         ),
     )
 
@@ -363,8 +353,6 @@ def test_no_preflight_ping_when_llm_toggles_off(
             "enrichment": {
                 "provider": "ollama",
                 "model": "qwen2.5:14b",
-                "enrich_product": False,
-                "enrich_gd_rating": False,
                 "enrich_fit": False,
                 "enrich_notes": False,
             },

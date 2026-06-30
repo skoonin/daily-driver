@@ -32,8 +32,6 @@ def _write_minimal_csv(path: Path, *, needs_enrichment: bool = True) -> None:
         if not needs_enrichment:
             row["Fit"] = "8"
             row["Notes"] = "done"
-            row["Product/Purpose"] = "SaaS"
-            row["GD Rating"] = "4.0"
         writer.writerow(row)
 
 
