@@ -7,7 +7,6 @@ JSON suitable for piping into a Claude prompt.
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
@@ -98,7 +97,7 @@ def _run_calendar(args: argparse.Namespace, workspace: Workspace) -> int:
             "events": [e.model_dump(mode="json") for e in events],
             "count": len(events),
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2))
+        Console.emit_json(payload)
     else:
         if not events:
             print("(no calendar events)")
@@ -155,7 +154,7 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
             "count": len(commits),
             "repos": [str(r) for r in repos],
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2))
+        Console.emit_json(payload)
     else:
         if not commits:
             scanned = ", ".join(str(r) for r in repos)

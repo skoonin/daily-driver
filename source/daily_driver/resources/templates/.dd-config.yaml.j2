@@ -41,6 +41,13 @@ tracker:
   # normalized (case-folded, underscores -> hyphens), so `ruled_out` and
   # `ruled-out` are the same status.
   # extra_statuses: [waiting, snoozed]
+  # Extra terminal status values, merged with the built-ins (done,
+  # ruled-out, dropped, rejected, closed). Entries in a terminal status
+  # are excluded from `status` stalled detection and `tracker
+  # follow-ups`, so a custom closing state like `cancelled` won't linger
+  # as a false-positive. Spelling is normalized (case-folded, underscores
+  # -> hyphens). Built-in terminal statuses cannot be removed.
+  # terminal_statuses: [cancelled]
   categories:
     task:
       required: [title]
@@ -168,6 +175,18 @@ tracker:
 #     search_paths:
 #       - "~/git"
 
+# Optional: write daily-plan time blocks to a local macOS Calendar
+# (consumed by `calendar sync`, macOS-only). Set `sync_enabled: true`
+# to opt in and name the target calendar.
+# calendar:
+#   # Opt-in switch for `calendar sync`. When false, sync is a clean
+#   # no-op. macOS-only — writes the day's plan time blocks to a local
+#   # Calendar; ignored on other platforms.
+#   sync_enabled: false
+#   # Name of the local macOS Calendar to write plan time blocks into.
+#   # The calendar must already exist in Calendar.app.
+#   plan_calendar_name: "Daily Plan"
+
 # Optional: plugins. Each plugin schema is strict — typos error out.
 # plugins:
 #   job_search:
@@ -241,6 +260,12 @@ tracker:
 #       max_enrich_fit: 50
 #       # Pause between detail-page fetches, in seconds, to avoid rate limits.
 #       detail_delay_seconds: 0.5
+#       # Fetch login-free LinkedIn job pages during enrichment to fill
+#       # missing job descriptions, so the fit/notes pass can write Notes for
+#       # LinkedIn rows. Bounded by max_enrich_fit, fill-missing-only, and
+#       # politely throttled. Anonymous fetches are often redirected to a
+#       # signup wall, so coverage is good-but-partial by nature.
+#       fetch_linkedin_descriptions: false
 #       # Extra things to assess in each job description. Each becomes a
 #       # "Label: value" segment appended to Notes. `assess` is a
 #       # natural-language instruction the LLM reasons about, not a

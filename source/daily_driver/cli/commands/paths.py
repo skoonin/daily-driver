@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import date
 from pathlib import Path
 
@@ -89,7 +88,7 @@ def run(args: argparse.Namespace) -> int:
             "daily_notes": str(daily / f"{when.isoformat()}-notes.md"),
             "daily_state": str(daily_state_path(workspace, when)),
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2))
+        Console.emit_json(payload)
         return 0
 
     if args.kind == "root":

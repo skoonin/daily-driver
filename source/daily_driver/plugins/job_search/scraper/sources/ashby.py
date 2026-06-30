@@ -31,11 +31,18 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
     """
     from daily_driver.plugins.job_search.config import AshbyToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+    from daily_driver.plugins.job_search.scraper.runner import (
+        PartialSourceError,
+        source_toggle,
+    )
 
     boards = source_toggle(ctx.plugin, "ashby", AshbyToggle).ashby_boards
     session = _http_session(ctx)
     jobs: list[dict] = []
+    # Boards whose request failed -> the source is degraded (its result is
+    # incomplete). An all-failed source returns [] otherwise indistinguishable
+    # from a clean "no roles matched"; surfaced after the loop.
+    failed_boards: list[str] = []
 
     # Live progress unit: one board (reported at loop-top so a skipped board
     # still advances the bar).
@@ -51,6 +58,7 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
         api_url = f"https://api.ashbyhq.com/posting-api/job-board/{board}"
         resp = _api_get(session, api_url, ctx, label=f"ashby/{board}")
         if not resp:
+            failed_boards.append(board)
             continue
         data = resp.json()
 
@@ -87,6 +95,14 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
             len(board_jobs),
         )
 
+    if failed_boards:
+        # Incomplete scrape (one or more boards failed) -> degraded, not a clean
+        # run. The gathered jobs ride along and still append.
+        raise PartialSourceError(
+            jobs,
+            f"{len(failed_boards)} of {len(boards)} boards failed: "
+            f"{', '.join(failed_boards)}",
+        )
     return jobs
 
 

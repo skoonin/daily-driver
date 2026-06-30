@@ -106,7 +106,10 @@ def add_parser(
         "--timeout",
         type=int,
         default=180,
-        help="Seconds to wait for Claude before giving up (default: 180)",
+        help=(
+            "Seconds to wait for the Claude route before giving up (default: "
+            "180); the ollama route is bounded by ai.ollama.timeout instead."
+        ),
     )
     add_global_flags(parser)
     return parser
@@ -168,13 +171,15 @@ def run(args: argparse.Namespace) -> int:
             )
         else:
             # Ollama (and any future non-claude provider) has no workspace /
-            # agent / session concept — send the prompt as-is.
+            # agent / session concept — send the prompt as-is. Pass timeout=None
+            # so the ollama route is governed by ai.ollama.timeout; --timeout
+            # bounds only the claude route above (ollama is materially slower).
             output = ai_provider.invoke_for(
                 prompt,
                 provider=provider,
                 model=model,
                 ai=workspace.config.ai,
-                timeout=args.timeout,
+                timeout=None,
             )
     except AITimeoutError as exc:
         Console.error(f"{exc.provider} summary timed out after {exc.timeout_seconds}s")

@@ -15,12 +15,12 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `recurring_tasks` | list | `[]` | |
 | `scheduler` | object or null | null | Freeform; passed to launchd templates |
 | `schedule` | object | empty | day-start / day-end scheduled times |
-| `voice_profile` | object | empty | |
 | `tracker` | object | — | **Required** |
 | `gather` | object | empty | |
 | `claude` | object | empty | |
 | `ai` | object | empty | |
 | `focus` | object | empty | |
+| `calendar` | object | empty | macOS-only daily-plan calendar sync (consumed by `calendar sync`) |
 | `plugins` | object | empty | |
 
 ## `daily_driver`
@@ -52,15 +52,6 @@ Injected into Claude sessions as context.
 | `estimated_minutes` | int or null | no | |
 | `day` | string or null | no | Only valid with `cadence: weekly` |
 
-## `voice_profile`
-
-| Key | Type | Values |
-|-----|------|--------|
-| `formality` | string or null | `formal`, `professional-casual`, `casual` |
-| `sentence_length` | string or null | `short`, `medium`, `long` |
-| `avoid_words` | list[string] | |
-| `preferred_signoff` | string or null | |
-
 ## `tracker` (required)
 
 | Key | Type | Default | Notes |
@@ -69,6 +60,7 @@ Injected into Claude sessions as context.
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
 | `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
 | `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
+| `terminal_statuses` | list[string] | `[]` | Extra terminal (closing) status values, merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled-detection and `tracker follow-ups`, so a custom closing state like `cancelled` won't linger as a false positive. The built-in terminal statuses cannot be removed; values are normalized like other statuses (case-folded, underscores/spaces → hyphens). |
 
 `required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
 
@@ -191,12 +183,20 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 |-----|------|---------|-------|
 | `default_duration` | string | `25m` | Fallback for `focus on` when `--for` is omitted. Accepts `30m`, `2h`, `1h30m`, or bare minutes. |
 
+## `calendar`
+
+macOS-only opt-in for `daily-driver calendar sync`, which writes the day's plan time blocks (the `HH:MM-HH:MM` `time_block` entries in the daily plan) into a local Calendar.app calendar. Omitting the block leaves sync a clean no-op.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `sync_enabled` | bool | false | Opt-in switch for `calendar sync`. While false, sync is a no-op on every platform. macOS-only; ignored on other hosts. |
+| `plan_calendar_name` | string | `Daily Plan` | Name of the local macOS calendar to write plan time blocks into. The calendar must already exist in Calendar.app — sync degrades to a clean no-op if it is missing. |
+
 ## `plugins.job_search`
 
 | Key | Type | Default |
 |-----|------|---------|
 | `persona` | string or null | null |
-| `home_city` | string or null | null |
 | `roles` | list[string] | `[]` |
 | `domain_keywords` | list[string] | `[]` |
 | `seniority_keywords` | list[string] | `[]` |
@@ -258,6 +258,7 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
 | `detail_delay_seconds` | float | 0.5 | |
+| `fetch_linkedin_descriptions` | bool | false | When true, fetches login-free LinkedIn job pages during enrichment to fill missing descriptions, so the fit/notes pass can write Notes for LinkedIn rows. Bounded by `max_enrich_fit`, fill-missing-only, and politely throttled. Anonymous fetches are often redirected to a signup wall, so coverage is good-but-partial by nature |
 | `criteria` | list of `{label, assess}` | `[]` | |
 
 #### `criteria` — the criteria scanner
@@ -296,6 +297,8 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
 | `ashby` | `AshbyToggle` | `ashby_boards` (`[]`) |
+| `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |
+| `workday` | `WorkdayToggle` | `workday_boards` (`[]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
 | `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
 | `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
@@ -364,12 +367,6 @@ user_profile:
   citizenship: [US, CA]
   work_auth: {US: citizen, CA: citizen}
   seeking_since: 2026-04-01
-
-voice_profile:
-  formality: professional-casual
-  sentence_length: medium
-  avoid_words: [utilize, leverage, synergy]
-  preferred_signoff: "Best,"
 
 tracker:
   default_category: task

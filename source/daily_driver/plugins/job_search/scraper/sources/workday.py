@@ -41,11 +41,17 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
     """
     from daily_driver.plugins.job_search.config import WorkdayToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+    from daily_driver.plugins.job_search.scraper.runner import (
+        PartialSourceError,
+        source_toggle,
+    )
 
     boards = source_toggle(ctx.plugin, "workday", WorkdayToggle).workday_boards
     session = _http_session(ctx)
     jobs: list[dict] = []
+    # Boards whose pagination broke off on an HTTP failure -> the source is
+    # degraded (its result is incomplete), surfaced after the loop.
+    degraded_boards: list[str] = []
 
     # Live progress unit: one board (reported at loop-top so a skipped board
     # still advances the bar). Pagination happens within a board.
@@ -125,7 +131,10 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
                     }
                 )
 
-            offset += _PAGE_SIZE
+            # Advance by what the page actually returned, not the requested
+            # _PAGE_SIZE: a short non-final page would otherwise skip the gap
+            # between len(postings) and _PAGE_SIZE and miss those postings.
+            offset += len(postings)
             if total is not None and offset >= total:
                 break
         else:
@@ -139,6 +148,7 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
         matched = len(jobs) - matched_before
         if partial:
             # Loud, not green: this board's result is incomplete by HTTP failure.
+            degraded_boards.append(board.tenant)
             log.warning(
                 "[workday] %s: fetch failed at offset %d; %d matched from %d"
                 " postings seen (PARTIAL board)",
@@ -157,6 +167,15 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
                 seen,
             )
 
+    if degraded_boards:
+        # Signal the orchestrator this scrape is incomplete (kept jobs, but some
+        # boards lost pagination mid-walk) so it reads as degraded, not a clean
+        # run. The gathered jobs ride along on the exception and still append.
+        raise PartialSourceError(
+            jobs,
+            f"{len(degraded_boards)} of {len(boards)} boards returned incomplete "
+            f"results: {', '.join(degraded_boards)}",
+        )
     return jobs
 
 

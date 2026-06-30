@@ -470,6 +470,7 @@ def _overlap_run(
         attempted: dict[str, set[str]] | None = None,
         on_planned: Any = None,
         _reset_hint: bool = True,
+        force: bool = False,
     ) -> Any:
         call[0] += 1
         eligible = [
@@ -1230,6 +1231,105 @@ def test_flush_preserves_preexisting_rows(tmp_path: Path) -> None:
     assert rows[2]["Priority"] == ""
 
 
+def test_csv_row_identity_tolerates_short_rows() -> None:
+    """A jobs.csv row shorter than the header (a hand-edit slip) yields None cell
+    values from csv.DictReader; _csv_row_identity must not crash on them (the H1
+    flush re-reads on-disk rows and would otherwise raise AttributeError mid-run).
+    """
+    # Link present -> URL identity, even with None Company/Role.
+    assert (
+        runner._csv_row_identity(
+            {"Link": "https://x/1", "Company": None, "Role": None}  # type: ignore[dict-item]
+        )
+        == "https://x/1"
+    )
+    # No Link, None Company/Role (row truncated before those cells) -> no crash.
+    ident = runner._csv_row_identity(
+        {"Link": None, "Company": None, "Role": None}  # type: ignore[dict-item]
+    )
+    assert isinstance(ident, str)
+
+
+def test_flush_does_not_clobber_concurrent_prune_and_edit(tmp_path: Path) -> None:
+    """A run-path flush must re-read disk and merge by identity, not replay the
+    stale snapshot captured at run start (audit H1).
+
+    The sentinel lock is released for the long scrape/enrich phase, so a
+    concurrent ``prune`` or hand-edit can change jobs.csv while the run holds an
+    in-memory snapshot. The next flush must NOT resurrect a pruned row or revert
+    a field edit the run did not make.
+    """
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        load_existing_jobs,
+        read_rows,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    seed_rows = [
+        {
+            "Status": "new",
+            "Company": "PruneCo",
+            "Role": "SRE",
+            "Link": "https://old/prune",
+        },
+        {
+            "Status": "new",
+            "Company": "EditCo",
+            "Role": "SRE",
+            "Link": "https://old/edit",
+        },
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER)
+        w.writeheader()
+        w.writerows(seed_rows)
+
+    # Mirror run()'s setup: snapshot dedup state + pre-existing rows under the
+    # initial lock, then build the sink (the run path releases the lock here).
+    known_urls, known_keys, file_header = load_existing_jobs(csv_path)
+    _, preexisting = read_rows(csv_path)
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=file_header,
+        known_urls=known_urls,
+        known_keys=known_keys,
+        plugin=_us_remote_plugin(),
+        preexisting_rows=preexisting,
+    )
+    # This run scrapes one new row, appended to disk immediately.
+    sink.append_source("remoteok", [_scraped("https://new/1", "NewCo")])
+
+    # Concurrent writer (prune + status edit) takes the released lock mid-run:
+    # drop the pruned row and advance the edited row's status, keeping the run's
+    # already-appended row.
+    _, on_disk = read_rows(csv_path)
+    survivors = []
+    for row in on_disk:
+        if (row.get("Link") or "").strip() == "https://old/prune":
+            continue
+        if (row.get("Link") or "").strip() == "https://old/edit":
+            row = {**row, "Status": "applied"}
+        survivors.append(row)
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=file_header)
+        w.writeheader()
+        w.writerows(survivors)
+
+    # The run's next flush must honor the concurrent changes, not overwrite them.
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    links = [r["Link"] for r in rows]
+    assert (
+        "https://old/prune" not in links
+    ), "flush resurrected a concurrently pruned row"
+    assert links == ["https://old/edit", "https://new/1"]
+    edited = next(r for r in rows if r["Link"] == "https://old/edit")
+    assert edited["Status"] == "applied", "flush reverted a concurrent status edit"
+
+
 def test_run_enrichment_flush_preserves_preexisting_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1475,6 +1575,80 @@ def test_run_one_marks_interrupted_finish_when_stop_set() -> None:
     )
     assert not isinstance(out, Exception)
     assert done == [("src", True, "interrupted -- 1 found so far")]
+
+
+def test_run_one_records_degraded_and_keeps_partial_jobs() -> None:
+    """A source raising PartialSourceError is DEGRADED, not failed: ``_run_one``
+    returns the partial jobs carried on the exception (so they still append),
+    fires on_source_degraded with the reason, and finishes the row ok=True with a
+    'degraded' note rather than a clean completion or a failure."""
+    ctx = ScrapeContext(plugin=_us_remote_plugin())
+    done: list[tuple[str, bool, str]] = []
+    degraded: list[tuple[str, str]] = []
+
+    def scraper_fn(_ctx: ScrapeContext) -> list[dict[str, Any]]:
+        raise runner.PartialSourceError(
+            [_scraped("https://a/1", "Acme")], "1 of 2 boards failed: down"
+        )
+
+    out = runner._run_one(
+        "ashby",
+        ctx,
+        on_source_done=lambda sid, ok, detail: done.append((sid, ok, detail)),
+        scraper_fn=scraper_fn,
+        on_source_degraded=lambda sid, reason: degraded.append((sid, reason)),
+    )
+
+    # The partial jobs are returned (NOT the exception), so they still append.
+    assert not isinstance(out, Exception)
+    assert [j["company"] for j in out] == ["Acme"]
+    assert degraded == [("ashby", "1 of 2 boards failed: down")]
+    sid, ok, detail = done[0]
+    assert sid == "ashby"
+    assert ok is True  # degraded is distinct from failed (ok=False)
+    assert "degraded -- 1 found" in detail
+
+
+def test_run_records_degraded_sources_in_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A degraded source (incomplete scrape) lands in the manifest's
+    ``sources_degraded`` -- distinct from ``sources_failed`` -- while its kept
+    rows still persist and the run is not treated as a hard failure."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_source_degraded: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        job = _scraped("https://w/1", "Acme", source="Workday (acme)")
+        # The source completed but its scrape was incomplete -> degraded, kept.
+        on_source_degraded("workday", "1 of 1 boards returned incomplete results")
+        on_source_result("workday", [job])
+        return ([job], [], [("workday", [job])])
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    # Degraded is not a hard failure: exit stays 0 and the row persists.
+    assert rc == 0
+    rows = _read_csv(tmp_path / "jobs.csv")
+    assert [r["Company"] for r in rows] == ["Acme"]
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["sources_degraded"] == ["workday"]
+    assert manifest["sources_failed"] == []
+    # A degraded source is excluded from sources_ok (its scrape is incomplete).
+    assert "workday" not in manifest["sources_ok"]
 
 
 def test_orchestrator_drains_partial_on_first_interrupt(

@@ -253,7 +253,7 @@ Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` validate
 
 | Command | Use |
 |---|---|
-| `paths <kind> [-d DATE] [-j]` | Print a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. |
+| `paths <kind> [-d DATE] [-j]` | Print a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `tracker`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. `-j` emits all paths including the `tracker` key. |
 | `gather calendar [--since SPEC] [--until SPEC] [-j]` | Read macOS Calendar (icalBuddy) events. |
 | `gather git [--repo PATH] [--since SPEC] [--until SPEC] [-j]` | Recent commits from configured repos (or `--repo PATH`). |
 | `status [-j]` | Tracker dashboard. |

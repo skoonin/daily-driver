@@ -56,13 +56,17 @@ def _api_request(
     label: str = "",
     max_retries: int | None = None,
     sleep: Any = time.sleep,
+    headers: dict[str, str] | None = None,
 ) -> requests.Response | None:
     """Issue an HTTP request with retry on 429/503; log + return None on failure.
 
     Shared by `_api_get` / `_api_post`. `max_retries` defaults to
     `scraper.max_retries` from config (3). Honors `Retry-After` when present;
     otherwise applies exponential backoff (1.5s, 3s, 6s, ... capped at 30s).
-    `json`, when given, is sent as the request body. `sleep` is a seam for tests.
+    `json`, when given, is sent as the request body. `headers`, when given,
+    are merged onto the session headers for this request only (e.g. the
+    browser-like set a login-free LinkedIn page expects). `sleep` is a seam for
+    tests.
     """
     timeout = ctx.plugin.scraper.timeout
     retries = ctx.plugin.scraper.max_retries if max_retries is None else max_retries
@@ -71,9 +75,9 @@ def _api_request(
     for attempt in range(retries + 1):
         try:
             if method == "POST":
-                resp = session.post(url, json=json, timeout=timeout)
+                resp = session.post(url, json=json, timeout=timeout, headers=headers)
             else:
-                resp = session.get(url, timeout=timeout)
+                resp = session.get(url, timeout=timeout, headers=headers)
         except requests.RequestException as exc:
             last_exc = exc
             if attempt >= retries:
@@ -119,10 +123,18 @@ def _api_get(
     label: str = "",
     max_retries: int | None = None,
     sleep: Any = time.sleep,
+    headers: dict[str, str] | None = None,
 ) -> requests.Response | None:
     """GET a URL with retry on 429/503; log + return None on terminal failure."""
     return _api_request(
-        session, "GET", url, ctx, label=label, max_retries=max_retries, sleep=sleep
+        session,
+        "GET",
+        url,
+        ctx,
+        label=label,
+        max_retries=max_retries,
+        sleep=sleep,
+        headers=headers,
     )
 
 

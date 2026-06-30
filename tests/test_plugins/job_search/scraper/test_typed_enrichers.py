@@ -7,9 +7,13 @@ contract: new frozen instances out, immutable inputs, skipped-status handling.
 
 from __future__ import annotations
 
+import io
+
 import pytest
+from rich.console import Console as RichConsole
 
 from daily_driver.core.config_models import AIConfig
+from daily_driver.core.progress import RunProgress
 from daily_driver.integrations import ai_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
@@ -518,6 +522,48 @@ def test_fit_on_planned_reports_budget_capped_count(
     jobs = [_enriched(url=f"https://x/{i}", description_text="d") for i in range(5)]
     enrich_fit_and_notes(jobs, ctx, on_planned=planned.append)
     assert planned == [2]
+
+
+def test_fit_set_total_rebases_live_phase_to_budget_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live (non-dry) backfill wiring: once the planner resolves, the Fit phase's
+    denominator is re-based to the budget-capped plan count (``min(needs, cap)``)
+    via ``on_planned=fit_phase.set_total``, while the Detail phase total stays at
+    the full row count. Pins the runner wiring so a future refactor cannot
+    silently revert the bars to showing the whole active-row count.
+    """
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "max_enrich_fit": 2,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
+    )
+    jobs = [_enriched(url=f"https://x/{i}", description_text="d") for i in range(5)]
+
+    # Plain (non-TTY) RunProgress: phases hold their denominator in ``_total``
+    # without opening a live bar, so the re-base is observable directly.
+    console = RichConsole(file=io.StringIO(), force_terminal=False, color_system=None)
+    with RunProgress(console, tty=False) as run_progress:
+        group = run_progress.group("Job backfill")
+        # Both phases are pinned with total=len(jobs) before the plan exists,
+        # mirroring _enrich_wave.
+        detail_phase = group.phase("Detail pages", total=len(jobs))
+        fit_phase = group.phase("Fit and notes", total=len(jobs))
+        # _run_llm_enrichment wires the planner's on_planned to fit_phase.set_total.
+        enrich_fit_and_notes(jobs, ctx, on_planned=fit_phase.set_total)
+
+    assert fit_phase._total == min(len(jobs), 2)  # re-based to budget-capped count
+    assert detail_phase._total == len(jobs)  # full row count, never re-based
 
 
 def test_job_details_short_circuits_when_description_present(

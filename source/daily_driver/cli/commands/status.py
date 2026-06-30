@@ -5,10 +5,8 @@ from __future__ import annotations
 import argparse
 import datetime
 import importlib.resources
-import json
 from typing import Any
 
-from rich.console import Console as RichConsole
 from rich.table import Table
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
@@ -149,7 +147,8 @@ def _detect_setup_gaps(workspace: Any, all_entries: list[Any]) -> list[dict[str,
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.core.tracker import TERMINAL_STATUSES, Tracker
+    from daily_driver.core.statuses import normalize_status
+    from daily_driver.core.tracker import Tracker, terminal_statuses_for
     from daily_driver.core.workspace import WorkspaceError
 
     try:
@@ -159,6 +158,7 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     tracker = Tracker(workspace)
+    terminal_statuses = terminal_statuses_for(workspace.config.tracker)
 
     try:
         all_entries = tracker.list()
@@ -182,7 +182,8 @@ def run(args: argparse.Namespace) -> int:
     stalled = [
         e
         for e in all_entries
-        if e.status not in TERMINAL_STATUSES and _to_utc(e.updated_at) < stale_threshold
+        if normalize_status(e.status) not in terminal_statuses
+        and _to_utc(e.updated_at) < stale_threshold
     ]
 
     # Recent: updated within last 7 days, sorted most-recent first
@@ -205,10 +206,10 @@ def run(args: argparse.Namespace) -> int:
             "recent": [_entry_to_dict(e) for e in recent],
             "setup_gaps": setup_gaps,
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
 
     # --- Setup gaps (printed first so it's visible above the tables) ---
     if setup_gaps:

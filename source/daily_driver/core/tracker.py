@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from daily_driver.core.clock import now, today
+from daily_driver.core.config_models import TrackerConfig
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status, warn_unknown_statuses
@@ -45,10 +46,20 @@ JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
 
 # Terminal lifecycle states (entry won't progress): union across categories.
 # status.py uses this to exclude entries from "stalled"; the job-prune default
-# (jobs_archive.DEFAULT_PRUNE_STATUSES) is the job-terminal subset.
+# (jobs_archive.DEFAULT_PRUNE_STATUSES) is the job-terminal subset. A workspace
+# can extend (never shrink) this set via `tracker.terminal_statuses`; resolve the
+# effective set with `terminal_statuses_for`.
 TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"done", "ruled-out", "dropped", "rejected", "closed"}
 )
+
+
+def terminal_statuses_for(tracker_cfg: TrackerConfig) -> frozenset[str]:
+    """Effective terminal-status set: built-in defaults merged with the
+    workspace's `tracker.terminal_statuses`. Custom values are normalized so they
+    match the normalized status comparison done by callers."""
+    extra = {normalize_status(s) for s in tracker_cfg.terminal_statuses}
+    return TERMINAL_STATUSES | frozenset(extra)
 
 
 def _recommended_for_category(category: str) -> tuple[str, ...]:
@@ -385,11 +396,11 @@ class Tracker:
     # mypy resolves a bare `list` in this return annotation to that method rather
     # than the builtin. typing.List dodges the shadow cleanly.
     def follow_ups(self, *, overdue: bool = False) -> List[TrackerEntry]:
+        terminal = terminal_statuses_for(self._workspace.config.tracker)
         entries = [
             e
             for e in self.load().entries
-            if e.next_action is not None
-            and normalize_status(e.status) not in TERMINAL_STATUSES
+            if e.next_action is not None and normalize_status(e.status) not in terminal
         ]
         if overdue:
             cutoff = today()

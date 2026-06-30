@@ -177,6 +177,45 @@ def test_summary_provider_ollama_routes_through_ai_provider(
     assert seen == {"provider": "ollama", "model": "phi4"}
 
 
+def test_summary_ollama_route_honors_config_timeout_not_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: the ollama route is bounded by ai.ollama.timeout, not --timeout.
+
+    Regression for M2 — every production caller used to pass --timeout to
+    invoke_for, shadowing ai.ollama.timeout end-to-end. With an explicit
+    --timeout 60 on the command line, the ollama client must still receive the
+    configured 137s, not 60.
+    """
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import clipboard, ollama_client
+
+    ws = _init_workspace(tmp_path)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + "\nai:\n  summary:\n    provider: ollama\n    model: phi4\n"
+        + "  ollama:\n    timeout: 137\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    seen: dict[str, object] = {}
+
+    def fake_generate(prompt, *, model, endpoint, timeout, system=None):
+        seen.update(model=model, endpoint=endpoint, timeout=timeout)
+        return "ollama summary\n"
+
+    monkeypatch.setattr(ollama_client, "generate", fake_generate)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "today", "--timeout", "60"])
+
+    assert rc == 0
+    assert seen["timeout"] == 137
+    assert seen["model"] == "phi4"
+
+
 def test_summary_copies_to_clipboard_when_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

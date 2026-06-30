@@ -95,7 +95,10 @@ def add_parser(
         "--timeout",
         type=int,
         default=180,
-        help="Seconds to wait for Claude before giving up (default: 180).",
+        help=(
+            "Seconds to wait for the Claude route before giving up (default: "
+            "180); the ollama route is bounded by ai.ollama.timeout instead."
+        ),
     )
     add_global_flags(parser)
     return parser
@@ -130,11 +133,14 @@ def run(args: argparse.Namespace) -> int:
     )
 
     profile_path = workspace.output_dir / "voice-profile.md"
-    current_profile = (
+    # Read once for prompt context only; the authoritative merge base is re-read
+    # under the lock after the model call (L1), so a concurrent write landing
+    # during the up-to-timeout model call is not clobbered.
+    profile_for_prompt = (
         profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
     )
 
-    prompt = build_prompt(source_files, current_profile=current_profile, mode=mode)
+    prompt = build_prompt(source_files, current_profile=profile_for_prompt, mode=mode)
 
     if args.dry_run:
         Console.info(f"dry-run: would invoke {provider} with {len(prompt)} char prompt")
@@ -152,12 +158,14 @@ def run(args: argparse.Namespace) -> int:
                 timeout=args.timeout,
             )
         else:
+            # Pass timeout=None so the ollama route is governed by
+            # ai.ollama.timeout; --timeout bounds only the claude route above.
             new_content = ai_provider.invoke_for(
                 prompt,
                 provider=provider,
                 model=model,
                 ai=workspace.config.ai,
-                timeout=args.timeout,
+                timeout=None,
             )
     except AITimeoutError as exc:
         Console.error(
@@ -174,29 +182,35 @@ def run(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
 
-    # Append mode: the model returns only new observations; merge them into the
-    # existing document here (it is never regenerated). Replace mode takes the
-    # model's full rewritten profile verbatim.
-    if mode == "append":
-        try:
-            observations = parse_observations(new_content)
-        except VoiceUpdateError as exc:
-            Console.error(str(exc))
-            return 1
-        merged = merge_observations(current_profile, observations)
-        if not observations or merged.strip() == current_profile.strip():
-            Console.info("no new observations found; voice profile unchanged")
-            return 0
-        new_content = merged
-
-    # Normalize to a single trailing newline for consistent file formatting.
-    normalized = new_content.strip() + "\n"
-
+    # Read-modify-write under the lock so the merge base and the write are
+    # atomic against concurrent runs (L1). The sentinel lives under
+    # ephemeral_dir rather than the user-visible output dir (L2), and is a
+    # sentinel — not the data file itself — because apply_update does an
+    # os.replace that would sever a lock held on the original inode.
+    normalized = ""
     try:
-        # Lock a sentinel, not the data file itself: apply_update does an
-        # os.replace, which would sever a lock held on the original inode and
-        # break mutual exclusion between concurrent runs.
-        with file_lock(profile_path.with_suffix(".md.lock")):
+        with file_lock(workspace.ephemeral_dir / "voice-profile.lock"):
+            current_profile = (
+                profile_path.read_text(encoding="utf-8")
+                if profile_path.exists()
+                else ""
+            )
+
+            # Append mode: the model returns only new observations; merge them
+            # into the existing document (it is never regenerated). Replace mode
+            # takes the model's full rewritten profile verbatim.
+            if mode == "append":
+                observations = parse_observations(new_content)
+                merged = merge_observations(current_profile, observations)
+                if not observations or merged.strip() == current_profile.strip():
+                    Console.info("no new observations found; voice profile unchanged")
+                    return 0
+                content = merged
+            else:
+                content = new_content
+
+            # Normalize to a single trailing newline for consistent formatting.
+            normalized = content.strip() + "\n"
             apply_update(
                 profile_path,
                 new_content=normalized,
