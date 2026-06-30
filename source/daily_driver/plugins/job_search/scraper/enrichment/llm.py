@@ -586,6 +586,14 @@ def _build_fit_plan(
     system_prompt = _build_fit_notes_system(
         role_persona, loc_summary, hc, crit_list, context_text, include_remote
     )
+    # The per-job user prompt is logged per call in _fetch_fit_notes_for_job; log
+    # the (identical) system block ONCE here so a -vv trace is complete without
+    # repeating the whole context.md on every job.
+    log.debug(
+        "%s system prompt (sent once, cached across jobs): %r",
+        _enrich_tag("enrich-fit-notes"),
+        system_prompt,
+    )
 
     pool_size = _enrich_pool_size(ctx)
     # Eligible indices preserve input order so budget truncation matches the
@@ -598,20 +606,21 @@ def _build_fit_plan(
     ]
     eligible_count = len(eligible_idx)
     no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
-    if context_text:
-        # context.md rides EVERY eligible job's prompt -- _build_fit_notes_prompt
-        # injects it whenever context is non-empty, regardless of whether the job
-        # has a description, and no-description jobs are still in eligible_idx and
-        # still make a full LLM call. So the projection counts every job that will
-        # be enriched this run (capped by budget); subtracting no-desc jobs would
-        # under-project the real token cost.
+    # Cost warning is provider-specific. On ollama there is no cross-call prompt
+    # cache, so context.md is re-sent and reprocessed in full on every per-job
+    # call -- a large file multiplies input tokens by the job count, so warn. On
+    # the claude path context.md rides the cached system prompt (sent/processed
+    # once per run, then read from cache), so the per-call multiplication does not
+    # apply and no warning is emitted. The projection counts every job that will
+    # be enriched (capped by budget); no-desc jobs still make a full call.
+    if context_text and provider == "ollama":
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
             jobs_to_enrich = min(budget, eligible_count)
             log.warning(
-                "[enrich-fit-notes] context.md is ~%d tokens, injected into ~%d "
-                "enrichment calls this run (~%d input tokens); trim it if that's "
-                "more than you want to spend",
+                "[enrich-fit-notes] context.md is ~%d tokens, sent on each of ~%d "
+                "ollama enrichment calls this run (~%d input tokens); trim it if "
+                "that's more than you want to spend",
                 ctx_tokens,
                 jobs_to_enrich,
                 ctx_tokens * jobs_to_enrich,

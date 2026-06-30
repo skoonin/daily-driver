@@ -89,7 +89,7 @@ def _build_args(
     # caller that sends the SAME system prompt across a rapid batch of headless
     # invocations gets cross-process cache reads of that prefix (and the bundled
     # tool definitions) instead of reprocessing it every call.
-    if system_prompt is not None:
+    if system_prompt:
         args.extend(["--system-prompt", system_prompt])
     # Prompt MUST come before --add-dir: claude's --add-dir is variadic and
     # silently absorbs trailing positionals as extra directories, leaving the
