@@ -41,9 +41,12 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `tracker add` | `--link` | `-l` |
 | `tracker add` | `--note` | `-N` |
 | `tracker add` | `--due` | `-d` |
+| `tracker update` | `--title` | `-T` |
 | `tracker update` | `--status` | `-s` |
-| `tracker update` | `--note` | `-N` |
 | `tracker update` | `--tags` | `-t` |
+| `tracker update` | `--link` | `-l` |
+| `tracker update` | `--note` | `-N` |
+| `tracker update` | `--due` | `-d` |
 | `tracker prune` | `--category` | `-c` |
 | `tracker prune` | `--status` | `-s` |
 | `tracker prune` | `--dry-run` | `-n` |
@@ -143,7 +146,7 @@ Filtered Rich table or JSON. `--since` accepts the same grammar as `tracker prun
 
 ### `tracker follow-ups [--overdue] [--json]`
 
-Entries with a `next_action` set. `--overdue` filters to those with a past `due` date. Primary view for starting a day.
+Entries with a `next_action` set. Entries in a terminal status (`done`, `ruled-out`, and the job-terminal set, plus any `tracker.terminal_statuses`) are excluded. `--overdue` filters to those with a past `due` date. Primary view for starting a day.
 
 ### `tracker stats [--json]`
 
@@ -200,12 +203,12 @@ Generates a period summary non-interactively and copies to clipboard.
 
 ### `voice-update --from PATH [PATH ...]`
 
-Rewrites `voice-profile.md` from writing samples via headless `claude`.
+Updates `voice-profile.md` from writing samples via headless `claude`. Default `--append` merges new observations into the profile by section, preserving existing text; `--replace` rewrites the whole profile from scratch.
 
 | Flag | Notes |
 | --- | --- |
 | `--from PATH` | Required; repeatable; files or directories |
-| `--append` / `--replace` | Default `--append` |
+| `--append` / `--replace` | Default `--append` merges new observations by section; `--replace` rewrites the whole profile |
 | `-n`, `--dry-run` | Validate sources + print target path; no model call or write |
 | `--no-clipboard`, `--timeout`, `--model`, `--session-name` | As above |
 
@@ -291,7 +294,7 @@ Lists configured jobs and whether each plist is currently installed in `~/Librar
 
 ### `paths <kind> [--date YYYY-MM-DD] [--json]`
 
-Prints a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `daily`, `daily-plan`, `daily-notes`, `daily-state`.
+Prints a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `tracker`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. `--json` emits all paths at once, including the `tracker` key (`tracker.yaml`).
 
 ### `gather {calendar,git} [--since|--until|--json]`
 

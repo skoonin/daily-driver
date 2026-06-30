@@ -46,7 +46,10 @@ daily-driver/
 │   │   └── --extra KEY=VALUE (repeatable)
 │   ├── update
 │   │   ├── id (positional)
+│   │   ├── -T, --title TEXT
 │   │   ├── -s, --status STATUS
+│   │   ├── -l, --link URL
+│   │   ├── -d, --due YYYY-MM-DD
 │   │   ├── -N, --note TEXT
 │   │   ├── --next-action TEXT
 │   │   ├── -t, --tags a,b

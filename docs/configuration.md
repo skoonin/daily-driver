@@ -15,7 +15,6 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `recurring_tasks` | list | `[]` | |
 | `scheduler` | object or null | null | Freeform; passed to launchd templates |
 | `schedule` | object | empty | day-start / day-end scheduled times |
-| `voice_profile` | object | empty | |
 | `tracker` | object | — | **Required** |
 | `gather` | object | empty | |
 | `claude` | object | empty | |
@@ -51,15 +50,6 @@ Injected into Claude sessions as context.
 | `cadence` | `daily`\|`weekly`\|`monthly` | yes | |
 | `estimated_minutes` | int or null | no | |
 | `day` | string or null | no | Only valid with `cadence: weekly` |
-
-## `voice_profile`
-
-| Key | Type | Values |
-|-----|------|--------|
-| `formality` | string or null | `formal`, `professional-casual`, `casual` |
-| `sentence_length` | string or null | `short`, `medium`, `long` |
-| `avoid_words` | list[string] | |
-| `preferred_signoff` | string or null | |
 
 ## `tracker` (required)
 
@@ -196,7 +186,6 @@ Directories to scan recursively for git checkouts. Paths may be absolute or tild
 | Key | Type | Default |
 |-----|------|---------|
 | `persona` | string or null | null |
-| `home_city` | string or null | null |
 | `roles` | list[string] | `[]` |
 | `domain_keywords` | list[string] | `[]` |
 | `seniority_keywords` | list[string] | `[]` |
@@ -296,6 +285,8 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
 | `ashby` | `AshbyToggle` | `ashby_boards` (`[]`) |
+| `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |
+| `workday` | `WorkdayToggle` | `workday_boards` (`[]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
 | `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
 | `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
@@ -364,12 +355,6 @@ user_profile:
   citizenship: [US, CA]
   work_auth: {US: citizen, CA: citizen}
   seeking_since: 2026-04-01
-
-voice_profile:
-  formality: professional-casual
-  sentence_length: medium
-  avoid_words: [utilize, leverage, synergy]
-  preferred_signoff: "Best,"
 
 tracker:
   default_category: task

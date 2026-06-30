@@ -33,6 +33,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **`daily-driver help` lists every `jobs` subcommand**: the commands reference summarized `jobs` as `(run, status, prune)`, omitting `backfill` and `promote`. It now names all five (`run, backfill, promote, status, prune`).
+
 - **`gather calendar` no longer drops the end time of timed events**: a single-line dated range from icalBuddy (e.g. `2026-04-21 10:00 - 11:00`) captured only the start, leaving `end` empty for every real timed event. The parser now recovers the second time on the line — whether a bare `HH:MM` or a repeated full datetime — so events carry their duration.
 
 - **`ai.ollama.timeout` now actually bounds ollama `summary` and `voice-update` runs**: the configured ollama timeout was silently ignored because both commands always passed their `--timeout` value (default 180s) down the dispatch path, shadowing the knob. The ollama route is now governed by `ai.ollama.timeout` (giving slower local models the headroom the knob promises), while `--timeout` still bounds the claude route; the `--timeout` help text now names both routes. `voice-update` also reads, merges, and writes the profile entirely under its lock — closing a window where a concurrent edit landing during the model call could be lost — and its lock sentinel moved out of the user-visible output directory into the workspace state directory.
