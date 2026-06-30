@@ -73,6 +73,9 @@ def test_doctor_exits_0_when_all_checks_ok(
     assert "Python version" in combined
     assert "dep:pydantic" in combined
     assert "Workspace drift" in combined
+    # Table-stream convention: the results table renders to STDOUT, not STDERR.
+    assert "Python version" in captured.out
+    assert "Workspace drift" in captured.out
 
 
 def test_doctor_exits_0_with_drifted_workspace(

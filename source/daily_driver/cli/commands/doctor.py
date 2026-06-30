@@ -62,7 +62,12 @@ def run(args: argparse.Namespace) -> int:
     from daily_driver.core.doctor import reset, run_checks
     from daily_driver.core.workspace import WorkspaceError
 
-    console = RichConsole(stderr=True)
+    # Table-stream convention: data tables render to STDOUT (the central user
+    # console) so a script can pipe them; status/action lines stay on the STDERR
+    # log console. doctor's results table previously went to stderr, the lone
+    # outlier vs status/tracker/jobs.
+    table_console = Console.get_user_console()
+    log_console = Console.get_log_console()
 
     try:
         workspace = resolve_workspace(args)
@@ -79,7 +84,7 @@ def run(args: argparse.Namespace) -> int:
 
     if args.reset:
         reset(workspace)
-        console.print("[green]✓[/green] workspace regenerated from package data")
+        log_console.print("[green]✓[/green] workspace regenerated from package data")
         return 0
 
     if args.fix:
@@ -87,7 +92,7 @@ def run(args: argparse.Namespace) -> int:
         from daily_driver.core.doctor import _run_plugin_fixers
 
         results = run_checks(workspace)
-        _render_table(results, console)
+        _render_table(results, table_console)
 
         # Mirror core.doctor.fix(): only run generate when a drift /
         # contract violation is present.
@@ -105,18 +110,20 @@ def run(args: argparse.Namespace) -> int:
         results = run_checks(workspace)
 
         if action is not None:
-            console.print(
+            log_console.print(
                 f"\n[bold]Action:[/bold] regenerated {action.n_written} file"
                 f"{'s' if action.n_written != 1 else ''} "
                 f"(preserved {action.n_preserved} user-edited)"
             )
         if repaired:
-            console.print(f"\n[bold]Action:[/bold] ran fixer for {', '.join(repaired)}")
-        console.print("\n[bold]After fix:[/bold]")
-        _render_table(results, console)
+            log_console.print(
+                f"\n[bold]Action:[/bold] ran fixer for {', '.join(repaired)}"
+            )
+        log_console.print("\n[bold]After fix:[/bold]")
+        _render_table(results, table_console)
         return 0 if all(r.status in ("OK", "WARNING") for r in results) else 1
 
     # Default: check and report.
     results = run_checks(workspace)
-    _render_table(results, console)
+    _render_table(results, table_console)
     return 0 if all(r.status != "ERROR" for r in results) else 1

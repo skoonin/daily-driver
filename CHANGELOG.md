@@ -25,6 +25,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Changed
 
+- **`doctor` renders its results table to stdout**: the check-results table previously went to stderr, the lone outlier against `status`, `tracker`, and `jobs` (which all put data tables on stdout). It now follows the single table-stream convention — data tables to stdout, status/action lines to stderr — so `daily-driver doctor | ...` captures the table.
+
 - **BREAKING: company-info enrichment removed — `jobs.csv` drops two columns and enrichment is now a single fit/notes pass.** The Product/Purpose and GD Rating columns are gone (the header falls from 15 to 13 columns), and with them the entire per-company enrichment pass: the `plugins.job_search.enrichment.enrich_product`, `enrich_gd_rating`, and `max_enrich_companies` config knobs and the `company_info` provider/model route are removed (an `extra="forbid"` config rejects them). Enrichment now runs one LLM pass — `fit_notes` (Fit, Notes, remote judgment, criteria) — instead of two. Older `jobs.csv` files keep loading; the two dropped columns are not carried forward on the next rewrite. No compat shim — workspace configs that set the removed knobs must drop them.
 
 - **`voice-update --append` now merges only new observations instead of regenerating the whole profile**: append mode asks the model for just the new, non-redundant observations (as structured section/bullet items) and merges them into the existing `voice-profile.md` deterministically — each bullet added under its matching section, with new sections created as needed and duplicates skipped. Existing content is never regenerated, removing the failure mode where the model subtly altered or summarized the profile while "preserving" it. If the samples reveal nothing new, the profile is left untouched; unparseable model output is rejected with the original intact. `--replace` (full rewrite) is unchanged. (#122)
@@ -32,6 +34,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 - **`tracker follow-ups` hides finished work**: entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, `closed`) are excluded from `follow-ups` even when they still carry a next action, so the list reflects only work that can still progress. (#115)
 
 ### Fixed
+
+- **`init` summary survives `-q`**: the post-scaffold summary (`Initialized workspace at ... / Created / Skipped / Generated`) was emitted via `Console.info`, which quiet mode silences — so `daily-driver init -q` confirmed nothing was written. The summary is now a write-confirmation that prints regardless of `-q` (still on stderr).
 
 - **`daily-driver help` lists every `jobs` subcommand**: the commands reference summarized `jobs` as `(run, status, prune)`, omitting `backfill` and `promote`. It now names all five (`run, backfill, promote, status, prune`).
 

@@ -133,6 +133,28 @@ def test_first_init_summary_lists_created_artifacts(
     assert ".dd-config.yaml" in out
 
 
+def test_init_summary_survives_quiet_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The scaffold summary is a write-confirmation: -q must NOT silence it.
+
+    Console.info/success both suppress under quiet, so init writes the summary
+    straight to the stderr log console to keep the confirmation visible.
+    """
+    from daily_driver.core.console import Console
+
+    Console.setup_for_user(quiet=True, verbose=False, no_color=True)
+    try:
+        rc = run(_args(str(tmp_path)))
+    finally:
+        Console.setup_for_user(quiet=False, verbose=False, no_color=False)
+
+    assert rc == 0
+    out = capsys.readouterr().err
+    assert "Initialized workspace at" in out
+    assert ".dd-config.yaml" in out
+
+
 def test_partial_reinit_creates_missing_files(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
