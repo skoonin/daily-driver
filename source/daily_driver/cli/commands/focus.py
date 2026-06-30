@@ -161,7 +161,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     if not lock.exists():
         if emit_json:
             payload = {"enabled": False, "started_at": None, "reason": None}
-            print(json.dumps({"schema": 1, "data": payload}, indent=2))
+            Console.emit_json(payload)
         else:
             console.print("not in focus mode")
         return 0
@@ -179,7 +179,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             lock.unlink(missing_ok=True)
         if emit_json:
             payload = {"enabled": False, "started_at": None, "reason": None}
-            print(json.dumps({"schema": 1, "data": payload}, indent=2))
+            Console.emit_json(payload)
         else:
             console.print("Focus mode expired")
         return 0
@@ -195,7 +195,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             "started_at": data.get("start_iso"),
             "reason": reason,
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2))
+        Console.emit_json(payload)
     else:
         console.print("Focus mode: Active")
         console.print(f"Until: {end_hm} ({remaining}m remaining)")

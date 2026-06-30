@@ -668,9 +668,12 @@ def test_jobs_run_json_list_sources_emits_json_array(
     rc = app(["--workspace", str(ws), "jobs", "run", "--json", "--list-sources"])
 
     assert rc == 0
+    # Wrapped in the standard {"schema": 1, "data": ...} envelope like every
+    # other --json surface; the source list is the data payload.
     payload = json.loads(capsys.readouterr().out)
-    assert "remoteok" in payload
-    assert "jobspy" not in payload
+    assert payload["schema"] == 1
+    assert "remoteok" in payload["data"]
+    assert "jobspy" not in payload["data"]
 
 
 # ---------------------------------------------------------------------------

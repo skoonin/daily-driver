@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import importlib.resources
-import json
 from typing import Any
 
 from rich.table import Table
@@ -207,7 +206,7 @@ def run(args: argparse.Namespace) -> int:
             "recent": [_entry_to_dict(e) for e in recent],
             "setup_gaps": setup_gaps,
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
 
     console = Console.get_user_console()

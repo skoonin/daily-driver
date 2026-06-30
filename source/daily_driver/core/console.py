@@ -13,6 +13,7 @@ JSON/structured data payloads that belong on stdout should still use plain
 
 from __future__ import annotations
 
+import json
 import sys
 from typing import Literal
 
@@ -121,6 +122,18 @@ class Console:
             cls._setup_consoles()
         assert cls._user_console is not None
         return cls._user_console
+
+    @classmethod
+    def emit_json(cls, data: object) -> None:
+        """Print the ``{"schema": 1, "data": data}`` envelope to stdout.
+
+        Single source of truth for every ``--json`` surface so the shape stays
+        uniform: schema-1 envelope, ``indent=2``, and ``default=str`` so a
+        ``date``/``Path`` in the payload serializes rather than raising
+        ``TypeError``. A plain ``print`` (not the Rich console) keeps stdout a
+        clean machine-readable JSON channel, independent of quiet mode.
+        """
+        print(json.dumps({"schema": 1, "data": data}, indent=2, default=str))
 
     # ------------------------------------------------------------------ #
     # Output methods

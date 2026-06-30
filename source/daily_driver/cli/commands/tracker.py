@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import json
 from typing import Any
 
 from rich.console import Console as RichConsole
@@ -416,7 +415,7 @@ def _run_prune(args: argparse.Namespace, tracker: Any) -> int:
             "removed": [_entry_to_dict(e) for e in removed],
             "count": len(removed),
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
 
     if not removed:
@@ -439,13 +438,7 @@ def _run_show(args: argparse.Namespace, tracker: Any) -> int:
         Console.error(exc.args[0])
         return 1
     if getattr(args, "json", False):
-        print(
-            json.dumps(
-                {"schema": 1, "data": {"entry": _entry_to_dict(entry)}},
-                indent=2,
-                default=str,
-            )
-        )
+        Console.emit_json({"entry": _entry_to_dict(entry)})
         return 0
     console = Console.get_user_console()
     table = Table(show_header=False, box=None, title=f"Entry {entry.id}")
@@ -491,7 +484,7 @@ def _run_list(args: argparse.Namespace, tracker: Any) -> int:
             "count": len(entries),
             "category_filter": args.category,
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
     console = Console.get_user_console()
     _render_entries_table(entries, console)
@@ -505,7 +498,7 @@ def _run_follow_ups(args: argparse.Namespace, tracker: Any) -> int:
             "items": [_entry_to_dict(e) for e in entries],
             "count": len(entries),
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
     console = Console.get_user_console()
     _render_entries_table(entries, console)
@@ -515,7 +508,7 @@ def _run_follow_ups(args: argparse.Namespace, tracker: Any) -> int:
 def _run_stats(args: argparse.Namespace, tracker: Any) -> int:
     stats = tracker.stats()
     if getattr(args, "json", False):
-        print(json.dumps({"schema": 1, "data": stats}, indent=2, default=str))
+        Console.emit_json(stats)
         return 0
     console = Console.get_user_console()
     table = Table(show_header=True, header_style="bold", title="Tracker Stats")

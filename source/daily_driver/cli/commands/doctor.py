@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +66,7 @@ def _emit_json(mode: str, results: list[Any], exit_code: int) -> None:
         "checks": _results_payload(results),
         "exit_code": exit_code,
     }
-    print(json.dumps({"schema": 1, "data": payload}, indent=2))
+    Console.emit_json(payload)
 
 
 def _render_table(results: list[Any], console: RichConsole) -> None:

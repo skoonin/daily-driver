@@ -13,8 +13,6 @@ scannable.
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from typing import Any
 
 from rich.console import Console as RichConsole
@@ -210,7 +208,7 @@ def _build_payload(workspace: Any | None) -> dict[str, Any]:
 
 
 def _emit_json(payload: dict[str, Any]) -> None:
-    print(json.dumps({"schema": 1, "data": payload}, indent=2))
+    Console.emit_json(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -317,10 +315,7 @@ def run(args: argparse.Namespace) -> int:
             # Topic JSON: same envelope, but data scoped to the topic key
             # plus its peer (e.g. statuses includes recommended/in_use/consumers).
             scoped: dict[str, Any] = {topic: payload[topic]}
-            print(
-                json.dumps({"schema": 1, "data": scoped}, indent=2),
-                file=sys.stdout,
-            )
+            _emit_json(scoped)
         return 0
 
     console = Console.get_user_console()

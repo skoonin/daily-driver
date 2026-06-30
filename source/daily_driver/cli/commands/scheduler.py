@@ -112,7 +112,6 @@ def _run_uninstall(args: argparse.Namespace) -> int:
 
 
 def _run_status(args: argparse.Namespace) -> int:
-    import json as _json
 
     from rich.table import Table
 
@@ -148,7 +147,7 @@ def _run_status(args: argparse.Namespace) -> int:
         )
 
     if getattr(args, "json", False):
-        print(_json.dumps({"schema": 1, "data": rows}, indent=2))
+        Console.emit_json(rows)
         return 0
 
     console = Console.get_user_console()

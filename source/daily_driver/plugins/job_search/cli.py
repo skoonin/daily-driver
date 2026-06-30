@@ -60,9 +60,10 @@ def add_parser(
         action="store_true",
         default=False,
         help=(
-            "After the run, emit the run-manifest JSON (jobs-last-run.json) to "
-            "stdout for scripting. Suppresses the live progress block; "
-            "diagnostics still go to stderr. Not combinable with --dry-run."
+            "After the run, emit the run manifest to stdout for scripting, "
+            'wrapped as {"schema": 1, "data": <manifest>} (read e.g. '
+            ".data.new_jobs). Suppresses the live progress block; diagnostics "
+            "still go to stderr. Not combinable with --dry-run."
         ),
     )
     p_run.add_argument(
@@ -259,9 +260,9 @@ def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         Console.warning(f"could not read run manifest {manifest_path}: {exc}")
-        print(json.dumps({"schema": 1, "data": None}))
+        Console.emit_json(None)
         return
-    print(json.dumps({"schema": 1, "data": manifest}, indent=2))
+    Console.emit_json(manifest)
 
 
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
@@ -277,7 +278,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         if getattr(args, "json", False):
             # --json owns stdout for jq; emit the source list as a JSON array
             # rather than bare lines so a --json consumer never gets plain text.
-            print(json.dumps(sorted(SCRAPERS)))
+            Console.emit_json(sorted(SCRAPERS))
         else:
             for sid in sorted(SCRAPERS):
                 print(sid)
@@ -386,7 +387,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             emit_json=emit_json,
         )
         if emit_json:
-            print(json.dumps({"schema": 1, "data": summary}, indent=2, default=str))
+            Console.emit_json(summary)
         return 0
     except KeyboardInterrupt:
         # run_backfill already saved partial progress and printed the backup path.
@@ -485,7 +486,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
             "candidates": candidates,
             "archived": archived,
         }
-        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        Console.emit_json(payload)
         return 0
 
     console = Console.get_user_console()
@@ -526,7 +527,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
     emit_json = getattr(args, "json", False)
     if emit_json:
-        print(json.dumps({"schema": 1, "data": status}, indent=2))
+        Console.emit_json(status)
         return 0
 
     console = Console.get_user_console()
