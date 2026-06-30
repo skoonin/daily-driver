@@ -195,6 +195,20 @@ def dedup_key(company: str, role: str) -> str:
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
 
 
+def _csv_row_identity(row: dict[str, str]) -> str:
+    """Stable identity for a jobs.csv row: stripped Link URL, else dedup key.
+
+    Mirrors the append-time dedup boundary (URL primary, ``(company, role)``
+    fallback) so a row's identity is the same whether it is held in memory as an
+    ``EnrichedJob`` or read back as a raw CSV dict. Used by ``_JobSink.flush`` to
+    merge this run's rows against the current on-disk rows by identity.
+    """
+    url = (row.get("Link") or "").strip()
+    if url:
+        return url
+    return dedup_key(row.get("Company", ""), row.get("Role", ""))
+
+
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
 # so downstream consumers see one canonical value.
 _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
@@ -836,7 +850,7 @@ class _JobSink:
             return dict(counts)
 
     def flush(self) -> None:
-        """Rewrite jobs.csv -- ``preexisting_rows`` then ``rows`` -- through the
+        """Rewrite jobs.csv -- carried non-run rows then ``rows`` -- through the
         one backfill rewrite path.
 
         Snapshot AND rewrite happen under one held ``_rows_lock`` + ``file_lock``
@@ -844,6 +858,16 @@ class _JobSink:
         reading the rows and writing them out). The locks are held only for the
         rewrite, never across the slow LLM calls that produced the updates, so a
         concurrent prune/backfill is serialized but not starved.
+
+        On the run path the sentinel lock was released for the long scrape/enrich
+        phase, so the rows that existed at run start may have changed since. Each
+        flush therefore RE-READS the current on-disk rows under the held lock and
+        keeps the ones that are not this run's -- so a row a concurrent ``prune``
+        or hand-edit removed stays removed and a field edit this run did not make
+        survives -- then layers this run's enriched rows on top by identity (Link
+        URL, falling back to the ``(company, role)`` dedup key). backfill keeps the
+        sentinel lock for its whole lifecycle, so it replays its in-memory
+        ``preexisting_rows`` directly without a re-read.
 
         Unknown / hand-added columns are carried through POSITIONALLY via
         ``row_extras`` (aligned 1:1 with ``rows``), not keyed by Link: every row
@@ -863,9 +887,35 @@ class _JobSink:
             snapshot = list(self.rows)
             extras_snapshot = list(self.row_extras)
             out_header = self.header + self.extra_columns
-            # Pre-existing file rows lead, field-for-field; this run's rows follow
-            # in append order, so the rewrite preserves the on-disk layout.
-            out_rows: list[dict[str, str]] = list(self.preexisting_rows)
+            if self._external_lock_held:
+                # backfill holds the sentinel lock for its whole lifecycle, so the
+                # ``preexisting_rows`` snapshot can't have gone stale under it.
+                leading_rows: list[dict[str, str]] = list(self.preexisting_rows)
+            else:
+                # run path: the sentinel lock was RELEASED for the minutes-long
+                # scrape/enrich phase, so the snapshot captured at run start may be
+                # stale -- a concurrent prune/hand-edit could have removed or
+                # changed rows since. Re-read the current on-disk rows under the
+                # held flush lock and keep every row that is NOT one of this run's
+                # rows. A row a concurrent writer removed stays removed; a field
+                # edit this run did not make survives; this run's enriched rows are
+                # layered on top below by append order. (The run's own appended
+                # rows are already on disk -- exclude them by identity so the
+                # in-memory enriched version wins instead of being duplicated.)
+                _, on_disk_rows = read_rows(self.csv_path)
+                run_identities = {
+                    ident
+                    for job in snapshot
+                    if (ident := _csv_row_identity(job.to_csv_row()))
+                }
+                leading_rows = [
+                    row
+                    for row in on_disk_rows
+                    if _csv_row_identity(row) not in run_identities
+                ]
+            # Carried rows lead, field-for-field; this run's rows follow in append
+            # order, so the rewrite preserves the on-disk layout.
+            out_rows: list[dict[str, str]] = list(leading_rows)
             for i, job in enumerate(snapshot):
                 csv_row = job.to_csv_row()
                 if i < len(extras_snapshot):

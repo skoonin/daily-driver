@@ -1231,6 +1231,86 @@ def test_flush_preserves_preexisting_rows(tmp_path: Path) -> None:
     assert rows[2]["Priority"] == ""
 
 
+def test_flush_does_not_clobber_concurrent_prune_and_edit(tmp_path: Path) -> None:
+    """A run-path flush must re-read disk and merge by identity, not replay the
+    stale snapshot captured at run start (audit H1).
+
+    The sentinel lock is released for the long scrape/enrich phase, so a
+    concurrent ``prune`` or hand-edit can change jobs.csv while the run holds an
+    in-memory snapshot. The next flush must NOT resurrect a pruned row or revert
+    a field edit the run did not make.
+    """
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        load_existing_jobs,
+        read_rows,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    seed_rows = [
+        {
+            "Status": "new",
+            "Company": "PruneCo",
+            "Role": "SRE",
+            "Link": "https://old/prune",
+        },
+        {
+            "Status": "new",
+            "Company": "EditCo",
+            "Role": "SRE",
+            "Link": "https://old/edit",
+        },
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER)
+        w.writeheader()
+        w.writerows(seed_rows)
+
+    # Mirror run()'s setup: snapshot dedup state + pre-existing rows under the
+    # initial lock, then build the sink (the run path releases the lock here).
+    known_urls, known_keys, file_header = load_existing_jobs(csv_path)
+    _, preexisting = read_rows(csv_path)
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=file_header,
+        known_urls=known_urls,
+        known_keys=known_keys,
+        plugin=_us_remote_plugin(),
+        preexisting_rows=preexisting,
+    )
+    # This run scrapes one new row, appended to disk immediately.
+    sink.append_source("remoteok", [_scraped("https://new/1", "NewCo")])
+
+    # Concurrent writer (prune + status edit) takes the released lock mid-run:
+    # drop the pruned row and advance the edited row's status, keeping the run's
+    # already-appended row.
+    _, on_disk = read_rows(csv_path)
+    survivors = []
+    for row in on_disk:
+        if (row.get("Link") or "").strip() == "https://old/prune":
+            continue
+        if (row.get("Link") or "").strip() == "https://old/edit":
+            row = {**row, "Status": "applied"}
+        survivors.append(row)
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=file_header)
+        w.writeheader()
+        w.writerows(survivors)
+
+    # The run's next flush must honor the concurrent changes, not overwrite them.
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    links = [r["Link"] for r in rows]
+    assert (
+        "https://old/prune" not in links
+    ), "flush resurrected a concurrently pruned row"
+    assert links == ["https://old/edit", "https://new/1"]
+    edited = next(r for r in rows if r["Link"] == "https://old/edit")
+    assert edited["Status"] == "applied", "flush reverted a concurrent status edit"
+
+
 def test_run_enrichment_flush_preserves_preexisting_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

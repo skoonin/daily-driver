@@ -31,6 +31,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **`jobs run` no longer reverts a concurrent `prune` or hand-edit**: a run releases the workspace lock for the long scrape/enrich phase, so a `jobs prune` (or a hand-edit of `jobs.csv`) during that window could be silently undone — pruned rows came back and status edits were reverted — because each save replayed the row snapshot captured at run start. Saves now re-read `jobs.csv` under the lock and merge by identity (Link URL, falling back to company/role), so rows another command removed stay removed and field edits the run did not make survive, while this run's enrichment is layered on top.
+
 - **Calendar gather no longer collapses the whole calendar into one event**: `gather calendar` (and the calendar context behind `day-start` / `check-in`) split events on blank lines, but icalBuddy 1.10.x with the app's flags prints events with no blank line between them — so every event was merged into a single garbage entry. Events are now grouped by their unindented title line, which parses each event correctly and also keeps a wrapped multi-line location attached to its event. (#123)
 
 - **`voice-update` no longer risks clobbering your voice profile**: the default `--append` mode now backs up the existing `voice-profile.md` to `.bak` before writing (previously only `--replace` did), and it refuses to write when the model returns content materially shorter than the current profile — the failure mode that silently replaced a full profile with a short summary. A backup, lock, or write error now reports a clear message and leaves the original profile untouched, instead of surfacing a raw traceback. (#114)
