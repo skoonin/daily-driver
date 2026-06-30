@@ -64,6 +64,7 @@ def _build_args(
     session_persistence: bool = True,
     session_id: str | None = None,
     resume_session_id: str | None = None,
+    system_prompt: str | None = None,
 ) -> list[str]:
     if session_id is not None and resume_session_id is not None:
         raise ValueError("session_id and resume_session_id are mutually exclusive")
@@ -83,6 +84,13 @@ def _build_args(
         args.extend(["--resume", resume_session_id])
     if model:
         args.extend(["--model", model])
+    # --system-prompt REPLACES the default system prompt with a fully-static
+    # block. Claude Code prompt-caches the system prompt server-side, so a
+    # caller that sends the SAME system prompt across a rapid batch of headless
+    # invocations gets cross-process cache reads of that prefix (and the bundled
+    # tool definitions) instead of reprocessing it every call.
+    if system_prompt is not None:
+        args.extend(["--system-prompt", system_prompt])
     # Prompt MUST come before --add-dir: claude's --add-dir is variadic and
     # silently absorbs trailing positionals as extra directories, leaving the
     # prompt empty. Symptom (review §8): "Input must be provided either through
@@ -108,11 +116,15 @@ def invoke(
     session_persistence: bool = True,
     session_id: str | None = None,
     resume_session_id: str | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """Invoke the `claude` CLI and return its stdout.
 
     Stdout/stderr are captured -- suitable for headless / scripted use.
     For TTY-attached interactive sessions, use `spawn_interactive` instead.
+
+    ``system_prompt`` replaces the default system prompt (``--system-prompt``);
+    pass a STABLE value across a batch to get server-side prompt-cache reuse.
     """
     args = _build_args(
         prompt,
@@ -124,6 +136,7 @@ def invoke(
         session_persistence=session_persistence,
         session_id=session_id,
         resume_session_id=resume_session_id,
+        system_prompt=system_prompt,
     )
 
     try:

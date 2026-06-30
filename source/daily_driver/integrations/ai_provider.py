@@ -115,6 +115,7 @@ def invoke_for(
     model: str | None,
     ai: AIConfig,
     timeout: int | None = None,
+    system: str | None = None,
 ) -> str:
     """Dispatch a headless prompt to the resolved `provider` / `model` route.
 
@@ -122,6 +123,11 @@ def invoke_for(
     enrichers from `plugins.job_search.enrichment`); `ai` supplies the shared
     provider-connection blocks (`ai.claude` tuning, `ai.ollama` endpoint /
     timeout).
+
+    ``system`` is a static system prompt. Routed to claude's ``--system-prompt``
+    (which Claude Code prompt-caches server-side, so a stable value across a
+    batch is read from cache rather than reprocessed) and to ollama's native
+    ``system`` field. Keep it byte-identical across a batch for cache reuse.
 
     Failure normalization:
         - All provider errors (auth, rate-limit, HTTP error, model-not-found,
@@ -144,6 +150,7 @@ def invoke_for(
                 session_persistence=False,
                 model=model,
                 timeout=timeout,
+                system_prompt=system,
             )
         except claude_cli.ClaudeInvocationError as exc:
             raise AIInvocationError(
@@ -171,6 +178,7 @@ def invoke_for(
             model=model,
             endpoint=ai_cfg.ollama.endpoint,
             timeout=effective_timeout,
+            system=system,
         )
     except (
         ollama_client.OllamaNotReachableError,

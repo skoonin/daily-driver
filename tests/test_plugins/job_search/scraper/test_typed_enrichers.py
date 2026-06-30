@@ -207,18 +207,63 @@ def test_persona_and_home_city_reach_fit_prompt(
         }
     )
     ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
-    prompts: list[str] = []
+    systems: list[str] = []
 
     def fake_invoke(prompt, *a, **k):
-        prompts.append(prompt)
+        # persona + home_city now live in the cached system prompt, not the
+        # per-job user prompt.
+        systems.append(k.get("system") or "")
         return '{"fit": 6, "notes": "x"}'
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     enrich_fit_and_notes([_enriched(description_text="desc")], ctx, budget=5)
 
-    assert prompts
-    assert "Staff Data Engineer" in prompts[0]
-    assert "Berlin, Germany" in prompts[0]
+    assert systems
+    assert "Staff Data Engineer" in systems[0]
+    assert "Berlin, Germany" in systems[0]
+
+
+def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The static block is sent as a byte-identical system prompt for every job
+    (so Claude Code prompt-caches it), while the per-job posting rides the user
+    prompt. This is the whole point of the split -- a varying system prompt would
+    defeat the cache."""
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "persona": "Staff SRE",
+            "locations": {"home_city": "Vancouver, BC"},
+            "enrichment": {
+                "provider": "ollama",
+                "model": "qwen2.5:14b",
+                "max_enrich_fit": 5,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    calls: list[tuple[str, str]] = []
+
+    def fake_invoke(prompt, *a, **k):
+        calls.append((k.get("system") or "", prompt))
+        return '{"fit": 6, "notes": "x"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [
+        _enriched(company="Acme", url="https://x/1", description_text="d1"),
+        _enriched(company="Bravo", url="https://x/2", description_text="d2"),
+    ]
+    enrich_fit_and_notes(jobs, ctx, budget=5)
+
+    assert len(calls) == 2
+    # Identical system prompt across both jobs (cache-stable).
+    assert calls[0][0] == calls[1][0]
+    assert "Staff SRE" in calls[0][0]
+    # Per-job content lives in the user prompt, not the system prompt.
+    assert "Acme" in calls[0][1] and "Acme" not in calls[0][0]
+    assert "Bravo" in calls[1][1]
+    assert calls[0][1] != calls[1][1]
 
 
 def test_fit_budget_zero_makes_no_calls_despite_config_cap(

@@ -64,6 +64,19 @@ def test_generate_format_json_flag_plumbed() -> None:
     assert post.call_args.kwargs["json"]["format"] == "json"
 
 
+def test_generate_system_plumbed_into_body() -> None:
+    with patch.object(ollama_client.requests, "post") as post:
+        post.return_value = _fake_response(200, {"response": "ok"})
+        ollama_client.generate(
+            "p",
+            model="m",
+            endpoint="http://localhost:11434",
+            timeout=10,
+            system="STATIC SYSTEM",
+        )
+    assert post.call_args.kwargs["json"]["system"] == "STATIC SYSTEM"
+
+
 def test_generate_404_raises_model_not_found() -> None:
     with patch.object(ollama_client.requests, "post") as post:
         post.return_value = _fake_response(404)

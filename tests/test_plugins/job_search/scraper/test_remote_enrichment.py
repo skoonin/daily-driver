@@ -49,31 +49,32 @@ def _ctx(**enrichment: object) -> ScrapeContext:
 
 class TestRemotePromptGating:
     def test_remote_requested_in_prompt_when_toggle_on(self, monkeypatch) -> None:
-        prompts: list[str] = []
+        # The remote instruction lives in the (cached) system prompt now.
+        systems: list[str] = []
 
         def fake(prompt, *a, **k):
-            prompts.append(prompt)
+            systems.append(k.get("system") or "")
             return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
 
         monkeypatch.setattr(ai_provider, "invoke_for", fake)
         j = _enriched(description_text="Hybrid SRE role")
         out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
-        assert prompts and "remote" in prompts[0].lower()
+        assert systems and '"remote"' in systems[0]
         assert out[0].remote == "hybrid"
 
     def test_remote_not_requested_or_written_when_toggle_off(self, monkeypatch) -> None:
-        prompts: list[str] = []
+        systems: list[str] = []
 
         def fake(prompt, *a, **k):
-            prompts.append(prompt)
+            systems.append(k.get("system") or "")
             # The model returns remote anyway; with the toggle off it is ignored.
             return '{"fit": 7, "notes": "k8s", "remote": "remote"}'
 
         monkeypatch.setattr(ai_provider, "invoke_for", fake)
         j = _enriched(description_text="desc")
         out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=False), budget=5)
-        # Prompt must not request a remote field, and nothing is written.
-        assert prompts and '"remote"' not in prompts[0]
+        # The system prompt must not request a remote field, and nothing is written.
+        assert systems and '"remote"' not in systems[0]
         assert out[0].remote == ""
 
     def test_zero_extra_calls_with_toggle_on(self, monkeypatch) -> None:
