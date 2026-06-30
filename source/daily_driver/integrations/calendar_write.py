@@ -85,7 +85,7 @@ def available() -> bool:
         return True
     log.warning(
         "calendar: osascript not found on PATH; skipping calendar write. "
-        "See docs/dev/developer.md 'Calendar (write) setup'."
+        "See the calendar settings in docs/configuration.md."
     )
     return False
 
@@ -130,8 +130,8 @@ def write_day(
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()[:200]
         log.warning(
-            "calendar: osascript exited %d; stderr=%r. See docs/dev/developer.md "
-            "'Calendar (write) setup' for permission steps.",
+            "calendar: osascript exited %d; stderr=%r. See the calendar settings "
+            "in docs/configuration.md for permission steps.",
             result.returncode,
             stderr,
         )
