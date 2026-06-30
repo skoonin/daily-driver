@@ -115,6 +115,15 @@ def add_parser(
             "(minimum 1; default: the configured cap)"
         ),
     )
+    p_backfill.add_argument(
+        "--force-update",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-enrich every active row and OVERWRITE its Fit, Notes, and Remote "
+            "(default: fill missing cells only). Still bounded by --limit"
+        ),
+    )
     add_global_flags(p_backfill)
     p_backfill.set_defaults(func=_run_backfill)
 
@@ -354,6 +363,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             context_text=context_text,
             dry_run=args.dry_run,
             limit=args.limit,
+            force=args.force_update,
         )
         return 0
     except KeyboardInterrupt:

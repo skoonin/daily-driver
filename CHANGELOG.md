@@ -6,6 +6,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
+- **`jobs backfill --force-update`**: re-enriches every active row and OVERWRITES its Fit, Notes, and Remote, instead of the default fill-missing-only behavior that only touches empty cells. Useful after editing `context.md` or your roles when you want existing scores refreshed. Rows in a skip status (`skipped`) are still left untouched, and the pass remains bounded by `--limit` / the configured `max_enrich_fit` cap. `--dry-run` reports the would-overwrite count.
+
 - **Workday board source**: a new `workday` scraper source pulls postings from any company's Workday careers site via its public search API. Each entry under `plugins.job_search.sources.workday.workday_boards` names the three parts of a Workday URL (`tenant`, `host`, `site`) plus an optional `company` display-name override; the source paginates the board and filters to your configured roles. Enable it with `enabled: true`, or select it on a single run with `jobs run -S workday`. (#121)
 
 - **Workable board source**: a new `workable` scraper source pulls postings from any company's Workable account via the public widget API (`apply.workable.com/<slug>`). List the company slugs under `plugins.job_search.sources.workable.workable_accounts` (e.g. `huggingface`); each account is fetched in one request and filtered to your configured roles, mirroring the Greenhouse and Ashby sources. Enable it with `enabled: true`, or select it on a single run with `jobs run -S workable`. (#120)

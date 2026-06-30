@@ -470,6 +470,7 @@ def _overlap_run(
         attempted: dict[str, set[str]] | None = None,
         on_planned: Any = None,
         _reset_hint: bool = True,
+        force: bool = False,
     ) -> Any:
         call[0] += 1
         eligible = [

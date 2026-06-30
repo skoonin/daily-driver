@@ -210,6 +210,32 @@ def test_jobs_backfill_limit_defaults_none(tmp_path: Path) -> None:
     assert mock_backfill.call_args.kwargs.get("limit") is None
 
 
+def test_jobs_backfill_force_update_passes_through(tmp_path: Path) -> None:
+    """`--force-update` propagates as force=True to run_backfill."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill", "--force-update"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("force") is True
+
+
+def test_jobs_backfill_force_update_defaults_false(tmp_path: Path) -> None:
+    """Without --force-update, run_backfill receives force=False (fill-missing-only)."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("force") is False
+
+
 def test_jobs_backfill_limit_zero_rejected(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

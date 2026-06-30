@@ -1292,6 +1292,7 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 def _backfill_needs(
     jobs: list[EnrichedJob],  # noqa: F821
     plugin: JobSearchPlugin,
+    force: bool = False,
 ) -> dict[str, int]:
     """Per-phase counts of rows the enricher WOULD actually touch.
 
@@ -1304,7 +1305,8 @@ def _backfill_needs(
       nothing-to-do short-circuit speak in those terms. The count is gated on
       BOTH ``enrich_fit`` and ``enrich_notes``: the fit pass refuses to run
       unless both are on, so a disabled axis reports zero need rather than
-      over-reporting work the pass would never do.
+      over-reporting work the pass would never do. Under ``force`` every active
+      row counts (the enricher re-enriches and overwrites all of them).
 
     Used by the dry-run report and the start-of-run short-circuit.
     """
@@ -1316,7 +1318,7 @@ def _backfill_needs(
     cfg = plugin.enrichment
     active = [j for j in jobs if _active(j)]
     fit_notes = (
-        sum(1 for j in active if _fit_notes_eligible(j))
+        sum(1 for j in active if _fit_notes_eligible(j, force=force))
         if (cfg.enrich_fit and cfg.enrich_notes)
         else 0
     )
@@ -1335,6 +1337,7 @@ def run_backfill(
     context_text: str = "",
     dry_run: bool = False,
     limit: int | None = None,
+    force: bool = False,
 ) -> None:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
 
@@ -1346,6 +1349,9 @@ def run_backfill(
 
     The enricher itself skips already-filled fields and ENRICH_SKIP-status
     rows, so handing the whole row list to the wave enriches only the empties.
+    ``force`` (``--force-update``) instead re-enriches EVERY active row and
+    OVERWRITES its Fit, Notes, and Remote, still bounded by ``limit`` and the
+    fit budget cap.
 
     ``limit`` caps LLM spend this invocation by bounding the fit budget at
     ``limit`` (``None`` = the config cap; the CLI rejects ``limit < 1``).
@@ -1386,10 +1392,11 @@ def run_backfill(
     if dry_run:
         _, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
-        needs = _backfill_needs(jobs, plugin)
+        needs = _backfill_needs(jobs, plugin, force=force)
         skipped = len(jobs) - needs["rows"]
+        verb = "re-enrich (overwrite)" if force else "need"
         Console.info(
-            f"Backfill dry-run: {needs['fit_notes']} need Fit/Notes "
+            f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
             f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
         )
         # The needs counts are the FULL backlog; one pass spends at most the
@@ -1457,7 +1464,7 @@ def run_backfill(
                 ", ".join(extra_columns),
             )
 
-        needs = _backfill_needs(jobs, plugin)
+        needs = _backfill_needs(jobs, plugin, force=force)
         skipped = len(jobs) - needs["rows"]
         log.info(
             "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes",
@@ -1520,6 +1527,7 @@ def run_backfill(
                     wave_label="",
                     run_preflight=True,
                     fit_budget=fit_budget,
+                    force=force,
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -1633,6 +1641,7 @@ def _run_llm_enrichment(
     fit_budget: int | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    force: bool = False,
 ) -> dict[str, int]:
     """Run the fit/notes LLM pass, flushing as it goes.
 
@@ -1673,6 +1682,7 @@ def _run_llm_enrichment(
             flush=sink.flush_periodic,
             exclude_urls=exclude_fit_urls,
             attempted=attempted,
+            force=force,
         )
     else:
         fn_stats = _empty_fit_stats()
@@ -1699,6 +1709,7 @@ def _enrich_wave(
     set_phase: Callable[[str], None] | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    force: bool = False,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1707,9 +1718,10 @@ def _enrich_wave(
     own phase rows -- the honest two-wave UI. ``fit_budget`` is this wave's
     remaining slice of the shared running total (None = the config cap; an
     explicit 0 spends nothing). ``set_phase`` records the coarse run phase for
-    the manifest. Flushes per phase and on the periodic hook; the caller's
-    try/except flushes once more on interrupt. Returns
-    ``(detail_stats, fn_stats)``.
+    the manifest. ``force`` re-enriches and overwrites every active row's
+    Fit/Notes/Remote (backfill --force-update). Flushes per phase and on the
+    periodic hook; the caller's try/except flushes once more on interrupt.
+    Returns ``(detail_stats, fn_stats)``.
     """
     from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
@@ -1747,6 +1759,7 @@ def _enrich_wave(
         fit_budget=fit_budget,
         exclude_fit_urls=exclude_fit_urls,
         attempted=attempted,
+        force=force,
     )
     return detail_stats, fn_stats
 
