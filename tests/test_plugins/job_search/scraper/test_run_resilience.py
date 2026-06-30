@@ -1231,6 +1231,25 @@ def test_flush_preserves_preexisting_rows(tmp_path: Path) -> None:
     assert rows[2]["Priority"] == ""
 
 
+def test_csv_row_identity_tolerates_short_rows() -> None:
+    """A jobs.csv row shorter than the header (a hand-edit slip) yields None cell
+    values from csv.DictReader; _csv_row_identity must not crash on them (the H1
+    flush re-reads on-disk rows and would otherwise raise AttributeError mid-run).
+    """
+    # Link present -> URL identity, even with None Company/Role.
+    assert (
+        runner._csv_row_identity(
+            {"Link": "https://x/1", "Company": None, "Role": None}  # type: ignore[dict-item]
+        )
+        == "https://x/1"
+    )
+    # No Link, None Company/Role (row truncated before those cells) -> no crash.
+    ident = runner._csv_row_identity(
+        {"Link": None, "Company": None, "Role": None}  # type: ignore[dict-item]
+    )
+    assert isinstance(ident, str)
+
+
 def test_flush_does_not_clobber_concurrent_prune_and_edit(tmp_path: Path) -> None:
     """A run-path flush must re-read disk and merge by identity, not replay the
     stale snapshot captured at run start (audit H1).

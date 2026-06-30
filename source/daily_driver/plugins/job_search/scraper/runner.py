@@ -228,7 +228,10 @@ def _csv_row_identity(row: dict[str, str]) -> str:
     url = (row.get("Link") or "").strip()
     if url:
         return url
-    return dedup_key(row.get("Company", ""), row.get("Role", ""))
+    # csv.DictReader fills missing trailing cells with None for a row shorter
+    # than the header (a hand-edit slip), so coerce to str -- dedup_key lower()s
+    # its inputs and would otherwise raise AttributeError on None mid-flush.
+    return dedup_key(row.get("Company") or "", row.get("Role") or "")
 
 
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
