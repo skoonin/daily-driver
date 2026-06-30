@@ -38,7 +38,9 @@ def _run_sync(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import WorkspaceError
     from daily_driver.integrations import calendar_write
 
-    console = Console.get_user_console()
+    # Status/action lines only (no data payload), so they belong on the stderr
+    # log console per the output convention -- and are quiet-gated like other
+    # status output.
     try:
         workspace = resolve_workspace(args)
     except WorkspaceError as exc:
@@ -46,31 +48,31 @@ def _run_sync(args: argparse.Namespace) -> int:
         return 1
 
     if not workspace.config.calendar.sync_enabled:
-        console.print(
-            "[dim]Calendar sync is disabled."
-            " Set `calendar.sync_enabled: true` in .dd-config.yaml to enable.[/dim]"
+        Console.info(
+            "Calendar sync is disabled. Set `calendar.sync_enabled: true` "
+            "in .dd-config.yaml to enable (see the calendar settings in "
+            "docs/configuration.md)."
         )
         return 0
 
     today = clock.today()
     events = read_plan_time_blocks(_plan_path(workspace, today), day=today)
     if not events:
-        console.print("[dim]No plan time blocks to sync.[/dim]")
+        Console.info("No plan time blocks to sync.")
         return 0
 
     calendar_name = workspace.config.calendar.plan_calendar_name
     result = calendar_write.write_day(calendar_name, today, events)
     if not result.ok:
         # Best-effort: a write failure must not abort the day-start flow.
-        console.print(
-            f"[yellow]Calendar sync skipped: {result.reason}.[/yellow]"
-            " See docs/dev/developer.md 'Calendar (write) setup'."
+        Console.warning(
+            f"Calendar sync skipped: {result.reason}. See the calendar "
+            "settings in docs/configuration.md."
         )
         return 0
 
-    console.print(
-        f"[green]Synced {result.written} time block(s)"
-        f" to calendar '{calendar_name}'.[/green]"
+    Console.success(
+        f"Synced {result.written} time block(s) to calendar '{calendar_name}'."
     )
     return 0
 

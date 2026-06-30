@@ -81,7 +81,9 @@ def test_calendar_sync_writes_events(
             notes="daily-plan:2026-06-30",
         )
     ]
-    assert "Synced 1" in capsys.readouterr().out
+    # Status/action lines go to the stderr log console (the output convention),
+    # not stdout.
+    assert "Synced 1" in capsys.readouterr().err
 
 
 def test_calendar_sync_disabled_is_no_op(
@@ -97,7 +99,7 @@ def test_calendar_sync_disabled_is_no_op(
 
     assert rc == 0
     mock_write.assert_not_called()
-    assert "disabled" in capsys.readouterr().out.lower()
+    assert "disabled" in capsys.readouterr().err.lower()
 
 
 def test_calendar_sync_no_time_blocks_is_no_op(
@@ -113,7 +115,7 @@ def test_calendar_sync_no_time_blocks_is_no_op(
 
     assert rc == 0
     mock_write.assert_not_called()
-    assert "No plan time blocks" in capsys.readouterr().out
+    assert "No plan time blocks" in capsys.readouterr().err
 
 
 def test_bare_calendar_prints_usage_and_returns_2(

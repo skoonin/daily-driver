@@ -164,7 +164,10 @@ def fetch_linkedin_descriptions(
             log.warning("[linkedin] %s: parse failed: %s", url, exc)
             details = {}
         desc = details.get("description_text", "") or ""
-        if desc and not out[i].description_text:
+        # Match the top-of-loop skip gate (which uses .strip()): a whitespace-only
+        # existing description must not block the fill, or this row would be
+        # fetched every run yet never written.
+        if desc and not out[i].description_text.strip():
             out[i] = out[i].with_updates(description_text=desc)
             stats["filled"] += 1
         if progress is not None:

@@ -142,4 +142,4 @@ def write_day(
     return CalendarWriteResult(ok=True, written=len(events))
 
 
-__all__ = ["CalendarWriteResult", "write_day", "available"]
+__all__ = ["CalendarWriteResult", "write_day"]
