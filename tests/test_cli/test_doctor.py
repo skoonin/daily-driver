@@ -128,6 +128,45 @@ def test_doctor_exits_1_when_required_dep_missing(
     assert rc == 1
 
 
+def test_doctor_json_emits_envelope_with_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`doctor --json` emits a {schema, data} envelope with per-check results and
+    the overall exit intent, and renders no Rich table to stdout."""
+    import json
+
+    import daily_driver.core.doctor as doctor_module
+    from daily_driver.cli.cli import app
+    from daily_driver.core.doctor import CheckResult
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+
+    def fake_checks(workspace):
+        return [
+            CheckResult(
+                name="dep:fake", status="ERROR", detail="missing", fix_hint="x"
+            ),
+            CheckResult(name="Python version", status="OK", detail="3.11"),
+        ]
+
+    monkeypatch.setattr(doctor_module, "run_checks", fake_checks)
+
+    rc = app(["--workspace", str(ws), "doctor", "--json"])
+    assert rc == 1
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["schema"] == 1
+    assert payload["data"]["mode"] == "check"
+    assert payload["data"]["exit_code"] == 1
+    names = [c["name"] for c in payload["data"]["checks"]]
+    assert names == ["dep:fake", "Python version"]
+    assert payload["data"]["checks"][0]["status"] == "ERROR"
+
+
 def test_doctor_on_empty_dir_errors_with_no_workspace(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

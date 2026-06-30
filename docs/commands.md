@@ -50,6 +50,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `tracker prune` | `--category` | `-c` |
 | `tracker prune` | `--status` | `-s` |
 | `tracker prune` | `--dry-run` | `-n` |
+| `tracker prune` | `--json` | `-j` |
 | `tracker show` | `--json` | `-j` |
 | `tracker list` | `--category` | `-c` |
 | `tracker list` | `--status` | `-s` |
@@ -62,10 +63,12 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `jobs run` | `--sources` | `-S` |
 | `jobs run` | `--dry-run` | `-n` |
 | `jobs run` | `--json` | `-j` |
+| `jobs backfill` | `--json` | `-j` |
 | `jobs promote` | `--dry-run` | `-n` |
 | `jobs status` | `--json` | `-j` |
 | `jobs prune` | `--status` | `-s` |
 | `jobs prune` | `--dry-run` | `-n` |
+| `jobs prune` | `--json` | `-j` |
 | `paths` | `--date` | `-d` |
 | `paths` | `--json` | `-j` |
 | `gather calendar` | `--json` | `-j` |
@@ -84,9 +87,9 @@ Capitals are used where a lowercase letter is already taken on the same subparse
 
 Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten (the previous contents are preserved as `.dd-config.yaml.bak`). `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
 
-### `doctor [--fix | --reset]`
+### `doctor [--fix | --reset] [-j | --json]`
 
-Runs contract + dependency checks. `--fix` and `--reset` are mutually exclusive. Exit 1 on any ERROR; WARNING exits 0. `--reset` requires a workspace. `--fix` prints an action log of every repair it performs (created file, restored permission, regenerated managed file) so the change set is auditable.
+Runs contract + dependency checks. `--fix` and `--reset` are mutually exclusive. Exit 1 on any ERROR; WARNING exits 0. `--reset` requires a workspace. `--fix` prints an action log of every repair it performs (created file, restored permission, regenerated managed file) so the change set is auditable. `--json` emits a `{schema, data}` envelope whose `data` carries the run `mode` (`check`/`fix`/`reset`), the per-check results (`name`, `status`, `detail`, `fix_hint`), and the overall `exit_code` (the results table is suppressed).
 
 ### `status [-j | --json]`
 
@@ -132,9 +135,9 @@ Same flags as `add`. `--note` **appends** (joined with newlines). `--tags` **rep
 
 Removes a single entry by ID. Exit 1 if the ID is unknown.
 
-### `tracker prune [--category|--status|--older-than SPEC] [-n|--dry-run]`
+### `tracker prune [--category|--status|--older-than SPEC] [-n|--dry-run] [-j|--json]`
 
-Bulk-delete entries matching all provided filters. At least one filter is required (no-filter prune is refused with exit 2). `--older-than` accepts `today`, `yesterday`, `week`, `month`, `quarter`, `year`, `Nd`/`Nw`/`Nm`/`Ny`, or `YYYY-MM-DD`. `--dry-run` lists candidates without deleting.
+Bulk-delete entries matching all provided filters. At least one filter is required (no-filter prune is refused with exit 2). `--older-than` accepts `today`, `yesterday`, `week`, `month`, `quarter`, `year`, `Nd`/`Nw`/`Nm`/`Ny`, or `YYYY-MM-DD`. `--dry-run` lists candidates without deleting. `--json` emits the matched/removed entry set (`dry_run`, `removed`, `count`) in the `{schema, data}` envelope.
 
 ### `tracker show ID [--json]`
 
@@ -229,7 +232,7 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 - `--dry-run` — print matches without writing.
 - `--no-enrich` — append scraped rows but skip enrichment (detail pages and fit/notes). Fast and cheap; fill later with `jobs backfill`.
 - `-S` / `--sources a,b,c` — override the enabled set for one run. `--list-sources` prints the names and exits.
-- `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`).
+- `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, wrapped in the standard `{"schema": 1, "data": <manifest>}` envelope (read e.g. `.data.new_jobs`), with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`); an unreadable manifest emits `{"schema": 1, "data": null}`.
 
 **Resilience.** `jobs run` writes as it works, so an interrupt keeps what finished:
 
@@ -244,13 +247,14 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 
 > **VS Code integrated terminal**: a frozen copy of the live block left in scrollback is VS Code's DOM renderer mishandling scroll-region repaints, not the program. Set `terminal.integrated.gpuAcceleration` to `"auto"` (or `"on"`) to fix it. iTerm2 and tmux are unaffected.
 
-### `jobs backfill [-n|--dry-run] [--limit N]`
+### `jobs backfill [-n|--dry-run] [--limit N] [-j|--json]`
 
 Re-enriches empty fields (Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
 
 - Rows already filled — and rows in a skip status — are left untouched. Fit and Notes are one combined need, since a single call fills both.
 - `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
 - `--limit N` — cap LLM spend by bounding the fit/notes budget at `N` (minimum 1; default: the configured per-phase cap).
+- `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `elapsed_seconds`; `dry_run` adds `fit_cap`) in the `{schema, data}` envelope, with the live progress block suppressed.
 - A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
 - Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).
 
@@ -270,9 +274,9 @@ Promotes a `jobs.csv` row into a tracker `job` entry once it needs active drivin
 
 Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment.
 
-### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run]`
+### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run] [-j|--json]`
 
-Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`.
+Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`. `--json` emits the candidate/archived set (`dry_run`, `candidates`, `archived`) in the `{schema, data}` envelope.
 
 ## Scheduler (macOS)
 

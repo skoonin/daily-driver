@@ -103,6 +103,18 @@ class Console:
         return cls.get_log_console().is_terminal
 
     @classmethod
+    def live_progress_enabled(cls, *, suppress: bool = False) -> bool:
+        """Whether a live progress display should render for long-running work.
+
+        Single source of truth for the ``is_tty() and not quiet and not json``
+        gate every progress call site shares: live bars animate only when stderr
+        is an animatable TTY, quiet mode is off, and the caller is not
+        suppressing live output (``suppress=True`` for ``--json``, which owns
+        stdout and must stay free of progress frames).
+        """
+        return cls.is_tty() and not cls.quiet_mode and not suppress
+
+    @classmethod
     def get_user_console(cls) -> rich_console.Console:
         """Return the stdout console."""
         if cls._user_console is None:

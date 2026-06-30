@@ -74,3 +74,24 @@ def test_log_console_is_stderr():
 def test_user_console_is_stdout():
     uc = Console.get_user_console()
     assert uc.stderr is False
+
+
+def test_live_progress_enabled_gates_on_tty_quiet_and_suppress(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The shared gate is is_tty() AND not quiet AND not suppress."""
+    monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: True))
+
+    Console.quiet_mode = False
+    assert Console.live_progress_enabled() is True
+    # --json (suppress) forces it off even on an animatable TTY.
+    assert Console.live_progress_enabled(suppress=True) is False
+
+    # Quiet mode forces it off.
+    Console.quiet_mode = True
+    assert Console.live_progress_enabled() is False
+    Console.quiet_mode = False
+
+    # A non-animatable stderr forces it off regardless of the other flags.
+    monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: False))
+    assert Console.live_progress_enabled() is False

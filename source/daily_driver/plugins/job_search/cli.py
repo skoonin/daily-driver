@@ -124,6 +124,16 @@ def add_parser(
             "(default: fill missing cells only). Still bounded by --limit"
         ),
     )
+    p_backfill.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help=(
+            "Emit the completion summary as JSON. Suppresses the live progress "
+            "block; diagnostics still go to stderr."
+        ),
+    )
     add_global_flags(p_backfill)
     p_backfill.set_defaults(func=_run_backfill)
 
@@ -194,6 +204,13 @@ def add_parser(
         action="store_true",
         help="Print prune candidates without writing to disk",
     )
+    p_prune.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit the candidate/archived set as JSON instead of a Rich table",
+    )
     add_global_flags(p_prune)
     p_prune.set_defaults(func=_run_prune)
 
@@ -228,22 +245,23 @@ def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
     completion (``interrupted=False``) or a Ctrl-C / SIGTERM / crash
     (``interrupted=True``). ``--json`` is mutually exclusive with ``--dry-run``
     (which writes no manifest), so under ``--json`` a manifest always exists; we
-    read it back and re-emit it so stdout carries the machine-readable result
-    while the runner's diagnostics stayed on stderr.
+    read it back and re-emit it wrapped in the standard ``{"schema", "data"}``
+    envelope (the on-disk manifest becomes ``data``) so stdout carries the
+    machine-readable result while the runner's diagnostics stayed on stderr.
 
-    If the manifest is unreadable (an I/O error, not the dry-run case) emit an
-    empty object so a scripted consumer still gets valid JSON, and warn on stderr
-    naming the path so "unreadable" is distinguishable from "nothing to report".
+    If the manifest is unreadable (an I/O error or a corrupt body, not the
+    dry-run case) emit the envelope with ``data: null`` so a scripted consumer
+    still gets valid JSON, and warn on stderr naming the path so "unreadable" is
+    distinguishable from "nothing to report".
     """
     manifest_path = output_dir / "jobs-last-run.json"
     try:
-        payload = manifest_path.read_text(encoding="utf-8")
-    except OSError as exc:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
         Console.warning(f"could not read run manifest {manifest_path}: {exc}")
-        print(json.dumps({}))
+        print(json.dumps({"schema": 1, "data": None}))
         return
-    # Pass the file through as-is so the on-disk manifest and stdout never drift.
-    print(payload.rstrip("\n"))
+    print(json.dumps({"schema": 1, "data": manifest}, indent=2))
 
 
 def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
@@ -352,10 +370,11 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
     plugin, ai, context_text = resolved
     csv_path = workspace.output_dir / "jobs.csv"
     ephemeral_dir = workspace.ephemeral_dir
+    emit_json = getattr(args, "json", False)
 
     sigterm_prev = install_sigterm_handler()
     try:
-        run_backfill(
+        summary = run_backfill(
             plugin,
             csv_path,
             ephemeral_dir,
@@ -364,7 +383,10 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             dry_run=args.dry_run,
             limit=args.limit,
             force=args.force_update,
+            emit_json=emit_json,
         )
+        if emit_json:
+            print(json.dumps({"schema": 1, "data": summary}, indent=2, default=str))
         return 0
     except KeyboardInterrupt:
         # run_backfill already saved partial progress and printed the backup path.
@@ -424,7 +446,6 @@ def _run_promote(args: argparse.Namespace, workspace) -> int:  # type: ignore[no
 
 
 def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from rich.console import Console as RichConsole
     from rich.table import Table
 
     from daily_driver.core.dates import parse_since
@@ -457,7 +478,17 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         dry_run=args.dry_run,
     )
 
-    console = RichConsole(stderr=False)
+    emit_json = getattr(args, "json", False)
+    if emit_json:
+        payload = {
+            "dry_run": args.dry_run,
+            "candidates": candidates,
+            "archived": archived,
+        }
+        print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
+        return 0
+
+    console = Console.get_user_console()
     if not candidates:
         console.print("[dim]No rows match prune criteria.[/dim]")
         return 0
@@ -486,7 +517,6 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
 
 
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from rich.console import Console as RichConsole
     from rich.table import Table
 
     from daily_driver.plugins.job_search.scraper_status import build_status
@@ -499,7 +529,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         print(json.dumps({"schema": 1, "data": status}, indent=2))
         return 0
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
 
     last_run = status["last_run"]
     if last_run is None:

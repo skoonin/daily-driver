@@ -171,6 +171,36 @@ def test_jobs_run_rejects_backfill_flag(
     assert "backfill" in err and "unrecognized" in err
 
 
+def test_jobs_backfill_json_emits_summary_envelope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--json` wraps the run_backfill summary in the {schema, data} envelope and
+    passes emit_json through to the runner."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    summary = {
+        "dry_run": False,
+        "rows": 3,
+        "skipped": 1,
+        "needs_before": 2,
+        "needs_after": 0,
+        "enriched": 2,
+        "elapsed_seconds": 1.5,
+    }
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run_backfill", return_value=summary
+    ) as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill", "--json"])
+
+    assert rc == 0
+    assert mock_backfill.call_args.kwargs.get("emit_json") is True
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert payload["data"] == summary
+
+
 def test_jobs_backfill_dry_run_passes_flag(tmp_path: Path) -> None:
     """`-n/--dry-run` propagates as dry_run=True to run_backfill."""
     from daily_driver.cli.cli import app
@@ -502,8 +532,9 @@ def test_jobs_run_json_suppresses_live_and_emits_manifest(
     _, kwargs = mock_run.call_args
     assert kwargs.get("suppress_live") is True
     payload = json.loads(capsys.readouterr().out)
-    assert payload["new_jobs"] == 4
-    assert payload["phase_reached"] == "complete"
+    assert payload["schema"] == 1
+    assert payload["data"]["new_jobs"] == 4
+    assert payload["data"]["phase_reached"] == "complete"
 
 
 def test_jobs_run_without_json_does_not_suppress_live(tmp_path: Path) -> None:
@@ -525,9 +556,9 @@ def test_jobs_run_without_json_does_not_suppress_live(tmp_path: Path) -> None:
 def test_emit_run_manifest_unreadable_warns_and_prints_empty(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An unreadable manifest emits an empty JSON object on stdout AND a stderr
-    warning naming the path, so a consumer can tell "I/O error" from "nothing
-    to report"."""
+    """An unreadable manifest emits the envelope with data null on stdout AND a
+    stderr warning naming the path, so a consumer can tell "I/O error" from
+    "nothing to report"."""
     from daily_driver.core.console import Console
     from daily_driver.plugins.job_search.cli import _emit_run_manifest
 
@@ -536,7 +567,7 @@ def test_emit_run_manifest_unreadable_warns_and_prints_empty(
     _emit_run_manifest(tmp_path)
 
     captured = capsys.readouterr()
-    assert json.loads(captured.out) == {}
+    assert json.loads(captured.out) == {"schema": 1, "data": None}
     assert "jobs-last-run.json" in captured.err
     assert "could not read run manifest" in captured.err.lower()
 
@@ -587,8 +618,9 @@ def test_jobs_run_json_interrupt_emits_manifest_and_exits_130(
 
     assert rc == 130
     payload = json.loads(capsys.readouterr().out)
-    assert payload["interrupted"] is True
-    assert payload["phase_reached"] == "enrichment"
+    assert payload["schema"] == 1
+    assert payload["data"]["interrupted"] is True
+    assert payload["data"]["phase_reached"] == "enrichment"
 
 
 def test_jobs_run_json_emits_manifest_on_non_interrupt_crash(
@@ -620,8 +652,9 @@ def test_jobs_run_json_emits_manifest_on_non_interrupt_crash(
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["interrupted"] is True
-    assert payload["new_jobs"] == 1
+    assert payload["schema"] == 1
+    assert payload["data"]["interrupted"] is True
+    assert payload["data"]["new_jobs"] == 1
 
 
 def test_jobs_run_json_list_sources_emits_json_array(
@@ -805,6 +838,55 @@ def test_prune_dry_run_lists_candidates_without_writing(
     # File untouched.
     assert "OldCo" in csv_path.read_text()
     assert not (ws / "jobs.archive.csv").exists()
+
+
+def test_jobs_prune_json_emits_envelope(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`jobs prune --json` emits the candidate/archived set as a {schema, data}
+    envelope instead of a Rich table."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "OldCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/1",
+            },
+            {
+                "Status": "applied",
+                "Company": "ActiveCo",
+                "Role": "SRE",
+                "Date Last Seen": "2026-01-01",
+                "Link": "https://x/2",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--dry-run",
+            "--json",
+        ]
+    )
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert payload["data"]["dry_run"] is True
+    assert payload["data"]["archived"] == 0
+    companies = [row["Company"] for row in payload["data"]["candidates"]]
+    assert companies == ["OldCo"]
 
 
 def test_prune_moves_rows_to_archive(tmp_path: Path) -> None:

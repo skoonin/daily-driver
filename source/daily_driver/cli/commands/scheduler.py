@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import argparse
 
-from rich.console import Console as RichConsole
-
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
@@ -60,7 +58,7 @@ def _run_install(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, install_all
     from daily_driver.core.workspace import WorkspaceError
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
     try:
         workspace = resolve_workspace(args)
     except WorkspaceError as exc:
@@ -90,7 +88,7 @@ def _run_uninstall(args: argparse.Namespace) -> int:
     from daily_driver.core.scheduler import SchedulerError, uninstall_all
     from daily_driver.core.workspace import WorkspaceError
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
     try:
         workspace = resolve_workspace(args)
     except WorkspaceError as exc:
@@ -153,7 +151,7 @@ def _run_status(args: argparse.Namespace) -> int:
         print(_json.dumps({"schema": 1, "data": rows}, indent=2))
         return 0
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
     if not rows:
         console.print(
             "[dim]No scheduler jobs configured.[/dim]"

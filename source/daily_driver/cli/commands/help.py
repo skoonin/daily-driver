@@ -17,9 +17,10 @@ import json
 import sys
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
+from daily_driver.core.console import Console
 
 # Topic names accepted by `help <topic>`. Order is the rendering order in
 # the full reference, so keep it grouped: commands first (most-used surface),
@@ -230,7 +231,7 @@ _TOPIC_HEADERS = {
 
 
 def _render_topic(
-    console: Console, topic: str, payload: dict[str, Any], *, full: bool
+    console: RichConsole, topic: str, payload: dict[str, Any], *, full: bool
 ) -> None:
     """Render one topic. The full reference loops this per topic with a
     section header and indented body; the standalone topic view drops the
@@ -288,7 +289,7 @@ def _render_topic(
         console.print(f"{indent}{', '.join(payload['cadences'])}")
 
 
-def _render_full(console: Console, payload: dict[str, Any]) -> None:
+def _render_full(console: RichConsole, payload: dict[str, Any]) -> None:
     console.print("[bold]daily-driver — reference[/bold]\n")
     for i, topic in enumerate(_TOPICS):
         _render_topic(console, topic, payload, full=True)
@@ -322,7 +323,7 @@ def run(args: argparse.Namespace) -> int:
             )
         return 0
 
-    console = Console(stderr=False)
+    console = Console.get_user_console()
     if topic is None:
         _render_full(console, payload)
     else:

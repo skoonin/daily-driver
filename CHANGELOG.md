@@ -6,6 +6,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
+- **`--json` on `doctor`, `jobs backfill`, `jobs prune`, and `tracker prune`**: four commands that emitted only human output now offer a `-j`/`--json` flag using the same `{"schema": 1, "data": ...}` envelope as the rest of the surface. `doctor --json` returns the per-check results (name, status, detail, fix hint) plus the overall `exit_code`; `jobs backfill --json` returns the completion summary (rows considered, skipped, Fit/Notes needed before/after, enriched delta, elapsed seconds); `jobs prune --json` and `tracker prune --json` return the candidate/removed set and the archived/removed count. Each `--json` run suppresses the Rich table (and, for `jobs backfill`, the live progress block) so stdout carries only the JSON object.
+
 - **`tracker.terminal_statuses` extends the terminal-status set**: a workspace can now name extra closing states (e.g. `cancelled`) that are merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled detection and `tracker follow-ups`, so a custom closing state no longer lingers as a persistent false-positive. Built-in terminal statuses cannot be removed, and values are normalized like other statuses.
 
 - **`jobs backfill --force-update`**: re-enriches every active row and OVERWRITES its Fit, Notes, and Remote, instead of the default fill-missing-only behavior that only touches empty cells. Useful after editing `context.md` or your roles when you want existing scores refreshed. Rows in a skip status (`skipped`) are still left untouched, and the pass remains bounded by `--limit` / the configured `max_enrich_fit` cap. `--dry-run` reports the would-overwrite count.
@@ -24,6 +26,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 - **AshbyHQ board source**: a new `ashby` scraper source pulls postings from any company's AshbyHQ board via the public Job Posting API (`jobs.ashbyhq.com/<slug>`). List the company slugs under `plugins.job_search.sources.ashby.ashby_boards` (slugs are case-sensitive, e.g. `Notion`); each board is fetched in one request and filtered to your configured roles, mirroring the Greenhouse source. Enable it with `enabled: true`, or select it on a single run with `jobs run -S ashby`. (#111)
 
 ### Changed
+
+- **BREAKING: `jobs run --json` now wraps the run manifest in the standard envelope.** It previously re-emitted the on-disk `jobs-last-run.json` verbatim at the top level; it now prints `{"schema": 1, "data": <manifest>}` to match every other `--json` command. Scripts that read fields like `.new_jobs` directly must now read `.data.new_jobs`. An unreadable manifest emits `{"schema": 1, "data": null}` (was `{}`). No compat shim.
 
 - **`doctor` renders its results table to stdout**: the check-results table previously went to stderr, the lone outlier against `status`, `tracker`, and `jobs` (which all put data tables on stdout). It now follows the single table-stream convention — data tables to stdout, status/action lines to stderr — so `daily-driver doctor | ...` captures the table.
 

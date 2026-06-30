@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
@@ -35,9 +36,38 @@ def add_parser(
         default=False,
         help="Force regenerate the managed .claude/ files (overwrites local edits).",
     )
+    p.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit check results as JSON instead of a Rich table",
+    )
     add_global_flags(p)
     p.set_defaults(func=run)
     return p
+
+
+def _results_payload(results: list[Any]) -> list[dict[str, Any]]:
+    """Serialize check results for the ``--json`` envelope."""
+    return [
+        {
+            "name": r.name,
+            "status": r.status,
+            "detail": r.detail,
+            "fix_hint": r.fix_hint,
+        }
+        for r in results
+    ]
+
+
+def _emit_json(mode: str, results: list[Any], exit_code: int) -> None:
+    payload = {
+        "mode": mode,
+        "checks": _results_payload(results),
+        "exit_code": exit_code,
+    }
+    print(json.dumps({"schema": 1, "data": payload}, indent=2))
 
 
 def _render_table(results: list[Any], console: RichConsole) -> None:
@@ -68,6 +98,7 @@ def run(args: argparse.Namespace) -> int:
     # outlier vs status/tracker/jobs.
     table_console = Console.get_user_console()
     log_console = Console.get_log_console()
+    emit_json = getattr(args, "json", False)
 
     try:
         workspace = resolve_workspace(args)
@@ -84,7 +115,12 @@ def run(args: argparse.Namespace) -> int:
 
     if args.reset:
         reset(workspace)
-        log_console.print("[green]✓[/green] workspace regenerated from package data")
+        if emit_json:
+            _emit_json("reset", [], 0)
+        else:
+            log_console.print(
+                "[green]✓[/green] workspace regenerated from package data"
+            )
         return 0
 
     if args.fix:
@@ -92,7 +128,8 @@ def run(args: argparse.Namespace) -> int:
         from daily_driver.core.doctor import _run_plugin_fixers
 
         results = run_checks(workspace)
-        _render_table(results, table_console)
+        if not emit_json:
+            _render_table(results, table_console)
 
         # Mirror core.doctor.fix(): only run generate when a drift /
         # contract violation is present.
@@ -109,6 +146,10 @@ def run(args: argparse.Namespace) -> int:
         repaired = _run_plugin_fixers(results)
         results = run_checks(workspace)
 
+        exit_code = 0 if all(r.status in ("OK", "WARNING") for r in results) else 1
+        if emit_json:
+            _emit_json("fix", results, exit_code)
+            return exit_code
         if action is not None:
             log_console.print(
                 f"\n[bold]Action:[/bold] regenerated {action.n_written} file"
@@ -121,9 +162,13 @@ def run(args: argparse.Namespace) -> int:
             )
         log_console.print("\n[bold]After fix:[/bold]")
         _render_table(results, table_console)
-        return 0 if all(r.status in ("OK", "WARNING") for r in results) else 1
+        return exit_code
 
     # Default: check and report.
     results = run_checks(workspace)
+    exit_code = 0 if all(r.status != "ERROR" for r in results) else 1
+    if emit_json:
+        _emit_json("check", results, exit_code)
+        return exit_code
     _render_table(results, table_console)
-    return 0 if all(r.status != "ERROR" for r in results) else 1
+    return exit_code

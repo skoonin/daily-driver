@@ -8,7 +8,6 @@ import importlib.resources
 import json
 from typing import Any
 
-from rich.console import Console as RichConsole
 from rich.table import Table
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
@@ -211,7 +210,7 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps({"schema": 1, "data": payload}, indent=2, default=str))
         return 0
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
 
     # --- Setup gaps (printed first so it's visible above the tables) ---
     if setup_gaps:

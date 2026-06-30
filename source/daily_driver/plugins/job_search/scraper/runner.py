@@ -1434,7 +1434,8 @@ def run_backfill(
     dry_run: bool = False,
     limit: int | None = None,
     force: bool = False,
-) -> None:
+    emit_json: bool = False,
+) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
 
     Shares the run-side enrichment machinery: ``_enrich_wave`` renders the same
@@ -1465,6 +1466,12 @@ def run_backfill(
     (the sink's ``pre_write_hook``), so a no-op backfill (ollama down, nothing to
     persist) leaves the file untouched and writes no backup. The final rewrite is
     skipped entirely when enrichment changed no row content.
+
+    Returns a completion summary dict (rows considered, skipped, Fit/Notes
+    needed-before/after, enriched delta, elapsed seconds) so the CLI can wrap it
+    in the standard ``{schema, data}`` JSON envelope. ``emit_json`` suppresses
+    the human Console summary lines and forces plain (no live-bar) progress so
+    ``--json`` keeps stdout clean.
     """
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
@@ -1490,32 +1497,39 @@ def run_backfill(
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
         needs = _backfill_needs(jobs, plugin, force=force)
         skipped = len(jobs) - needs["rows"]
-        verb = "re-enrich (overwrite)" if force else "need"
-        Console.info(
-            f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
-            f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
-        )
-        # The needs counts are the FULL backlog; one pass spends at most the
-        # config caps (or --limit). Say so when a cap would trim this pass,
-        # or the report reads as if the caps were ignored.
         enrich_cfg = plugin.enrichment
         fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
-        cap_notes = []
-        if needs["fit_notes"] > fit_cap:
-            cap_notes.append(f"fit/notes capped at {fit_cap}")
-        if cap_notes:
-            source = "--limit" if limit is not None else "config"
+        if not emit_json:
+            verb = "re-enrich (overwrite)" if force else "need"
             Console.info(
-                f"This pass would be {', '.join(cap_notes)} ({source}); "
-                "run backfill again to continue."
+                f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
+                f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
             )
-        return
+            # The needs counts are the FULL backlog; one pass spends at most the
+            # config caps (or --limit). Say so when a cap would trim this pass,
+            # or the report reads as if the caps were ignored.
+            if needs["fit_notes"] > fit_cap:
+                source = "--limit" if limit is not None else "config"
+                Console.info(
+                    f"This pass would be fit/notes capped at {fit_cap} ({source}); "
+                    "run backfill again to continue."
+                )
+        return {
+            "dry_run": True,
+            "rows": needs["rows"],
+            "skipped": skipped,
+            "needs_before": needs["fit_notes"],
+            "needs_after": needs["fit_notes"],
+            "enriched": 0,
+            "fit_cap": fit_cap,
+            "elapsed_seconds": None,
+        }
 
     # No --limit: None lets the enrichment plan apply the config cap
     # (max_enrich_fit).
     fit_budget = limit
 
-    tty = Console.is_tty() and not Console.quiet_mode
+    tty = Console.live_progress_enabled(suppress=emit_json)
     # Announce-then-wait on contention, with a bounded give-up so a wedged peer
     # can't hang backfill forever. ExitStack lets the give-up branch return
     # before the lock body without re-indenting the whole lifecycle block.
@@ -1572,8 +1586,18 @@ def run_backfill(
         if not needs["fit_notes"]:
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
-            Console.info("All rows already enriched, nothing to backfill.")
-            return
+            if not emit_json:
+                Console.info("All rows already enriched, nothing to backfill.")
+            elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
+            return {
+                "dry_run": False,
+                "rows": len(jobs),
+                "skipped": skipped,
+                "needs_before": 0,
+                "needs_after": 0,
+                "enriched": 0,
+                "elapsed_seconds": elapsed,
+            }
 
         sink = _JobSink(
             csv_path=csv_path,
@@ -1677,16 +1701,27 @@ def run_backfill(
 
     after = _backfill_needs(jobs, plugin)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
-    Console.success(
-        f"Backfill complete: +{needs['fit_notes'] - after['fit_notes']} Fit/Notes. "
-        f"Total run time: {_fmt_duration(elapsed)}."
-    )
-    # The rewrite ran (this point is reached only past the no-enrichment early
-    # return), so any status spellings it canonicalized are now on disk. Make
-    # that visible, once, when something actually changed.
-    canon_notice = format_canonicalized_notice(status_canonicalizations)
-    if canon_notice is not None:
-        Console.info(canon_notice)
+    enriched = needs["fit_notes"] - after["fit_notes"]
+    if not emit_json:
+        Console.success(
+            f"Backfill complete: +{enriched} Fit/Notes. "
+            f"Total run time: {_fmt_duration(elapsed)}."
+        )
+        # The rewrite ran (this point is reached only past the no-enrichment early
+        # return), so any status spellings it canonicalized are now on disk. Make
+        # that visible, once, when something actually changed.
+        canon_notice = format_canonicalized_notice(status_canonicalizations)
+        if canon_notice is not None:
+            Console.info(canon_notice)
+    return {
+        "dry_run": False,
+        "rows": len(jobs),
+        "skipped": skipped,
+        "needs_before": needs["fit_notes"],
+        "needs_after": after["fit_notes"],
+        "enriched": enriched,
+        "elapsed_seconds": elapsed,
+    }
 
 
 def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
@@ -2237,7 +2272,7 @@ def _run_impl(
     # mode, no block. Quiet mode ("errors only") suppresses the block entirely;
     # the plain-mode progress lines are dropped by RunProgress under quiet too.
     # --json (suppress_live) also forces plain mode so stdout stays clean JSON.
-    tty = Console.is_tty() and not Console.quiet_mode and not suppress_live
+    tty = Console.live_progress_enabled(suppress=suppress_live)
     with (
         live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,

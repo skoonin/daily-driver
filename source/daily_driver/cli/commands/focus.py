@@ -9,8 +9,6 @@ import os
 import re
 from pathlib import Path
 
-from rich.console import Console as RichConsole
-
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
@@ -99,7 +97,7 @@ def _lock_path(workspace: Workspace) -> Path:
 def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.core.clock import now
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
 
     duration_minutes = args.duration
     if duration_minutes is None:
@@ -142,7 +140,7 @@ def _run_on(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unty
 
 
 def _run_off(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
     lock = _lock_path(workspace)
     if lock.exists():
         with file_lock(lock, shared=False):
@@ -156,7 +154,7 @@ def _run_off(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-unt
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.core.clock import now
 
-    console = RichConsole(stderr=False)
+    console = Console.get_user_console()
     lock = _lock_path(workspace)
     emit_json = getattr(args, "json", False)
 
