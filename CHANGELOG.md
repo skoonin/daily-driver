@@ -31,6 +31,10 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **`jobs run` no longer reports a partial or all-failed source as a clean "0 found"**: a source whose scrape was incomplete — a Workday board that lost connectivity mid-pagination, or an Ashby/Workable/Workday run where one or more board/account requests failed — used to return its partial (or empty) result and read as a healthy success, indistinguishable from "no roles matched". Such a source is now tracked as DEGRADED (distinct from a hard-failed source): its rows are still kept, but it is called out in the end-of-run summary, surfaced in `jobs status`, and recorded under a new `sources_degraded` field in the `jobs-last-run.json` manifest.
+
+- **Workday pagination no longer skips postings after a short page**: the offset now advances by the number of postings actually returned rather than the fixed requested page size, so a Workday board that returns a shorter-than-requested non-final page is walked completely instead of skipping the gap.
+
 - **`jobs run` no longer reverts a concurrent `prune` or hand-edit**: a run releases the workspace lock for the long scrape/enrich phase, so a `jobs prune` (or a hand-edit of `jobs.csv`) during that window could be silently undone — pruned rows came back and status edits were reverted — because each save replayed the row snapshot captured at run start. Saves now re-read `jobs.csv` under the lock and merge by identity (Link URL, falling back to company/role), so rows another command removed stay removed and field edits the run did not make survive, while this run's enrichment is layered on top.
 
 - **Calendar gather no longer collapses the whole calendar into one event**: `gather calendar` (and the calendar context behind `day-start` / `check-in`) split events on blank lines, but icalBuddy 1.10.x with the app's flags prints events with no blank line between them — so every event was merged into a single garbage entry. Events are now grouped by their unindented title line, which parses each event correctly and also keeps a wrapped multi-line location attached to its event. (#123)

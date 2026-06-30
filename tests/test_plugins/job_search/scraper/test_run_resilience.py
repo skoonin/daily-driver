@@ -1558,6 +1558,80 @@ def test_run_one_marks_interrupted_finish_when_stop_set() -> None:
     assert done == [("src", True, "interrupted -- 1 found so far")]
 
 
+def test_run_one_records_degraded_and_keeps_partial_jobs() -> None:
+    """A source raising PartialSourceError is DEGRADED, not failed: ``_run_one``
+    returns the partial jobs carried on the exception (so they still append),
+    fires on_source_degraded with the reason, and finishes the row ok=True with a
+    'degraded' note rather than a clean completion or a failure."""
+    ctx = ScrapeContext(plugin=_us_remote_plugin())
+    done: list[tuple[str, bool, str]] = []
+    degraded: list[tuple[str, str]] = []
+
+    def scraper_fn(_ctx: ScrapeContext) -> list[dict[str, Any]]:
+        raise runner.PartialSourceError(
+            [_scraped("https://a/1", "Acme")], "1 of 2 boards failed: down"
+        )
+
+    out = runner._run_one(
+        "ashby",
+        ctx,
+        on_source_done=lambda sid, ok, detail: done.append((sid, ok, detail)),
+        scraper_fn=scraper_fn,
+        on_source_degraded=lambda sid, reason: degraded.append((sid, reason)),
+    )
+
+    # The partial jobs are returned (NOT the exception), so they still append.
+    assert not isinstance(out, Exception)
+    assert [j["company"] for j in out] == ["Acme"]
+    assert degraded == [("ashby", "1 of 2 boards failed: down")]
+    sid, ok, detail = done[0]
+    assert sid == "ashby"
+    assert ok is True  # degraded is distinct from failed (ok=False)
+    assert "degraded -- 1 found" in detail
+
+
+def test_run_records_degraded_sources_in_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A degraded source (incomplete scrape) lands in the manifest's
+    ``sources_degraded`` -- distinct from ``sources_failed`` -- while its kept
+    rows still persist and the run is not treated as a hard failure."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    def fake_scrape(
+        ctx: Any,
+        *_a: Any,
+        on_source_result: Any = None,
+        on_source_degraded: Any = None,
+        **_kw: Any,
+    ) -> Any:
+        job = _scraped("https://w/1", "Acme", source="Workday (acme)")
+        # The source completed but its scrape was incomplete -> degraded, kept.
+        on_source_degraded("workday", "1 of 1 boards returned incomplete results")
+        on_source_result("workday", [job])
+        return ([job], [], [("workday", [job])])
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    # Degraded is not a hard failure: exit stays 0 and the row persists.
+    assert rc == 0
+    rows = _read_csv(tmp_path / "jobs.csv")
+    assert [r["Company"] for r in rows] == ["Acme"]
+
+    manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
+    assert manifest["sources_degraded"] == ["workday"]
+    assert manifest["sources_failed"] == []
+    # A degraded source is excluded from sources_ok (its scrape is incomplete).
+    assert "workday" not in manifest["sources_ok"]
+
+
 def test_orchestrator_drains_partial_on_first_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

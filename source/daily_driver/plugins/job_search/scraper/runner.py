@@ -119,6 +119,28 @@ class CheckpointAborted(Exception):
     """
 
 
+class PartialSourceError(Exception):
+    """Signals a source finished but its result is INCOMPLETE (degraded).
+
+    Raised by a source whose scrape only partly succeeded -- a paginated board
+    that lost connectivity mid-walk, or a single-GET source where one or more
+    board/account requests failed -- so its partial (or empty) job list would
+    otherwise be indistinguishable from a clean, complete "0 found" scrape.
+
+    Carries the jobs gathered so far (still appended and deduped, exactly as a
+    normal return) plus a human-readable ``reason``. The orchestrator records
+    the source as DEGRADED -- a state DISTINCT from failed (a source that
+    raised an ordinary exception and produced nothing) -- and surfaces it in the
+    end-of-run summary and the run manifest. A degraded source's rows are kept;
+    only the completeness of its scrape is in doubt.
+    """
+
+    def __init__(self, jobs: list[dict[str, Any]], reason: str) -> None:
+        super().__init__(reason)
+        self.jobs = jobs
+        self.reason = reason
+
+
 # ── Source-toggle helper ─────────────────────────────────────────────────────
 
 
@@ -410,6 +432,7 @@ def _run_one(
     on_source_progress: Callable[[str, int, int | None], None] | None = None,
     scraper_fn: Callable[[ScrapeContext], list[dict[str, Any]]] | None = None,
     on_source_checkpoint: Callable[[str, list[dict[str, Any]]], None] | None = None,
+    on_source_degraded: Callable[[str, str], None] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
@@ -434,6 +457,12 @@ def _run_one(
     incrementally, so the coordinator SKIPS its end-of-source append (it tracks
     which sources checkpointed); ``_run_one`` still returns the full job list for
     the run manifest's sources-ok tally and cross-source dedup.
+
+    ``on_source_degraded(source_id, reason)`` fires when a source raises
+    ``PartialSourceError`` -- it completed but its scrape is incomplete. Its
+    partial jobs are returned normally (so they still append and dedup), but the
+    orchestrator records the source as degraded (distinct from failed) for the
+    summary and manifest.
     """
     if scraper_fn is None:
         scraper_fn = SCRAPERS[source_id]
@@ -456,8 +485,20 @@ def _run_one(
 
         ctx = replace(ctx, checkpoint=_checkpoint)
     start = time.perf_counter()
+    degraded_reason: str | None = None
     try:
         jobs = scraper_fn(ctx)
+    except PartialSourceError as exc:
+        # Degraded, not failed: the source completed but one or more of its units
+        # failed mid-scrape, so its (possibly empty) result is incomplete. Keep
+        # the jobs it did gather -- they still flow through the normal append/dedup
+        # path below -- and record the source as degraded so the summary and
+        # manifest do not read the incomplete scrape as a clean run.
+        jobs = exc.jobs
+        degraded_reason = exc.reason
+        log.warning("[%s] degraded: %s", source_id, exc.reason)
+        if on_source_degraded is not None:
+            on_source_degraded(source_id, exc.reason)
     except HTTPTimeout as exc:
         # HTTPTimeout/HTTPError alias requests exceptions; the stub-less
         # `requests` import types them as Any, so narrow on the way out.
@@ -491,6 +532,8 @@ def _run_one(
         # it kept what it had fetched before the stop, not a complete scrape.
         if ctx.stop_event.is_set():
             detail = f"interrupted -- {len(jobs)} found so far"
+        elif degraded_reason is not None:
+            detail = f"degraded -- {len(jobs)} found ({degraded_reason})"
         else:
             detail = f"{len(jobs)} found in {_fmt_duration(elapsed)}"
         on_source_done(source_id, True, detail)
@@ -976,6 +1019,7 @@ def run_all_scrapers(
     on_note: Callable[[str], None] | None = None,
     on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None,
     on_source_checkpoint: Callable[[str, list[dict[str, Any]]], object] | None = None,
+    on_source_degraded: Callable[[str, str], None] | None = None,
     on_phase1_done: Callable[[bool], None] | None = None,
     force_headless: bool = False,
 ) -> tuple[
@@ -1152,6 +1196,7 @@ def run_all_scrapers(
                     on_source_progress,
                     fn,
                     _checkpoint_for(row_id),
+                    on_source_degraded,
                 ): row_id
                 for row_id, fn in headless_items
             }
@@ -1224,6 +1269,7 @@ def run_all_scrapers(
                 on_source_done,
                 on_source_start,
                 on_source_progress,
+                on_source_degraded=on_source_degraded,
             )
             results.append((sid, result))
             if on_source_result is not None and not isinstance(result, Exception):
@@ -1846,6 +1892,11 @@ class _RunState:
     sink: _JobSink | None = None
     all_jobs: list[dict[str, Any]] = field(default_factory=list)
     failed_sources: list[str] = field(default_factory=list)
+    # Sources that finished but returned INCOMPLETE results (raised
+    # PartialSourceError). Distinct from failed_sources -- their rows are kept --
+    # but surfaced separately so a partial/all-failed scrape is never read as a
+    # clean run. Carried on state so the interrupt-path manifest stays honest.
+    degraded_sources: list[str] = field(default_factory=list)
     phase_reached: str = "scraping"
     fn_stats: dict[str, int] = field(default_factory=_empty_fit_stats)
     # The overlap (wave-1) background enrichment thread, exposed so run()'s exit
@@ -1878,6 +1929,7 @@ def _write_run_manifest(
     started_at: datetime,
     all_jobs: list[dict[str, Any]],
     failed_sources: list[str],
+    degraded_sources: list[str],
     written: int,
     fn_enriched: int,
     phase_reached: str,
@@ -1896,10 +1948,13 @@ def _write_run_manifest(
             {
                 j.get("source", "")
                 for j in all_jobs
-                if j.get("source") and j.get("source") not in failed_sources
+                if j.get("source")
+                and j.get("source") not in failed_sources
+                and j.get("source") not in degraded_sources
             }
         ),
         "sources_failed": failed_sources,
+        "sources_degraded": degraded_sources,
         "new_jobs": written,
         "enriched_fit_notes": fn_enriched,
         "phase_reached": phase_reached,
@@ -2032,6 +2087,7 @@ def run(
                 started_at=started_at,
                 all_jobs=state.all_jobs,
                 failed_sources=state.failed_sources,
+                degraded_sources=state.degraded_sources,
                 written=state.written,
                 fn_enriched=state.fn_stats["enriched"],
                 phase_reached=state.phase_reached,
@@ -2136,6 +2192,7 @@ def _run_impl(
                         started_at=started_at,
                         all_jobs=[],
                         failed_sources=[],
+                        degraded_sources=[],
                         written=0,
                         fn_enriched=0,
                         phase_reached="scraping",
@@ -2372,6 +2429,13 @@ def _run_impl(
             state.wave1_thread = wave1_thread
             wave1_thread.start()
 
+        def _on_degraded(source_id: str, reason: str) -> None:
+            # A source finished but its scrape is incomplete (PartialSourceError);
+            # record it as degraded -- distinct from failed -- so the summary and
+            # manifest stay honest. Its partial rows are kept (appended normally).
+            if source_id not in state.degraded_sources:
+                state.degraded_sources.append(source_id)
+
         all_jobs, scrape_failed, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
@@ -2381,6 +2445,7 @@ def _run_impl(
             on_source_done=_on_done,
             on_note=rp.note,
             on_source_result=on_source_result,
+            on_source_degraded=_on_degraded,
             # Slow jobspy sources checkpoint each finished (term x country) unit
             # through the failure-isolated append path, so a crash/kill keeps every
             # completed unit (not the whole-source-or-nothing of before). On a
@@ -2398,9 +2463,15 @@ def _run_impl(
             if sid not in state.failed_sources:
                 state.failed_sources.append(sid)
         failed_sources = state.failed_sources
+        degraded_sources = state.degraded_sources
 
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
+        if degraded_sources:
+            log.warning(
+                "Degraded sources (incomplete results, kept what was scraped): %s",
+                ", ".join(degraded_sources),
+            )
 
         if sink is not None:
             # Append-time funnel: the sink classified every row as it was written,
@@ -2562,6 +2633,15 @@ def _run_impl(
                 line += f", {other} other"
             Console.info(line)
 
+    # Degraded sources finished with INCOMPLETE results (a partial-pagination or
+    # all-units-failed scrape). Their rows are kept, but call it out so a partial
+    # run is never mistaken for a clean one. Distinct from failed sources below.
+    if degraded_sources:
+        Console.warning(
+            "Degraded sources (incomplete results, kept what was scraped): "
+            + ", ".join(_display_name(sid) for sid in degraded_sources)
+        )
+
     if dry_run:
         Console.success(
             f"Dry-run complete: {len(typed_jobs)} new jobs ready (nothing written)."
@@ -2588,6 +2668,7 @@ def _run_impl(
         started_at=started_at,
         all_jobs=all_jobs,
         failed_sources=failed_sources,
+        degraded_sources=state.degraded_sources,
         written=written,
         fn_enriched=fn_stats["enriched"],
         phase_reached=state.phase_reached,

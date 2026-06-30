@@ -509,9 +509,15 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         console.print(f"  New jobs:       {last_run.get('new_jobs', '?')}")
         sources_ok = last_run.get("sources_ok") or []
         sources_failed = last_run.get("sources_failed") or []
+        sources_degraded = last_run.get("sources_degraded") or []
         console.print(f"  Sources OK:     {', '.join(sources_ok) or 'none'}")
         if sources_failed:
             console.print(f"  [red]Sources failed:[/red] {', '.join(sources_failed)}")
+        if sources_degraded:
+            console.print(
+                f"  [yellow]Sources degraded:[/yellow] "
+                f"{', '.join(sources_degraded)}"
+            )
         if last_run.get("interrupted"):
             # The last run was cut short (Ctrl-C / SIGTERM / crash); point the
             # user at the resume path so the half-enriched rows get finished.

@@ -126,11 +126,18 @@ def test_workday_stops_on_empty_page(monkeypatch: Any) -> None:
     assert len(results) == 1
 
 
-def test_workday_partial_fetch_failure_keeps_data_and_warns(
+def test_workday_partial_fetch_failure_raises_degraded_keeping_data(
     monkeypatch: Any, caplog: Any
 ) -> None:
-    """A mid-pagination HTTP failure keeps the fetched pages but logs PARTIAL,
-    so an incomplete board is never reported as a clean, complete scrape."""
+    """A mid-pagination HTTP failure logs PARTIAL and raises PartialSourceError
+    carrying the fetched pages, so the orchestrator records the board degraded
+    rather than reporting an incomplete board as a clean, complete scrape."""
+    import logging
+
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+
     page0 = [_posting(f"Engineer {i}", f"/job/x/E-{i}_R{i}") for i in range(20)]
 
     def fake_post(session: Any, url: str, ctx: Any, *, json: Any, **kw: Any) -> Any:
@@ -140,13 +147,39 @@ def test_workday_partial_fetch_failure_keeps_data_and_warns(
     monkeypatch.setattr(workday_module, "_api_post", fake_post)
     monkeypatch.setattr(workday_module, "_http_session", lambda cfg: MagicMock())
 
-    import logging
-
     with caplog.at_level(logging.WARNING):
-        results = workday_module.scrape_workday(_config([_BOARD]))
+        with pytest.raises(PartialSourceError) as excinfo:
+            workday_module.scrape_workday(_config([_BOARD]))
 
-    assert len(results) == 20  # the fetched page is kept, not discarded
+    # The fetched page rides along on the exception, not discarded.
+    assert len(excinfo.value.jobs) == 20
+    assert "crowdstrike" in excinfo.value.reason
     assert any("PARTIAL" in r.message for r in caplog.records)
+
+
+def test_workday_advances_offset_by_postings_returned(monkeypatch: Any) -> None:
+    """A short non-final page must advance the offset by what it returned, not by
+    the requested _PAGE_SIZE, or the gap between them is skipped (L6). A server
+    returning 15-item pages for a 30-job board is fully walked: offsets 0 and 15.
+    """
+    master = [_posting(f"Engineer {i}", f"/job/x/E-{i}_R{i}") for i in range(30)]
+    calls: list[int] = []
+
+    def fake_post(session: Any, url: str, ctx: Any, *, json: Any, **kw: Any) -> Any:
+        offset = json["offset"]
+        calls.append(offset)
+        # Server returns at most 15 per page -- shorter than _PAGE_SIZE (20).
+        return _response(len(master), master[offset : offset + 15])
+
+    monkeypatch.setattr(workday_module, "_api_post", fake_post)
+    monkeypatch.setattr(workday_module, "_http_session", lambda cfg: MagicMock())
+
+    results = workday_module.scrape_workday(_config([_BOARD]))
+
+    # Advancing by len(postings) walks every posting; advancing by _PAGE_SIZE
+    # would request offset 20 and skip postings 15-19.
+    assert calls == [0, 15]
+    assert len(results) == 30
 
 
 def test_workday_missing_total_paginates_until_empty(monkeypatch: Any) -> None:
