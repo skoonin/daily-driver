@@ -636,6 +636,120 @@ def test_voice_update_append_no_new_observations_is_noop(
     assert "no new observations" in capsys.readouterr().err.lower()
 
 
+def test_voice_update_ollama_route_honors_config_timeout_not_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: the ollama route is bounded by ai.ollama.timeout, not --timeout.
+
+    Regression for M2 — voice-update used to pass --timeout to invoke_for,
+    shadowing ai.ollama.timeout end-to-end. With an explicit --timeout 60, the
+    ollama client must still receive the configured 137s.
+    """
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import clipboard, ollama_client
+
+    ws = _init_workspace(tmp_path)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + "\nai:\n  voice_update:\n    provider: ollama\n    model: phi4\n"
+        + "  ollama:\n    timeout: 137\n",
+        encoding="utf-8",
+    )
+    sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
+    (ws / "voice-profile.md").write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
+
+    seen: dict[str, object] = {}
+
+    def fake_generate(prompt, *, model, endpoint, timeout):
+        seen.update(model=model, timeout=timeout)
+        return '[{"section": "Tone", "bullet": "Direct and concise."}]'
+
+    monkeypatch.setattr(ollama_client, "generate", fake_generate)
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "voice-update",
+            "--from",
+            str(sample),
+            "--timeout",
+            "60",
+        ]
+    )
+
+    assert rc == 0
+    assert seen["timeout"] == 137
+    assert seen["model"] == "phi4"
+
+
+def test_voice_update_rereads_profile_under_lock_after_model_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent write during the model call must not be clobbered (L1).
+
+    The merge base is re-read under the lock after the model returns, so a
+    section another writer added while the model was running survives the merge.
+    """
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
+    profile_path = ws / "voice-profile.md"
+    profile_path.write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
+
+    def fake_invoke(**kw):
+        # Simulate a concurrent writer landing during the (slow) model call.
+        profile_path.write_text(
+            "## Tone\n\n- Warm.\n\n## Energy\n\n- Lively.\n", encoding="utf-8"
+        )
+        return '[{"section": "Tone", "bullet": "Direct and concise."}]'
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "invoke", fake_invoke)
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
+
+    assert rc == 0
+    updated = profile_path.read_text(encoding="utf-8")
+    # Concurrent section survives (re-read under lock); new bullet merged in.
+    assert "- Lively." in updated
+    assert "- Direct and concise." in updated
+    assert "- Warm." in updated
+
+
+def test_voice_update_lock_lives_in_ephemeral_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock sentinel is under ephemeral_dir, not the user-visible output (L2)."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    sample = _make_sample(tmp_path, "x.md", "text")
+    (ws / "voice-profile.md").write_text("## Tone\n\n- old\n", encoding="utf-8")
+
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(
+        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "new"}]'
+    )
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
+
+    assert rc == 0
+    assert (ws / ".daily-driver" / "state" / "voice-profile.lock").exists()
+    # The old output-dir sentinel must not be created.
+    assert not (ws / "voice-profile.md.lock").exists()
+
+
 def test_voice_update_write_failure_exits_1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
