@@ -94,6 +94,34 @@ def test_invoke_builds_full_args(monkeypatch):
     ]
 
 
+def test_invoke_emits_system_prompt_flag(monkeypatch):
+    """system_prompt is passed as --system-prompt, before the positional prompt."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    invoke("user msg", headless=True, system_prompt="STATIC SYSTEM")
+
+    assert captured["args"] == [
+        "claude",
+        "-p",
+        "--system-prompt",
+        "STATIC SYSTEM",
+        "user msg",
+    ]
+
+
 def test_invoke_prompt_precedes_add_dir(monkeypatch):
     """Regression: --add-dir is variadic; trailing prompt was absorbed.
 

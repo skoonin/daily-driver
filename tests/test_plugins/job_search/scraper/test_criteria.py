@@ -2,7 +2,7 @@
 
 The criteria scanner rides the existing fit/notes enrichment call — no new API
 calls. These tests pin the three seams: the `Criterion` config model, the
-`_build_fit_notes_prompt` JSON contract (which must stay byte-for-byte
+`_build_fit_notes_system` JSON contract (which must stay byte-for-byte
 unchanged when no criteria are configured), and the quiet-by-default fold that
 appends meaningful criterion values to a job's Notes.
 """
@@ -22,7 +22,7 @@ from daily_driver.plugins.job_search.config import (
     JobSearchPlugin,
 )
 from daily_driver.plugins.job_search.scraper.enrichment.llm import (
-    _build_fit_notes_prompt,
+    _build_fit_notes_system,
     _fetch_fit_notes_for_job,
     _fold_criteria_values,
 )
@@ -121,8 +121,8 @@ def test_enrichment_criteria_parse_list() -> None:
 
 
 def test_prompt_base_contract_no_criteria_no_context() -> None:
-    """Base prompt: fit/notes-only JSON, no criteria key, no tech-stack ask."""
-    prompt = _build_fit_notes_prompt(_job(), "SRE", "Based in: Vancouver", "Vancouver")
+    """Base system prompt: fit/notes-only JSON, no criteria key, no tech-stack ask."""
+    prompt = _build_fit_notes_system("SRE", "Based in: Vancouver", "Vancouver")
     assert '"criteria"' not in prompt
     assert '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"}' in prompt
     assert "Do not list the tech stack" in prompt
@@ -131,15 +131,14 @@ def test_prompt_base_contract_no_criteria_no_context() -> None:
 
 
 def test_prompt_empty_list_equals_default() -> None:
-    job = _job()
-    assert _build_fit_notes_prompt(job, "SRE", "loc", "Van") == _build_fit_notes_prompt(
-        job, "SRE", "loc", "Van", []
+    assert _build_fit_notes_system("SRE", "loc", "Van") == _build_fit_notes_system(
+        "SRE", "loc", "Van", []
     )
 
 
 def test_prompt_injects_context_and_weights_experience() -> None:
     ctx = "CANDIDATE BACKGROUND: ten years SRE, deep Kubernetes and Terraform."
-    prompt = _build_fit_notes_prompt(_job(), "SRE", "loc", "Van", (), ctx)
+    prompt = _build_fit_notes_system("SRE", "loc", "Van", (), ctx)
     assert "CANDIDATE CONTEXT" in prompt
     assert ctx in prompt
     # With context, fit emphasizes experience match over bare role/location.
@@ -147,7 +146,7 @@ def test_prompt_injects_context_and_weights_experience() -> None:
 
 
 def test_prompt_omits_context_block_when_absent() -> None:
-    prompt = _build_fit_notes_prompt(_job(), "SRE", "loc", "Van")
+    prompt = _build_fit_notes_system("SRE", "loc", "Van")
     assert "CANDIDATE CONTEXT" not in prompt
     assert "experience match" not in prompt
 
@@ -157,7 +156,7 @@ def test_prompt_with_criteria_names_each_and_extends_json() -> None:
         Criterion(label="Sponsorship", assess="Does it sponsor work visas?"),
         Criterion(label="Clearance", assess="Is a security clearance required?"),
     ]
-    prompt = _build_fit_notes_prompt(_job(), "SRE", "loc", "Van", criteria)
+    prompt = _build_fit_notes_system("SRE", "loc", "Van", criteria)
     assert '"criteria"' in prompt
     for c in criteria:
         assert c.label in prompt
@@ -230,7 +229,11 @@ def test_worker_folds_criteria_into_notes() -> None:
         return_value=payload,
     ):
         fit, notes, _remote, failed = _fetch_fit_notes_for_job(
-            _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
+            _job(),
+            _build_fit_notes_system("SRE", "loc", "Van", _CRITERIA),
+            _CTX,
+            5,
+            _CRITERIA,
         )
     assert not failed
     assert fit == 8
@@ -244,7 +247,11 @@ def test_worker_missing_criteria_key_leaves_notes_unchanged() -> None:
         return_value=payload,
     ):
         _fit, notes, _remote, failed = _fetch_fit_notes_for_job(
-            _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
+            _job(),
+            _build_fit_notes_system("SRE", "loc", "Van", _CRITERIA),
+            _CTX,
+            5,
+            _CRITERIA,
         )
     assert not failed
     assert notes == "k8s shop"
@@ -257,7 +264,11 @@ def test_worker_malformed_criteria_value_does_not_crash() -> None:
         return_value=payload,
     ):
         _fit, notes, _remote, failed = _fetch_fit_notes_for_job(
-            _job(), "SRE", "loc", "Van", _CTX, 5, _CRITERIA
+            _job(),
+            _build_fit_notes_system("SRE", "loc", "Van", _CRITERIA),
+            _CTX,
+            5,
+            _CRITERIA,
         )
     assert not failed
     assert notes == "k8s shop"

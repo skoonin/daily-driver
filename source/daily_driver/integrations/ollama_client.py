@@ -77,8 +77,14 @@ def generate(
     endpoint: str,
     timeout: int,
     format_json: bool = False,
+    system: str | None = None,
 ) -> str:
     """POST /api/generate (non-streaming) and return the `response` field.
+
+    ``system`` is forwarded as the native ``/api/generate`` system field, so a
+    caller that splits a prompt into a static system block + per-call user text
+    still delivers the system content to the model. (Ollama has no Anthropic-
+    style prompt-cache billing; this is for parity/correctness, not caching.)
 
     Raises:
         OllamaNotReachableError: connection refused / DNS / network down.
@@ -90,8 +96,11 @@ def generate(
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "options": {"num_ctx": _estimate_num_ctx(prompt)},
+        # num_ctx must cover system + prompt so the system block isn't truncated.
+        "options": {"num_ctx": _estimate_num_ctx((system or "") + prompt)},
     }
+    if system:
+        body["system"] = system
     if format_json:
         body["format"] = "json"
     url = f"{endpoint.rstrip('/')}/api/generate"

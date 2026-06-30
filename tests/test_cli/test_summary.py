@@ -203,7 +203,7 @@ def test_summary_ollama_route_honors_config_timeout_not_cli(
 
     seen: dict[str, object] = {}
 
-    def fake_generate(prompt, *, model, endpoint, timeout):
+    def fake_generate(prompt, *, model, endpoint, timeout, system=None):
         seen.update(model=model, endpoint=endpoint, timeout=timeout)
         return "ollama summary\n"
 

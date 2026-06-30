@@ -211,18 +211,102 @@ def test_persona_and_home_city_reach_fit_prompt(
         }
     )
     ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
-    prompts: list[str] = []
+    systems: list[str] = []
 
     def fake_invoke(prompt, *a, **k):
-        prompts.append(prompt)
+        # persona + home_city now live in the cached system prompt, not the
+        # per-job user prompt.
+        systems.append(k.get("system") or "")
         return '{"fit": 6, "notes": "x"}'
 
     monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
     enrich_fit_and_notes([_enriched(description_text="desc")], ctx, budget=5)
 
-    assert prompts
-    assert "Staff Data Engineer" in prompts[0]
-    assert "Berlin, Germany" in prompts[0]
+    assert systems
+    assert "Staff Data Engineer" in systems[0]
+    assert "Berlin, Germany" in systems[0]
+
+
+def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The static block is sent as a byte-identical system prompt for every job
+    (so Claude Code prompt-caches it), while the per-job posting rides the user
+    prompt. This is the whole point of the split -- a varying system prompt would
+    defeat the cache."""
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "persona": "Staff SRE",
+            "locations": {"home_city": "Vancouver, BC"},
+            "enrichment": {
+                "provider": "ollama",
+                "model": "qwen2.5:14b",
+                "max_enrich_fit": 5,
+                "enrich_timeout": 5,
+            },
+        }
+    )
+    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    calls: list[tuple[str, str]] = []
+
+    def fake_invoke(prompt, *a, **k):
+        calls.append((k.get("system") or "", prompt))
+        return '{"fit": 6, "notes": "x"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [
+        _enriched(company="Acme", url="https://x/1", description_text="d1"),
+        _enriched(company="Bravo", url="https://x/2", description_text="d2"),
+    ]
+    enrich_fit_and_notes(jobs, ctx, budget=5)
+
+    assert len(calls) == 2
+    # Identical system prompt across both jobs (cache-stable).
+    assert calls[0][0] == calls[1][0]
+    assert "Staff SRE" in calls[0][0]
+    # Per-job content lives in the user prompt, never in the (cached) system
+    # prompt -- checked symmetrically so a per-job leak into the system fails.
+    assert "Acme" in calls[0][1] and "Acme" not in calls[0][0]
+    assert "Bravo" in calls[1][1] and "Bravo" not in calls[1][0]
+    assert calls[0][1] != calls[1][1]
+
+
+@pytest.mark.parametrize(
+    "provider, expect_warning",
+    [("ollama", True), ("claude", False)],
+)
+def test_large_context_token_warning_is_ollama_only(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+    provider: str,
+    expect_warning: bool,
+) -> None:
+    """The per-call context-token-cost warning fires only on the ollama path.
+
+    On claude the static block (incl. context.md) rides the cached system prompt
+    -- sent once per run -- so the per-job multiplication the warning projects no
+    longer applies; on ollama it is re-sent every call, so the warning stands."""
+    import logging
+
+    big_context = "x " * 4000  # ~2000 tokens, above the 1500-token warn floor
+    plugin = JobSearchPlugin.model_validate(
+        {"enrichment": {"provider": provider, "model": "m", "enrich_timeout": 5}}
+    )
+    ctx = ScrapeContext(plugin=plugin, ai=AIConfig(), context_text=big_context)
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 6, "notes": "x"}'
+    )
+    # claude path guards on the CLI being present before it reaches the warning.
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.enrichment.llm.shutil.which",
+        lambda _: "/usr/bin/claude",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        enrich_fit_and_notes([_enriched(description_text="d")], ctx, budget=5)
+
+    warned = any("context.md is ~" in r.getMessage() for r in caplog.records)
+    assert warned is expect_warning
 
 
 def test_fit_budget_zero_makes_no_calls_despite_config_cap(

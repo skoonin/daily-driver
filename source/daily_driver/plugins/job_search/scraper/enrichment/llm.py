@@ -179,8 +179,7 @@ def _fold_criteria_values(
     return notes
 
 
-def _build_fit_notes_prompt(
-    job: EnrichedJob,
+def _build_fit_notes_system(
     role_persona: str,
     loc_summary: str,
     hc: str,
@@ -188,36 +187,16 @@ def _build_fit_notes_prompt(
     context: str = "",
     include_remote: bool = False,
 ) -> str:
-    role = job.role or "unknown"
-    company = job.company or "unknown"
-    location = job.location or "unknown"
-    desc = job.description_text
+    """Build the STATIC fit/notes instruction block (the system prompt).
 
-    desc_section = ""
-    if desc:
-        words = desc.split()
-        if len(words) > 500:
-            desc = " ".join(words[:500]) + " ..."
-        desc_section = f"\nDescription: {desc}"
-
-    prompt = (
-        "You are evaluating how well a specific candidate fits a job. Be honest "
-        "and calibrated -- most jobs are average fits. Reserve 8-10 for genuinely "
-        "strong matches, 1-3 for clear mismatches.\n"
-        f"The candidate is targeting: {role_persona}, based in {hc}.\n"
-        f"Location preferences: {loc_summary}\n"
-    )
-    # The candidate's full context.md is injected when the workspace has one;
-    # without it, fit falls back to role/company/location signal alone.
-    if context:
-        prompt += (
-            "\nCANDIDATE CONTEXT -- their full background, experience, and "
-            "preferences. Treat as authoritative; the candidate may deliberately "
-            "repeat points they consider especially important:\n"
-            f"{context}\n"
-        )
-    prompt += f"\nJob: {role} at {company}, {location}\n"
-
+    Depends only on run-level constants (persona, locations, criteria, the
+    candidate's context.md, the remote toggle) -- never on the job -- so it is
+    byte-identical for every job in a run. Passed as the provider's system
+    prompt, which Claude Code prompt-caches server-side: the candidate's full
+    context.md is reprocessed once per run, then read from cache on every
+    subsequent job instead of riding each per-job prompt. The per-job posting is
+    supplied separately by :func:`_build_fit_notes_user`.
+    """
     # The JSON shape gains a "remote" field (when enabled) and a "criteria"
     # object (when criteria are configured), each only when asked for.
     shape = '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"'
@@ -244,8 +223,25 @@ def _build_fit_notes_prompt(
             "assess, return 5.\n"
         )
 
+    prompt = (
+        "You are evaluating how well a specific candidate fits a job. Be honest "
+        "and calibrated -- most jobs are average fits. Reserve 8-10 for genuinely "
+        "strong matches, 1-3 for clear mismatches.\n"
+        f"The candidate is targeting: {role_persona}, based in {hc}.\n"
+        f"Location preferences: {loc_summary}\n"
+    )
+    # The candidate's full context.md is injected when the workspace has one;
+    # without it, fit falls back to role/company/location signal alone.
+    if context:
+        prompt += (
+            "\nCANDIDATE CONTEXT -- their full background, experience, and "
+            "preferences. Treat as authoritative; the candidate may deliberately "
+            "repeat points they consider especially important:\n"
+            f"{context}\n"
+        )
     prompt += (
-        f"{desc_section}\n\n"
+        "\nThe next message gives ONE job posting (role, company, location, and "
+        "an optional description). Score that job.\n\n"
         "Reply with ONLY valid JSON on a single line, exactly this shape:\n"
         f"{shape}\n\n"
         f"{fit_instr}"
@@ -277,6 +273,28 @@ def _build_fit_notes_prompt(
         "Do not include any preamble, explanation, or markdown -- only the JSON object."
     )
     return prompt
+
+
+def _build_fit_notes_user(job: EnrichedJob) -> str:
+    """Build the PER-JOB fit/notes message (role/company/location + description).
+
+    This is the only job-varying part of the prompt; the instructions and the
+    candidate context live in the cached system block
+    (:func:`_build_fit_notes_system`).
+    """
+    role = job.role or "unknown"
+    company = job.company or "unknown"
+    location = job.location or "unknown"
+    desc = job.description_text
+
+    desc_section = ""
+    if desc:
+        words = desc.split()
+        if len(words) > 500:
+            desc = " ".join(words[:500]) + " ..."
+        desc_section = f"\nDescription: {desc}"
+
+    return f"Job: {role} at {company}, {location}{desc_section}"
 
 
 def _guarded_consume(
@@ -367,26 +385,24 @@ def _parse_remote(value: object, *, company: str = "", role: str = "") -> str:
 
 def _fetch_fit_notes_for_job(
     job: EnrichedJob,
-    role_persona: str,
-    loc_summary: str,
-    hc: str,
+    system_prompt: str,
     ctx: ScrapeContext,
     timeout: int,
     criteria: Sequence[Criterion] = (),
-    context: str = "",
     include_remote: bool = False,
 ) -> tuple[int | None, str, str, bool]:
     """Worker: fetch fit/notes (and remote) for one job.
 
-    Returns ``(fit, notes, remote, failed)``. ``fit`` is a validated 1-10 integer
-    (clamped from out-of-range values) or ``None`` when the call failed; ``remote``
-    is a canonical value ("remote"/"hybrid"/"onsite") or "" when not judged.
+    ``system_prompt`` is the prebuilt static instruction block (the same for
+    every job in the run, so it caches); only the per-job posting is built here.
+    ``criteria`` / ``include_remote`` are kept for PARSING the response, not for
+    building the prompt. Returns ``(fit, notes, remote, failed)``. ``fit`` is a
+    validated 1-10 integer (clamped from out-of-range values) or ``None`` when
+    the call failed; ``remote`` is a canonical value or "" when not judged.
     """
     company = job.company or "unknown"
     role = job.role or "unknown"
-    prompt = _build_fit_notes_prompt(
-        job, role_persona, loc_summary, hc, criteria, context, include_remote
-    )
+    prompt = _build_fit_notes_user(job)
     log.debug(
         "%s company=%s role=%s prompt=%r",
         _enrich_tag("enrich-fit-notes"),
@@ -406,6 +422,7 @@ def _fetch_fit_notes_for_job(
             model=model,
             ai=ctx.ai,
             timeout=timeout,
+            system=system_prompt,
         )
     except AITimeoutError as exc:
         _log_provider_timeout(
@@ -596,6 +613,21 @@ def _build_fit_plan(
     context_text = ctx.context_text
     timeout = cfg.enrich_timeout
     include_remote = cfg.enrich_is_remote
+    # Build the static instruction block (incl. context.md) ONCE per run: it is
+    # identical for every job, so passing it as the provider system prompt lets
+    # Claude Code prompt-cache it server-side -- reprocessed once, then read from
+    # cache on every subsequent job instead of riding each per-job request.
+    system_prompt = _build_fit_notes_system(
+        role_persona, loc_summary, hc, crit_list, context_text, include_remote
+    )
+    # The per-job user prompt is logged per call in _fetch_fit_notes_for_job; log
+    # the (identical) system block ONCE here so a -vv trace is complete without
+    # repeating the whole context.md on every job.
+    log.debug(
+        "%s system prompt (sent once, cached across jobs): %r",
+        _enrich_tag("enrich-fit-notes"),
+        system_prompt,
+    )
 
     pool_size = _enrich_pool_size(ctx)
     # Eligible indices preserve input order so budget truncation matches the
@@ -608,20 +640,21 @@ def _build_fit_plan(
     ]
     eligible_count = len(eligible_idx)
     no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
-    if context_text:
-        # context.md rides EVERY eligible job's prompt -- _build_fit_notes_prompt
-        # injects it whenever context is non-empty, regardless of whether the job
-        # has a description, and no-description jobs are still in eligible_idx and
-        # still make a full LLM call. So the projection counts every job that will
-        # be enriched this run (capped by budget); subtracting no-desc jobs would
-        # under-project the real token cost.
+    # Cost warning is provider-specific. On ollama there is no cross-call prompt
+    # cache, so context.md is re-sent and reprocessed in full on every per-job
+    # call -- a large file multiplies input tokens by the job count, so warn. On
+    # the claude path context.md rides the cached system prompt (sent/processed
+    # once per run, then read from cache), so the per-call multiplication does not
+    # apply and no warning is emitted. The projection counts every job that will
+    # be enriched (capped by budget); no-desc jobs still make a full call.
+    if context_text and provider == "ollama":
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
             jobs_to_enrich = min(budget, eligible_count)
             log.warning(
-                "[enrich-fit-notes] context.md is ~%d tokens, injected into ~%d "
-                "enrichment calls this run (~%d input tokens); trim it if that's "
-                "more than you want to spend",
+                "[enrich-fit-notes] context.md is ~%d tokens, sent on each of ~%d "
+                "ollama enrichment calls this run (~%d input tokens); trim it if "
+                "that's more than you want to spend",
                 ctx_tokens,
                 jobs_to_enrich,
                 ctx_tokens * jobs_to_enrich,
@@ -724,13 +757,10 @@ def _build_fit_plan(
     def _fetch(idx: int) -> tuple[int | None, str, str, bool]:
         return _fetch_fit_notes_for_job(
             out[idx],
-            role_persona,
-            loc_summary,
-            hc,
+            system_prompt,
             ctx,
             timeout,
             crit_list,
-            context_text,
             include_remote,
         )
 

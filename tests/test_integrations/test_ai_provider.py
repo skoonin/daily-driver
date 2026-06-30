@@ -37,6 +37,30 @@ def test_claude_route_default_model_none() -> None:
     assert inv.call_args.kwargs["model"] is None
 
 
+def test_system_routes_to_claude_system_prompt() -> None:
+    """A `system` arg reaches claude as --system-prompt (the cached prefix)."""
+    with patch.object(claude_cli, "invoke", return_value="ok") as inv:
+        ai_provider.invoke_for(
+            "user", provider="claude", model="haiku", ai=AIConfig(), system="STATIC"
+        )
+    assert inv.call_args.kwargs["system_prompt"] == "STATIC"
+
+
+def test_system_defaults_none_for_claude() -> None:
+    with patch.object(claude_cli, "invoke", return_value="ok") as inv:
+        ai_provider.invoke_for("hi", provider="claude", model="haiku", ai=AIConfig())
+    assert inv.call_args.kwargs["system_prompt"] is None
+
+
+def test_system_routes_to_ollama_system_field() -> None:
+    """A `system` arg reaches the ollama client's native system parameter."""
+    with patch.object(ollama_client, "generate", return_value="x") as gen:
+        ai_provider.invoke_for(
+            "user", provider="ollama", model="phi4", ai=AIConfig(), system="STATIC"
+        )
+    assert gen.call_args.kwargs["system"] == "STATIC"
+
+
 def test_ollama_route_dispatches_to_ollama_client() -> None:
     with patch.object(ollama_client, "generate", return_value="response text") as gen:
         out = ai_provider.invoke_for(

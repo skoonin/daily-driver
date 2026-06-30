@@ -68,7 +68,7 @@ def test_fit_and_notes_routes_with_plugin_provider() -> None:
         ai=AIConfig.model_validate({"ollama": {"max_parallel": 1}}),
     )
 
-    def fake_invoke(prompt, *, provider, model, ai, timeout):
+    def fake_invoke(prompt, *, provider, model, ai, timeout, system=None):
         captured["provider"] = provider
         captured["model"] = model
         return '{"fit": 7, "notes": "kubernetes-heavy"}'

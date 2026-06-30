@@ -662,7 +662,7 @@ def test_voice_update_ollama_route_honors_config_timeout_not_cli(
 
     seen: dict[str, object] = {}
 
-    def fake_generate(prompt, *, model, endpoint, timeout):
+    def fake_generate(prompt, *, model, endpoint, timeout, system=None):
         seen.update(model=model, timeout=timeout)
         return '[{"section": "Tone", "bullet": "Direct and concise."}]'
 

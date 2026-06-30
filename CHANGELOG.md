@@ -31,6 +31,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Changed
 
+- **Enrichment sends the candidate context once per run instead of with every job, via prompt caching.** The fit/notes pass previously embedded the full `context.md` (plus persona, locations, and scoring instructions) into every per-job prompt, re-sending it for all N jobs. That static block is now passed as the provider's system prompt — identical across the run — so on the `claude` path Claude Code prompt-caches it server-side and reprocesses it once per run instead of every job (the bulk of each call is then a cache read), and on the `ollama` path it rides the native `system` field. Same enrichment output; materially lower latency and usage-limit consumption on large runs. No config change.
+
 - **BREAKING: `jobs run --json` now wraps the run manifest in the standard envelope.** It previously re-emitted the on-disk `jobs-last-run.json` verbatim at the top level; it now prints `{"schema": 1, "data": <manifest>}` to match every other `--json` command. Scripts that read fields like `.new_jobs` directly must now read `.data.new_jobs`. An unreadable manifest emits `{"schema": 1, "data": null}` (was `{}`). No compat shim.
 
 - **`doctor` renders its results table to stdout**: the check-results table previously went to stderr, the lone outlier against `status`, `tracker`, and `jobs` (which all put data tables on stdout). It now follows the single table-stream convention — data tables to stdout, status/action lines to stderr — so `daily-driver doctor | ...` captures the table.

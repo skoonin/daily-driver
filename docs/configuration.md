@@ -245,7 +245,7 @@ Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichm
 
 Enrichment runs a single routable LLM pass, `fit_notes` (fit score, notes, remote judgment, and criteria, one call per job). The `provider` / `model` directly on `enrichment` are the **domain default**; the optional `fit_notes` block overrides per pass. It follows the resolution chain `phase override → enrichment domain → ai global → claude` (see [`ai`](#ai) above).
 
-The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
+The fit/notes pass also reads `context.md` from the workspace root, if present, and uses it in every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. The file is sent as the provider system prompt (built once per run, identical across jobs): on the `claude` path it is prompt-cached server-side and processed once per run rather than re-sent per job; on the `ollama` path there is no such cache, so `jobs run` logs a one-line token-cost estimate when `context.md` is large.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
