@@ -45,6 +45,7 @@ _CORE_COMMANDS = [
     ("check-in", "daily_driver.cli.commands.check_in"),
     ("summary", "daily_driver.cli.commands.summary"),
     ("scheduler", "daily_driver.cli.commands.scheduler"),
+    ("calendar", "daily_driver.cli.commands.calendar"),
     ("voice-update", "daily_driver.cli.commands.voice_update"),
     ("help", "daily_driver.cli.commands.help"),
 ]
@@ -74,6 +75,7 @@ _TOP_HELP = {
     "check-in": "Interactive mid-day check-in session (runs /daily-driver:check-in via claude)",
     "summary": "Generate a period summary using Claude (or --json for raw data)",
     "scheduler": "Install, uninstall, or check the macOS background scheduler",
+    "calendar": "Write today's plan time blocks to a local macOS Calendar",
     "voice-update": "Update voice-profile.md from writing samples (uses Claude)",
     "help": "Show reference: subcommands and discoverable values",
 }

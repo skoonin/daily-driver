@@ -175,6 +175,18 @@ tracker:
 #     search_paths:
 #       - "~/git"
 
+# Optional: write daily-plan time blocks to a local macOS Calendar
+# (consumed by `calendar sync`, macOS-only). Set `sync_enabled: true`
+# to opt in and name the target calendar.
+# calendar:
+#   # Opt-in switch for `calendar sync`. When false, sync is a clean
+#   # no-op. macOS-only — writes the day's plan time blocks to a local
+#   # Calendar; ignored on other platforms.
+#   sync_enabled: false
+#   # Name of the local macOS Calendar to write plan time blocks into.
+#   # The calendar must already exist in Calendar.app.
+#   plan_calendar_name: "Daily Plan"
+
 # Optional: plugins. Each plugin schema is strict — typos error out.
 # plugins:
 #   job_search:
