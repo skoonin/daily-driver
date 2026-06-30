@@ -41,6 +41,13 @@ tracker:
   # normalized (case-folded, underscores -> hyphens), so `ruled_out` and
   # `ruled-out` are the same status.
   # extra_statuses: [waiting, snoozed]
+  # Extra terminal status values, merged with the built-ins (done,
+  # ruled-out, dropped, rejected, closed). Entries in a terminal status
+  # are excluded from `status` stalled detection and `tracker
+  # follow-ups`, so a custom closing state like `cancelled` won't linger
+  # as a false-positive. Spelling is normalized (case-folded, underscores
+  # -> hyphens). Built-in terminal statuses cannot be removed.
+  # terminal_statuses: [cancelled]
   categories:
     task:
       required: [title]

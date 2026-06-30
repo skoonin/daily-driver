@@ -234,3 +234,38 @@ def test_status_stalled_detection(
     assert stale.id in stalled_ids, "stale non-terminal entry must be in stalled"
     assert fresh.id not in stalled_ids, "recently-updated entry must not be stalled"
     assert terminal.id not in stalled_ids, "terminal-status entry must not be stalled"
+
+
+def test_status_stalled_honors_custom_terminal_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A workspace-defined terminal status (e.g. `cancelled`) keeps its stale
+    entries out of stalled detection, the same as the built-in terminal states."""
+    from daily_driver.core.tracker import Tracker
+
+    config_text = """\
+daily_driver:
+  output_dir: .
+tracker:
+  terminal_statuses: [cancelled]
+  categories:
+    task: {required: [title]}
+"""
+    (tmp_path / ".dd-config.yaml").write_text(config_text, encoding="utf-8")
+    (tmp_path / ".daily-driver").mkdir(exist_ok=True)
+    ws = Workspace.discover_or_fail(override=tmp_path)
+    tracker = Tracker(ws)
+    cancelled = tracker.add(category="task", title="Cancelled task", status="cancelled")
+
+    now = datetime.datetime.now(tz=datetime.UTC)
+    _patch_tracker_yaml_timestamps(
+        tracker.path, cancelled.id, now - datetime.timedelta(days=30)
+    )
+
+    args = _args(ws.root, json_output=True)
+    result = run(args)
+
+    assert result == 0
+    envelope = json.loads(capsys.readouterr().out)
+    stalled_ids = {e["id"] for e in envelope["data"]["stalled"]}
+    assert cancelled.id not in stalled_ids

@@ -126,6 +126,21 @@ class TrackerConfig(BaseModel):
             "template_example": ["waiting", "snoozed"],
         },
     )
+    terminal_statuses: list[str] = Field(
+        default=[],
+        description=(
+            "Extra terminal status values, merged with the built-ins (done,\n"
+            "ruled-out, dropped, rejected, closed). Entries in a terminal status\n"
+            "are excluded from `status` stalled detection and `tracker\n"
+            "follow-ups`, so a custom closing state like `cancelled` won't linger\n"
+            "as a false-positive. Spelling is normalized (case-folded, underscores\n"
+            "-> hyphens). Built-in terminal statuses cannot be removed."
+        ),
+        json_schema_extra={
+            "template_commented": True,
+            "template_example": ["cancelled"],
+        },
+    )
     categories: dict[str, TrackerCategoryConfig] = Field(
         default={"task": TrackerCategoryConfig(required=["title"])},
         description="",

@@ -149,7 +149,8 @@ def _detect_setup_gaps(workspace: Any, all_entries: list[Any]) -> list[dict[str,
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.core.tracker import TERMINAL_STATUSES, Tracker
+    from daily_driver.core.statuses import normalize_status
+    from daily_driver.core.tracker import Tracker, terminal_statuses_for
     from daily_driver.core.workspace import WorkspaceError
 
     try:
@@ -159,6 +160,7 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     tracker = Tracker(workspace)
+    terminal_statuses = terminal_statuses_for(workspace.config.tracker)
 
     try:
         all_entries = tracker.list()
@@ -182,7 +184,8 @@ def run(args: argparse.Namespace) -> int:
     stalled = [
         e
         for e in all_entries
-        if e.status not in TERMINAL_STATUSES and _to_utc(e.updated_at) < stale_threshold
+        if normalize_status(e.status) not in terminal_statuses
+        and _to_utc(e.updated_at) < stale_threshold
     ]
 
     # Recent: updated within last 7 days, sorted most-recent first

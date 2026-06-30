@@ -6,6 +6,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
+- **`tracker.terminal_statuses` extends the terminal-status set**: a workspace can now name extra closing states (e.g. `cancelled`) that are merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled detection and `tracker follow-ups`, so a custom closing state no longer lingers as a persistent false-positive. Built-in terminal statuses cannot be removed, and values are normalized like other statuses.
+
 - **`jobs backfill --force-update`**: re-enriches every active row and OVERWRITES its Fit, Notes, and Remote, instead of the default fill-missing-only behavior that only touches empty cells. Useful after editing `context.md` or your roles when you want existing scores refreshed. Rows in a skip status (`skipped`) are still left untouched, and the pass remains bounded by `--limit` / the configured `max_enrich_fit` cap. `--dry-run` reports the would-overwrite count.
 
 - **Workday board source**: a new `workday` scraper source pulls postings from any company's Workday careers site via its public search API. Each entry under `plugins.job_search.sources.workday.workday_boards` names the three parts of a Workday URL (`tenant`, `host`, `site`) plus an optional `company` display-name override; the source paginates the board and filters to your configured roles. Enable it with `enabled: true`, or select it on a single run with `jobs run -S workday`. (#121)
@@ -30,6 +32,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 - **`tracker follow-ups` hides finished work**: entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, `closed`) are excluded from `follow-ups` even when they still carry a next action, so the list reflects only work that can still progress. (#115)
 
 ### Fixed
+
+- **`gather calendar` no longer drops the end time of timed events**: a single-line dated range from icalBuddy (e.g. `2026-04-21 10:00 - 11:00`) captured only the start, leaving `end` empty for every real timed event. The parser now recovers the second time on the line — whether a bare `HH:MM` or a repeated full datetime — so events carry their duration.
 
 - **`ai.ollama.timeout` now actually bounds ollama `summary` and `voice-update` runs**: the configured ollama timeout was silently ignored because both commands always passed their `--timeout` value (default 180s) down the dispatch path, shadowing the knob. The ollama route is now governed by `ai.ollama.timeout` (giving slower local models the headroom the knob promises), while `--timeout` still bounds the claude route; the `--timeout` help text now names both routes. `voice-update` also reads, merges, and writes the profile entirely under its lock — closing a window where a concurrent edit landing during the model call could be lost — and its lock sentinel moved out of the user-visible output directory into the workspace state directory.
 

@@ -13,7 +13,12 @@ from typing import Any
 import pytest
 
 import daily_driver.core.clock as clock_mod
-from daily_driver.core.tracker import Tracker, TrackerFile
+from daily_driver.core.tracker import (
+    TERMINAL_STATUSES,
+    Tracker,
+    TrackerFile,
+    terminal_statuses_for,
+)
 from daily_driver.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
@@ -227,6 +232,52 @@ def test_follow_ups_excludes_terminal_status(workspace: Workspace) -> None:
     # The terminal exclusion also applies under the overdue filter.
     overdue = tracker.follow_ups(overdue=True)
     assert all(e.title == "Active" for e in overdue)
+
+
+def test_terminal_statuses_for_merges_custom_with_builtins(tmp_path: Path) -> None:
+    """`tracker.terminal_statuses` extends the built-in set; it never shrinks it,
+    and custom spellings are normalized."""
+    config_text = """\
+daily_driver:
+  output_dir: .
+tracker:
+  terminal_statuses: [Cancelled, on_hold]
+  categories:
+    task: {required: [title]}
+"""
+    (tmp_path / ".dd-config.yaml").write_text(config_text, encoding="utf-8")
+    (tmp_path / ".daily-driver").mkdir(exist_ok=True)
+    ws = Workspace.discover_or_fail(override=tmp_path)
+
+    effective = terminal_statuses_for(ws.config.tracker)
+    assert TERMINAL_STATUSES <= effective
+    assert "cancelled" in effective
+    assert "on-hold" in effective
+
+
+def test_follow_ups_excludes_custom_terminal_status(tmp_path: Path) -> None:
+    """A workspace-defined terminal status (e.g. `cancelled`) drops its entries
+    from follow-ups, the same as the built-in terminal states."""
+    config_text = """\
+daily_driver:
+  output_dir: .
+tracker:
+  terminal_statuses: [cancelled]
+  categories:
+    task: {required: [title]}
+"""
+    (tmp_path / ".dd-config.yaml").write_text(config_text, encoding="utf-8")
+    (tmp_path / ".daily-driver").mkdir(exist_ok=True)
+    ws = Workspace.discover_or_fail(override=tmp_path)
+    tracker = Tracker(ws)
+
+    tracker.add(category="task", title="Active", status="open", next_action="Ping")
+    tracker.add(
+        category="task", title="Cancelled", status="cancelled", next_action="Ping"
+    )
+
+    follow = tracker.follow_ups()
+    assert {e.title for e in follow} == {"Active"}
 
 
 # ---------------------------------------------------------------------------
