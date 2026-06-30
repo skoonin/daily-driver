@@ -28,10 +28,9 @@ def _enrich_pool_size(ctx: ScrapeContext) -> int:
 
     ai_cfg = ctx.ai
     enrichment = ctx.plugin.enrichment
-    any_ollama = any(
-        ai_provider.resolve_route(ai_cfg, task=phase, domain_cfg=enrichment)[0]
+    any_ollama = (
+        ai_provider.resolve_route(ai_cfg, task="fit_notes", domain_cfg=enrichment)[0]
         == "ollama"
-        for phase in ("company_info", "fit_notes")
     )
     if any_ollama:
         return max(1, ai_cfg.ollama.max_parallel)

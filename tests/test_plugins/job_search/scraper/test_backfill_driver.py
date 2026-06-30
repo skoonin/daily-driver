@@ -1,11 +1,10 @@
 """Driver tests for the modern ``jobs backfill`` path (runner.run_backfill).
 
-Backfill shares the run-side enrichment machinery: detail pages, the overlapped
-product + fit/notes coordinator, periodic flushes, and the ollama preflight. It
-enriches only rows with empty fields, bounds both LLM budgets with ``--limit``,
-and under ``--dry-run`` makes zero LLM calls and zero writes while reporting the
-per-phase would-enrich counts. All status lines route through Console (no bare
-stdout print) — closing audit L-4.
+Backfill shares the run-side enrichment machinery: detail pages, the fit/notes
+pass, periodic flushes, and the ollama preflight. It enriches only rows with
+empty fields, bounds the LLM budget with ``--limit``, and under ``--dry-run``
+makes zero LLM calls and zero writes while reporting the would-enrich count. All
+status lines route through Console (no bare stdout print) — closing audit L-4.
 """
 
 from __future__ import annotations
@@ -46,8 +45,6 @@ def _row(
     status: str = "found",
     fit: str = "",
     notes: str = "",
-    product: str = "",
-    gd: str = "",
 ) -> dict[str, str]:
     return {
         "Status": status,
@@ -61,20 +58,15 @@ def _row(
         "Date Last Seen": "2026-04-01",
         "Date Applied": "",
         "Link": link,
-        "Product/Purpose": product,
-        "GD Rating": gd,
         "Source": "remoteok",
     }
 
 
-def _plugin(
-    max_enrich_companies: int = 50, max_enrich_fit: int = 50
-) -> JobSearchPlugin:
+def _plugin(max_enrich_fit: int = 50) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
             "enrichment": {
-                "max_enrich_companies": max_enrich_companies,
                 "max_enrich_fit": max_enrich_fit,
                 "detail_delay_seconds": 0,
             },
@@ -115,8 +107,6 @@ def test_backfill_enriches_only_empty_field_rows(
                 link="https://example.com/full",
                 fit="8",
                 notes="done",
-                product="SaaS",
-                gd="4.0",
             ),
         ],
     )
@@ -126,30 +116,22 @@ def test_backfill_enriches_only_empty_field_rows(
 
     seen_fit_companies: list[str] = []
 
-    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         # The fit plan would target only empty-Fit rows; emulate by enriching
         # every empty-field row in place and recording which companies it touched.
         for i, j in enumerate(jobs):
             if not j.fit:
-                jobs[i] = j.with_updates(
-                    fit=7, notes="filled", product="P", gd_rating="3.9"
-                )
+                jobs[i] = j.with_updates(fit=7, notes="filled")
                 seen_fit_companies.append(j.company)
-        fit_prog = kwargs.get("fit_progress")
-        prod_prog = kwargs.get("product_progress")
-        if fit_prog is not None:
-            fit_prog(len(jobs))
-        if prod_prog is not None:
-            prod_prog(len(jobs))
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
         return (
             jobs,
-            {"enriched": 1, "skipped_cached": 0, "failed": 0},
-            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -162,10 +144,10 @@ def test_backfill_enriches_only_empty_field_rows(
     assert seen_fit_companies == ["Empty"]
 
 
-def test_backfill_limit_bounds_both_budgets(
+def test_backfill_limit_bounds_fit_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--limit N caps BOTH product_budget and fit_budget at N."""
+    """--limit N caps the fit budget at N."""
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(
         csv_path,
@@ -177,29 +159,24 @@ def test_backfill_limit_bounds_both_budgets(
 
     captured: dict[str, int] = {}
 
-    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        captured["product_budget"] = kwargs.get("product_budget")
-        captured["fit_budget"] = kwargs.get("fit_budget")
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        captured["budget"] = kwargs.get("budget")
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path, limit=3)
 
-    assert captured["product_budget"] == 3
-    assert captured["fit_budget"] == 3
+    assert captured["budget"] == 3
 
 
-def test_backfill_no_limit_uses_config_budgets(
+def test_backfill_no_limit_uses_config_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without --limit, both budgets pass None (the config-cap sentinel)."""
+    """Without --limit, the budget passes None (the config-cap sentinel)."""
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(csv_path, [_row(company="C", link="https://example.com/c")])
     _stub_detail(monkeypatch)
@@ -208,23 +185,18 @@ def test_backfill_no_limit_uses_config_budgets(
 
     captured: dict[str, int] = {}
 
-    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        captured["product_budget"] = kwargs.get("product_budget")
-        captured["fit_budget"] = kwargs.get("fit_budget")
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        captured["budget"] = kwargs.get("budget")
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path, limit=None)
 
-    assert captured["product_budget"] is None
-    assert captured["fit_budget"] is None
+    assert captured["budget"] is None
 
 
 def test_backfill_dry_run_notes_config_cap_when_needs_exceed_it(
@@ -239,7 +211,7 @@ def test_backfill_dry_run_notes_config_cap_when_needs_exceed_it(
         csv_path,
         [_row(company=f"C{i}", link=f"https://example.com/{i}") for i in range(3)],
     )
-    plugin = _plugin(max_enrich_fit=2, max_enrich_companies=2)
+    plugin = _plugin(max_enrich_fit=2)
     runner.run_backfill(plugin, csv_path, tmp_path, dry_run=True)
     err = capsys.readouterr().err
     assert "capped at 2" in err
@@ -266,13 +238,10 @@ def test_backfill_flushes_periodically(
             flush()
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -297,8 +266,6 @@ def test_backfill_dry_run_no_calls_no_writes(
                 link="https://example.com/b",
                 fit="8",
                 notes="x",
-                product="P",
-                gd="4.0",
             ),
         ],
     )
@@ -313,9 +280,7 @@ def test_backfill_dry_run_no_calls_no_writes(
         raise AssertionError("dry-run must not call LLM enrichment")
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", boom_detail)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", boom_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom_concurrent)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path, dry_run=True)
 
@@ -324,9 +289,9 @@ def test_backfill_dry_run_no_calls_no_writes(
     assert not (tmp_path / "backups").exists()
 
     err = capsys.readouterr().err
-    # One row needs all four; the report names the per-phase counts.
+    # One row needs Fit/Notes; the report names the count.
     assert "1" in err
-    assert "Product" in err and "Fit" in err
+    assert "Fit" in err
 
 
 def test_backfill_status_lines_route_through_console(
@@ -350,13 +315,10 @@ def test_backfill_status_lines_route_through_console(
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
     success_calls: list[str] = []
     monkeypatch.setattr(
@@ -388,8 +350,6 @@ def test_backfill_all_filled_reports_nothing_to_do(
                 link="https://example.com/c",
                 fit="8",
                 notes="x",
-                product="P",
-                gd="4.0",
             )
         ],
     )
@@ -400,7 +360,7 @@ def test_backfill_all_filled_reports_nothing_to_do(
         raise AssertionError("no enrichment when all rows are filled")
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", boom)
-    monkeypatch.setattr(enrichment_pkg, "enrich_product_and_fit_concurrently", boom)
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -416,13 +376,10 @@ def _stub_concurrent_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
 
 # --- Finding 1: read inside the lock -----------------------------------------
@@ -495,21 +452,17 @@ def test_backfill_extras_kept_on_empty_link_row(
 
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         for i, j in enumerate(jobs):
-            jobs[i] = j.with_updates(fit=7, notes="n", product="P", gd_rating="4.0")
+            jobs[i] = j.with_updates(fit=7, notes="n")
         return (
             jobs,
-            {"enriched": len(jobs), "skipped_cached": 0, "failed": 0},
             {
                 "enriched": len(jobs),
                 "skipped_budget": 0,
-                "skipped_no_desc": 0,
                 "failed": 0,
             },
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -541,21 +494,17 @@ def test_backfill_extras_distinct_for_duplicate_link_rows(
 
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         for i, j in enumerate(jobs):
-            jobs[i] = j.with_updates(fit=6, notes="n", product="P", gd_rating="4.0")
+            jobs[i] = j.with_updates(fit=6, notes="n")
         return (
             jobs,
-            {"enriched": len(jobs), "skipped_cached": 0, "failed": 0},
             {
                 "enriched": len(jobs),
                 "skipped_budget": 0,
-                "skipped_no_desc": 0,
                 "failed": 0,
             },
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -581,19 +530,16 @@ def test_backfill_warns_when_periodic_flush_degraded(
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        jobs[0] = jobs[0].with_updates(fit=7, notes="n", product="P", gd_rating="4.0")
+        jobs[0] = jobs[0].with_updates(fit=7, notes="n")
         flush = kwargs.get("flush")
         if callable(flush):
             flush()  # the periodic hook (flush_periodic) -> degrades on OSError
         return (
             jobs,
-            {"enriched": 1, "skipped_cached": 0, "failed": 0},
-            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_concurrent)
 
     # Make the FIRST write (the periodic flush) fail, later writes succeed.
     from daily_driver.plugins.job_search.scraper import csv_io
@@ -633,16 +579,13 @@ def test_backfill_final_flush_failure_names_backup(
     from daily_driver.plugins.job_search.scraper import csv_io, enrichment
 
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        jobs[0] = jobs[0].with_updates(fit=7, notes="n", product="P", gd_rating="4.0")
+        jobs[0] = jobs[0].with_updates(fit=7, notes="n")
         return (
             jobs,
-            {"enriched": 1, "skipped_cached": 0, "failed": 0},
-            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment, "enrich_fit_and_notes", fake_concurrent)
 
     def always_fail(path: Path, header: list[str], rows: list[Any]) -> None:
         raise OSError("disk full (simulated)")
@@ -676,11 +619,11 @@ def test_backfill_interrupt_teardown_flush_error_preserves_interrupt(
     state = {"interrupted": False}
 
     def interrupting(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        jobs[0] = jobs[0].with_updates(fit=7, notes="n", product="P", gd_rating="4.0")
+        jobs[0] = jobs[0].with_updates(fit=7, notes="n")
         state["interrupted"] = True
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(enrichment, "enrich_product_and_fit_concurrently", interrupting)
+    monkeypatch.setattr(enrichment, "enrich_fit_and_notes", interrupting)
 
     # The teardown flush (only AFTER the interrupt) blows up with a RuntimeError,
     # e.g. a second Ctrl-C race. The post-detail periodic flush before the
@@ -731,16 +674,13 @@ def test_backfill_backup_taken_before_first_write(
     from daily_driver.plugins.job_search.scraper import enrichment
 
     def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        jobs[0] = jobs[0].with_updates(fit=7, notes="n", product="P", gd_rating="4.0")
+        jobs[0] = jobs[0].with_updates(fit=7, notes="n")
         return (
             jobs,
-            {"enriched": 1, "skipped_cached": 0, "failed": 0},
-            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "failed": 0},
         )
 
-    monkeypatch.setattr(
-        enrichment, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment, "enrich_fit_and_notes", fake_concurrent)
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
@@ -751,7 +691,7 @@ def test_backfill_backup_taken_before_first_write(
     assert _read_jobs_csv(csv_path)[0]["Fit"] == "7"
 
 
-# --- Finding 8: dry-run truth (combined fit/notes + toggle-aware product/gd) --
+# --- Finding 8: dry-run truth (combined fit/notes, toggle-aware) ------------
 
 
 def test_backfill_dry_run_counts_fit_notes_once_combined(
@@ -774,7 +714,12 @@ def test_backfill_dry_run_counts_fit_notes_once_combined(
 def test_backfill_dry_run_respects_disabled_toggles(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """With product/gd enrichment off, those axes report zero need."""
+    """With either fit/notes toggle off, the fit/notes axis reports zero need.
+
+    The fit pass refuses to run unless BOTH enrich_fit and enrich_notes are on
+    (audit M3), so the dry-run count must be gated the same way -- otherwise it
+    over-reports need and the start-of-run short-circuit never fires.
+    """
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(csv_path, [_row(company="C", link="https://example.com/c")])
 
@@ -782,8 +727,7 @@ def test_backfill_dry_run_respects_disabled_toggles(
         {
             "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
             "enrichment": {
-                "enrich_product": False,
-                "enrich_gd_rating": False,
+                "enrich_fit": False,
                 "detail_delay_seconds": 0,
             },
         }
@@ -792,8 +736,7 @@ def test_backfill_dry_run_respects_disabled_toggles(
     runner.run_backfill(plugin, csv_path, tmp_path, dry_run=True)
 
     err = capsys.readouterr().err
-    assert "0 need Product" in err
-    assert "0 need GD" in err
+    assert "0 need Fit/Notes" in err
 
 
 # --- Visible status canonicalization (review #1) -----------------------------

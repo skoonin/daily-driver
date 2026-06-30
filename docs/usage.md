@@ -135,7 +135,7 @@ These ship to `.claude/commands/daily-driver/` but are not CLI subcommands — i
 
 ## Jobs
 
-The job-search plugin scrapes a configurable set of boards, dedupes against `jobs.csv`, and enriches missing fields (fit, notes, comp, Glassdoor rating) via an AI provider.
+The job-search plugin scrapes a configurable set of boards, dedupes against `jobs.csv`, and enriches missing fields (fit, notes, comp) via an AI provider.
 
 ### Enable it
 
@@ -191,7 +191,7 @@ daily-driver jobs run                           # full run, writes jobs.csv
 daily-driver jobs run -n                        # dry run (no writes)
 daily-driver jobs run --no-enrich               # append only, skip enrichment
 daily-driver jobs backfill                      # re-enrich empty cells
-daily-driver jobs backfill --limit 20           # cap LLM spend at 20 product + 20 fit
+daily-driver jobs backfill --limit 20           # cap LLM spend at 20 fit/notes calls
 daily-driver jobs run -S remoteok,hn_jobs       # source override
 daily-driver jobs promote https://acme.example/jobs/123   # row -> tracker job entry
 daily-driver jobs status                        # last-run metadata + csv size

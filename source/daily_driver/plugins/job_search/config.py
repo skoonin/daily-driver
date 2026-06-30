@@ -298,15 +298,14 @@ class PhaseRoute(BaseModel):
 
 
 class EnrichmentConfig(BaseModel):
-    """Knobs for the post-scrape enrichment passes (comp, fit, notes).
+    """Knobs for the post-scrape enrichment pass (comp, fit, notes).
 
     Owns its own AI provider routing: enrichment is plugin-specific, so the
     provider/model selection lives here rather than leaking into core's `ai:`
     block. The provider-connection blocks (parallelism, ollama endpoint /
     timeout) are still shared core infra under `ai.claude:` / `ai.ollama:`.
-    The two LLM passes — `company_info` (product + Glassdoor lookup) and
-    `fit_notes` (fit / notes / remote / criteria) — each take an optional
-    per-phase route block that overrides these domain defaults.
+    The single LLM pass — `fit_notes` (fit / notes / remote / criteria) — takes
+    an optional per-phase route block that overrides these domain defaults.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -314,8 +313,8 @@ class EnrichmentConfig(BaseModel):
     provider: Literal["claude", "ollama"] | None = Field(
         default=None,
         description=(
-            "Domain default provider for both enrichment passes. Unset inherits\n"
-            "the global `ai.provider`, then claude. Per-phase blocks override it."
+            "Domain default provider for the enrichment pass. Unset inherits\n"
+            "the global `ai.provider`, then claude. The per-phase block overrides it."
         ),
         json_schema_extra={"template_example": "claude"},
     )
@@ -330,13 +329,6 @@ class EnrichmentConfig(BaseModel):
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
-    company_info: PhaseRoute = Field(
-        default=PhaseRoute(),
-        description=(
-            "Route override for the company-info pass (product summary +\n"
-            "Glassdoor rating, one call per company)."
-        ),
-    )
     fit_notes: PhaseRoute = Field(
         default=PhaseRoute(),
         description=(
@@ -347,18 +339,6 @@ class EnrichmentConfig(BaseModel):
     enrich_timeout: int = Field(
         default=30,
         description="Seconds before a single enrichment LLM call is abandoned.",
-    )
-    max_enrich_companies: int = Field(
-        default=50,
-        description="Cap on company-description lookups per run (bounds API cost).",
-    )
-    enrich_product: bool = Field(
-        default=True,
-        description="Look up a one-line Product/Purpose summary for each company.",
-    )
-    enrich_gd_rating: bool = Field(
-        default=True,
-        description="Look up each company's Glassdoor rating during enrichment.",
     )
     enrich_fit: bool = Field(
         default=True,
@@ -449,9 +429,9 @@ class JobSearchPlugin(BaseModel):
     enrichment: EnrichmentConfig = Field(
         default=EnrichmentConfig(),
         description=(
-            "Post-scrape enrichment: optional LLM passes that add Product,\n"
-            "Glassdoor rating, a fit score, and a Notes summary. Each pass\n"
-            "costs API calls; the max_* values cap how many run."
+            "Post-scrape enrichment: an optional LLM pass that adds a fit score\n"
+            "and a Notes summary. The pass costs API calls; max_enrich_fit caps\n"
+            "how many run."
         ),
     )
     sources: dict[str, SourceToggle] = Field(

@@ -274,8 +274,6 @@ def test_scraper_config_rejects_moved_sources_field():
 def test_enrichment_config_defaults():
     m = EnrichmentConfig()
     assert m.enrich_timeout == 30
-    assert m.max_enrich_companies == 50
-    assert m.enrich_gd_rating is True
     assert m.enrich_fit is True
     assert m.enrich_notes is True
     assert m.max_enrich_fit == 50

@@ -49,8 +49,6 @@ def _row(*, company: str, link: str, status: str = "found") -> dict[str, str]:
         "Date Last Seen": "2026-04-01",
         "Date Applied": "",
         "Link": link,
-        "Product/Purpose": "",
-        "GD Rating": "",
         "Source": "remoteok",
     }
 
@@ -88,34 +86,32 @@ def test_backfill_keyboard_interrupt_saves_partial_progress(
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def interrupting_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+    def interrupting_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         # Replace slot 0 in place (mirrors the real enricher) before raising so
         # backfill's interrupt handler can persist the partial result.
-        jobs[0] = jobs[0].with_updates(
-            product="Saved before interrupt", gd_rating="4.2"
-        )
+        jobs[0] = jobs[0].with_updates(fit=8, notes="Saved before interrupt")
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
         enrichment_pkg,
-        "enrich_product_and_fit_concurrently",
-        interrupting_concurrent,
+        "enrich_fit_and_notes",
+        interrupting_fit_notes,
     )
 
     with pytest.raises(KeyboardInterrupt):
         runner.run_backfill(JobSearchPlugin(), csv_path, tmp_path)
 
     rows = _read_jobs_csv(csv_path)
-    assert rows[0]["Product/Purpose"] == "Saved before interrupt"
-    assert rows[0]["GD Rating"] == "4.2"
+    assert rows[0]["Fit"] == "8"
+    assert rows[0]["Notes"] == "Saved before interrupt"
 
     backups_dir = tmp_path / "backups"
     backups = [p for p in backups_dir.iterdir() if p.name.startswith("jobs.csv.bak.")]
     assert len(backups) == 1
     # Backup must capture pre-mutation state (made before enrichment ran).
     backup_rows = _read_jobs_csv(backups[0])
-    assert backup_rows[0]["Product/Purpose"] == ""
-    assert backup_rows[0]["GD Rating"] == ""
+    assert backup_rows[0]["Fit"] == ""
+    assert backup_rows[0]["Notes"] == ""
 
     # Interrupt message should name the backup file so the user can recover.
     captured = capsys.readouterr()
@@ -138,20 +134,15 @@ def test_backfill_uses_shared_jobs_lock_path(
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def enrich_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
-        jobs[0] = jobs[0].with_updates(
-            product="Acme product", gd_rating="unknown", fit=7, notes="Saved"
-        )
+    def enrich_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        jobs[0] = jobs[0].with_updates(fit=7, notes="Saved")
         return (
             jobs,
-            {"enriched": 1, "skipped_cached": 0, "failed": 0},
-            {"enriched": 1, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 1, "skipped_budget": 0, "failed": 0},
         )
 
     monkeypatch.setattr(runner, "file_lock", fake_file_lock)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", enrich_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", enrich_fit_notes)
 
     runner.run_backfill(JobSearchPlugin(), csv_path, tmp_path)
 

@@ -298,7 +298,7 @@ def scrape_<name>(ctx: ScrapeContext) -> list[dict]:
     source as failed."""
 ```
 
-Required keys per returned dict: `company`, `role`, `location`, `url`, `source`, `date_found` (ISO). Optional (empty string if absent): `comp`, `notes`, `gd_rating`, `product_purpose`.
+Required keys per returned dict: `company`, `role`, `location`, `url`, `source`, `date_found` (ISO). Optional (empty string if absent): `comp`, `notes`.
 
 Do not normalize in the scraper. `NormalizedJob.from_raw` downstream handles lowercasing country codes, stripping trailing slashes, ISO-coercing dates.
 

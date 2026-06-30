@@ -83,8 +83,7 @@ def resolve_route(
       "voice_update") and leave `domain_cfg` None.
     - Plugin domains (enrichment) pass `domain_cfg` (the domain config, e.g.
       `EnrichmentConfig`) and `task` naming a per-phase block on it
-      ("company_info" / "fit_notes"); `domain_cfg` itself supplies the domain
-      default.
+      ("fit_notes"); `domain_cfg` itself supplies the domain default.
 
     `cli_provider` / `cli_model` outrank all config. Provider's terminal
     fallback is the literal "claude"; model has no hardcoded default and may

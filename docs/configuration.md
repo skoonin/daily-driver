@@ -74,7 +74,7 @@ Injected into Claude sessions as context.
 
 ## `ai`
 
-Routes every **routable** AI task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. The routable tasks are the headless `summary` (`ai.summary`), `voice-update` (`ai.voice_update`), and the job_search plugin's two enrichment passes (`plugins.job_search.enrichment.company_info` / `fit_notes`). The shared provider blocks are consulted by whichever provider a task resolves to.
+Routes every **routable** AI task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. The routable tasks are the headless `summary` (`ai.summary`), `voice-update` (`ai.voice_update`), and the job_search plugin's enrichment pass (`plugins.job_search.enrichment.fit_notes`). The shared provider blocks are consulted by whichever provider a task resolves to.
 
 **Routable vs. interactive.** Only the headless tasks above route through a provider. The interactive launchers (`day-start`, `check-in`, `day-end`) always use the `claude` CLI directly — they rely on Claude Code session / agent / workspace-context features Ollama has no equivalent for — so the `ai` block's provider routing does not affect them. They do honor one model-only knob, `ai.interactive.model`, as the default claude model (a `--model` flag still wins). The block is model-only by design — there is no `provider` field, so setting `ai.interactive.provider` is rejected at config-load rather than silently ignored — and it deliberately does not inherit the global `ai.model`, which may name an ollama tag the claude CLI cannot run.
 
@@ -87,7 +87,7 @@ task / phase override  →  domain default  →  global ai default  →  hardcod
 ```
 
 - Core tasks: `ai.<task>` (e.g. `ai.summary`, `ai.voice_update`) → `ai` global → `claude`.
-- Enrichment phases: `plugins.job_search.enrichment.<phase>` (`company_info` / `fit_notes`) → `enrichment` (domain) → `ai` global → `claude`.
+- Enrichment phase: `plugins.job_search.enrichment.fit_notes` → `enrichment` (domain) → `ai` global → `claude`.
 - A CLI `--model` flag (where the command offers one, e.g. `summary --model`) outranks all config.
 
 Because provider and model walk apart, you can set `ai.provider: ollama` once to send the whole app to Ollama, then pin a single task back to claude with `ai.summary: { provider: claude }`. Or keep everything on claude and just set `ai.summary.model: sonnet` — the model is honored on the claude path too.
@@ -116,7 +116,7 @@ Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`, `haiku`
 
 See [`docs/ollama-setup.md`](ollama-setup.md) for installation, tuning, and the `doctor` reachability check.
 
-Example: send the whole app to a local model by default, but pin the higher-stakes tasks back to claude, and give the cheap company-info lookup a smaller model. Provider and model resolve independently down the chain:
+Example: send the whole app to a local model by default, but pin the higher-stakes tasks back to claude. Provider and model resolve independently down the chain:
 
 ```yaml
 ai:
@@ -130,9 +130,8 @@ ai:
 plugins:
   job_search:
     enrichment:
-      provider: ollama        # domain default for both passes
+      provider: ollama        # domain default for the enrichment pass
       model: phi4
-      company_info: { model: qwen2.5:7b }              # cheaper model for lookups
       fit_notes: { provider: claude, model: sonnet }   # stronger for scoring
 ```
 
@@ -242,30 +241,24 @@ checks for the configured engine and `doctor --fix` installs it.
 
 ### `enrichment` (`EnrichmentConfig`)
 
-Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment passes (comp, product/Glassdoor, fit, notes), plus the AI provider routing for those passes. The provider/model live here (enrichment is plugin-specific); the shared connection/tuning lives in the core `ai.claude:` / `ai.ollama:` blocks.
+Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment pass (comp, fit, notes), plus the AI provider routing for that pass. The provider/model live here (enrichment is plugin-specific); the shared connection/tuning lives in the core `ai.claude:` / `ai.ollama:` blocks.
 
-Enrichment runs exactly **two** LLM passes, each independently routable: `company_info` (the product summary + Glassdoor lookup, one call per company) and `fit_notes` (fit score, notes, remote judgment, and criteria, one call per job). The `provider` / `model` directly on `enrichment` are the **domain default** for both passes; the optional `company_info` / `fit_notes` blocks override per pass. Each follows the resolution chain `phase override → enrichment domain → ai global → claude` (see [`ai`](#ai) above).
+Enrichment runs a single routable LLM pass, `fit_notes` (fit score, notes, remote judgment, and criteria, one call per job). The `provider` / `model` directly on `enrichment` are the **domain default**; the optional `fit_notes` block overrides per pass. It follows the resolution chain `phase override → enrichment domain → ai global → claude` (see [`ai`](#ai) above).
 
 The fit/notes pass also reads `context.md` from the workspace root, if present, and injects it into every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. Because the file rides every per-job call, `jobs run` logs a one-line token-cost estimate when `context.md` is large.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `provider` | `claude` \| `ollama` \| null | null (→ claude) | Domain default backend for both enrichment passes |
+| `provider` | `claude` \| `ollama` \| null | null (→ claude) | Domain default backend for the enrichment pass |
 | `model` | string or null | null | Domain default model (e.g. `sonnet`, `qwen2.5:14b`) |
-| `company_info.provider` / `company_info.model` | as above | null | Override for the product/Glassdoor pass only |
 | `fit_notes.provider` / `fit_notes.model` | as above | null | Override for the fit/notes pass only |
 | `enrich_timeout` | int | 30 | |
-| `max_enrich_companies` | int | 50 | |
-| `enrich_product` | bool | true | Fill the Product/Purpose one-liner per company |
-| `enrich_gd_rating` | bool | true | Fill the Glassdoor rating per company |
 | `enrich_fit` | bool | true | |
 | `enrich_notes` | bool | true | |
 | `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
 | `detail_delay_seconds` | float | 0.5 | |
 | `criteria` | list of `{label, assess}` | `[]` | |
-
-`enrich_product` and `enrich_gd_rating` share one LLM call per company. With both off, the company pass is skipped entirely; with only one on, the prompt asks for and writes only that field.
 
 #### `criteria` — the criteria scanner
 

@@ -4,8 +4,9 @@ These tests fix the externally-observable contract of the scraper's CSV path
 BEFORE the dual-representation collapse, and must survive the refactor
 unchanged:
 
-- The exact 15-column ``jobs.csv`` header, byte-for-byte (Remote added after
-  Location in task #6).
+- The exact 13-column ``jobs.csv`` header, byte-for-byte (Remote added after
+  Location in task #6; GD Rating and Product/Purpose removed with the
+  company-info pass).
 - A full-coverage EnrichedJob round-trip: write -> read -> rewrite is stable,
   including unicode, commas, quotes, and newlines in free-text fields.
 - A backfill round-trip on a fixture CSV: rows survive a no-op backfill
@@ -33,10 +34,11 @@ from daily_driver.plugins.job_search.scraper.models import (
     RawScrapedJob,
 )
 
-# The frozen 15-column jobs.csv layout. The single derived CANONICAL_HEADER must
-# equal this list. Remote sits immediately after Location; Product/Purpose moved
-# to after Notes (task #6). Reads are header-name-based, so files stored in an
-# older column order still load and adopt this order on the next rewrite.
+# The frozen 13-column jobs.csv layout. The single derived CANONICAL_HEADER must
+# equal this list. Remote sits immediately after Location. Reads are
+# header-name-based, so files stored in an older column order (or with the
+# removed GD Rating / Product/Purpose columns) still load and adopt this order on
+# the next rewrite.
 _EXPECTED_HEADER = [
     "Status",
     "Company",
@@ -45,9 +47,7 @@ _EXPECTED_HEADER = [
     "Comp",
     "Location",
     "Remote",
-    "GD Rating",
     "Notes",
-    "Product/Purpose",
     "Date Found",
     "Date Applied",
     "Date Last Seen",
@@ -56,7 +56,7 @@ _EXPECTED_HEADER = [
 ]
 
 
-def test_canonical_header_is_exactly_the_frozen_15_columns() -> None:
+def test_canonical_header_is_exactly_the_frozen_13_columns() -> None:
     assert CANONICAL_HEADER == _EXPECTED_HEADER
 
 
@@ -73,8 +73,6 @@ def _coverage_jobs() -> list[EnrichedJob]:
     base = EnrichedJob.from_normalized(NormalizedJob.from_raw(raw))
     j1 = base.model_copy(
         update={
-            "product": "Builds tools, widgets & things",
-            "gd_rating": "4.1",
             "fit": 7,
             "notes": "Strong match\nmultiline, with comma",  # newline + comma
             "date_found": dt.date(2026, 1, 2),
@@ -125,7 +123,6 @@ def _backfill_plugin() -> JobSearchPlugin:
         {
             "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
             "enrichment": {
-                "max_enrich_companies": 0,
                 "max_enrich_fit": 0,
                 "detail_delay_seconds": 0,
             },
@@ -149,17 +146,14 @@ def _stub_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
             "skip_reasons": {},
         }
 
-    def fake_concurrent(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         return (
             jobs,
-            {"enriched": 0, "skipped_cached": 0, "failed": 0},
-            {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0},
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
         )
 
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
-    monkeypatch.setattr(
-        enrichment_pkg, "enrich_product_and_fit_concurrently", fake_concurrent
-    )
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
 
 def test_backfill_round_trip_preserves_rows_and_order(
@@ -167,8 +161,8 @@ def test_backfill_round_trip_preserves_rows_and_order(
 ) -> None:
     """A no-op backfill (enrichment stubbed) leaves rows + header order intact."""
     csv_path = tmp_path / "jobs.csv"
-    # A fixture row that already needs enrichment (blank Product/Fit/Notes/GD)
-    # so backfill does not early-return, plus a fully-filled row.
+    # A fixture row that already needs enrichment (blank Fit/Notes) so backfill
+    # does not early-return, plus a fully-filled row.
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, quoting=csv.QUOTE_MINIMAL)
         w.writeheader()

@@ -680,7 +680,6 @@ def test_jobs_status_json_with_last_run(
         "sources_failed": [],
         "new_jobs": 3,
         "enriched_fit_notes": 3,
-        "enriched_product": 2,
     }
     (ws / "jobs-last-run.json").write_text(json.dumps(last_run), encoding="utf-8")
 

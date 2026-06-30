@@ -101,7 +101,7 @@ def add_parser(
         "--dry-run",
         action="store_true",
         help=(
-            "Report what would be enriched (per-phase counts) without making "
+            "Report what would be enriched (the fit/notes count) without making "
             "LLM calls or writing to jobs.csv"
         ),
     )
@@ -111,8 +111,8 @@ def add_parser(
         default=None,
         metavar="N",
         help=(
-            "Cap LLM spend this run: bound both the product and fit/notes "
-            "budgets at N (minimum 1; default: the configured per-phase caps)"
+            "Cap LLM spend this run: bound the fit/notes budget at N "
+            "(minimum 1; default: the configured cap)"
         ),
     )
     add_global_flags(p_backfill)

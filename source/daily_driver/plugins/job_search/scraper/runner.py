@@ -39,6 +39,7 @@ from daily_driver.plugins.job_search.jobs_lock import (
     workspace_busy_notice,
 )
 from daily_driver.plugins.job_search.scraper.countries import country_names
+from daily_driver.plugins.job_search.scraper.enrichment.llm import _empty_fit_stats
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
     HTTPError,
@@ -1203,13 +1204,11 @@ def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
     """Whether this run will make ollama LLM calls (detail pages don't count).
 
     Detail-page enrichment is plain HTTP against the job board, so it needs no
-    provider. Only the product / gd-rating / fit / notes passes route to the
-    LLM, so the preflight is warranted only when at least one of those is on.
+    provider. Only the fit / notes pass routes to the LLM, so the preflight is
+    warranted only when it is on.
     """
     cfg = plugin.enrichment
-    return (
-        cfg.enrich_product or cfg.enrich_gd_rating or cfg.enrich_fit or cfg.enrich_notes
-    )
+    return cfg.enrich_fit or cfg.enrich_notes
 
 
 def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
@@ -1233,7 +1232,6 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
     # A phase is probed only when its own toggles are on AND it resolves to
     # ollama: a disabled phase makes no LLM calls, so its route is moot.
     phase_enabled = {
-        "company_info": cfg.enrich_product or cfg.enrich_gd_rating,
         "fit_notes": cfg.enrich_fit or cfg.enrich_notes,
     }
     ollama_models: list[str] = []
@@ -1295,19 +1293,18 @@ def _backfill_needs(
     jobs: list[EnrichedJob],  # noqa: F821
     plugin: JobSearchPlugin,
 ) -> dict[str, int]:
-    """Per-phase counts of rows the enrichers WOULD actually touch.
+    """Per-phase counts of rows the enricher WOULD actually touch.
 
     Rows in an ENRICH_SKIP status are excluded (deliberately untouched). The
-    counts mirror the enrichers' own eligibility, not a re-implementation:
+    counts mirror the enricher's own eligibility, not a re-implementation:
 
-    - ``fit`` uses :func:`_fit_notes_eligible` -- the combined predicate, since
-      one fit/notes call fills both Fit and Notes. There is no separate notes
-      count (a single call covers it), so the dry-run report and the
-      nothing-to-do short-circuit speak in those terms.
-    - ``product`` / ``gd`` respect the ``enrich_product`` / ``enrich_gd_rating``
-      toggles: a disabled axis reports zero need (the company pass would never
-      fill it). When a row's company already has the field filled it is not
-      counted either.
+    - ``fit_notes`` uses :func:`_fit_notes_eligible` -- the combined predicate,
+      since one fit/notes call fills both Fit and Notes. There is no separate
+      notes count (a single call covers it), so the dry-run report and the
+      nothing-to-do short-circuit speak in those terms. The count is gated on
+      BOTH ``enrich_fit`` and ``enrich_notes``: the fit pass refuses to run
+      unless both are on, so a disabled axis reports zero need rather than
+      over-reporting work the pass would never do.
 
     Used by the dry-run report and the start-of-run short-circuit.
     """
@@ -1318,15 +1315,13 @@ def _backfill_needs(
 
     cfg = plugin.enrichment
     active = [j for j in jobs if _active(j)]
-    product = (
-        sum(1 for j in active if not j.product_filled) if cfg.enrich_product else 0
+    fit_notes = (
+        sum(1 for j in active if _fit_notes_eligible(j))
+        if (cfg.enrich_fit and cfg.enrich_notes)
+        else 0
     )
-    gd = sum(1 for j in active if not j.gd_rating) if cfg.enrich_gd_rating else 0
-    fit_notes = sum(1 for j in active if _fit_notes_eligible(j))
     return {
         "rows": len(active),
-        "product": product,
-        "gd": gd,
         "fit_notes": fit_notes,
     }
 
@@ -1344,18 +1339,18 @@ def run_backfill(
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
 
     Shares the run-side enrichment machinery: ``_enrich_wave`` renders the same
-    Detail pages / Company products / Fit and notes phase rows under a "Job
-    backfill" :class:`RunProgress` block, fans the product + fit/notes passes out
-    through the overlapped coordinator under the shared concurrency cap, flushes
-    every ~25 results, and runs the ollama preflight before the LLM phases.
+    Detail pages / Fit and notes phase rows under a "Job backfill"
+    :class:`RunProgress` block, fans the fit/notes pass out under the provider's
+    concurrency cap, flushes every ~25 results, and runs the ollama preflight
+    before the LLM phase.
 
-    The enrichers themselves skip already-filled fields and ENRICH_SKIP-status
+    The enricher itself skips already-filled fields and ENRICH_SKIP-status
     rows, so handing the whole row list to the wave enriches only the empties.
 
-    ``limit`` caps LLM spend this invocation by bounding BOTH the product and fit
-    budgets at ``limit`` (``None`` = the config caps; the CLI rejects
-    ``limit < 1``). ``dry_run`` reports the per-phase would-enrich counts and
-    makes zero LLM/detail calls and zero writes (no backup either).
+    ``limit`` caps LLM spend this invocation by bounding the fit budget at
+    ``limit`` (``None`` = the config cap; the CLI rejects ``limit < 1``).
+    ``dry_run`` reports the would-enrich count and makes zero LLM/detail calls
+    and zero writes (no backup either).
 
     Locking: the sentinel ``file_lock`` is held for the WHOLE lifecycle -- the
     read of jobs.csv, the enrichment, and every rewrite all happen inside it.
@@ -1394,19 +1389,15 @@ def run_backfill(
         needs = _backfill_needs(jobs, plugin)
         skipped = len(jobs) - needs["rows"]
         Console.info(
-            f"Backfill dry-run: {needs['product']} need Product, "
-            f"{needs['gd']} need GD, {needs['fit_notes']} need Fit/Notes "
+            f"Backfill dry-run: {needs['fit_notes']} need Fit/Notes "
             f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
         )
         # The needs counts are the FULL backlog; one pass spends at most the
         # config caps (or --limit). Say so when a cap would trim this pass,
         # or the report reads as if the caps were ignored.
         enrich_cfg = plugin.enrichment
-        company_cap = limit if limit is not None else enrich_cfg.max_enrich_companies
         fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
         cap_notes = []
-        if needs["product"] > company_cap or needs["gd"] > company_cap:
-            cap_notes.append(f"company lookups capped at {company_cap}")
         if needs["fit_notes"] > fit_cap:
             cap_notes.append(f"fit/notes capped at {fit_cap}")
         if cap_notes:
@@ -1417,9 +1408,8 @@ def run_backfill(
             )
         return
 
-    # No --limit: None lets the enrichment plans apply the config caps
-    # (max_enrich_companies / max_enrich_fit).
-    product_budget = limit
+    # No --limit: None lets the enrichment plan apply the config cap
+    # (max_enrich_fit).
     fit_budget = limit
 
     tty = Console.is_tty() and not Console.quiet_mode
@@ -1470,16 +1460,13 @@ def run_backfill(
         needs = _backfill_needs(jobs, plugin)
         skipped = len(jobs) - needs["rows"]
         log.info(
-            "[backfill] %d rows (%d skipped excluded): "
-            "%d need Product, %d need GD, %d need Fit/Notes",
+            "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes",
             len(jobs),
             skipped,
-            needs["product"],
-            needs["gd"],
             needs["fit_notes"],
         )
 
-        if not (needs["product"] or needs["gd"] or needs["fit_notes"]):
+        if not needs["fit_notes"]:
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
             Console.info("All rows already enriched, nothing to backfill.")
@@ -1518,10 +1505,10 @@ def run_backfill(
                     Console.get_log_console(), tty=tty, title="Job backfill"
                 ) as rp,
             ):
-                # title + "Enriching jobs" header + 3 phase rows (detail,
-                # products, fit/notes) -- reserve the block in one scroll-region
-                # set, as run() does, to avoid the per-bar resize gap.
-                rp.reserve(2 + 3)
+                # title + "Enriching jobs" header + 2 phase rows (detail,
+                # fit/notes) -- reserve the block in one scroll-region set, as
+                # run() does, to avoid the per-bar resize gap.
+                rp.reserve(2 + 2)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
                     plugin,
@@ -1532,7 +1519,6 @@ def run_backfill(
                     enrich_group,
                     wave_label="",
                     run_preflight=True,
-                    product_budget=product_budget,
                     fit_budget=fit_budget,
                 )
                 enrich_group.done()
@@ -1588,9 +1574,7 @@ def run_backfill(
     after = _backfill_needs(jobs, plugin)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
     Console.success(
-        f"Backfill complete: +{needs['product'] - after['product']} Product, "
-        f"+{needs['gd'] - after['gd']} GD, "
-        f"+{needs['fit_notes'] - after['fit_notes']} Fit/Notes. "
+        f"Backfill complete: +{needs['fit_notes'] - after['fit_notes']} Fit/Notes. "
         f"Total run time: {_fmt_duration(elapsed)}."
     )
     # The rewrite ran (this point is reached only past the no-enrichment early
@@ -1637,45 +1621,34 @@ def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
     )
 
 
-def _empty_product_stats() -> dict[str, int]:
-    return {"enriched": 0, "skipped_cached": 0, "failed": 0}
-
-
-def _empty_fit_stats() -> dict[str, int]:
-    return {"enriched": 0, "skipped_budget": 0, "skipped_no_desc": 0, "failed": 0}
-
-
 def _run_llm_enrichment(
     plugin: JobSearchPlugin,
     ai_cfg: AIConfig,
     typed_jobs: list[EnrichedJob],  # noqa: F821
     ctx: ScrapeContext,
     sink: _JobSink,
-    product_phase: Phase | None,
     fit_phase: Phase | None,
     *,
     run_preflight: bool,
-    product_budget: int | None = None,
     fit_budget: int | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
-    exclude_companies: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
-) -> tuple[dict[str, int], dict[str, int]]:
-    """Run the overlapped product + fit/notes LLM pass, flushing as it goes.
+) -> dict[str, int]:
+    """Run the fit/notes LLM pass, flushing as it goes.
 
-    Returns ``(product_stats, fn_stats)``. ``run_preflight`` gates the ollama
-    reachability probe -- run it before the FIRST wave only; later waves skip it
-    (the server state cannot change mid-run). On a failed probe the LLM phases
-    render as zero-count done bars and zero counters (the same shape
-    ``--no-enrich`` records), so the manifest stays honest and the user fills the
-    rows later with ``jobs backfill``. The claude provider is untouched
-    (its which-guard inside the enrichers already covers a missing CLI).
-    ``sink.flush`` is the periodic resilience hook, invoked every ~25 results on
-    the coordinator thread. ``product_budget`` / ``fit_budget`` are the SHARED
-    running totals' remaining allowance for this wave (None = the config caps; an explicit 0 spends nothing).
+    Returns ``fn_stats``. ``run_preflight`` gates the ollama reachability probe
+    -- run it before the FIRST wave only; later waves skip it (the server state
+    cannot change mid-run). On a failed probe the LLM phase renders as a
+    zero-count done bar and zero counters (the same shape ``--no-enrich``
+    records), so the manifest stays honest and the user fills the rows later with
+    ``jobs backfill``. The claude provider is untouched (its which-guard inside
+    the enricher already covers a missing CLI). ``sink.flush_periodic`` is the
+    periodic resilience hook, invoked every ~25 results on the coordinator
+    thread. ``fit_budget`` is the SHARED running total's remaining allowance for
+    this wave (None = the config cap; an explicit 0 spends nothing).
     """
     from daily_driver.plugins.job_search.scraper.enrichment import (
-        enrich_product_and_fit_concurrently,
+        enrich_fit_and_notes,
     )
 
     run_llm = True
@@ -1683,53 +1656,33 @@ def _run_llm_enrichment(
         run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
 
     if run_llm:
-        # Product and fit/notes overlap under one shared concurrency cap (F1):
-        # both fan out through a single executor bounded by the provider's
-        # max_parallel, so total claude/ollama subprocesses never exceed it.
-        # A None phase means that pass is disabled by config: no bar exists and
-        # the coordinator's plan builder skips the pass on its own toggles.
-        if product_phase is not None:
-            product_phase.start()
+        # A None phase means the pass is disabled by config: no bar exists and
+        # the plan builder skips the pass on its own toggles.
         if fit_phase is not None:
             fit_phase.start()
-        _, product_stats, fn_stats = enrich_product_and_fit_concurrently(
+        _, fn_stats = enrich_fit_and_notes(
             typed_jobs,
             ctx,
-            product_budget=product_budget,
-            fit_budget=fit_budget,
-            product_progress=(
-                product_phase.advance if product_phase is not None else None
-            ),
-            fit_progress=fit_phase.advance if fit_phase is not None else None,
-            # The bars are pinned with total=len(jobs) before the plans exist;
-            # once the planner resolves the budget-capped call counts, re-base
-            # the denominators so the bars show what will actually be spent.
-            on_product_planned=(
-                product_phase.set_total if product_phase is not None else None
-            ),
-            on_fit_planned=fit_phase.set_total if fit_phase is not None else None,
+            budget=fit_budget,
+            progress=fit_phase.advance if fit_phase is not None else None,
+            # The bar is pinned with total=len(jobs) before the plan exists; once
+            # the planner resolves the budget-capped call count, re-base the
+            # denominator so the bar shows what will actually be spent.
+            on_planned=fit_phase.set_total if fit_phase is not None else None,
             # Periodic in-loop flush degrades (not crashes) on a disk error.
             flush=sink.flush_periodic,
-            exclude_fit_urls=exclude_fit_urls,
-            exclude_companies=exclude_companies,
+            exclude_urls=exclude_fit_urls,
             attempted=attempted,
         )
     else:
-        product_stats = _empty_product_stats()
         fn_stats = _empty_fit_stats()
-    if product_phase is not None:
-        product_phase.done(
-            f"{product_stats['enriched']} enriched, "
-            f"{product_stats['skipped_cached']} cached, "
-            f"{product_stats['failed']} failed"
-        )
     if fit_phase is not None:
         fit_phase.done(
             f"{fn_stats['enriched']} enriched, "
             f"{fn_stats['skipped_budget']} skipped (budget), "
             f"{fn_stats['failed']} failed"
         )
-    return product_stats, fn_stats
+    return fn_stats
 
 
 def _enrich_wave(
@@ -1742,23 +1695,21 @@ def _enrich_wave(
     *,
     wave_label: str,
     run_preflight: bool,
-    product_budget: int | None,
     fit_budget: int | None,
     set_phase: Callable[[str], None] | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
-    exclude_companies: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
-) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
+) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
     ``wave_label`` suffixes the phase rows ("" for the only/first wave, e.g.
     " (wave 2)" for the post-Apple wave) so the live display shows each wave's
-    own phase rows -- the honest two-wave UI. ``product_budget`` / ``fit_budget``
-    are this wave's remaining slice of the shared running totals (None = the
-    config caps; an explicit 0 spends nothing). ``set_phase`` records the
-    coarse run phase for the manifest. Flushes
-    per phase and on the periodic hook; the caller's try/except flushes once more
-    on interrupt. Returns ``(detail_stats, product_stats, fn_stats)``.
+    own phase rows -- the honest two-wave UI. ``fit_budget`` is this wave's
+    remaining slice of the shared running total (None = the config cap; an
+    explicit 0 spends nothing). ``set_phase`` records the coarse run phase for
+    the manifest. Flushes per phase and on the periodic hook; the caller's
+    try/except flushes once more on interrupt. Returns
+    ``(detail_stats, fn_stats)``.
     """
     from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
@@ -1768,18 +1719,8 @@ def _enrich_wave(
     total = len(jobs)
     detail_phase = enrich_group.phase(f"Detail pages{wave_label}", total=total)
     # A disabled pass renders NO bar: pinning one with a placeholder total for
-    # work that will never run reads as a stuck/ignored toggle (owner-observed
-    # with both company toggles off). The company pass serves two toggles
-    # sharing one call, so when it does run, label it by what is enabled --
-    # a gd-only run under "Company products" looks like enrich_product is
-    # being ignored.
+    # work that will never run reads as a stuck/ignored toggle.
     enrich_cfg = plugin.enrichment
-    product_phase: Phase | None = None
-    if enrich_cfg.enrich_product or enrich_cfg.enrich_gd_rating:
-        company_label = (
-            "Company products" if enrich_cfg.enrich_product else "Glassdoor ratings"
-        )
-        product_phase = enrich_group.phase(f"{company_label}{wave_label}", total=total)
     fit_phase: Phase | None = None
     if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
@@ -1789,28 +1730,25 @@ def _enrich_wave(
     detail_phase.start()
     _, detail_stats = enrich_job_details(jobs, ctx, progress=detail_phase.advance)
     detail_phase.done(render_detail_summary(detail_stats))
-    # Persist detail comp/posted_date before the LLM phases; a disk error here
+    # Persist detail comp/posted_date before the LLM phase; a disk error here
     # degrades rather than aborting (the final flush retries and propagates).
     sink.flush_periodic()
     if set_phase is not None:
         set_phase("enrichment")
 
-    product_stats, fn_stats = _run_llm_enrichment(
+    fn_stats = _run_llm_enrichment(
         plugin,
         ai_cfg,
         jobs,
         ctx,
         sink,
-        product_phase,
         fit_phase,
         run_preflight=run_preflight,
-        product_budget=product_budget,
         fit_budget=fit_budget,
         exclude_fit_urls=exclude_fit_urls,
-        exclude_companies=exclude_companies,
         attempted=attempted,
     )
-    return detail_stats, product_stats, fn_stats
+    return detail_stats, fn_stats
 
 
 def _add_stats(into: dict[str, int], more: dict[str, int]) -> None:
@@ -1824,13 +1762,10 @@ def _add_stats(into: dict[str, int], more: dict[str, int]) -> None:
 
 
 def _accumulate_enrich_stats(
-    product_stats: dict[str, int],
     fn_stats: dict[str, int],
     wave_result: dict[str, dict[str, Any]],
 ) -> None:
-    """Fold a completed wave's product/fit stats into the running totals."""
-    if "product" in wave_result:
-        _add_stats(product_stats, wave_result["product"])
+    """Fold a completed wave's fit stats into the running total."""
     if "fit" in wave_result:
         _add_stats(fn_stats, wave_result["fit"])
 
@@ -1849,7 +1784,6 @@ class _RunState:
     all_jobs: list[dict[str, Any]] = field(default_factory=list)
     failed_sources: list[str] = field(default_factory=list)
     phase_reached: str = "scraping"
-    product_stats: dict[str, int] = field(default_factory=_empty_product_stats)
     fn_stats: dict[str, int] = field(default_factory=_empty_fit_stats)
     # The overlap (wave-1) background enrichment thread, exposed so run()'s exit
     # handler can join its in-flight enrichment before the final flush/manifest.
@@ -1883,7 +1817,6 @@ def _write_run_manifest(
     failed_sources: list[str],
     written: int,
     fn_enriched: int,
-    product_enriched: int,
     phase_reached: str,
     interrupted: bool,
 ) -> None:
@@ -1906,7 +1839,6 @@ def _write_run_manifest(
         "sources_failed": failed_sources,
         "new_jobs": written,
         "enriched_fit_notes": fn_enriched,
-        "enriched_product": product_enriched,
         "phase_reached": phase_reached,
         "interrupted": interrupted,
     }
@@ -2020,9 +1952,7 @@ def run(
             # Fold wave-1's enrichment counts into the manifest unless the normal
             # path already did (guards against double-counting).
             if not state.wave1_accumulated and state.wave1_result:
-                _accumulate_enrich_stats(
-                    state.product_stats, state.fn_stats, state.wave1_result
-                )
+                _accumulate_enrich_stats(state.fn_stats, state.wave1_result)
                 state.wave1_accumulated = True
             sink = state.sink
             if sink is not None:
@@ -2041,7 +1971,6 @@ def run(
                 failed_sources=state.failed_sources,
                 written=state.written,
                 fn_enriched=state.fn_stats["enriched"],
-                product_enriched=state.product_stats["enriched"],
                 phase_reached=state.phase_reached,
                 interrupted=True,
             )
@@ -2146,7 +2075,6 @@ def _run_impl(
                         failed_sources=[],
                         written=0,
                         fn_enriched=0,
-                        product_enriched=0,
                         phase_reached="scraping",
                         interrupted=True,
                     )
@@ -2316,11 +2244,11 @@ def _run_impl(
 
         enrich_group: Group | None = None
         wave1_thread: threading.Thread | None = None
-        # Holds wave-1's per-phase stats plus the attempted-identity sets
-        # (fit_attempted_urls / product_attempted_companies) so wave 2 can exclude
-        # them and size the shared budget by what wave 1 actually attempted.
-        # Aliased to state so the run() interrupt handler can fold wave-1 stats
-        # into the manifest and surface a relayed wave-1 exception after the join.
+        # Holds wave-1's per-phase stats plus the attempted-identity set
+        # (fit_attempted_urls) so wave 2 can exclude those rows and size the
+        # shared budget by what wave 1 actually attempted. Aliased to state so
+        # the run() interrupt handler can fold wave-1 stats into the manifest and
+        # surface a relayed wave-1 exception after the join.
         wave1_result: dict[str, Any] = state.wave1_result
         wave1_error: list[BaseException] = state.wave1_error
         wave1_count = [0]  # phase-1 rows handed to wave 1
@@ -2329,7 +2257,7 @@ def _run_impl(
             assert sink is not None and enrich_group is not None
             try:
                 attempted: dict[str, set[str]] = {}
-                d, p, f = _enrich_wave(
+                d, f = _enrich_wave(
                     plugin,
                     ai_cfg,
                     phase1_jobs,
@@ -2338,20 +2266,15 @@ def _run_impl(
                     enrich_group,
                     wave_label="",
                     run_preflight=True,
-                    product_budget=None,  # wave 1 gets the full config budget
-                    fit_budget=None,
+                    fit_budget=None,  # wave 1 gets the full config budget
                     set_phase=_set_phase,
                     attempted=attempted,
                 )
                 wave1_result.update(
                     {
                         "detail": d,
-                        "product": p,
                         "fit": f,
                         "fit_attempted_urls": attempted.get("fit_urls", set()),
-                        "product_attempted_companies": attempted.get(
-                            "product_companies", set()
-                        ),
                     }
                 )
             except BaseException as exc:  # noqa: BLE001 -- relayed to main thread
@@ -2466,7 +2389,6 @@ def _run_impl(
 
         # Accumulate enrichment counters straight into state so the run()
         # wrapper's manifest reflects partial progress on an interrupt.
-        product_stats = state.product_stats
         fn_stats = state.fn_stats
         if not do_enrich:
             # dry-run avoids writes entirely; --no-enrich appends the lifted rows
@@ -2491,23 +2413,19 @@ def _run_impl(
                 if wave1_error:
                     raise wave1_error[0]
                 assert enrich_group is not None
-                _accumulate_enrich_stats(product_stats, fn_stats, wave1_result)
+                _accumulate_enrich_stats(fn_stats, wave1_result)
                 state.wave1_accumulated = True
                 # Wave 2 receives the WHOLE row list (so its slot mutations and
                 # the periodic flush both target sink.rows directly). Rows ALREADY
                 # ATTEMPTED in wave 1 -- enriched or failed -- are excluded so a
                 # failed wave-1 row is not retried (and double-charged) in wave 2;
-                # backfill is the retry path. Budgets are shared running totals:
-                # product by UNIQUE COMPANIES attempted (the company cap counts
-                # companies, not jobs), fit by jobs attempted.
+                # backfill is the retry path. The fit budget is a shared running
+                # total: wave 2 gets what wave 1 left, counted by jobs attempted.
                 if len(typed_jobs) > wave1_count[0]:
                     fit_attempted = frozenset(
                         wave1_result.get("fit_attempted_urls", set())
                     )
-                    company_attempted = frozenset(
-                        wave1_result.get("product_attempted_companies", set())
-                    )
-                    _, p2, f2 = _enrich_wave(
+                    _, f2 = _enrich_wave(
                         plugin,
                         ai_cfg,
                         typed_jobs,
@@ -2516,26 +2434,21 @@ def _run_impl(
                         enrich_group,
                         wave_label=" (wave 2)",
                         run_preflight=False,  # wave 1 already probed
-                        # Shared running totals: wave 2 gets exactly what wave 1
+                        # Shared running total: wave 2 gets exactly what wave 1
                         # left -- 0 when exhausted (an explicit 0 makes no calls;
                         # the wave still runs its unbudgeted detail enrichment).
-                        product_budget=max(
-                            0, enrich_cfg.max_enrich_companies - len(company_attempted)
-                        ),
                         fit_budget=max(
                             0, enrich_cfg.max_enrich_fit - len(fit_attempted)
                         ),
                         set_phase=_set_phase,
                         exclude_fit_urls=fit_attempted,
-                        exclude_companies=company_attempted,
                     )
-                    _add_stats(product_stats, p2)
                     _add_stats(fn_stats, f2)
             else:
                 # No overlap (no Apple phase, or it landed nothing): one wave
                 # over every row on the main thread, same as the classic path.
                 enrich_group = rp.group("Enriching jobs")
-                _, p1, f1 = _enrich_wave(
+                _, f1 = _enrich_wave(
                     plugin,
                     ai_cfg,
                     typed_jobs,
@@ -2544,11 +2457,9 @@ def _run_impl(
                     enrich_group,
                     wave_label="",
                     run_preflight=True,
-                    product_budget=None,
                     fit_budget=None,
                     set_phase=_set_phase,
                 )
-                _add_stats(product_stats, p1)
                 _add_stats(fn_stats, f1)
             if enrich_group is not None:
                 enrich_group.done()
@@ -2560,13 +2471,6 @@ def _run_impl(
         n,
         fn_stats["skipped_budget"],
         fn_stats["failed"],
-    )
-    log.info(
-        "Product enriched: %d/%d, %d skipped (cached), %d failed",
-        product_stats["enriched"],
-        n,
-        product_stats["skipped_cached"],
-        product_stats["failed"],
     )
     # Headline that reconciles every job: found (raw scraped) -> new (not already
     # in csv) -> matched location (the only filter that removes jobs). Intra/
@@ -2623,7 +2527,6 @@ def _run_impl(
         failed_sources=failed_sources,
         written=written,
         fn_enriched=fn_stats["enriched"],
-        product_enriched=product_stats["enriched"],
         phase_reached=state.phase_reached,
         interrupted=False,
     )
