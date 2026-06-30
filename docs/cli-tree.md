@@ -113,6 +113,8 @@ daily-driver/
 │       ├── --since SPEC
 │       ├── --until SPEC
 │       └── -j, --json
+├── calendar
+│   └── sync
 ├── day-start
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)

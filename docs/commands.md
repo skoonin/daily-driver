@@ -233,6 +233,7 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 - `--no-enrich` — append scraped rows but skip enrichment (detail pages and fit/notes). Fast and cheap; fill later with `jobs backfill`.
 - `-S` / `--sources a,b,c` — override the enabled set for one run. `--list-sources` prints the names and exits.
 - `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, wrapped in the standard `{"schema": 1, "data": <manifest>}` envelope (read e.g. `.data.new_jobs`), with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`); an unreadable manifest emits `{"schema": 1, "data": null}`.
+- `.data.sources_degraded` — distinct from `.data.sources_failed`: a source that returned partial or empty-after-failures results is tracked as degraded rather than failed. Its rows are kept and the exit code is unchanged, but it is listed under `sources_degraded` in the manifest and called out in the run summary, so a quietly thin scrape is visible without being treated as an outright failure.
 
 **Resilience.** `jobs run` writes as it works, so an interrupt keeps what finished:
 
@@ -293,6 +294,16 @@ Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them
 ### `scheduler status [--json]`
 
 Lists configured jobs and whether each plist is currently installed in `~/Library/LaunchAgents/`.
+
+## Calendar (macOS)
+
+### `calendar sync`
+
+Writes today's plan time blocks into a local macOS Calendar so the day's agenda shows up alongside the rest of your calendar. The source is the day's plan: each `plan_items[]` entry whose `time_block` is an `HH:MM-HH:MM` range becomes one calendar event.
+
+- **macOS-only and opt-in.** Sync is a clean no-op unless `calendar.sync_enabled: true` is set in `.dd-config.yaml` (see [configuration.md](configuration.md#calendar)). Events are written to the calendar named by `calendar.plan_calendar_name` (default `Daily Plan`), which must already exist in Calendar.app.
+- **Idempotent.** Each event is tagged `daily-plan:<date>`; re-running for the same day removes that day's existing tagged events and rewrites them, so editing the plan and syncing again replaces — never duplicates — the day's blocks.
+- **Best-effort.** A missing calendar, a non-macOS host, or a denied permission prompt degrades to a clean no-op (exit `0`) with a one-line stderr notice — it never aborts the day-start flow.
 
 ## Scripting helpers
 
