@@ -115,3 +115,55 @@ def test_ashby_empty_location_falls_back_to_remote(monkeypatch: Any) -> None:
     results = ashby_module.scrape_ashby(_config(["acme"]))
 
     assert results[0]["location"] == "Remote"
+
+
+def test_ashby_failed_board_raises_degraded_keeping_data(monkeypatch: Any) -> None:
+    """A board whose request fails raises PartialSourceError carrying the jobs
+    matched from the boards that succeeded, so a partial/all-failed scrape is
+    recorded as degraded -- not a clean "0 found" indistinguishable from no match.
+    """
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+
+    ok_jobs = [
+        {
+            "title": "Platform Engineer",
+            "location": "Remote",
+            "jobUrl": "https://jobs.ashbyhq.com/ok/1",
+            "descriptionPlain": "",
+            "isListed": True,
+        }
+    ]
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        # "ok" returns a posting; "down" fails (falsy response).
+        return _response(ok_jobs) if url.endswith("/ok") else None
+
+    monkeypatch.setattr(ashby_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())
+
+    with pytest.raises(PartialSourceError) as excinfo:
+        ashby_module.scrape_ashby(_config(["ok", "down"]))
+
+    # The successful board's match rides along on the exception.
+    assert len(excinfo.value.jobs) == 1
+    assert "down" in excinfo.value.reason
+
+
+def test_ashby_all_boards_failed_raises_degraded_empty(monkeypatch: Any) -> None:
+    """Every board failing yields an empty job list AND a degraded signal, so the
+    all-failed case is never read as a clean, complete "no roles matched" scrape.
+    """
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+
+    monkeypatch.setattr(ashby_module, "_api_get", lambda *a, **kw: None)
+    monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())
+
+    with pytest.raises(PartialSourceError) as excinfo:
+        ashby_module.scrape_ashby(_config(["a", "b"]))
+
+    assert excinfo.value.jobs == []
+    assert "2 of 2" in excinfo.value.reason

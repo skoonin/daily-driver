@@ -46,7 +46,10 @@ daily-driver/
 │   │   └── --extra KEY=VALUE (repeatable)
 │   ├── update
 │   │   ├── id (positional)
+│   │   ├── -T, --title TEXT
 │   │   ├── -s, --status STATUS
+│   │   ├── -l, --link URL
+│   │   ├── -d, --due YYYY-MM-DD
 │   │   ├── -N, --note TEXT
 │   │   ├── --next-action TEXT
 │   │   ├── -t, --tags a,b
@@ -110,6 +113,8 @@ daily-driver/
 │       ├── --since SPEC
 │       ├── --until SPEC
 │       └── -j, --json
+├── calendar
+│   └── sync
 ├── day-start
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)

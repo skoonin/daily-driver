@@ -32,11 +32,18 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
     """
     from daily_driver.plugins.job_search.config import WorkableToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+    from daily_driver.plugins.job_search.scraper.runner import (
+        PartialSourceError,
+        source_toggle,
+    )
 
     accounts = source_toggle(ctx.plugin, "workable", WorkableToggle).workable_accounts
     session = _http_session(ctx)
     jobs: list[dict] = []
+    # Accounts whose request failed -> the source is degraded (its result is
+    # incomplete). An all-failed source returns [] otherwise indistinguishable
+    # from a clean "no roles matched"; surfaced after the loop.
+    failed_accounts: list[str] = []
 
     # Live progress unit: one account (reported at loop-top so a skipped account
     # still advances the bar).
@@ -52,6 +59,7 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
         api_url = f"https://apply.workable.com/api/v1/widget/accounts/{slug}"
         resp = _api_get(session, api_url, ctx, label=f"workable/{slug}")
         if not resp:
+            failed_accounts.append(slug)
             continue
         data = resp.json()
 
@@ -88,6 +96,14 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
             len(account_jobs),
         )
 
+    if failed_accounts:
+        # Incomplete scrape (one or more accounts failed) -> degraded, not a clean
+        # run. The gathered jobs ride along and still append.
+        raise PartialSourceError(
+            jobs,
+            f"{len(failed_accounts)} of {len(accounts)} accounts failed: "
+            f"{', '.join(failed_accounts)}",
+        )
     return jobs
 
 

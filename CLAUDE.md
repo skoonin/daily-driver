@@ -45,7 +45,7 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver jobs {run,backfill,status,prune}` — search the configured job
   boards, re-enrich empty fields on existing rows, show last-run metadata, or
   archive stale rows from `jobs.csv`.
-- `daily-driver paths [<kind>] [--json]` — print workspace-resolved paths
+- `daily-driver paths <kind> [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
 - `daily-driver gather {calendar,git} [--json]` — read
   external state for downstream commands.

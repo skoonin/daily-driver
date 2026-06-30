@@ -13,13 +13,12 @@ scannable.
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from typing import Any
 
-from rich.console import Console
+from rich.console import Console as RichConsole
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
+from daily_driver.core.console import Console
 
 # Topic names accepted by `help <topic>`. Order is the rendering order in
 # the full reference, so keep it grouped: commands first (most-used surface),
@@ -209,7 +208,7 @@ def _build_payload(workspace: Any | None) -> dict[str, Any]:
 
 
 def _emit_json(payload: dict[str, Any]) -> None:
-    print(json.dumps({"schema": 1, "data": payload}, indent=2))
+    Console.emit_json(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +229,7 @@ _TOPIC_HEADERS = {
 
 
 def _render_topic(
-    console: Console, topic: str, payload: dict[str, Any], *, full: bool
+    console: RichConsole, topic: str, payload: dict[str, Any], *, full: bool
 ) -> None:
     """Render one topic. The full reference loops this per topic with a
     section header and indented body; the standalone topic view drops the
@@ -288,7 +287,7 @@ def _render_topic(
         console.print(f"{indent}{', '.join(payload['cadences'])}")
 
 
-def _render_full(console: Console, payload: dict[str, Any]) -> None:
+def _render_full(console: RichConsole, payload: dict[str, Any]) -> None:
     console.print("[bold]daily-driver — reference[/bold]\n")
     for i, topic in enumerate(_TOPICS):
         _render_topic(console, topic, payload, full=True)
@@ -316,13 +315,10 @@ def run(args: argparse.Namespace) -> int:
             # Topic JSON: same envelope, but data scoped to the topic key
             # plus its peer (e.g. statuses includes recommended/in_use/consumers).
             scoped: dict[str, Any] = {topic: payload[topic]}
-            print(
-                json.dumps({"schema": 1, "data": scoped}, indent=2),
-                file=sys.stdout,
-            )
+            _emit_json(scoped)
         return 0
 
-    console = Console(stderr=False)
+    console = Console.get_user_console()
     if topic is None:
         _render_full(console, payload)
     else:

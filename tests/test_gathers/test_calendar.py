@@ -43,6 +43,20 @@ Onsite Interview
     Big City, Province
 """
 
+# Dated time range on a single line — icalBuddy prints the date once, then both
+# times ("2026-04-21 10:00 - 11:00"). The end time must be recovered, not dropped.
+_DATED_RANGE_OUTPUT = """\
+Team Sync
+    2026-04-21 10:00 - 11:00
+    location: Zoom
+"""
+
+# Dated range where icalBuddy repeats the date on the end side.
+_DATED_RANGE_FULL_OUTPUT = """\
+Planning
+    2026-04-21 13:00 - 2026-04-21 14:30
+"""
+
 # All-day event: a bare ISO date line with no time. Should anchor start at midnight.
 _ALL_DAY_OUTPUT = """\
 Company Holiday
@@ -179,6 +193,45 @@ def test_gather_events_parses_all_day_event(monkeypatch):
     assert events[0].title == "Company Holiday"
     assert events[0].start == datetime(2026, 4, 21, 0, 0, 0)
     assert events[0].location == "Everywhere"
+
+
+def test_gather_events_parses_dated_time_range(monkeypatch):
+    """A single-line dated range ("DATE 10:00 - 11:00") captures both start and
+    end; the end time must not be dropped."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_DATED_RANGE_OUTPUT),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    assert len(events) == 1
+    assert events[0].title == "Team Sync"
+    assert events[0].start == datetime(2026, 4, 21, 10, 0, 0)
+    assert events[0].end == datetime(2026, 4, 21, 11, 0, 0)
+
+
+def test_gather_events_parses_dated_range_with_repeated_date(monkeypatch):
+    """When icalBuddy repeats the date on the end side of a single-line range,
+    the full end datetime is recovered."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_DATED_RANGE_FULL_OUTPUT),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    assert len(events) == 1
+    assert events[0].start == datetime(2026, 4, 21, 13, 0, 0)
+    assert events[0].end == datetime(2026, 4, 21, 14, 30, 0)
 
 
 def test_gather_events_url_digits_do_not_corrupt_date(monkeypatch):

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from daily_driver.core.logging import get_logger
 from daily_driver.integrations import ai_provider, claude_cli
 from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
-from daily_driver.plugins.job_search.config import Criterion
+from daily_driver.plugins.job_search.config import Criterion, EnrichmentConfig
 from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _enrich_pool_size,
     _enrich_tag,
@@ -493,9 +493,42 @@ def _fetch_fit_notes_for_job(
     return score, notes_str, remote, False
 
 
-def _fit_notes_eligible(job: EnrichedJob) -> bool:
-    """A job still wants a fit/notes call: active status, missing fit or notes."""
-    return job.status not in ENRICH_SKIP_STATUSES and not (job.fit and job.notes)
+def _fit_notes_eligible(job: EnrichedJob, *, force: bool = False) -> bool:
+    """A job still wants a fit/notes call: active status, missing fit or notes.
+
+    Under ``force`` the missing-field condition is dropped: every active row is
+    eligible so existing Fit/Notes are re-enriched and overwritten.
+    """
+    if job.status in ENRICH_SKIP_STATUSES:
+        return False
+    if force:
+        return True
+    return not (job.fit and job.notes)
+
+
+def fit_notes_target_indices(
+    jobs: list[EnrichedJob],
+    budget: int | None,
+    cfg: EnrichmentConfig,
+    exclude_urls: frozenset[str] = frozenset(),
+    *,
+    force: bool = False,
+) -> list[int]:
+    """Input-order indices of rows the fit/notes pass will process this wave.
+
+    Single source of truth shared by ``_build_fit_plan`` and the LinkedIn
+    description fetch so the two never select a different slice of rows.
+    ``budget`` of ``None`` means the config cap (``max_enrich_fit``); an explicit
+    ``0`` selects none. Order is preserved so budget truncation matches the
+    first-N-by-position behavior.
+    """
+    resolved = max(0, cfg.max_enrich_fit if budget is None else budget)
+    eligible = [
+        i
+        for i, j in enumerate(jobs)
+        if _fit_notes_eligible(j, force=force) and j.url not in exclude_urls
+    ]
+    return eligible[:resolved]
 
 
 @dataclass
@@ -522,6 +555,7 @@ def _build_fit_plan(
     progress: ProgressCallback | None,
     exclude_urls: frozenset[str] = frozenset(),
     on_planned: Callable[[int], None] | None = None,
+    force: bool = False,
 ) -> _FitPlan | None:
     """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
@@ -570,7 +604,7 @@ def _build_fit_plan(
     eligible_idx = [
         i
         for i, j in enumerate(out)
-        if _fit_notes_eligible(j) and j.url not in exclude_urls
+        if _fit_notes_eligible(j, force=force) and j.url not in exclude_urls
     ]
     eligible_count = len(eligible_idx)
     no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
@@ -605,7 +639,7 @@ def _build_fit_plan(
             no_desc,
         )
 
-    target_idx = eligible_idx[:budget]
+    target_idx = fit_notes_target_indices(out, budget, cfg, exclude_urls, force=force)
     # Report the PLANNED call count (post-budget) so the caller's progress bar
     # shows the real denominator, not the whole eligible count.
     if on_planned is not None:
@@ -635,12 +669,20 @@ def _build_fit_plan(
             log.info("[enrich-fit-notes] %s: enrichment failed, no write", company)
             return
         updates: dict[str, Any] = {}
-        wrote_fit = not job.fit and fit is not None
-        wrote_notes = not job.notes and bool(notes_str)
-        # Remote: the LLM fills a blank cell and may refine the heuristic's coarse
-        # "remote" to a definite value; a hand-entered value (anything else) wins
-        # and a blank/unknown LLM answer never clobbers an existing value.
-        wrote_remote = bool(remote) and job.remote in ("", "remote")
+        # Under force every non-empty LLM answer overwrites the existing cell;
+        # otherwise the fill-missing-only gates below apply.
+        if force:
+            wrote_fit = fit is not None
+            wrote_notes = bool(notes_str)
+            wrote_remote = bool(remote)
+        else:
+            wrote_fit = not job.fit and fit is not None
+            wrote_notes = not job.notes and bool(notes_str)
+            # Remote: the LLM fills a blank cell and may refine the heuristic's
+            # coarse "remote" to a definite value; a hand-entered value (anything
+            # else) wins and a blank/unknown LLM answer never clobbers an
+            # existing value.
+            wrote_remote = bool(remote) and job.remote in ("", "remote")
         if wrote_fit:
             updates["fit"] = fit
         if wrote_notes:
@@ -734,6 +776,7 @@ def enrich_fit_and_notes(
     exclude_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
     on_planned: Callable[[int], None] | None = None,
+    force: bool = False,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -755,6 +798,10 @@ def enrich_fit_and_notes(
     (out-param) records this pass's attempted row URLs under ``"fit_urls"`` for
     cross-wave budget accounting.
 
+    ``force`` re-enriches every active row regardless of existing Fit/Notes and
+    OVERWRITES Fit, Notes, and Remote (still bounded by ``budget``); the default
+    fills only missing cells.
+
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget, failed.
     """
     if _reset_hint:
@@ -765,7 +812,7 @@ def enrich_fit_and_notes(
     applied = [0]
     progress = _wrap_progress_with_flush(progress, flush, flush_every, applied)
     plan = _build_fit_plan(
-        jobs, ctx, budget, progress, exclude_urls, on_planned=on_planned
+        jobs, ctx, budget, progress, exclude_urls, on_planned=on_planned, force=force
     )
     if attempted is not None:
         attempted["fit_urls"] = (

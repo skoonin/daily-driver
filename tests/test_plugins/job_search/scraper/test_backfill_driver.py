@@ -335,6 +335,74 @@ def test_backfill_status_lines_route_through_console(
     assert "Backfill" not in capsys.readouterr().out
 
 
+def test_backfill_dry_run_returns_summary_dict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """run_backfill returns a completion summary the CLI can wrap in --json."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [
+            _row(company="A", link="https://example.com/a"),
+            _row(company="B", link="https://example.com/b", fit="8", notes="x"),
+        ],
+    )
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    monkeypatch.setattr(
+        enrichment_pkg,
+        "enrich_job_details",
+        lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("no calls")),
+    )
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path, dry_run=True)
+
+    assert summary["dry_run"] is True
+    # Both rows are active; one needs Fit/Notes, the other is already filled.
+    assert summary["rows"] == 2
+    assert summary["needs_before"] == 1
+    assert summary["needs_after"] == 1
+    assert summary["enriched"] == 0
+    assert summary["skipped"] == 0
+    assert summary["elapsed_seconds"] is None
+
+
+def test_backfill_emit_json_suppresses_console_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """emit_json=True returns the summary but routes no human line through Console."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="C", link="https://example.com/c")])
+    _stub_detail(monkeypatch)
+
+    from daily_driver.core.console import Console
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    monkeypatch.setattr(
+        enrichment_pkg,
+        "enrich_fit_and_notes",
+        lambda jobs, ctx, **kw: (
+            jobs,
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
+        ),
+    )
+
+    success_calls: list[str] = []
+    monkeypatch.setattr(
+        Console,
+        "success",
+        classmethod(lambda cls, msg: success_calls.append(msg)),
+    )
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path, emit_json=True)
+
+    assert summary["dry_run"] is False
+    assert not success_calls, "emit_json must suppress the human completion line"
+
+
 def test_backfill_all_filled_reports_nothing_to_do(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

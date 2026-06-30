@@ -119,6 +119,28 @@ class CheckpointAborted(Exception):
     """
 
 
+class PartialSourceError(Exception):
+    """Signals a source finished but its result is INCOMPLETE (degraded).
+
+    Raised by a source whose scrape only partly succeeded -- a paginated board
+    that lost connectivity mid-walk, or a single-GET source where one or more
+    board/account requests failed -- so its partial (or empty) job list would
+    otherwise be indistinguishable from a clean, complete "0 found" scrape.
+
+    Carries the jobs gathered so far (still appended and deduped, exactly as a
+    normal return) plus a human-readable ``reason``. The orchestrator records
+    the source as DEGRADED -- a state DISTINCT from failed (a source that
+    raised an ordinary exception and produced nothing) -- and surfaces it in the
+    end-of-run summary and the run manifest. A degraded source's rows are kept;
+    only the completeness of its scrape is in doubt.
+    """
+
+    def __init__(self, jobs: list[dict[str, Any]], reason: str) -> None:
+        super().__init__(reason)
+        self.jobs = jobs
+        self.reason = reason
+
+
 # ── Source-toggle helper ─────────────────────────────────────────────────────
 
 
@@ -193,6 +215,23 @@ def dedup_key(company: str, role: str) -> str:
     on RemoteOK and LinkedIn produces an identical key.
     """
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
+
+
+def _csv_row_identity(row: dict[str, str]) -> str:
+    """Stable identity for a jobs.csv row: stripped Link URL, else dedup key.
+
+    Mirrors the append-time dedup boundary (URL primary, ``(company, role)``
+    fallback) so a row's identity is the same whether it is held in memory as an
+    ``EnrichedJob`` or read back as a raw CSV dict. Used by ``_JobSink.flush`` to
+    merge this run's rows against the current on-disk rows by identity.
+    """
+    url = (row.get("Link") or "").strip()
+    if url:
+        return url
+    # csv.DictReader fills missing trailing cells with None for a row shorter
+    # than the header (a hand-edit slip), so coerce to str -- dedup_key lower()s
+    # its inputs and would otherwise raise AttributeError on None mid-flush.
+    return dedup_key(row.get("Company") or "", row.get("Role") or "")
 
 
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
@@ -396,6 +435,7 @@ def _run_one(
     on_source_progress: Callable[[str, int, int | None], None] | None = None,
     scraper_fn: Callable[[ScrapeContext], list[dict[str, Any]]] | None = None,
     on_source_checkpoint: Callable[[str, list[dict[str, Any]]], None] | None = None,
+    on_source_degraded: Callable[[str, str], None] | None = None,
 ) -> list[dict[str, Any]] | Exception:
     """Invoke one scraper and map known failures to exceptions.
 
@@ -420,6 +460,12 @@ def _run_one(
     incrementally, so the coordinator SKIPS its end-of-source append (it tracks
     which sources checkpointed); ``_run_one`` still returns the full job list for
     the run manifest's sources-ok tally and cross-source dedup.
+
+    ``on_source_degraded(source_id, reason)`` fires when a source raises
+    ``PartialSourceError`` -- it completed but its scrape is incomplete. Its
+    partial jobs are returned normally (so they still append and dedup), but the
+    orchestrator records the source as degraded (distinct from failed) for the
+    summary and manifest.
     """
     if scraper_fn is None:
         scraper_fn = SCRAPERS[source_id]
@@ -442,8 +488,20 @@ def _run_one(
 
         ctx = replace(ctx, checkpoint=_checkpoint)
     start = time.perf_counter()
+    degraded_reason: str | None = None
     try:
         jobs = scraper_fn(ctx)
+    except PartialSourceError as exc:
+        # Degraded, not failed: the source completed but one or more of its units
+        # failed mid-scrape, so its (possibly empty) result is incomplete. Keep
+        # the jobs it did gather -- they still flow through the normal append/dedup
+        # path below -- and record the source as degraded so the summary and
+        # manifest do not read the incomplete scrape as a clean run.
+        jobs = exc.jobs
+        degraded_reason = exc.reason
+        log.warning("[%s] degraded: %s", source_id, exc.reason)
+        if on_source_degraded is not None:
+            on_source_degraded(source_id, exc.reason)
     except HTTPTimeout as exc:
         # HTTPTimeout/HTTPError alias requests exceptions; the stub-less
         # `requests` import types them as Any, so narrow on the way out.
@@ -477,6 +535,8 @@ def _run_one(
         # it kept what it had fetched before the stop, not a complete scrape.
         if ctx.stop_event.is_set():
             detail = f"interrupted -- {len(jobs)} found so far"
+        elif degraded_reason is not None:
+            detail = f"degraded -- {len(jobs)} found ({degraded_reason})"
         else:
             detail = f"{len(jobs)} found in {_fmt_duration(elapsed)}"
         on_source_done(source_id, True, detail)
@@ -836,7 +896,7 @@ class _JobSink:
             return dict(counts)
 
     def flush(self) -> None:
-        """Rewrite jobs.csv -- ``preexisting_rows`` then ``rows`` -- through the
+        """Rewrite jobs.csv -- carried non-run rows then ``rows`` -- through the
         one backfill rewrite path.
 
         Snapshot AND rewrite happen under one held ``_rows_lock`` + ``file_lock``
@@ -844,6 +904,16 @@ class _JobSink:
         reading the rows and writing them out). The locks are held only for the
         rewrite, never across the slow LLM calls that produced the updates, so a
         concurrent prune/backfill is serialized but not starved.
+
+        On the run path the sentinel lock was released for the long scrape/enrich
+        phase, so the rows that existed at run start may have changed since. Each
+        flush therefore RE-READS the current on-disk rows under the held lock and
+        keeps the ones that are not this run's -- so a row a concurrent ``prune``
+        or hand-edit removed stays removed and a field edit this run did not make
+        survives -- then layers this run's enriched rows on top by identity (Link
+        URL, falling back to the ``(company, role)`` dedup key). backfill keeps the
+        sentinel lock for its whole lifecycle, so it replays its in-memory
+        ``preexisting_rows`` directly without a re-read.
 
         Unknown / hand-added columns are carried through POSITIONALLY via
         ``row_extras`` (aligned 1:1 with ``rows``), not keyed by Link: every row
@@ -863,9 +933,35 @@ class _JobSink:
             snapshot = list(self.rows)
             extras_snapshot = list(self.row_extras)
             out_header = self.header + self.extra_columns
-            # Pre-existing file rows lead, field-for-field; this run's rows follow
-            # in append order, so the rewrite preserves the on-disk layout.
-            out_rows: list[dict[str, str]] = list(self.preexisting_rows)
+            if self._external_lock_held:
+                # backfill holds the sentinel lock for its whole lifecycle, so the
+                # ``preexisting_rows`` snapshot can't have gone stale under it.
+                leading_rows: list[dict[str, str]] = list(self.preexisting_rows)
+            else:
+                # run path: the sentinel lock was RELEASED for the minutes-long
+                # scrape/enrich phase, so the snapshot captured at run start may be
+                # stale -- a concurrent prune/hand-edit could have removed or
+                # changed rows since. Re-read the current on-disk rows under the
+                # held flush lock and keep every row that is NOT one of this run's
+                # rows. A row a concurrent writer removed stays removed; a field
+                # edit this run did not make survives; this run's enriched rows are
+                # layered on top below by append order. (The run's own appended
+                # rows are already on disk -- exclude them by identity so the
+                # in-memory enriched version wins instead of being duplicated.)
+                _, on_disk_rows = read_rows(self.csv_path)
+                run_identities = {
+                    ident
+                    for job in snapshot
+                    if (ident := _csv_row_identity(job.to_csv_row()))
+                }
+                leading_rows = [
+                    row
+                    for row in on_disk_rows
+                    if _csv_row_identity(row) not in run_identities
+                ]
+            # Carried rows lead, field-for-field; this run's rows follow in append
+            # order, so the rewrite preserves the on-disk layout.
+            out_rows: list[dict[str, str]] = list(leading_rows)
             for i, job in enumerate(snapshot):
                 csv_row = job.to_csv_row()
                 if i < len(extras_snapshot):
@@ -926,6 +1022,7 @@ def run_all_scrapers(
     on_note: Callable[[str], None] | None = None,
     on_source_result: Callable[[str, list[dict[str, Any]]], object] | None = None,
     on_source_checkpoint: Callable[[str, list[dict[str, Any]]], object] | None = None,
+    on_source_degraded: Callable[[str, str], None] | None = None,
     on_phase1_done: Callable[[bool], None] | None = None,
     force_headless: bool = False,
 ) -> tuple[
@@ -1102,6 +1199,7 @@ def run_all_scrapers(
                     on_source_progress,
                     fn,
                     _checkpoint_for(row_id),
+                    on_source_degraded,
                 ): row_id
                 for row_id, fn in headless_items
             }
@@ -1174,6 +1272,7 @@ def run_all_scrapers(
                 on_source_done,
                 on_source_start,
                 on_source_progress,
+                on_source_degraded=on_source_degraded,
             )
             results.append((sid, result))
             if on_source_result is not None and not isinstance(result, Exception):
@@ -1292,6 +1391,7 @@ def _notify_new_jobs(count: int, csv_path: Path) -> None:
 def _backfill_needs(
     jobs: list[EnrichedJob],  # noqa: F821
     plugin: JobSearchPlugin,
+    force: bool = False,
 ) -> dict[str, int]:
     """Per-phase counts of rows the enricher WOULD actually touch.
 
@@ -1304,7 +1404,8 @@ def _backfill_needs(
       nothing-to-do short-circuit speak in those terms. The count is gated on
       BOTH ``enrich_fit`` and ``enrich_notes``: the fit pass refuses to run
       unless both are on, so a disabled axis reports zero need rather than
-      over-reporting work the pass would never do.
+      over-reporting work the pass would never do. Under ``force`` every active
+      row counts (the enricher re-enriches and overwrites all of them).
 
     Used by the dry-run report and the start-of-run short-circuit.
     """
@@ -1316,7 +1417,7 @@ def _backfill_needs(
     cfg = plugin.enrichment
     active = [j for j in jobs if _active(j)]
     fit_notes = (
-        sum(1 for j in active if _fit_notes_eligible(j))
+        sum(1 for j in active if _fit_notes_eligible(j, force=force))
         if (cfg.enrich_fit and cfg.enrich_notes)
         else 0
     )
@@ -1335,7 +1436,9 @@ def run_backfill(
     context_text: str = "",
     dry_run: bool = False,
     limit: int | None = None,
-) -> None:
+    force: bool = False,
+    emit_json: bool = False,
+) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
 
     Shares the run-side enrichment machinery: ``_enrich_wave`` renders the same
@@ -1346,6 +1449,9 @@ def run_backfill(
 
     The enricher itself skips already-filled fields and ENRICH_SKIP-status
     rows, so handing the whole row list to the wave enriches only the empties.
+    ``force`` (``--force-update``) instead re-enriches EVERY active row and
+    OVERWRITES its Fit, Notes, and Remote, still bounded by ``limit`` and the
+    fit budget cap.
 
     ``limit`` caps LLM spend this invocation by bounding the fit budget at
     ``limit`` (``None`` = the config cap; the CLI rejects ``limit < 1``).
@@ -1363,6 +1469,12 @@ def run_backfill(
     (the sink's ``pre_write_hook``), so a no-op backfill (ollama down, nothing to
     persist) leaves the file untouched and writes no backup. The final rewrite is
     skipped entirely when enrichment changed no row content.
+
+    Returns a completion summary dict (rows considered, skipped, Fit/Notes
+    needed-before/after, enriched delta, elapsed seconds) so the CLI can wrap it
+    in the standard ``{schema, data}`` JSON envelope. ``emit_json`` suppresses
+    the human Console summary lines and forces plain (no live-bar) progress so
+    ``--json`` keeps stdout clean.
     """
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
@@ -1386,33 +1498,41 @@ def run_backfill(
     if dry_run:
         _, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
-        needs = _backfill_needs(jobs, plugin)
+        needs = _backfill_needs(jobs, plugin, force=force)
         skipped = len(jobs) - needs["rows"]
-        Console.info(
-            f"Backfill dry-run: {needs['fit_notes']} need Fit/Notes "
-            f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
-        )
-        # The needs counts are the FULL backlog; one pass spends at most the
-        # config caps (or --limit). Say so when a cap would trim this pass,
-        # or the report reads as if the caps were ignored.
         enrich_cfg = plugin.enrichment
         fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
-        cap_notes = []
-        if needs["fit_notes"] > fit_cap:
-            cap_notes.append(f"fit/notes capped at {fit_cap}")
-        if cap_notes:
-            source = "--limit" if limit is not None else "config"
+        if not emit_json:
+            verb = "re-enrich (overwrite)" if force else "need"
             Console.info(
-                f"This pass would be {', '.join(cap_notes)} ({source}); "
-                "run backfill again to continue."
+                f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
+                f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
             )
-        return
+            # The needs counts are the FULL backlog; one pass spends at most the
+            # config caps (or --limit). Say so when a cap would trim this pass,
+            # or the report reads as if the caps were ignored.
+            if needs["fit_notes"] > fit_cap:
+                source = "--limit" if limit is not None else "config"
+                Console.info(
+                    f"This pass would be fit/notes capped at {fit_cap} ({source}); "
+                    "run backfill again to continue."
+                )
+        return {
+            "dry_run": True,
+            "rows": needs["rows"],
+            "skipped": skipped,
+            "needs_before": needs["fit_notes"],
+            "needs_after": needs["fit_notes"],
+            "enriched": 0,
+            "fit_cap": fit_cap,
+            "elapsed_seconds": None,
+        }
 
     # No --limit: None lets the enrichment plan apply the config cap
     # (max_enrich_fit).
     fit_budget = limit
 
-    tty = Console.is_tty() and not Console.quiet_mode
+    tty = Console.live_progress_enabled(suppress=emit_json)
     # Announce-then-wait on contention, with a bounded give-up so a wedged peer
     # can't hang backfill forever. ExitStack lets the give-up branch return
     # before the lock body without re-indenting the whole lifecycle block.
@@ -1457,7 +1577,7 @@ def run_backfill(
                 ", ".join(extra_columns),
             )
 
-        needs = _backfill_needs(jobs, plugin)
+        needs = _backfill_needs(jobs, plugin, force=force)
         skipped = len(jobs) - needs["rows"]
         log.info(
             "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes",
@@ -1469,8 +1589,18 @@ def run_backfill(
         if not needs["fit_notes"]:
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
-            Console.info("All rows already enriched, nothing to backfill.")
-            return
+            if not emit_json:
+                Console.info("All rows already enriched, nothing to backfill.")
+            elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
+            return {
+                "dry_run": False,
+                "rows": len(jobs),
+                "skipped": skipped,
+                "needs_before": 0,
+                "needs_after": 0,
+                "enriched": 0,
+                "elapsed_seconds": elapsed,
+            }
 
         sink = _JobSink(
             csv_path=csv_path,
@@ -1505,10 +1635,18 @@ def run_backfill(
                     Console.get_log_console(), tty=tty, title="Job backfill"
                 ) as rp,
             ):
-                # title + "Enriching jobs" header + 2 phase rows (detail,
-                # fit/notes) -- reserve the block in one scroll-region set, as
-                # run() does, to avoid the per-bar resize gap.
-                rp.reserve(2 + 2)
+                # title + "Enriching jobs" header + the phase rows the wave will
+                # render -- reserve the block in one scroll-region set, as run()
+                # does, to avoid the per-bar resize gap. Phases: detail (always),
+                # fit/notes (when enabled), and LinkedIn descriptions (when fit/
+                # notes runs and the toggle is on).
+                enrich_cfg = plugin.enrichment
+                phase_rows = 1
+                if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+                    phase_rows += 1
+                    if enrich_cfg.fetch_linkedin_descriptions:
+                        phase_rows += 1
+                rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
                     plugin,
@@ -1520,6 +1658,7 @@ def run_backfill(
                     wave_label="",
                     run_preflight=True,
                     fit_budget=fit_budget,
+                    force=force,
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -1573,16 +1712,27 @@ def run_backfill(
 
     after = _backfill_needs(jobs, plugin)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
-    Console.success(
-        f"Backfill complete: +{needs['fit_notes'] - after['fit_notes']} Fit/Notes. "
-        f"Total run time: {_fmt_duration(elapsed)}."
-    )
-    # The rewrite ran (this point is reached only past the no-enrichment early
-    # return), so any status spellings it canonicalized are now on disk. Make
-    # that visible, once, when something actually changed.
-    canon_notice = format_canonicalized_notice(status_canonicalizations)
-    if canon_notice is not None:
-        Console.info(canon_notice)
+    enriched = needs["fit_notes"] - after["fit_notes"]
+    if not emit_json:
+        Console.success(
+            f"Backfill complete: +{enriched} Fit/Notes. "
+            f"Total run time: {_fmt_duration(elapsed)}."
+        )
+        # The rewrite ran (this point is reached only past the no-enrichment early
+        # return), so any status spellings it canonicalized are now on disk. Make
+        # that visible, once, when something actually changed.
+        canon_notice = format_canonicalized_notice(status_canonicalizations)
+        if canon_notice is not None:
+            Console.info(canon_notice)
+    return {
+        "dry_run": False,
+        "rows": len(jobs),
+        "skipped": skipped,
+        "needs_before": needs["fit_notes"],
+        "needs_after": after["fit_notes"],
+        "enriched": enriched,
+        "elapsed_seconds": elapsed,
+    }
 
 
 def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
@@ -1633,6 +1783,7 @@ def _run_llm_enrichment(
     fit_budget: int | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    force: bool = False,
 ) -> dict[str, int]:
     """Run the fit/notes LLM pass, flushing as it goes.
 
@@ -1673,6 +1824,7 @@ def _run_llm_enrichment(
             flush=sink.flush_periodic,
             exclude_urls=exclude_fit_urls,
             attempted=attempted,
+            force=force,
         )
     else:
         fn_stats = _empty_fit_stats()
@@ -1699,6 +1851,7 @@ def _enrich_wave(
     set_phase: Callable[[str], None] | None = None,
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
+    force: bool = False,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1707,9 +1860,10 @@ def _enrich_wave(
     own phase rows -- the honest two-wave UI. ``fit_budget`` is this wave's
     remaining slice of the shared running total (None = the config cap; an
     explicit 0 spends nothing). ``set_phase`` records the coarse run phase for
-    the manifest. Flushes per phase and on the periodic hook; the caller's
-    try/except flushes once more on interrupt. Returns
-    ``(detail_stats, fn_stats)``.
+    the manifest. ``force`` re-enriches and overwrites every active row's
+    Fit/Notes/Remote (backfill --force-update). Flushes per phase and on the
+    periodic hook; the caller's try/except flushes once more on interrupt.
+    Returns ``(detail_stats, fn_stats)``.
     """
     from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
@@ -1721,9 +1875,18 @@ def _enrich_wave(
     # A disabled pass renders NO bar: pinning one with a placeholder total for
     # work that will never run reads as a stuck/ignored toggle.
     enrich_cfg = plugin.enrichment
+    fit_enabled = enrich_cfg.enrich_fit and enrich_cfg.enrich_notes
     fit_phase: Phase | None = None
-    if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+    if fit_enabled:
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
+    # LinkedIn description backfill rides between detail and fit/notes so the
+    # descriptions it fills feed Fit/Notes in the same wave. Only meaningful when
+    # fit/notes runs (it has no other consumer) and the toggle is on.
+    linkedin_phase: Phase | None = None
+    if fit_enabled and enrich_cfg.fetch_linkedin_descriptions:
+        linkedin_phase = enrich_group.phase(
+            f"LinkedIn descriptions{wave_label}", total=total
+        )
 
     if set_phase is not None:
         set_phase("detail")
@@ -1733,6 +1896,29 @@ def _enrich_wave(
     # Persist detail comp/posted_date before the LLM phase; a disk error here
     # degrades rather than aborting (the final flush retries and propagates).
     sink.flush_periodic()
+
+    if linkedin_phase is not None:
+        from daily_driver.plugins.job_search.scraper.enrichment.linkedin import (
+            fetch_linkedin_descriptions,
+            render_linkedin_summary,
+        )
+        from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+            fit_notes_target_indices,
+        )
+
+        # Same slice the fit/notes pass will enrich this wave, so the two never
+        # drift: fill descriptions for exactly those rows, not the full backlog.
+        target_idx = fit_notes_target_indices(
+            jobs, fit_budget, enrich_cfg, exclude_fit_urls, force=force
+        )
+        linkedin_phase.start()
+        linkedin_phase.set_total(len(target_idx))
+        _, linkedin_stats = fetch_linkedin_descriptions(
+            jobs, ctx, target_idx, progress=linkedin_phase.advance
+        )
+        linkedin_phase.done(render_linkedin_summary(linkedin_stats))
+        sink.flush_periodic()
+
     if set_phase is not None:
         set_phase("enrichment")
 
@@ -1747,6 +1933,7 @@ def _enrich_wave(
         fit_budget=fit_budget,
         exclude_fit_urls=exclude_fit_urls,
         attempted=attempted,
+        force=force,
     )
     return detail_stats, fn_stats
 
@@ -1783,6 +1970,11 @@ class _RunState:
     sink: _JobSink | None = None
     all_jobs: list[dict[str, Any]] = field(default_factory=list)
     failed_sources: list[str] = field(default_factory=list)
+    # Sources that finished but returned INCOMPLETE results (raised
+    # PartialSourceError). Distinct from failed_sources -- their rows are kept --
+    # but surfaced separately so a partial/all-failed scrape is never read as a
+    # clean run. Carried on state so the interrupt-path manifest stays honest.
+    degraded_sources: list[str] = field(default_factory=list)
     phase_reached: str = "scraping"
     fn_stats: dict[str, int] = field(default_factory=_empty_fit_stats)
     # The overlap (wave-1) background enrichment thread, exposed so run()'s exit
@@ -1815,6 +2007,7 @@ def _write_run_manifest(
     started_at: datetime,
     all_jobs: list[dict[str, Any]],
     failed_sources: list[str],
+    degraded_sources: list[str],
     written: int,
     fn_enriched: int,
     phase_reached: str,
@@ -1833,10 +2026,13 @@ def _write_run_manifest(
             {
                 j.get("source", "")
                 for j in all_jobs
-                if j.get("source") and j.get("source") not in failed_sources
+                if j.get("source")
+                and j.get("source") not in failed_sources
+                and j.get("source") not in degraded_sources
             }
         ),
         "sources_failed": failed_sources,
+        "sources_degraded": degraded_sources,
         "new_jobs": written,
         "enriched_fit_notes": fn_enriched,
         "phase_reached": phase_reached,
@@ -1969,6 +2165,7 @@ def run(
                 started_at=started_at,
                 all_jobs=state.all_jobs,
                 failed_sources=state.failed_sources,
+                degraded_sources=state.degraded_sources,
                 written=state.written,
                 fn_enriched=state.fn_stats["enriched"],
                 phase_reached=state.phase_reached,
@@ -2073,6 +2270,7 @@ def _run_impl(
                         started_at=started_at,
                         all_jobs=[],
                         failed_sources=[],
+                        degraded_sources=[],
                         written=0,
                         fn_enriched=0,
                         phase_reached="scraping",
@@ -2117,7 +2315,7 @@ def _run_impl(
     # mode, no block. Quiet mode ("errors only") suppresses the block entirely;
     # the plain-mode progress lines are dropped by RunProgress under quiet too.
     # --json (suppress_live) also forces plain mode so stdout stays clean JSON.
-    tty = Console.is_tty() and not Console.quiet_mode and not suppress_live
+    tty = Console.live_progress_enabled(suppress=suppress_live)
     with (
         live_log_window(tty),
         RunProgress(Console.get_log_console(), tty=tty, title=title) as rp,
@@ -2309,6 +2507,13 @@ def _run_impl(
             state.wave1_thread = wave1_thread
             wave1_thread.start()
 
+        def _on_degraded(source_id: str, reason: str) -> None:
+            # A source finished but its scrape is incomplete (PartialSourceError);
+            # record it as degraded -- distinct from failed -- so the summary and
+            # manifest stay honest. Its partial rows are kept (appended normally).
+            if source_id not in state.degraded_sources:
+                state.degraded_sources.append(source_id)
+
         all_jobs, scrape_failed, source_results = run_all_scrapers(
             ctx,
             sources_override=sources_override,
@@ -2318,6 +2523,7 @@ def _run_impl(
             on_source_done=_on_done,
             on_note=rp.note,
             on_source_result=on_source_result,
+            on_source_degraded=_on_degraded,
             # Slow jobspy sources checkpoint each finished (term x country) unit
             # through the failure-isolated append path, so a crash/kill keeps every
             # completed unit (not the whole-source-or-nothing of before). On a
@@ -2335,9 +2541,15 @@ def _run_impl(
             if sid not in state.failed_sources:
                 state.failed_sources.append(sid)
         failed_sources = state.failed_sources
+        degraded_sources = state.degraded_sources
 
         if failed_sources:
             log.warning("Failed sources: %s", ", ".join(failed_sources))
+        if degraded_sources:
+            log.warning(
+                "Degraded sources (incomplete results, kept what was scraped): %s",
+                ", ".join(degraded_sources),
+            )
 
         if sink is not None:
             # Append-time funnel: the sink classified every row as it was written,
@@ -2499,6 +2711,15 @@ def _run_impl(
                 line += f", {other} other"
             Console.info(line)
 
+    # Degraded sources finished with INCOMPLETE results (a partial-pagination or
+    # all-units-failed scrape). Their rows are kept, but call it out so a partial
+    # run is never mistaken for a clean one. Distinct from failed sources below.
+    if degraded_sources:
+        Console.warning(
+            "Degraded sources (incomplete results, kept what was scraped): "
+            + ", ".join(_display_name(sid) for sid in degraded_sources)
+        )
+
     if dry_run:
         Console.success(
             f"Dry-run complete: {len(typed_jobs)} new jobs ready (nothing written)."
@@ -2525,6 +2746,7 @@ def _run_impl(
         started_at=started_at,
         all_jobs=all_jobs,
         failed_sources=failed_sources,
+        degraded_sources=state.degraded_sources,
         written=written,
         fn_enriched=fn_stats["enriched"],
         phase_reached=state.phase_reached,

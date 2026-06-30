@@ -155,3 +155,13 @@ Write the plan to that path with YAML frontmatter followed by the markdown body.
 - `plan_items`: one entry per planned item (work and personal) with `time_block`, `tracker_id` (the `{category}-NNN` ID, or `null` for items not tied to a tracker entry), `type`, `status: planned`, `carry_forward_id` linking to source cf-NNN where applicable, and for personal items: `recurring`
 
 See the work-planner agent's "Plan File Frontmatter" section for the exact schema.
+
+## 9. Sync Plan to Calendar
+
+Once the plan file is written, push its time blocks to the local macOS Calendar:
+
+```bash
+daily-driver calendar sync
+```
+
+This is best-effort and macOS-only: it writes each `plan_items` entry that has a `time_block` ("HH:MM-HH:MM") as a calendar event, replacing any it wrote earlier today (idempotent). If it prints a warning (sync disabled, no time blocks, or a permission issue), note it and proceed — never block the session on calendar sync.

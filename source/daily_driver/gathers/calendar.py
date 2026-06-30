@@ -12,6 +12,9 @@ log = get_logger(__name__)
 
 # Matches ISO-like datetime strings e.g. "2026-04-20 09:00" or "2026-04-20T09:00"
 _DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})")
+# Matches an HH:MM time anywhere in a line (used to recover a range end time
+# that follows the start on the same line).
+_TIME_IN_LINE_RE = re.compile(r"(\d{2}:\d{2})")
 # Matches standalone HH:MM time lines (for icalBuddy's "-tf %H:%M" output)
 _TIME_RE = re.compile(r"^\s*(\d{2}:\d{2})\s*(?:-\s*(\d{2}:\d{2}))?\s*$")
 # Matches a bare ISO date line (no time) — an all-day event
@@ -27,6 +30,29 @@ _DATE_LINE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})(?:\s*$|[T ]\d{2}:\d{2})")
 # their title or body. The other two markers are distinctive enough to be
 # unambiguous wherever they appear.
 _USAGE_BODY_MARKERS = ("icalBuddy man page", "Originally by Ali Rantakari")
+
+
+def _scan_range_end(rest: str, start_date: str) -> datetime | None:
+    """Recover a range end time from the remainder of a start line.
+
+    icalBuddy prints a dated range on a single line as
+    "2026-04-21 10:00 - 11:00" (the date appears once) and occasionally as
+    "2026-04-21 10:00 - 2026-04-21 11:00". The end may therefore be a full
+    datetime or a bare HH:MM that shares the start's date.
+    """
+    m = _DATETIME_RE.search(rest)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return None
+    t = _TIME_IN_LINE_RE.search(rest)
+    if t:
+        try:
+            return datetime.strptime(f"{start_date} {t.group(1)}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return None
+    return None
 
 
 def _looks_like_usage_text(stdout: str) -> bool:
@@ -66,13 +92,18 @@ def _parse_event_block(block: str, event_date: str) -> CalendarEvent | None:
         if m:
             dt_str = f"{m.group(1)} {m.group(2)}"
             try:
-                parsed = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+                parsed: datetime | None = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
+            except ValueError:
+                parsed = None
+            if parsed is not None:
                 if start is None:
                     start = parsed
+                    # A dated range may sit on this one line; recover its end
+                    # time so timed events keep their duration.
+                    if end is None:
+                        end = _scan_range_end(line[m.end() :], m.group(1))
                 elif end is None:
                     end = parsed
-            except ValueError:
-                pass
             continue
 
         # Bare date line (no time) — an all-day event; anchor start at midnight.

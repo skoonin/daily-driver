@@ -216,5 +216,11 @@ def run(args: argparse.Namespace) -> int:
     if backup is not None and backup.exists():
         backup.unlink()
 
-    Console.info(_format_summary(root, created, skipped, result))
+    # The scaffold summary is a write-confirmation, not routine status: the user
+    # needs to see that init actually wrote files even under -q. Console.info and
+    # Console.success both suppress under quiet mode, so print straight to the
+    # stderr log console (where the summary has always lived) to bypass the gate.
+    Console.get_log_console().print(
+        _format_summary(root, created, skipped, result), style="success"
+    )
     return 0

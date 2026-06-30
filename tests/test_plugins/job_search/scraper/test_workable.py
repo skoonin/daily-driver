@@ -112,3 +112,55 @@ def test_workable_company_falls_back_to_slug(monkeypatch: Any) -> None:
     assert results[0]["company"] == "Two Words"
     # Empty city/country falls back to Remote.
     assert results[0]["location"] == "Remote"
+
+
+def test_workable_failed_account_raises_degraded_keeping_data(
+    monkeypatch: Any,
+) -> None:
+    """An account whose request fails raises PartialSourceError carrying the jobs
+    from the accounts that succeeded, so a partial scrape is recorded as degraded
+    rather than a clean "0 found" indistinguishable from no match."""
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+
+    ok_jobs = [
+        {
+            "title": "Platform Engineer",
+            "city": "Remote",
+            "country": "",
+            "url": "https://apply.workable.com/j/OK",
+        }
+    ]
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        # "ok" returns a posting; "down" fails (falsy response).
+        return _response("OK Co", ok_jobs) if url.endswith("/ok") else None
+
+    monkeypatch.setattr(workable_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(workable_module, "_http_session", lambda cfg: MagicMock())
+
+    with pytest.raises(PartialSourceError) as excinfo:
+        workable_module.scrape_workable(_config(["ok", "down"]))
+
+    assert len(excinfo.value.jobs) == 1
+    assert "down" in excinfo.value.reason
+
+
+def test_workable_all_accounts_failed_raises_degraded_empty(
+    monkeypatch: Any,
+) -> None:
+    """Every account failing yields an empty job list AND a degraded signal, so
+    the all-failed case is never read as a clean, complete scrape."""
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+
+    monkeypatch.setattr(workable_module, "_api_get", lambda *a, **kw: None)
+    monkeypatch.setattr(workable_module, "_http_session", lambda cfg: MagicMock())
+
+    with pytest.raises(PartialSourceError) as excinfo:
+        workable_module.scrape_workable(_config(["a", "b"]))
+
+    assert excinfo.value.jobs == []
+    assert "2 of 2" in excinfo.value.reason

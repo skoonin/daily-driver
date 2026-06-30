@@ -126,6 +126,21 @@ class TrackerConfig(BaseModel):
             "template_example": ["waiting", "snoozed"],
         },
     )
+    terminal_statuses: list[str] = Field(
+        default=[],
+        description=(
+            "Extra terminal status values, merged with the built-ins (done,\n"
+            "ruled-out, dropped, rejected, closed). Entries in a terminal status\n"
+            "are excluded from `status` stalled detection and `tracker\n"
+            "follow-ups`, so a custom closing state like `cancelled` won't linger\n"
+            "as a false-positive. Spelling is normalized (case-folded, underscores\n"
+            "-> hyphens). Built-in terminal statuses cannot be removed."
+        ),
+        json_schema_extra={
+            "template_commented": True,
+            "template_example": ["cancelled"],
+        },
+    )
     categories: dict[str, TrackerCategoryConfig] = Field(
         default={"task": TrackerCategoryConfig(required=["title"])},
         description="",
@@ -432,6 +447,27 @@ class GatherConfig(BaseModel):
     git: GatherGitConfig = Field(default=GatherGitConfig(), description="")
 
 
+class CalendarConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sync_enabled: bool = Field(
+        default=False,
+        description=(
+            "Opt-in switch for `calendar sync`. When false, sync is a clean\n"
+            "no-op. macOS-only — writes the day's plan time blocks to a local\n"
+            "Calendar; ignored on other platforms."
+        ),
+    )
+    plan_calendar_name: str = Field(
+        default="Daily Plan",
+        description=(
+            "Name of the local macOS Calendar to write plan time blocks into.\n"
+            "The calendar must already exist in Calendar.app."
+        ),
+        json_schema_extra={"template_quote": True},
+    )
+
+
 class Config(BaseModel):
     """Root daily-driver config schema.
 
@@ -570,6 +606,18 @@ class Config(BaseModel):
             "block_comment": (
                 "Optional: gather config (controls what `daily-driver gather"
                 " <kind>` reads)."
+            ),
+        },
+    )
+    calendar: CalendarConfig = Field(
+        default=CalendarConfig(),
+        description="",
+        json_schema_extra={
+            "template_commented": True,
+            "block_comment": (
+                "Optional: write daily-plan time blocks to a local macOS Calendar\n"
+                "(consumed by `calendar sync`, macOS-only). Set `sync_enabled: true`\n"
+                "to opt in and name the target calendar."
             ),
         },
     )
