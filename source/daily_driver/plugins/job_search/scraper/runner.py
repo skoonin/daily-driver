@@ -689,10 +689,16 @@ class _JobSink:
         plugin: JobSearchPlugin,
         external_lock_held: bool = False,
         preexisting_rows: list[dict[str, str]] | None = None,
+        descriptions: dict[str, str] | None = None,
     ) -> None:
         self.csv_path = csv_path
         self.lock_path = lock_path
         self.header = header
+        # Sidecar description store (url -> text), loaded once by the caller.
+        # Folded into by append_source, persisted by flush -- see the
+        # descriptions module docstring for why this lives outside jobs.csv.
+        self._descriptions = descriptions or {}
+        self._descriptions_dirty = False
         # backfill holds the sentinel ``file_lock`` for its whole lifecycle (read
         # -> enrich -> rewrite) so a concurrent run's appends can't slip into the
         # window a backfill rewrite would clobber. flock is not reentrant across
@@ -871,6 +877,18 @@ class _JobSink:
                     commit_keys.append(key)
                 to_append.append(_enriched_from_scraped(job))
 
+            # Fold any scrape-time descriptions (e.g. JobSpy's LinkedIn body)
+            # into the sidecar store so flush persists them alongside the row.
+            for enriched_job in to_append:
+                if (
+                    enriched_job.url
+                    and enriched_job.description_text
+                    and self._descriptions.get(enriched_job.url)
+                    != enriched_job.description_text
+                ):
+                    self._descriptions[enriched_job.url] = enriched_job.description_text
+                    self._descriptions_dirty = True
+
             if to_append:
                 # Write to disk first, then commit the in-memory state, all under
                 # the held _rows_lock so a concurrent flush can't interleave
@@ -928,6 +946,9 @@ class _JobSink:
             atomic_write_rows,
             read_rows,
         )
+        from daily_driver.plugins.job_search.scraper.descriptions import (
+            atomic_write_descriptions,
+        )
 
         with self._rows_lock, self._disk_lock():
             snapshot = list(self.rows)
@@ -984,6 +1005,22 @@ class _JobSink:
                 self._pre_write_done = True
                 self.pre_write_hook()
             atomic_write_rows(self.csv_path, out_header, out_rows)
+            # Detail/LinkedIn enrichment sets description_text via with_updates
+            # directly on sink.rows, never through append_source -- fold the
+            # snapshot's current descriptions in here so flush is the one place
+            # that reliably observes every description, however it was filled.
+            for enriched_job in snapshot:
+                if (
+                    enriched_job.url
+                    and enriched_job.description_text
+                    and self._descriptions.get(enriched_job.url)
+                    != enriched_job.description_text
+                ):
+                    self._descriptions[enriched_job.url] = enriched_job.description_text
+                    self._descriptions_dirty = True
+            if self._descriptions_dirty:
+                atomic_write_descriptions(self.csv_path, self._descriptions)
+                self._descriptions_dirty = False
 
     def flush_periodic(self) -> None:
         """Best-effort flush for the in-loop resilience hook.
@@ -1488,6 +1525,7 @@ def run_backfill(
         format_canonicalized_notice,
         read_rows,
     )
+    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
     if not csv_path.exists():
@@ -1519,6 +1557,15 @@ def run_backfill(
     if dry_run:
         _, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        store = load_descriptions(csv_path)
+        jobs = [
+            (
+                job.with_updates(description_text=store[job.url])
+                if not job.description_text and job.url in store
+                else job
+            )
+            for job in jobs
+        ]
         needs = _backfill_needs(
             jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
         )
@@ -1576,6 +1623,15 @@ def run_backfill(
         # an out-of-lock read and the rewrite would be lost.
         stored_header, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        store = load_descriptions(csv_path)
+        jobs = [
+            (
+                job.with_updates(description_text=store[job.url])
+                if not job.description_text and job.url in store
+                else job
+            )
+            for job in jobs
+        ]
         # Backfill lifts every stored row through from_csv_row, which normalizes
         # the Status spelling. That rewrites rows the user did not ask to touch,
         # so collect the spelling changes (old -> canonical) for a visible
@@ -1635,6 +1691,7 @@ def run_backfill(
             known_keys=set(),
             plugin=plugin,
             external_lock_held=True,
+            descriptions=store,
         )
         sink.rows = jobs
         sink.row_extras = row_extras
@@ -1653,6 +1710,9 @@ def run_backfill(
 
         sink.pre_write_hook = _take_backup
 
+        # Captured from the enrichment wave below; reported after completion.
+        fit_stats: dict[str, int] = _empty_fit_stats()
+
         try:
             with (
                 live_log_window(tty),
@@ -1663,17 +1723,17 @@ def run_backfill(
                 # title + "Enriching jobs" header + the phase rows the wave will
                 # render -- reserve the block in one scroll-region set, as run()
                 # does, to avoid the per-bar resize gap. Phases: detail (always),
-                # fit/notes (when enabled), and LinkedIn descriptions (when fit/
-                # notes runs and the toggle is on).
+                # fit/notes (when enabled), and LinkedIn descriptions (whenever
+                # fit/notes runs -- it has no other consumer). Must match the
+                # fit_enabled gate in _enrich_wave or the reserved row count
+                # drifts from the phases actually rendered.
                 enrich_cfg = plugin.enrichment
                 phase_rows = 1
                 if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
-                    phase_rows += 1
-                    if enrich_cfg.fetch_linkedin_descriptions:
-                        phase_rows += 1
+                    phase_rows += 2
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
-                _enrich_wave(
+                _, fit_stats = _enrich_wave(
                     plugin,
                     ai_cfg,
                     jobs,
@@ -1744,6 +1804,15 @@ def run_backfill(
             f"Backfill complete: +{enriched} Fit/Notes. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
+        # Rows with no obtainable description (e.g. a signup-walled posting) are
+        # left un-scored rather than guessed at; call it out so the phase-line
+        # count isn't mistaken for ordinary skips. Mirrors the run() path.
+        no_description_count = fit_stats.get("no_description", 0)
+        if no_description_count:
+            Console.warning(
+                f"{no_description_count} job(s) had no description; Fit/Notes "
+                "left blank. Delete the row and re-run a scrape to retry."
+            )
         # The rewrite ran (this point is reached only past the no-enrichment early
         # return), so any status spellings it canonicalized are now on disk. Make
         # that visible, once, when something actually changed.
@@ -1857,9 +1926,12 @@ def _run_llm_enrichment(
     else:
         fn_stats = _empty_fit_stats()
     if fit_phase is not None:
+        # .get() rather than a bare index: callers (tests, older stubs) may
+        # return a stats dict without this key, and 0 is the correct default.
         fit_phase.done(
             f"{fn_stats['enriched']} enriched, "
             f"{fn_stats['skipped_budget']} skipped (budget), "
+            f"{fn_stats.get('no_description', 0)} no description, "
             f"{fn_stats['failed']} failed"
         )
     return fn_stats
@@ -1910,9 +1982,9 @@ def _enrich_wave(
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
     # LinkedIn description backfill rides between detail and fit/notes so the
     # descriptions it fills feed Fit/Notes in the same wave. Only meaningful when
-    # fit/notes runs (it has no other consumer) and the toggle is on.
+    # fit/notes runs (it has no other consumer).
     linkedin_phase: Phase | None = None
-    if fit_enabled and enrich_cfg.fetch_linkedin_descriptions:
+    if fit_enabled:
         linkedin_phase = enrich_group.phase(
             f"LinkedIn descriptions{wave_label}", total=total
         )
@@ -2404,6 +2476,10 @@ def _run_impl(
             None
         )
         if not dry_run:
+            from daily_driver.plugins.job_search.scraper.descriptions import (
+                load_descriptions,
+            )
+
             sink = _JobSink(
                 csv_path=csv_path,
                 lock_path=lock_path,
@@ -2412,6 +2488,7 @@ def _run_impl(
                 known_keys=known_keys,
                 plugin=plugin,
                 preexisting_rows=preexisting_rows,
+                descriptions=load_descriptions(csv_path),
             )
             state.sink = sink
 
@@ -2713,10 +2790,12 @@ def _run_impl(
 
     n = len(typed_jobs)
     log.info(
-        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
+        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d no description, "
+        "%d failed (parse/subprocess)",
         fn_stats["enriched"],
         n,
         fn_stats["skipped_budget"],
+        fn_stats.get("no_description", 0),
         fn_stats["failed"],
     )
     # Headline that reconciles every job: found (raw scraped) -> new (not already
@@ -2745,6 +2824,16 @@ def _run_impl(
             if other > 0:
                 line += f", {other} other"
             Console.info(line)
+
+    # Rows with no obtainable description (e.g. a signup-walled posting) are
+    # intentionally left un-scored rather than guessed at; call it out so the
+    # user knows to re-scrape rather than assume the row was simply skipped.
+    no_description_count = fn_stats.get("no_description", 0)
+    if no_description_count:
+        Console.warning(
+            f"{no_description_count} job(s) had no description; Fit/Notes left "
+            "blank. Delete the row and re-run a scrape to retry."
+        )
 
     # Degraded sources finished with INCOMPLETE results (a partial-pagination or
     # all-units-failed scrape). Their rows are kept, but call it out so a partial

@@ -1,9 +1,12 @@
 """LinkedIn description backfill: fill missing descriptions for the fit/notes pass.
 
-LinkedIn's anonymous detail pages emit no JSON-LD, so the generic detail phase
-skips them and most LinkedIn rows keep an empty ``description_text`` -- which
-makes the fit/notes pass leave Notes blank by design. This optional phase fetches
-the login-free ``/jobs/view/<id>`` page (the same one JobSpy uses) and parses
+JobSpy fills most LinkedIn descriptions at scrape time and the sidecar
+(``descriptions.jsonl``) persists them across runs, so this phase's job is
+recovering the remainder: legacy rows scraped before the sidecar existed, or
+rows a prior run never covered. LinkedIn's anonymous detail pages emit no
+JSON-LD, so the generic detail phase skips them outright. This phase always
+runs alongside fit/notes enrichment and fetches the login-free
+``/jobs/view/<id>`` page (the same one JobSpy uses), parsing
 ``div.show-more-less-html__markup`` so populated descriptions feed Fit/Notes in
 the SAME wave. It is fill-missing-only, bounded to the fit/notes budget (the rows
 ``fit_notes_target_indices`` selects), politely throttled, and degrades
@@ -102,8 +105,7 @@ def fetch_linkedin_descriptions(
     the passed list with new frozen instances; the models are never mutated.
 
     Returns ``(jobs, stats)`` where stats carries ``fetched, filled, skipped,
-    signup_walled, stopped_early, total``. Returns zeroed stats untouched when
-    the ``fetch_linkedin_descriptions`` toggle is off.
+    signup_walled, stopped_early, total``.
     """
     out = jobs
     cfg = ctx.plugin.enrichment
@@ -115,8 +117,6 @@ def fetch_linkedin_descriptions(
         "stopped_early": False,
         "total": len(target_idx),
     }
-    if not cfg.fetch_linkedin_descriptions:
-        return out, stats
 
     throttle = _HostThrottle(cfg.detail_delay_seconds)
     headers = _linkedin_headers(ctx)

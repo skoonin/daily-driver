@@ -40,7 +40,11 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
         stdout="Credit balance is too low",
         stderr="",
     )
-    jobs = [make_enriched(company="Acme", url="https://example.com/jobs/1")]
+    jobs = [
+        make_enriched(
+            company="Acme", url="https://example.com/jobs/1", description_text="infra"
+        )
+    ]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -59,7 +63,11 @@ def test_fit_and_notes_warning_includes_stdout(caplog) -> None:
 
 def test_fit_and_notes_routes_with_plugin_provider() -> None:
     """Site 2 (fit/notes JSON) resolves its route from the plugin config."""
-    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+    jobs = [
+        make_enriched(
+            company="Acme", url="https://example.com/j/1", description_text="infra"
+        )
+    ]
     captured: dict = {}
     ctx = ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
@@ -92,7 +100,11 @@ def test_fit_notes_logs_ai_invocation_error_stdout(caplog) -> None:
         stderr="",
         returncode=500,
     )
-    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+    jobs = [
+        make_enriched(
+            company="Acme", url="https://example.com/j/1", description_text="infra"
+        )
+    ]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=err):
@@ -114,7 +126,11 @@ def test_fit_notes_failed_job_logs_info_one_liner(caplog) -> None:
     err = claude_cli.ClaudeInvocationError(
         1, ["claude", "-p", "..."], stdout="boom", stderr=""
     )
-    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+    jobs = [
+        make_enriched(
+            company="Acme", url="https://example.com/j/1", description_text="infra"
+        )
+    ]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(enrichment.claude_cli, "invoke", side_effect=err):
@@ -144,8 +160,12 @@ def test_ollama_timeout_warning_appends_queue_hint_once(caplog) -> None:
         "ollama timed out after 5s", provider="ollama", timeout_seconds=5
     )
     jobs = [
-        make_enriched(company="Acme", url="https://example.com/j/1"),
-        make_enriched(company="Beta", url="https://example.com/j/2"),
+        make_enriched(
+            company="Acme", url="https://example.com/j/1", description_text="infra"
+        ),
+        make_enriched(
+            company="Beta", url="https://example.com/j/2", description_text="infra"
+        ),
     ]
     ctx = ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
@@ -176,7 +196,11 @@ def test_fit_notes_timeout_uses_full_tag(caplog) -> None:
     err = AITimeoutError(
         "claude timed out after 5s", provider="claude", timeout_seconds=5
     )
-    jobs = [make_enriched(company="Acme", url="https://example.com/j/1")]
+    jobs = [
+        make_enriched(
+            company="Acme", url="https://example.com/j/1", description_text="infra"
+        )
+    ]
 
     with patch.object(enrichment.shutil, "which", return_value="/usr/bin/claude"):
         with patch.object(ai_provider, "invoke_for", side_effect=err):

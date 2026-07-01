@@ -144,6 +144,158 @@ def test_backfill_enriches_only_empty_field_rows(
     assert seen_fit_companies == ["Empty"]
 
 
+def test_backfill_warns_when_rows_have_no_description(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A no_description count from the fit/notes pass surfaces a Console.warning."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="NoDesc", link="https://example.com/x")])
+    _stub_detail(monkeypatch)
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "no_description": 2,
+            "failed": 0,
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    err = capsys.readouterr().err
+    assert "2 job(s) had no description" in err
+
+
+def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backfill fills a blank ``description_text`` from the sidecar and leaves
+    a row that already carries one untouched (fill-missing-only)."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+    from daily_driver.plugins.job_search.scraper.models import EnrichedJob
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [
+            _row(company="Blank", link="https://example.com/blank"),
+            _row(company="Prefilled", link="https://example.com/prefilled"),
+        ],
+    )
+    atomic_write_descriptions(
+        csv_path,
+        {
+            "https://example.com/blank": "Hydrated from sidecar.",
+            "https://example.com/prefilled": "Sidecar text that must lose.",
+        },
+    )
+    _stub_detail(monkeypatch)
+
+    # jobs.csv carries no description column, so from_csv_row always yields a
+    # blank description_text; simulate a row that already has one in memory
+    # (e.g. a future source that sets it before hydration runs) by patching
+    # the classmethod every EnrichedJob.from_csv_row call goes through.
+    original_from_csv_row = EnrichedJob.from_csv_row
+
+    def fake_from_csv_row(cls: type[EnrichedJob], row: dict[str, str]) -> EnrichedJob:
+        job: EnrichedJob = original_from_csv_row(row)
+        if job.company == "Prefilled":
+            job = job.with_updates(description_text="Already-fetched description.")
+        return job
+
+    monkeypatch.setattr(EnrichedJob, "from_csv_row", classmethod(fake_from_csv_row))
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    seen_descriptions: dict[str, str] = {}
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        for job in jobs:
+            seen_descriptions[job.company] = job.description_text
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return (
+            jobs,
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
+        )
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    assert seen_descriptions["Blank"] == "Hydrated from sidecar."
+    assert seen_descriptions["Prefilled"] == "Already-fetched description."
+
+
+def test_backfill_no_relinkedin_fetch_for_url_already_in_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sidecar-hydrated description feeds the real (unstubbed)
+    ``fetch_linkedin_descriptions`` fill-missing-only gate, so the LinkedIn HTTP
+    seam is never hit for a URL the sidecar already has -- the "no re-fetch"
+    regression."""
+    from unittest.mock import MagicMock
+
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="LI", link="https://www.linkedin.com/jobs/view/999")],
+    )
+    atomic_write_descriptions(
+        csv_path, {"https://www.linkedin.com/jobs/view/999": "Stored description."}
+    )
+    _stub_detail(monkeypatch)
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return (
+            jobs,
+            {"enriched": 0, "skipped_budget": 0, "failed": 0},
+        )
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    linkedin_api_get = MagicMock()
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.enrichment.linkedin._api_get",
+        linkedin_api_get,
+    )
+
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "enrichment": {
+                "max_enrich_fit": 50,
+                "detail_delay_seconds": 0,
+            },
+        }
+    )
+
+    runner.run_backfill(plugin, csv_path, tmp_path)
+
+    linkedin_api_get.assert_not_called()
+
+
 def test_backfill_limit_bounds_fit_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

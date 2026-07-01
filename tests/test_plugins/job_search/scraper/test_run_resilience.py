@@ -89,6 +89,90 @@ def test_append_jobs_for_source_writes_and_updates_dedup(tmp_path: Path) -> None
     assert len(sink.rows) == 3
 
 
+def test_append_source_scraped_description_lands_in_sidecar_on_flush(
+    tmp_path: Path,
+) -> None:
+    """A scrape that carries a description (e.g. JobSpy's LinkedIn body) is
+    folded into the sidecar store and persisted on the next flush -- so a later
+    backfill can hydrate it instead of re-fetching."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    sink.append_source(
+        "linkedin",
+        [
+            _scraped(
+                "https://a/1",
+                "Acme",
+                description_text="Full role description here.",
+            )
+        ],
+    )
+    # Not yet on disk until a flush -- append_source only writes jobs.csv rows.
+    assert load_descriptions(csv_path) == {}
+
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {
+        "https://a/1": "Full role description here.",
+    }
+
+
+def test_flush_persists_description_set_after_construction_by_enrichment(
+    tmp_path: Path,
+) -> None:
+    """detail.py / linkedin.py fill description_text by replacing a sink.rows
+    slot with ``with_updates`` in place, never through ``append_source``. flush
+    must still observe and persist it -- the regression this fix closes."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    # Scraped with no description (the common case for a generic detail-page
+    # source): append_source has nothing to fold in yet.
+    sink.append_source("greenhouse", [_scraped("https://a/1", "Acme")])
+    assert load_descriptions(csv_path) == {}
+
+    # Simulate the detail/linkedin enrichers: replace the row slot in place via
+    # with_updates, bypassing append_source entirely.
+    sink.rows[0] = sink.rows[0].with_updates(
+        description_text="Fetched from the detail page."
+    )
+
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {
+        "https://a/1": "Fetched from the detail page.",
+    }
+
+
 def test_append_source_strips_url_for_dedup_no_cross_run_duplicate(
     tmp_path: Path,
 ) -> None:
@@ -319,10 +403,11 @@ def test_run_flushes_enrichment_progress_to_disk(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    # comp set -> detail enricher skips the page fetch (no real network).
+    # comp set -> detail enricher skips the page fetch (no real network);
+    # description_text set -> the fit/notes pass reaches the provider.
     jobs = [
-        _scraped("https://x/1", "Acme", comp="$200k"),
-        _scraped("https://x/2", "Bravo", comp="$200k"),
+        _scraped("https://x/1", "Acme", comp="$200k", description_text="infra"),
+        _scraped("https://x/2", "Bravo", comp="$200k", description_text="infra"),
     ]
 
     def fake_scrape(
@@ -372,7 +457,10 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
             },
         }
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$200k") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$200k", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -556,8 +644,16 @@ def test_overlap_wave1_enrichment_reaches_disk(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
-    apple = [_scraped("https://ap/1", "ApCo", comp="$200k", source="apple")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
+    apple = [
+        _scraped(
+            "https://ap/1",
+            "ApCo",
+            comp="$200k",
+            source="apple",
+            description_text="infra",
+        )
+    ]
 
     def fake_scrape(
         ctx: Any,
@@ -609,7 +705,7 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_in_flight = threading.Event()
 
     def fake_scrape(
@@ -677,7 +773,7 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
     # Shorten the bound so the test does not wait the real 30s; the stuck call
     # below outlives it.
     monkeypatch.setattr(runner, "_WAVE1_INTERRUPT_JOIN_SECONDS", 0.3)
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_in_flight = threading.Event()
     release = threading.Event()
 
@@ -933,7 +1029,10 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
             },
         }
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1357,7 +1456,7 @@ def test_run_enrichment_flush_preserves_preexisting_rows(
             }
         )
 
-    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k", description_text="infra")]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1443,7 +1542,10 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(3)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(3)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1495,7 +1597,10 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any

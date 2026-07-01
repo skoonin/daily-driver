@@ -259,7 +259,6 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `max_enrich_fit` | int | 50 | |
 | `force_recook_cooldown_hours` | int | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown. Overridable per run with `--cooldown-hours` |
 | `detail_delay_seconds` | float | 0.5 | |
-| `fetch_linkedin_descriptions` | bool | false | When true, fetches login-free LinkedIn job pages during enrichment to fill missing descriptions, so the fit/notes pass can write Notes for LinkedIn rows. Bounded by `max_enrich_fit`, fill-missing-only, and politely throttled. Anonymous fetches are often redirected to a signup wall, so coverage is good-but-partial by nature |
 | `criteria` | list of `{label, assess}` | `[]` | |
 
 #### `criteria` — the criteria scanner

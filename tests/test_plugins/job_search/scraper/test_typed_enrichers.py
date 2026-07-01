@@ -594,6 +594,138 @@ def test_fit_set_total_rebases_live_phase_to_budget_cap(
     assert detail_phase._total == len(jobs)  # full row count, never re-based
 
 
+def test_fit_no_description_row_skips_llm_call_and_counts_stat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row with no description_text is left un-scored (blank Fit and Notes)
+    and never reaches the provider -- there is nothing to assess, so no call is
+    spent on it. It is counted under the new ``no_description`` stat rather than
+    the old fit=5 degradation."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda prompt, **k: calls.append(prompt) or '{"fit": 7, "notes": "n"}',
+    )
+    no_desc_job = _enriched(url="https://x/1", description_text="")
+    out, stats = enrich_fit_and_notes([no_desc_job], ctx, budget=5)
+
+    assert calls == []  # no provider call spent on a row with nothing to assess
+    assert out[0].fit is None
+    assert out[0].notes == ""
+    assert stats["no_description"] == 1
+    assert stats["enriched"] == 0
+
+
+def test_fit_row_with_description_still_enriches_normally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch mixing a no-description row and a described row: only the
+    described row reaches the provider and gets scored; the other is left
+    blank and counted separately."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai_provider,
+        "invoke_for",
+        lambda prompt, **k: calls.append(prompt) or '{"fit": 7, "notes": "k8s"}',
+    )
+    described_job = _enriched(
+        url="https://x/1", description_text="Kubernetes-heavy SRE role"
+    )
+    no_desc_job = _enriched(url="https://x/2", description_text="")
+    out, stats = enrich_fit_and_notes([described_job, no_desc_job], ctx, budget=5)
+
+    by_url = {j.url: j for j in out}
+    assert len(calls) == 1  # the LLM only ever saw the described row
+    assert by_url["https://x/1"].fit == 7
+    assert by_url["https://x/1"].notes == "k8s"
+    assert by_url["https://x/2"].fit is None
+    assert by_url["https://x/2"].notes == ""
+    assert stats["enriched"] == 1
+    assert stats["no_description"] == 1
+
+
+def test_fit_phase_summary_includes_no_description_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The runner's fit/notes phase summary reports the no-description count
+    alongside the existing enriched/skipped/failed pieces."""
+    import io
+
+    from rich.console import Console as RichConsole
+
+    from daily_driver.core.progress import RunProgress
+    from daily_driver.plugins.job_search.scraper.runner import _run_llm_enrichment
+
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "enrichment": {
+                    "provider": "ollama",
+                    "model": "qwen2.5:14b",
+                    "max_enrich_fit": 5,
+                    "enrich_timeout": 5,
+                }
+            }
+        ),
+        ai=AIConfig(),
+    )
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
+    )
+    jobs = [
+        _enriched(url="https://x/1", description_text="d"),
+        _enriched(url="https://x/2", description_text=""),
+    ]
+
+    class _NoopSink:
+        def flush_periodic(self) -> None:
+            pass
+
+    console = RichConsole(file=io.StringIO(), force_terminal=False, color_system=None)
+    with RunProgress(console, tty=False) as run_progress:
+        group = run_progress.group("Job search run")
+        fit_phase = group.phase("Fit and notes", total=len(jobs))
+        _run_llm_enrichment(
+            ctx.plugin,
+            ctx.ai,
+            jobs,
+            ctx,
+            _NoopSink(),  # type: ignore[arg-type]
+            fit_phase,
+            run_preflight=False,
+        )
+
+    output = console.file.getvalue()
+    assert "1 no description" in output
+
+
 def test_job_details_short_circuits_when_description_present(
     fake_config: ScrapeContext,
 ) -> None:
