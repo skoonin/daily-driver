@@ -56,6 +56,25 @@ def test_warning_always_shown_in_quiet_mode(capsys):
     assert captured.out == ""
 
 
+def test_log_console_does_not_hard_wrap_when_captured(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Captured stderr must not hard-wrap a long unbroken token.
+
+    Regression: the log console used to hard-wrap at the detected width, which
+    split path/command tokens mid-word (e.g. "jobs-last-run.json" ->
+    "jobs-la\\nst-run.json") at certain widths, corrupting piped output and
+    making width-dependent substring assertions flake. A narrow COLUMNS would
+    fold the token here without soft-wrap.
+    """
+    monkeypatch.setenv("COLUMNS", "40")
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
+    token = "averylongunbreakabletoken-jobs-last-run.json-1234567890"
+    Console.warning(token)
+    err = capsys.readouterr().err
+    assert token in err
+
+
 def test_get_log_console_returns_rich_console():
     lc = Console.get_log_console()
     assert isinstance(lc, RichConsole)
