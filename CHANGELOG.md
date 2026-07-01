@@ -4,6 +4,10 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+### Fixed
+
+- **Captured/piped output no longer splits tokens across lines**: the stderr log console hard-wrapped at the detected terminal width, which could break a path or command mid-word (e.g. `jobs-last-run.json` -> `jobs-la` / `st-run.json`) in redirected or piped output, and made width-dependent test assertions flake. It now soft-wraps when stderr is not a TTY; interactive terminals and the live progress display are unchanged. (#129)
+
 ### Added
 
 - **Job descriptions persist to a `descriptions.jsonl` sidecar and are reused on re-runs**: scraped and enrichment-fetched job descriptions are now written to `descriptions.jsonl` beside `jobs.csv` (keyed by URL) and rehydrated when `jobs backfill` loads existing rows. Previously a description lived only in memory and was dropped on every write, so each backfill re-fetched it (re-hitting LinkedIn/Indeed, often signup-walled) and fell back to weak fit-only enrichment. Now a description is fetched at most once and reused on every subsequent run. LinkedIn description fetching (the login-free `linkedin.com/jobs/view/<id>` page) is now automatic whenever fit/notes enrichment runs — fill-missing-only, politely throttled, and self-limiting after a run of consecutive signup-walls. `jobs.csv` is unchanged (the description text stays out of the CSV). (#128)
