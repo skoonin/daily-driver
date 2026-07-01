@@ -234,6 +234,7 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 - `-S` / `--sources a,b,c` — override the enabled set for one run. `--list-sources` prints the names and exits.
 - `-j` / `--json` — emit the run manifest (`jobs-last-run.json`) to stdout after the run, wrapped in the standard `{"schema": 1, "data": <manifest>}` envelope (read e.g. `.data.new_jobs`), with the live progress block suppressed and diagnostics on stderr so stdout stays clean for `jq`. Mutually exclusive with `--dry-run` (rejected with exit 2). An interrupt still emits the manifest (exit `130` / `143`); an unreadable manifest emits `{"schema": 1, "data": null}`.
 - `.data.sources_degraded` — distinct from `.data.sources_failed`: a source that returned partial or empty-after-failures results is tracked as degraded rather than failed. Its rows are kept and the exit code is unchanged, but it is listed under `sources_degraded` in the manifest and called out in the run summary, so a quietly thin scrape is visible without being treated as an outright failure.
+- **No description, no score.** A row with no obtainable description (e.g. a signup-walled LinkedIn posting) is left un-scored — blank Fit and blank Notes — rather than guessed at, and the count is called out in the run summary. To retry, delete the row from `jobs.csv`; the next `jobs run` re-scrapes it fresh. `jobs backfill` cannot recover these rows since it never re-scrapes.
 
 **Resilience.** `jobs run` writes as it works, so an interrupt keeps what finished:
 

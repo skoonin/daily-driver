@@ -58,8 +58,14 @@ def _claude_config(*, max_parallel: int = 4, budget: int = 10) -> ScrapeContext:
 
 
 def _job(company: str) -> EnrichedJob:
-    # url unique per company so cross-job identity stays distinct.
-    return make_enriched(company=company, url=f"https://example.com/{company}")
+    # url unique per company so cross-job identity stays distinct. A
+    # description is required so the fit/notes pass under test actually
+    # reaches the provider -- a row with no description now skips the call.
+    return make_enriched(
+        company=company,
+        url=f"https://example.com/{company}",
+        description_text="We run large-scale infra.",
+    )
 
 
 def test_ollama_path_runs_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:

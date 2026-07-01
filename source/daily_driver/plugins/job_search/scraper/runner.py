@@ -1914,9 +1914,12 @@ def _run_llm_enrichment(
     else:
         fn_stats = _empty_fit_stats()
     if fit_phase is not None:
+        # .get() rather than a bare index: callers (tests, older stubs) may
+        # return a stats dict without this key, and 0 is the correct default.
         fit_phase.done(
             f"{fn_stats['enriched']} enriched, "
             f"{fn_stats['skipped_budget']} skipped (budget), "
+            f"{fn_stats.get('no_description', 0)} no description, "
             f"{fn_stats['failed']} failed"
         )
     return fn_stats
@@ -2775,10 +2778,12 @@ def _run_impl(
 
     n = len(typed_jobs)
     log.info(
-        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d failed (parse/subprocess)",
+        "Fit+Notes enriched: %d/%d, %d skipped (budget), %d no description, "
+        "%d failed (parse/subprocess)",
         fn_stats["enriched"],
         n,
         fn_stats["skipped_budget"],
+        fn_stats.get("no_description", 0),
         fn_stats["failed"],
     )
     # Headline that reconciles every job: found (raw scraped) -> new (not already
@@ -2807,6 +2812,16 @@ def _run_impl(
             if other > 0:
                 line += f", {other} other"
             Console.info(line)
+
+    # Rows with no obtainable description (e.g. a signup-walled posting) are
+    # intentionally left un-scored rather than guessed at; call it out so the
+    # user knows to re-scrape rather than assume the row was simply skipped.
+    no_description_count = fn_stats.get("no_description", 0)
+    if no_description_count:
+        Console.warning(
+            f"{no_description_count} job(s) had no description; Fit/Notes left "
+            "blank. Delete the row and re-run a scrape to retry."
+        )
 
     # Degraded sources finished with INCOMPLETE results (a partial-pagination or
     # all-units-failed scrape). Their rows are kept, but call it out so a partial

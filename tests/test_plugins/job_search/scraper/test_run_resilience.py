@@ -403,10 +403,11 @@ def test_run_flushes_enrichment_progress_to_disk(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    # comp set -> detail enricher skips the page fetch (no real network).
+    # comp set -> detail enricher skips the page fetch (no real network);
+    # description_text set -> the fit/notes pass reaches the provider.
     jobs = [
-        _scraped("https://x/1", "Acme", comp="$200k"),
-        _scraped("https://x/2", "Bravo", comp="$200k"),
+        _scraped("https://x/1", "Acme", comp="$200k", description_text="infra"),
+        _scraped("https://x/2", "Bravo", comp="$200k", description_text="infra"),
     ]
 
     def fake_scrape(
@@ -456,7 +457,10 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
             },
         }
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$200k") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$200k", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -640,8 +644,16 @@ def test_overlap_wave1_enrichment_reaches_disk(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
-    apple = [_scraped("https://ap/1", "ApCo", comp="$200k", source="apple")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
+    apple = [
+        _scraped(
+            "https://ap/1",
+            "ApCo",
+            comp="$200k",
+            source="apple",
+            description_text="infra",
+        )
+    ]
 
     def fake_scrape(
         ctx: Any,
@@ -693,7 +705,7 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_in_flight = threading.Event()
 
     def fake_scrape(
@@ -761,7 +773,7 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
     # Shorten the bound so the test does not wait the real 30s; the stuck call
     # below outlives it.
     monkeypatch.setattr(runner, "_WAVE1_INTERRUPT_JOIN_SECONDS", 0.3)
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_in_flight = threading.Event()
     release = threading.Event()
 
@@ -1017,7 +1029,10 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
             },
         }
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1441,7 +1456,7 @@ def test_run_enrichment_flush_preserves_preexisting_rows(
             }
         )
 
-    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k", description_text="infra")]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1527,7 +1542,10 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(3)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(3)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1579,7 +1597,10 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set()),
     )
-    jobs = [_scraped(f"https://x/{i}", f"Co{i}", comp="$x") for i in range(4)]
+    jobs = [
+        _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
+        for i in range(4)
+    ]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any

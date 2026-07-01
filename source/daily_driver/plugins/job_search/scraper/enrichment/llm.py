@@ -247,9 +247,7 @@ def _build_fit_notes_system(
         f"{shape}\n\n"
         f"{fit_instr}"
         "notes: one line justifying the score -- name the decisive match or "
-        "mismatch and the location fit. Do not list the tech stack. If the "
-        "description is absent, return notes as an empty string. Do not guess or "
-        "hallucinate notes when you have no description.\n"
+        "mismatch and the location fit. Do not list the tech stack.\n"
     )
 
     if include_remote:
@@ -588,7 +586,7 @@ class _FitPlan:
     stats: dict[str, int]
     target_idx: list[int]
     timeout: int
-    fetch: Callable[[int], tuple[int | None, str, str, bool]]
+    fetch: Callable[[int], tuple[int | None, str, str, bool, bool]]
     consume: Callable[[Future[Any], int], None]
 
 
@@ -613,7 +611,7 @@ def _build_fit_plan(
     """
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
-    stats = {"enriched": 0, "skipped_budget": 0, "failed": 0}
+    stats = {"enriched": 0, "skipped_budget": 0, "no_description": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
     # mid-pass leaves enriched-so-far results for a caller that persists them
     # (backfill rewrites on interrupt; run() flushes the sink per phase and
@@ -674,12 +672,13 @@ def _build_fit_plan(
     # call -- a large file multiplies input tokens by the job count, so warn. On
     # the claude path context.md rides the cached system prompt (sent/processed
     # once per run, then read from cache), so the per-call multiplication does not
-    # apply and no warning is emitted. The projection counts every job that will
-    # be enriched (capped by budget); no-desc jobs still make a full call.
+    # apply and no warning is emitted. The projection counts only jobs that will
+    # actually reach the provider: no-description rows are skipped entirely (see
+    # the no_desc handling in _fetch below), so they are subtracted out here.
     if context_text and provider == "ollama":
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
-            jobs_to_enrich = min(budget, eligible_count)
+            jobs_to_enrich = max(0, min(budget, eligible_count) - no_desc)
             log.warning(
                 "[enrich-fit-notes] context.md is ~%d tokens, sent on each of ~%d "
                 "ollama enrichment calls this run (~%d input tokens); trim it if "
@@ -697,7 +696,7 @@ def _build_fit_plan(
     if no_desc:
         log.info(
             "[enrich-fit-notes] %d eligible jobs have no description_text on row "
-            "(notes will be left empty by prompt design — only Fit can be filled)",
+            "-- left un-scored (no Fit, no Notes) with no provider call made",
             no_desc,
         )
 
@@ -721,10 +720,25 @@ def _build_fit_plan(
     heartbeat = max(1, len(target_idx) // 5)
 
     def _apply(
-        idx: int, fit: int | None, notes_str: str, remote: str, failed: bool
+        idx: int,
+        fit: int | None,
+        notes_str: str,
+        remote: str,
+        failed: bool,
+        no_description: bool = False,
     ) -> None:
         job = out[idx]
         company = job.company or "unknown"
+        if no_description:
+            # Nothing to assess -- fit/notes stay blank rather than the model
+            # guessing (or the old fit=5 degradation). No provider call was made
+            # for this row (see _fetch below), so this is not a "failed" call.
+            stats["no_description"] += 1
+            log.debug(
+                "[enrich-fit-notes] %s: no description_text, leaving fit/notes blank",
+                company,
+            )
+            return
         if failed:
             stats["failed"] += 1
             # INFO (visible at -v): a one-liner naming the failed job so a single
@@ -789,8 +803,12 @@ def _build_fit_plan(
             wrote_notes,
         )
 
-    def _fetch(idx: int) -> tuple[int | None, str, str, bool]:
-        return _fetch_fit_notes_for_job(
+    def _fetch(idx: int) -> tuple[int | None, str, str, bool, bool]:
+        # No description means nothing to assess: skip the provider call
+        # entirely rather than spend a call the model can only guess at.
+        if not out[idx].description_text.strip():
+            return None, "", "", False, True
+        fit, notes_str, remote, failed = _fetch_fit_notes_for_job(
             out[idx],
             system_prompt,
             ctx,
@@ -798,14 +816,15 @@ def _build_fit_plan(
             crit_list,
             include_remote,
         )
+        return fit, notes_str, remote, failed, False
 
     def _consume(fut: Future[Any], idx: int) -> None:
         # `applied` guards against the interrupt drain re-applying a slot the
         # main consume loop already wrote.
         if id(fut) in applied:
             return
-        fit, notes_str, remote, failed = fut.result()
-        _apply(idx, fit, notes_str, remote, failed)
+        fit, notes_str, remote, failed, no_description = fut.result()
+        _apply(idx, fit, notes_str, remote, failed, no_description)
         applied.add(id(fut))
         if progress is not None:
             progress(1, out[idx].company)
@@ -848,8 +867,9 @@ def enrich_fit_and_notes(
 
     One call per job returns strict JSON ``{"fit": <int 1-10>, "notes": "..."}``.
     Budget caps the combined call count (uses ``max_enrich_fit`` as the limit).
-    Fit is scored from role/company/location alone, so description is optional;
-    when absent, notes is left empty (not confabulated). Fans out through
+    A row with no ``description_text`` makes no provider call at all -- there is
+    nothing to assess -- and is left with blank Fit and Notes, counted under the
+    ``no_description`` stat rather than guessed at. Fans out through
     ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
     serially on the main thread.
 
@@ -870,7 +890,8 @@ def enrich_fit_and_notes(
     ``date_enriched`` is at or after the cutoff so an interrupted force-update
     resumes rather than restarts; ``None`` disables the cooldown.
 
-    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget, failed.
+    Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
+    no_description, failed.
     """
     if _reset_hint:
         _reset_ollama_hint()
@@ -958,10 +979,12 @@ def enrich_fit_and_notes(
             finally:
                 _restore_interrupt_handler(previous_handler)
         log.info(
-            "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
+            "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget), "
+            "%d no description",
             plan.stats["enriched"],
             plan.stats["failed"],
             plan.stats["skipped_budget"],
+            plan.stats["no_description"],
         )
         return plan.out, plan.stats
 
@@ -985,16 +1008,18 @@ def enrich_fit_and_notes(
         plan.consume(settled_fut, idx)
 
     log.info(
-        "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget)",
+        "[enrich-fit-notes] done: %d enriched, %d failed, %d skipped (budget), "
+        "%d no description",
         plan.stats["enriched"],
         plan.stats["failed"],
         plan.stats["skipped_budget"],
+        plan.stats["no_description"],
     )
     return plan.out, plan.stats
 
 
 def _empty_fit_stats() -> dict[str, int]:
-    return {"enriched": 0, "skipped_budget": 0, "failed": 0}
+    return {"enriched": 0, "skipped_budget": 0, "no_description": 0, "failed": 0}
 
 
 def _wrap_progress_with_flush(
