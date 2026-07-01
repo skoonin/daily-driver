@@ -97,12 +97,12 @@ _BEHAVIOR_UNTESTED: dict[str, str] = {
 # call, so it is genuinely behavior-referenced.
 
 # Keys that string-attribution cannot pin to one knob: model duplicates (e.g.
-# `model`, `timeout`, `enabled`) plus common Python identifiers (`day`, `name`)
-# that appear in unrelated code (datetime.day, response["name"], ...). For these
-# the ledger-honesty check below can't assert "not referenced" — it would flag a
-# false positive — so those ledger entries lean on
-# test_behavior_ledger_paths_are_real_leaf_knobs instead.
-_AMBIGUOUS_EXTRA_KEYS = frozenset({"day"})
+# `model`, `timeout`, `enabled`) plus common Python identifiers (`day`, `name`,
+# `timezone`) that appear in unrelated code (datetime.day, dt.timezone.utc,
+# response["name"], ...). For these the ledger-honesty check below can't assert
+# "not referenced" — it would flag a false positive — so those ledger entries
+# lean on test_behavior_ledger_paths_are_real_leaf_knobs instead.
+_AMBIGUOUS_EXTRA_KEYS = frozenset({"day", "timezone"})
 
 
 def _leaf_knobs() -> list[tuple[str, str]]:
