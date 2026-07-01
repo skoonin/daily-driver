@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from daily_driver.core.logging import get_logger
 from daily_driver.core.progress import ProgressCallback
 from daily_driver.plugins.job_search.scraper.models import (
-    ENRICH_SKIP_STATUSES,
+    ENRICH_ELIGIBLE_STATUSES,
     EnrichedJob,
 )
 from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
@@ -41,7 +41,7 @@ def _skip_reason(job: EnrichedJob) -> str | None:
     """
     if job.comp:
         return "already complete"
-    if job.status in ENRICH_SKIP_STATUSES:
+    if job.status not in ENRICH_ELIGIBLE_STATUSES:
         return "inactive"
     url = (job.url or "").strip()
     if not url:

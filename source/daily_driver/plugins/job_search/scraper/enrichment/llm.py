@@ -26,6 +26,7 @@ from concurrent.futures import (
     wait,
 )
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
@@ -39,7 +40,7 @@ from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _restore_interrupt_handler,
 )
 from daily_driver.plugins.job_search.scraper.models import (
-    ENRICH_SKIP_STATUSES,
+    ENRICH_ELIGIBLE_STATUSES,
     EnrichedJob,
     clamp_fit,
 )
@@ -423,6 +424,11 @@ def _fetch_fit_notes_for_job(
             ai=ctx.ai,
             timeout=timeout,
             system=system_prompt,
+            # Fit/notes is a narrow, structured-output call with no need for the
+            # user's workspace CLAUDE.md / settings / MCP / custom commands --
+            # --safe-mode skips them (auth and model selection still work) so the
+            # call is faster and never picks up unrelated workspace behavior.
+            safe_mode=True,
         )
     except AITimeoutError as exc:
         _log_provider_timeout(
@@ -510,15 +516,34 @@ def _fetch_fit_notes_for_job(
     return score, notes_str, remote, False
 
 
-def _fit_notes_eligible(job: EnrichedJob, *, force: bool = False) -> bool:
+def _fit_notes_eligible(
+    job: EnrichedJob,
+    *,
+    force: bool = False,
+    cooldown_cutoff: datetime | None = None,
+) -> bool:
     """A job still wants a fit/notes call: active status, missing fit or notes.
 
-    Under ``force`` the missing-field condition is dropped: every active row is
-    eligible so existing Fit/Notes are re-enriched and overwritten.
+    Only rows in the active funnel (status ``found`` or ``pending``) are eligible;
+    triaged or blank statuses are never enriched. Under ``force`` the
+    missing-field condition is dropped: every eligible row is re-enriched and
+    overwritten -- except rows enriched within the cooldown window
+    (``cooldown_cutoff``), which are skipped so an interrupted force-update
+    resumes instead of restarting. ``cooldown_cutoff`` of ``None`` disables the
+    cooldown (overwrite all).
     """
-    if job.status in ENRICH_SKIP_STATUSES:
+    if job.status not in ENRICH_ELIGIBLE_STATUSES:
         return False
     if force:
+        # Skip rows re-cooked within the cooldown window so an interrupted
+        # force-update resumes rather than restarting. A None cutoff (cooldown
+        # disabled) or a never-enriched row (date_enriched None) stays eligible.
+        if (
+            cooldown_cutoff is not None
+            and job.date_enriched is not None
+            and job.date_enriched >= cooldown_cutoff
+        ):
+            return False
         return True
     return not (job.fit and job.notes)
 
@@ -530,6 +555,7 @@ def fit_notes_target_indices(
     exclude_urls: frozenset[str] = frozenset(),
     *,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> list[int]:
     """Input-order indices of rows the fit/notes pass will process this wave.
 
@@ -543,7 +569,8 @@ def fit_notes_target_indices(
     eligible = [
         i
         for i, j in enumerate(jobs)
-        if _fit_notes_eligible(j, force=force) and j.url not in exclude_urls
+        if _fit_notes_eligible(j, force=force, cooldown_cutoff=cooldown_cutoff)
+        and j.url not in exclude_urls
     ]
     return eligible[:resolved]
 
@@ -573,6 +600,7 @@ def _build_fit_plan(
     exclude_urls: frozenset[str] = frozenset(),
     on_planned: Callable[[int], None] | None = None,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> _FitPlan | None:
     """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
@@ -636,7 +664,8 @@ def _build_fit_plan(
     eligible_idx = [
         i
         for i, j in enumerate(out)
-        if _fit_notes_eligible(j, force=force) and j.url not in exclude_urls
+        if _fit_notes_eligible(j, force=force, cooldown_cutoff=cooldown_cutoff)
+        and j.url not in exclude_urls
     ]
     eligible_count = len(eligible_idx)
     no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
@@ -672,7 +701,9 @@ def _build_fit_plan(
             no_desc,
         )
 
-    target_idx = fit_notes_target_indices(out, budget, cfg, exclude_urls, force=force)
+    target_idx = fit_notes_target_indices(
+        out, budget, cfg, exclude_urls, force=force, cooldown_cutoff=cooldown_cutoff
+    )
     # Report the PLANNED call count (post-budget) so the caller's progress bar
     # shows the real denominator, not the whole eligible count.
     if on_planned is not None:
@@ -726,6 +757,10 @@ def _build_fit_plan(
             # No cell changed (e.g. a pre-existing fit with an empty-notes reply):
             # count nothing rather than inflate the enriched total.
             return
+        # Stamp the enrichment instant on every real write so the force-update
+        # cooldown can skip rows re-cooked within its window. Reached only when a
+        # cell actually changed, so a no-op result never churns the row.
+        updates["date_enriched"] = datetime.now(timezone.utc)
         # Validation (or any non-interrupt error) applying one result must
         # fail only this job, never abort the run — run() has no incremental
         # flush, so an escape would lose every scraped+enriched job.
@@ -807,6 +842,7 @@ def enrich_fit_and_notes(
     attempted: dict[str, set[str]] | None = None,
     on_planned: Callable[[int], None] | None = None,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> tuple[list[EnrichedJob], dict[str, int]]:
     """Populate Fit score and Notes for new jobs via one provider call per job.
 
@@ -830,7 +866,9 @@ def enrich_fit_and_notes(
 
     ``force`` re-enriches every active row regardless of existing Fit/Notes and
     OVERWRITES Fit, Notes, and Remote (still bounded by ``budget``); the default
-    fills only missing cells.
+    fills only missing cells. ``cooldown_cutoff`` (force only) excludes rows whose
+    ``date_enriched`` is at or after the cutoff so an interrupted force-update
+    resumes rather than restarts; ``None`` disables the cooldown.
 
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget, failed.
     """
@@ -842,7 +880,14 @@ def enrich_fit_and_notes(
     applied = [0]
     progress = _wrap_progress_with_flush(progress, flush, flush_every, applied)
     plan = _build_fit_plan(
-        jobs, ctx, budget, progress, exclude_urls, on_planned=on_planned, force=force
+        jobs,
+        ctx,
+        budget,
+        progress,
+        exclude_urls,
+        on_planned=on_planned,
+        force=force,
+        cooldown_cutoff=cooldown_cutoff,
     )
     if attempted is not None:
         attempted["fit_urls"] = (

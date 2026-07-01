@@ -56,6 +56,7 @@ def clamp_fit(score: int) -> int:
 JOBS_DEFAULT_STATUS = "found"
 JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "found",
+    "pending",
     "skipped",
     "applied",
     "interviewing",
@@ -70,6 +71,13 @@ JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment
 # pass (fit/notes): kept for visibility, not worth spending enrichment calls on.
 ENRICH_SKIP_STATUSES: frozenset[str] = frozenset({"skipped"})
+
+# Only freshly-found and explicitly-pending rows are worth (re-)enriching: once a
+# row reaches a triaged state (applied, interviewing, rejected, dropped, closed,
+# skipped) its Fit/Notes are settled, so the enrichment gate is an allowlist, not
+# a denylist. Blank/unrecognized statuses are excluded -- enrichment only acts on
+# rows the user has left in the active funnel.
+ENRICH_ELIGIBLE_STATUSES: frozenset[str] = frozenset({"found", "pending"})
 
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -255,6 +263,11 @@ class EnrichedJob(BaseModel):
     # Drives `jobs prune --older-than`. Defaults to Date Found on write when
     # unset (no upsert-on-rescan path yet), so prune ages from first-discovery.
     date_last_seen: dt.date | None = None
+    # UTC instant of the last fit/notes enrichment write. Distinct from
+    # date_last_seen (date-only, prune-aging): this is a full timestamp that
+    # drives the `backfill --force-update` cooldown (skip rows re-cooked within
+    # the window). None == never enriched / pre-migration row.
+    date_enriched: dt.datetime | None = None
 
     # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
     # derived from this map's key order and must stay byte-for-byte identical to
@@ -271,6 +284,7 @@ class EnrichedJob(BaseModel):
         "Date Found": "date_found",
         "Date Applied": "date_applied",
         "Date Last Seen": "date_last_seen",
+        "Date Enriched": "date_enriched",
         "Link": "url",
         "Source": "source",
     }
@@ -332,6 +346,9 @@ class EnrichedJob(BaseModel):
             ),
             # Seed from Date Found on insert so prune ages from first-discovery.
             "Date Last Seen": (self.date_last_seen or self.date_found).isoformat(),
+            "Date Enriched": (
+                "" if self.date_enriched is None else self.date_enriched.isoformat()
+            ),
             "Link": self.url,
             "Source": self.source,
         }
@@ -341,6 +358,17 @@ class EnrichedJob(BaseModel):
         def _opt_date(s: str) -> dt.date | None:
             s = (s or "").strip()
             return dt.date.fromisoformat(s) if s else None
+
+        def _opt_dt(s: str) -> dt.datetime | None:
+            s = (s or "").strip()
+            if not s:
+                return None
+            parsed = dt.datetime.fromisoformat(s)
+            # A hand-edited naive value compares against the (aware) cooldown
+            # cutoff; treat it as UTC so the comparison never raises.
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed
 
         source = row.get("Source", "").strip() or "unknown"
         if source.startswith("Greenhouse (") and source.endswith(")"):
@@ -377,6 +405,7 @@ class EnrichedJob(BaseModel):
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
             date_last_seen=_opt_date(row.get("Date Last Seen", "")),
+            date_enriched=_opt_dt(row.get("Date Enriched", "")),
             url=row.get("Link", ""),
             source=source,
             source_canonical=canonical,
@@ -402,6 +431,7 @@ class Source(Protocol):
 
 
 __all__ = [
+    "ENRICH_ELIGIBLE_STATUSES",
     "ENRICH_SKIP_STATUSES",
     "EnrichedJob",
     "JOBS_DEFAULT_STATUS",

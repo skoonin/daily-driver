@@ -122,6 +122,50 @@ def test_invoke_emits_system_prompt_flag(monkeypatch):
     ]
 
 
+def test_invoke_emits_safe_mode_flag(monkeypatch):
+    """safe_mode=True passes --safe-mode; auth/model flags are unaffected."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    invoke("user msg", headless=True, safe_mode=True)
+
+    assert captured["args"] == ["claude", "-p", "--safe-mode", "user msg"]
+
+
+def test_invoke_omits_safe_mode_flag_by_default(monkeypatch):
+    """safe_mode defaults False: interactive/session-based launchers are unaffected."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.claude_cli.shutil.which",
+        lambda _: "/usr/local/bin/claude",
+    )
+    captured = {}
+
+    def _popen(args, **kw):
+        captured["args"] = args
+        proc = MagicMock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        return proc
+
+    monkeypatch.setattr("daily_driver.integrations.claude_cli.subprocess.Popen", _popen)
+
+    invoke("user msg", headless=True)
+
+    assert "--safe-mode" not in captured["args"]
+
+
 def test_invoke_prompt_precedes_add_dir(monkeypatch):
     """Regression: --add-dir is variadic; trailing prompt was absorbed.
 

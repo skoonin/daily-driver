@@ -52,6 +52,20 @@ def test_system_defaults_none_for_claude() -> None:
     assert inv.call_args.kwargs["system_prompt"] is None
 
 
+def test_safe_mode_routes_to_claude_safe_mode_flag() -> None:
+    with patch.object(claude_cli, "invoke", return_value="ok") as inv:
+        ai_provider.invoke_for(
+            "hi", provider="claude", model="haiku", ai=AIConfig(), safe_mode=True
+        )
+    assert inv.call_args.kwargs["safe_mode"] is True
+
+
+def test_safe_mode_defaults_false_for_claude() -> None:
+    with patch.object(claude_cli, "invoke", return_value="ok") as inv:
+        ai_provider.invoke_for("hi", provider="claude", model="haiku", ai=AIConfig())
+    assert inv.call_args.kwargs["safe_mode"] is False
+
+
 def test_system_routes_to_ollama_system_field() -> None:
     """A `system` arg reaches the ollama client's native system parameter."""
     with patch.object(ollama_client, "generate", return_value="x") as gen:

@@ -271,6 +271,34 @@ def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
     assert calls[0][1] != calls[1][1]
 
 
+def test_fit_notes_call_sets_safe_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The enrichment call passes safe_mode=True: no workspace customizations
+    (CLAUDE.md, settings, hooks, MCP, custom commands/agents) load for this
+    narrow, structured-output call. Auth/model selection are unaffected --
+    safe_mode only adds a CLI flag, it does not change how invoke_for dispatches."""
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "enrichment": {
+                "provider": "ollama",
+                "model": "qwen2.5:14b",
+                "max_enrich_fit": 5,
+            }
+        }
+    )
+    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    captured: dict[str, object] = {}
+
+    def fake_invoke(prompt, *a, **k):
+        captured["safe_mode"] = k.get("safe_mode")
+        return '{"fit": 6, "notes": "x"}'
+
+    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    jobs = [_enriched(url="https://x/1", description_text="d1")]
+    enrich_fit_and_notes(jobs, ctx, budget=5)
+
+    assert captured["safe_mode"] is True
+
+
 @pytest.mark.parametrize(
     "provider, expect_warning",
     [("ollama", True), ("claude", False)],

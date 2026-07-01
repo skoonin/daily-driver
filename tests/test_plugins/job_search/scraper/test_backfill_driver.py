@@ -817,12 +817,17 @@ def test_backfill_reports_status_canonicalization(
 
     Backfill lifts every row through from_csv_row (which normalizes spelling),
     silently rewriting rows the user did not ask to touch — so the canonical-
-    ization must be visible.
+    ization must be visible. The ``found`` row makes the backfill proceed (only
+    found/pending rows are eligible); the ``Ruled_Out`` row is not enriched but
+    is still canonicalized by the rewrite.
     """
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(
         csv_path,
-        [_row(company="C", link="https://example.com/c", status="Ruled_Out")],
+        [
+            _row(company="C", link="https://example.com/c", status="Ruled_Out"),
+            _row(company="D", link="https://example.com/d", status="found"),
+        ],
     )
     _stub_detail(monkeypatch)
     _stub_concurrent_noop(monkeypatch)

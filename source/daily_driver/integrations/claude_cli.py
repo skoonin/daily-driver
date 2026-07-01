@@ -65,6 +65,7 @@ def _build_args(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     system_prompt: str | None = None,
+    safe_mode: bool = False,
 ) -> list[str]:
     if session_id is not None and resume_session_id is not None:
         raise ValueError("session_id and resume_session_id are mutually exclusive")
@@ -74,6 +75,14 @@ def _build_args(
     # --no-session-persistence only works with -p (claude CLI constraint)
     if headless and not session_persistence:
         args.append("--no-session-persistence")
+    # --safe-mode loads none of our local customizations (CLAUDE.md, settings,
+    # hooks, MCP servers, plugins, skills, custom commands/agents, output styles)
+    # while leaving auth, model selection, and built-in tools working normally --
+    # so a Claude Max OAuth login still authenticates (unlike --bare, which forces
+    # an API key). Used for enrichment, where workspace context would only add
+    # latency, tokens, and unwanted behavior to a narrow fit/notes call.
+    if safe_mode:
+        args.append("--safe-mode")
     if agent:
         args.extend(["--agent", agent])
     if session_name:
@@ -117,6 +126,7 @@ def invoke(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     system_prompt: str | None = None,
+    safe_mode: bool = False,
 ) -> str:
     """Invoke the `claude` CLI and return its stdout.
 
@@ -125,6 +135,10 @@ def invoke(
 
     ``system_prompt`` replaces the default system prompt (``--system-prompt``);
     pass a STABLE value across a batch to get server-side prompt-cache reuse.
+
+    ``safe_mode`` adds ``--safe-mode`` so none of the user's local customizations
+    (CLAUDE.md, settings, hooks, MCP servers, plugins, skills, custom
+    commands/agents) load, while auth and model selection still work normally.
     """
     args = _build_args(
         prompt,
@@ -137,6 +151,7 @@ def invoke(
         session_id=session_id,
         resume_session_id=resume_session_id,
         system_prompt=system_prompt,
+        safe_mode=safe_mode,
     )
 
     try:

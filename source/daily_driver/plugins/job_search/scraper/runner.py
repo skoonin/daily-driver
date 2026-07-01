@@ -13,7 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -1392,6 +1392,7 @@ def _backfill_needs(
     jobs: list[EnrichedJob],  # noqa: F821
     plugin: JobSearchPlugin,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> dict[str, int]:
     """Per-phase counts of rows the enricher WOULD actually touch.
 
@@ -1417,7 +1418,11 @@ def _backfill_needs(
     cfg = plugin.enrichment
     active = [j for j in jobs if _active(j)]
     fit_notes = (
-        sum(1 for j in active if _fit_notes_eligible(j, force=force))
+        sum(
+            1
+            for j in active
+            if _fit_notes_eligible(j, force=force, cooldown_cutoff=cooldown_cutoff)
+        )
         if (cfg.enrich_fit and cfg.enrich_notes)
         else 0
     )
@@ -1437,6 +1442,7 @@ def run_backfill(
     dry_run: bool = False,
     limit: int | None = None,
     force: bool = False,
+    cooldown_hours: int | None = None,
     emit_json: bool = False,
 ) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
@@ -1493,12 +1499,29 @@ def run_backfill(
     clear_stale_adjacent_lock(csv_path)
     lock_path = jobs_lock_path(ephemeral_dir)
 
+    # Force-update cooldown: skip rows enriched within the window so an
+    # interrupted force-update resumes instead of restarting. CLI --cooldown-hours
+    # overrides the config default; the cutoff is only meaningful under force, and
+    # 0 hours disables it (re-enrich every active row, the legacy behavior).
+    resolved_cooldown_hours = (
+        cooldown_hours
+        if cooldown_hours is not None
+        else plugin.enrichment.force_recook_cooldown_hours
+    )
+    cooldown_cutoff = (
+        backfill_started_at - timedelta(hours=resolved_cooldown_hours)
+        if force and resolved_cooldown_hours > 0
+        else None
+    )
+
     # Dry-run reads outside the lock: it never writes, so a concurrent run can't
     # be clobbered by it. The real path reads INSIDE the lock (below).
     if dry_run:
         _, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
-        needs = _backfill_needs(jobs, plugin, force=force)
+        needs = _backfill_needs(
+            jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
+        )
         skipped = len(jobs) - needs["rows"]
         enrich_cfg = plugin.enrichment
         fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
@@ -1577,7 +1600,9 @@ def run_backfill(
                 ", ".join(extra_columns),
             )
 
-        needs = _backfill_needs(jobs, plugin, force=force)
+        needs = _backfill_needs(
+            jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
+        )
         skipped = len(jobs) - needs["rows"]
         log.info(
             "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes",
@@ -1659,6 +1684,7 @@ def run_backfill(
                     run_preflight=True,
                     fit_budget=fit_budget,
                     force=force,
+                    cooldown_cutoff=cooldown_cutoff,
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -1784,6 +1810,7 @@ def _run_llm_enrichment(
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> dict[str, int]:
     """Run the fit/notes LLM pass, flushing as it goes.
 
@@ -1825,6 +1852,7 @@ def _run_llm_enrichment(
             exclude_urls=exclude_fit_urls,
             attempted=attempted,
             force=force,
+            cooldown_cutoff=cooldown_cutoff,
         )
     else:
         fn_stats = _empty_fit_stats()
@@ -1852,6 +1880,7 @@ def _enrich_wave(
     exclude_fit_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
     force: bool = False,
+    cooldown_cutoff: datetime | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1909,7 +1938,12 @@ def _enrich_wave(
         # Same slice the fit/notes pass will enrich this wave, so the two never
         # drift: fill descriptions for exactly those rows, not the full backlog.
         target_idx = fit_notes_target_indices(
-            jobs, fit_budget, enrich_cfg, exclude_fit_urls, force=force
+            jobs,
+            fit_budget,
+            enrich_cfg,
+            exclude_fit_urls,
+            force=force,
+            cooldown_cutoff=cooldown_cutoff,
         )
         linkedin_phase.start()
         linkedin_phase.set_total(len(target_idx))
@@ -1934,6 +1968,7 @@ def _enrich_wave(
         exclude_fit_urls=exclude_fit_urls,
         attempted=attempted,
         force=force,
+        cooldown_cutoff=cooldown_cutoff,
     )
     return detail_stats, fn_stats
 

@@ -195,6 +195,34 @@ class TestEnrichedJob:
             EnrichedJob.CSV_COLUMN_TO_ATTR.keys()
         )
 
+    def test_date_enriched_round_trips_utc(self) -> None:
+        stamp = dt.datetime(2026, 6, 30, 12, 0, tzinfo=dt.timezone.utc)
+        row = _enriched(date_enriched=stamp).to_csv_row()
+        assert row["Date Enriched"] == "2026-06-30T12:00:00+00:00"
+        back = EnrichedJob.from_csv_row(row)
+        assert back.date_enriched == stamp
+        assert back.date_enriched.tzinfo is not None
+
+    def test_date_enriched_none_round_trips_blank(self) -> None:
+        row = _enriched().to_csv_row()
+        assert row["Date Enriched"] == ""
+        assert EnrichedJob.from_csv_row(row).date_enriched is None
+
+    def test_date_enriched_missing_column_reads_none(self) -> None:
+        """Pre-migration files lack the column; the reader tolerates its absence."""
+        row = _enriched(fit=7).to_csv_row()
+        del row["Date Enriched"]
+        assert EnrichedJob.from_csv_row(row).date_enriched is None
+
+    def test_date_enriched_naive_value_upgraded_to_utc(self) -> None:
+        """A hand-edited naive timestamp reads back as UTC-aware (safe to compare)."""
+        row = _enriched().to_csv_row()
+        row["Date Enriched"] = "2026-06-29T08:00:00"
+        back = EnrichedJob.from_csv_row(row)
+        assert back.date_enriched == dt.datetime(
+            2026, 6, 29, 8, 0, tzinfo=dt.timezone.utc
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Source protocol — Q16 prep

@@ -248,13 +248,15 @@ Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fiel
 
 > **VS Code integrated terminal**: a frozen copy of the live block left in scrollback is VS Code's DOM renderer mishandling scroll-region repaints, not the program. Set `terminal.integrated.gpuAcceleration` to `"auto"` (or `"on"`) to fix it. iTerm2 and tmux are unaffected.
 
-### `jobs backfill [-n|--dry-run] [--limit N] [-j|--json]`
+### `jobs backfill [-n|--dry-run] [--limit N] [--force-update] [--cooldown-hours N] [-j|--json]`
 
 Re-enriches empty fields (Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
 
-- Rows already filled — and rows in a skip status — are left untouched. Fit and Notes are one combined need, since a single call fills both.
+- Only rows in the active funnel (`found` or `pending`) are ever (re-)enriched; a triaged status (`applied`, `interviewing`, `rejected`, `dropped`, `closed`, `skipped`) or a blank status is always left untouched. Fit and Notes are one combined need, since a single call fills both.
 - `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
 - `--limit N` — cap LLM spend by bounding the fit/notes budget at `N` (minimum 1; default: the configured per-phase cap).
+- `--force-update` — re-enrich every eligible row and OVERWRITE its existing Fit, Notes, and Remote, instead of the default fill-missing-only behavior. Still bounded by `--limit` and the cooldown below.
+- `--cooldown-hours N` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time).
 - `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `elapsed_seconds`; `dry_run` adds `fit_cap`) in the `{schema, data}` envelope, with the live progress block suppressed.
 - A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
 - Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).

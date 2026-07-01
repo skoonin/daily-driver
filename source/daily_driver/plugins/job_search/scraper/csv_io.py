@@ -11,7 +11,7 @@ from pathlib import Path
 from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status, warn_unknown_statuses
 from daily_driver.plugins.job_search.scraper.models import (
-    ENRICH_SKIP_STATUSES,
+    ENRICH_ELIGIBLE_STATUSES,
     JOBS_RECOMMENDED_STATUSES,
     EnrichedJob,
 )
@@ -254,7 +254,9 @@ def append_jobs_typed(
 
 
 def _active(job: EnrichedJob) -> bool:
-    return job.status not in ENRICH_SKIP_STATUSES
+    # Enrichment acts only on rows still in the active funnel (found / pending);
+    # triaged or blank statuses are left alone. Mirrors _fit_notes_eligible.
+    return job.status in ENRICH_ELIGIBLE_STATUSES
 
 
 __all__ = [

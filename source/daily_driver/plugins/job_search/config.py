@@ -361,6 +361,15 @@ class EnrichmentConfig(BaseModel):
         default=50,
         description="Cap on fit/notes LLM calls per run (bounds API cost).",
     )
+    force_recook_cooldown_hours: int = Field(
+        default=24,
+        ge=0,
+        description=(
+            "Under `jobs backfill --force-update`, skip rows enriched within the\n"
+            "last N hours so an interrupted force-update resumes instead of\n"
+            "restarting. 0 disables the cooldown (re-enrich every active row)."
+        ),
+    )
     detail_delay_seconds: float = Field(
         default=0.5,
         description="Pause between detail-page fetches, in seconds, to avoid rate limits.",

@@ -4,26 +4,36 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
 
-def _positive_limit(value: str) -> int:
-    """Parse ``--limit`` as an integer >= 1.
+def _int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
+    """Build an argparse ``type=`` callable parsing an integer >= ``minimum``.
 
-    A 0 limit would mean "spend nothing" (budget 0 = no calls) -- a pointless
-    backfill better expressed by not running it -- and a negative limit is
-    nonsense, so reject both at the parser. argparse turns the
-    ArgumentTypeError into a clean exit 2.
+    argparse turns the ArgumentTypeError into a clean exit 2.
     """
-    try:
-        n = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
-    if n < 1:
-        raise argparse.ArgumentTypeError(f"--limit must be >= 1 (got {n})")
-    return n
+
+    def _parse(value: str) -> int:
+        try:
+            n = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+        if n < minimum:
+            raise argparse.ArgumentTypeError(f"{flag} must be >= {minimum} (got {n})")
+        return n
+
+    return _parse
+
+
+# A 0 limit would mean "spend nothing" (budget 0 = no calls) -- a pointless
+# backfill better expressed by not running it -- and a negative limit is
+# nonsense, so reject both at the parser.
+_positive_limit = _int_at_least(1, "--limit")
+# 0 disables the force-update cooldown (re-enrich every active row).
+_nonneg_hours = _int_at_least(0, "--cooldown-hours")
 
 
 def add_parser(
@@ -122,7 +132,20 @@ def add_parser(
         default=False,
         help=(
             "Re-enrich every active row and OVERWRITE its Fit, Notes, and Remote "
-            "(default: fill missing cells only). Still bounded by --limit"
+            "(default: fill missing cells only). Still bounded by --limit and the "
+            "--cooldown-hours cooldown"
+        ),
+    )
+    p_backfill.add_argument(
+        "--cooldown-hours",
+        type=_nonneg_hours,
+        default=None,
+        metavar="N",
+        help=(
+            "Only with --force-update (no effect otherwise): skip rows enriched "
+            "within the last N hours, so an interrupted force-update resumes "
+            "instead of restarting (default: config force_recook_cooldown_hours, "
+            "normally 24; 0 disables)"
         ),
     )
     p_backfill.add_argument(
@@ -384,6 +407,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             dry_run=args.dry_run,
             limit=args.limit,
             force=args.force_update,
+            cooldown_hours=args.cooldown_hours,
             emit_json=emit_json,
         )
         if emit_json:

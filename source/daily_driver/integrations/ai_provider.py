@@ -116,6 +116,7 @@ def invoke_for(
     ai: AIConfig,
     timeout: int | None = None,
     system: str | None = None,
+    safe_mode: bool = False,
 ) -> str:
     """Dispatch a headless prompt to the resolved `provider` / `model` route.
 
@@ -128,6 +129,10 @@ def invoke_for(
     (which Claude Code prompt-caches server-side, so a stable value across a
     batch is read from cache rather than reprocessed) and to ollama's native
     ``system`` field. Keep it byte-identical across a batch for cache reuse.
+
+    ``safe_mode`` routes to claude's ``--safe-mode`` (no local customizations
+    loaded; auth still works) and is inert for ollama. Set it for narrow
+    enrichment calls that must not pick up workspace CLAUDE.md / settings / MCP.
 
     Failure normalization:
         - All provider errors (auth, rate-limit, HTTP error, model-not-found,
@@ -151,6 +156,7 @@ def invoke_for(
                 model=model,
                 timeout=timeout,
                 system_prompt=system,
+                safe_mode=safe_mode,
             )
         except claude_cli.ClaudeInvocationError as exc:
             raise AIInvocationError(
