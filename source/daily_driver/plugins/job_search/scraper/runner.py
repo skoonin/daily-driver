@@ -689,10 +689,16 @@ class _JobSink:
         plugin: JobSearchPlugin,
         external_lock_held: bool = False,
         preexisting_rows: list[dict[str, str]] | None = None,
+        descriptions: dict[str, str] | None = None,
     ) -> None:
         self.csv_path = csv_path
         self.lock_path = lock_path
         self.header = header
+        # Sidecar description store (url -> text), loaded once by the caller.
+        # Folded into by append_source, persisted by flush -- see the
+        # descriptions module docstring for why this lives outside jobs.csv.
+        self._descriptions = descriptions or {}
+        self._descriptions_dirty = False
         # backfill holds the sentinel ``file_lock`` for its whole lifecycle (read
         # -> enrich -> rewrite) so a concurrent run's appends can't slip into the
         # window a backfill rewrite would clobber. flock is not reentrant across
@@ -871,6 +877,18 @@ class _JobSink:
                     commit_keys.append(key)
                 to_append.append(_enriched_from_scraped(job))
 
+            # Fold any scrape-time descriptions (e.g. JobSpy's LinkedIn body)
+            # into the sidecar store so flush persists them alongside the row.
+            for enriched_job in to_append:
+                if (
+                    enriched_job.url
+                    and enriched_job.description_text
+                    and self._descriptions.get(enriched_job.url)
+                    != enriched_job.description_text
+                ):
+                    self._descriptions[enriched_job.url] = enriched_job.description_text
+                    self._descriptions_dirty = True
+
             if to_append:
                 # Write to disk first, then commit the in-memory state, all under
                 # the held _rows_lock so a concurrent flush can't interleave
@@ -928,6 +946,9 @@ class _JobSink:
             atomic_write_rows,
             read_rows,
         )
+        from daily_driver.plugins.job_search.scraper.descriptions import (
+            atomic_write_descriptions,
+        )
 
         with self._rows_lock, self._disk_lock():
             snapshot = list(self.rows)
@@ -984,6 +1005,22 @@ class _JobSink:
                 self._pre_write_done = True
                 self.pre_write_hook()
             atomic_write_rows(self.csv_path, out_header, out_rows)
+            # Detail/LinkedIn enrichment sets description_text via with_updates
+            # directly on sink.rows, never through append_source -- fold the
+            # snapshot's current descriptions in here so flush is the one place
+            # that reliably observes every description, however it was filled.
+            for enriched_job in snapshot:
+                if (
+                    enriched_job.url
+                    and enriched_job.description_text
+                    and self._descriptions.get(enriched_job.url)
+                    != enriched_job.description_text
+                ):
+                    self._descriptions[enriched_job.url] = enriched_job.description_text
+                    self._descriptions_dirty = True
+            if self._descriptions_dirty:
+                atomic_write_descriptions(self.csv_path, self._descriptions)
+                self._descriptions_dirty = False
 
     def flush_periodic(self) -> None:
         """Best-effort flush for the in-loop resilience hook.
@@ -1488,6 +1525,7 @@ def run_backfill(
         format_canonicalized_notice,
         read_rows,
     )
+    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
     if not csv_path.exists():
@@ -1519,6 +1557,15 @@ def run_backfill(
     if dry_run:
         _, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        store = load_descriptions(csv_path)
+        jobs = [
+            (
+                job.with_updates(description_text=store[job.url])
+                if not job.description_text and job.url in store
+                else job
+            )
+            for job in jobs
+        ]
         needs = _backfill_needs(
             jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
         )
@@ -1576,6 +1623,15 @@ def run_backfill(
         # an out-of-lock read and the rewrite would be lost.
         stored_header, stored_rows = read_rows(csv_path)
         jobs = [EnrichedJob.from_csv_row(r) for r in stored_rows]
+        store = load_descriptions(csv_path)
+        jobs = [
+            (
+                job.with_updates(description_text=store[job.url])
+                if not job.description_text and job.url in store
+                else job
+            )
+            for job in jobs
+        ]
         # Backfill lifts every stored row through from_csv_row, which normalizes
         # the Status spelling. That rewrites rows the user did not ask to touch,
         # so collect the spelling changes (old -> canonical) for a visible
@@ -1635,6 +1691,7 @@ def run_backfill(
             known_keys=set(),
             plugin=plugin,
             external_lock_held=True,
+            descriptions=store,
         )
         sink.rows = jobs
         sink.row_extras = row_extras
@@ -2404,6 +2461,10 @@ def _run_impl(
             None
         )
         if not dry_run:
+            from daily_driver.plugins.job_search.scraper.descriptions import (
+                load_descriptions,
+            )
+
             sink = _JobSink(
                 csv_path=csv_path,
                 lock_path=lock_path,
@@ -2412,6 +2473,7 @@ def _run_impl(
                 known_keys=known_keys,
                 plugin=plugin,
                 preexisting_rows=preexisting_rows,
+                descriptions=load_descriptions(csv_path),
             )
             state.sink = sink
 

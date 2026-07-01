@@ -89,6 +89,90 @@ def test_append_jobs_for_source_writes_and_updates_dedup(tmp_path: Path) -> None
     assert len(sink.rows) == 3
 
 
+def test_append_source_scraped_description_lands_in_sidecar_on_flush(
+    tmp_path: Path,
+) -> None:
+    """A scrape that carries a description (e.g. JobSpy's LinkedIn body) is
+    folded into the sidecar store and persisted on the next flush -- so a later
+    backfill can hydrate it instead of re-fetching."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    sink.append_source(
+        "linkedin",
+        [
+            _scraped(
+                "https://a/1",
+                "Acme",
+                description_text="Full role description here.",
+            )
+        ],
+    )
+    # Not yet on disk until a flush -- append_source only writes jobs.csv rows.
+    assert load_descriptions(csv_path) == {}
+
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {
+        "https://a/1": "Full role description here.",
+    }
+
+
+def test_flush_persists_description_set_after_construction_by_enrichment(
+    tmp_path: Path,
+) -> None:
+    """detail.py / linkedin.py fill description_text by replacing a sink.rows
+    slot with ``with_updates`` in place, never through ``append_source``. flush
+    must still observe and persist it -- the regression this fix closes."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow(CANONICAL_HEADER)
+
+    sink = runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=CANONICAL_HEADER,
+        known_urls=set(),
+        known_keys=set(),
+        plugin=_us_remote_plugin(),
+    )
+    # Scraped with no description (the common case for a generic detail-page
+    # source): append_source has nothing to fold in yet.
+    sink.append_source("greenhouse", [_scraped("https://a/1", "Acme")])
+    assert load_descriptions(csv_path) == {}
+
+    # Simulate the detail/linkedin enrichers: replace the row slot in place via
+    # with_updates, bypassing append_source entirely.
+    sink.rows[0] = sink.rows[0].with_updates(
+        description_text="Fetched from the detail page."
+    )
+
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {
+        "https://a/1": "Fetched from the detail page.",
+    }
+
+
 def test_append_source_strips_url_for_dedup_no_cross_run_duplicate(
     tmp_path: Path,
 ) -> None:
