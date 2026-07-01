@@ -6,6 +6,7 @@ import datetime as dt
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
@@ -33,6 +34,39 @@ log = get_logger(__name__)
 _MAX_DETAIL_WORKERS = 4
 
 
+@dataclass(frozen=True)
+class DescriptionCapability:
+    """Whether a host's detail page is worth fetching, and why when it isn't.
+
+    ``reason`` is the honest, host-specific phrase surfaced verbatim in the phase
+    summary -- replacing the old catch-all "blocked host", which hid three
+    unrelated causes (no JSON-LD, bot-wall, rate-limit) behind one label.
+    """
+
+    fetch_detail: bool
+    reason: str
+
+
+# Hosts the generic JSON-LD detail fetch must not attempt, each for its own
+# reason: LinkedIn emits no JSON-LD anonymously (JobSpy already fills the
+# description at scrape); Indeed 403s bare requests; Hacker News 429s /item?id=*.
+_HOST_CAPABILITY: dict[str, DescriptionCapability] = {
+    "linkedin.com": DescriptionCapability(False, "linkedin: from scrape"),
+    "indeed.com": DescriptionCapability(False, "indeed: bot-walled"),
+    "news.ycombinator.com": DescriptionCapability(False, "hn: rate-limited"),
+}
+_DEFAULT_CAPABILITY = DescriptionCapability(True, "")
+
+
+def _capability_for(url: str) -> DescriptionCapability:
+    """Description capability for a URL's host; default is to fetch it."""
+    host = urlsplit(url).netloc
+    for pattern, capability in _HOST_CAPABILITY.items():
+        if pattern in host:
+            return capability
+    return _DEFAULT_CAPABILITY
+
+
 def _skip_reason(job: EnrichedJob) -> str | None:
     """Classify why a job needs no detail fetch, or None when it should fetch.
 
@@ -46,18 +80,16 @@ def _skip_reason(job: EnrichedJob) -> str | None:
     url = (job.url or "").strip()
     if not url:
         return "no url"
-    # linkedin: anonymous detail pages don't emit JSON-LD (JobSpy already fills
-    # description). news.ycombinator.com: aggressive 429 on /item?id=*. indeed:
-    # bot-walls bare requests with 403 (JobSpy already fills description).
-    if "linkedin.com" in url or "news.ycombinator.com" in url or "indeed.com" in url:
-        return "blocked host"
+    capability = _capability_for(url)
+    if not capability.fetch_detail:
+        return capability.reason
     return None
 
 
 def render_detail_summary(stats: dict[str, Any]) -> str:
     """Render the detail phase.done line with a per-reason skip breakdown.
 
-    e.g. "0 enriched, 7 skipped (5 already complete, 2 blocked host)". The
+    e.g. "0 enriched, 7 skipped (5 already complete, 2 indeed: bot-walled)". The
     per-reason counts in ``stats['skip_reasons']`` sum to ``stats['skipped']``.
     """
     base = f"{stats['enriched']} enriched, {stats['skipped']} skipped"
