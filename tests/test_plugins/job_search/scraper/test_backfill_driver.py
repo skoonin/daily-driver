@@ -144,6 +144,37 @@ def test_backfill_enriches_only_empty_field_rows(
     assert seen_fit_companies == ["Empty"]
 
 
+def test_backfill_warns_when_rows_have_no_description(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A no_description count from the fit/notes pass surfaces a Console.warning."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="NoDesc", link="https://example.com/x")])
+    _stub_detail(monkeypatch)
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "no_description": 2,
+            "failed": 0,
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    err = capsys.readouterr().err
+    assert "2 job(s) had no description" in err
+
+
 def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

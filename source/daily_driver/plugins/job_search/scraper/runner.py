@@ -1710,6 +1710,9 @@ def run_backfill(
 
         sink.pre_write_hook = _take_backup
 
+        # Captured from the enrichment wave below; reported after completion.
+        fit_stats: dict[str, int] = _empty_fit_stats()
+
         try:
             with (
                 live_log_window(tty),
@@ -1730,7 +1733,7 @@ def run_backfill(
                     phase_rows += 2
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
-                _enrich_wave(
+                _, fit_stats = _enrich_wave(
                     plugin,
                     ai_cfg,
                     jobs,
@@ -1801,6 +1804,15 @@ def run_backfill(
             f"Backfill complete: +{enriched} Fit/Notes. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
+        # Rows with no obtainable description (e.g. a signup-walled posting) are
+        # left un-scored rather than guessed at; call it out so the phase-line
+        # count isn't mistaken for ordinary skips. Mirrors the run() path.
+        no_description_count = fit_stats.get("no_description", 0)
+        if no_description_count:
+            Console.warning(
+                f"{no_description_count} job(s) had no description; Fit/Notes "
+                "left blank. Delete the row and re-run a scrape to retry."
+            )
         # The rewrite ran (this point is reached only past the no-enrichment early
         # return), so any status spellings it canonicalized are now on disk. Make
         # that visible, once, when something actually changed.
