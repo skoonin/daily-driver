@@ -58,7 +58,7 @@ Injected into Claude sessions as context.
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
 | `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
-| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
+| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, pending, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
 | `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
 | `terminal_statuses` | list[string] | `[]` | Extra terminal (closing) status values, merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled-detection and `tracker follow-ups`, so a custom closing state like `cancelled` won't linger as a false positive. The built-in terminal statuses cannot be removed; values are normalized like other statuses (case-folded, underscores/spaces → hyphens). |
 
@@ -257,6 +257,7 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `enrich_notes` | bool | true | |
 | `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
+| `force_recook_cooldown_hours` | int | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown. Overridable per run with `--cooldown-hours` |
 | `detail_delay_seconds` | float | 0.5 | |
 | `fetch_linkedin_descriptions` | bool | false | When true, fetches login-free LinkedIn job pages during enrichment to fill missing descriptions, so the fit/notes pass can write Notes for LinkedIn rows. Bounded by `max_enrich_fit`, fill-missing-only, and politely throttled. Anonymous fetches are often redirected to a signup wall, so coverage is good-but-partial by nature |
 | `criteria` | list of `{label, assess}` | `[]` | |

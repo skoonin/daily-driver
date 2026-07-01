@@ -110,7 +110,7 @@ YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `requi
 Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge for a value outside the recommended set that no other entry uses. Spelling is normalized (case-folded, underscores/spaces to hyphens), so `Ruled_Out` and `ruled-out` are one status and neither warns.
 
 - Default recommended set: `open`, `in-progress`, `blocked`, `done`, `ruled-out`.
-- The `job` category uses the job-search lifecycle instead: `found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`.
+- The `job` category uses the job-search lifecycle instead: `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`.
 - Extend the set with `tracker.extra_statuses`, or silence the nudge with `tracker.warn_unknown_status: false`.
 
 ### `tracker add --category CAT --title TEXT [flags]`
@@ -219,7 +219,7 @@ Updates `voice-profile.md` from writing samples via headless `claude`. Default `
 
 Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
 
-The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank.
+The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank. Only `found`/`pending` rows are eligible for (re-)enrichment (`jobs run`, `jobs backfill`) — once a row moves to any other status its Fit/Notes/Remote are left alone.
 
 - **Spelling is normalized** (case-folded, underscores/spaces to hyphens, so `Ruled_Out` becomes `ruled-out`) — spelling only, never meaning.
 - **Reading never rewrites.** A row's Status is canonicalized only when that row is already being rewritten — i.e. in `jobs backfill` and `jobs prune`, which print a one-line notice when they fix spellings (`Canonicalized 3 status spelling(s) ...`). A normal `jobs run` append leaves pre-existing rows untouched.

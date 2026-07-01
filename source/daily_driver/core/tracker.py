@@ -35,6 +35,7 @@ RECOMMENDED_STATUSES: tuple[str, ...] = (
 # row share one vocabulary.
 JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
     "found",
+    "pending",
     "skipped",
     "applied",
     "interviewing",
