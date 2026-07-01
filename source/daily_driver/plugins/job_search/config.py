@@ -374,16 +374,6 @@ class EnrichmentConfig(BaseModel):
         default=0.5,
         description="Pause between detail-page fetches, in seconds, to avoid rate limits.",
     )
-    fetch_linkedin_descriptions: bool = Field(
-        default=False,
-        description=(
-            "Fetch login-free LinkedIn job pages during enrichment to fill\n"
-            "missing job descriptions, so the fit/notes pass can write Notes for\n"
-            "LinkedIn rows. Bounded by max_enrich_fit, fill-missing-only, and\n"
-            "politely throttled. Anonymous fetches are often redirected to a\n"
-            "signup wall, so coverage is good-but-partial by nature."
-        ),
-    )
     criteria: list[Criterion] = Field(
         default=[],
         description=(

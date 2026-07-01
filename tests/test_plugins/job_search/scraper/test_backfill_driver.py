@@ -256,7 +256,6 @@ def test_backfill_no_relinkedin_fetch_for_url_already_in_sidecar(
             "enrichment": {
                 "max_enrich_fit": 50,
                 "detail_delay_seconds": 0,
-                "fetch_linkedin_descriptions": True,
             },
         }
     )

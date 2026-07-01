@@ -34,23 +34,7 @@ _LINKEDIN_PATCH = "daily_driver.plugins.job_search.scraper.enrichment.linkedin._
 
 @pytest.fixture
 def ctx_on() -> ScrapeContext:
-    """A context with the LinkedIn-description toggle ON and no throttle delay."""
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
-                "enrichment": {
-                    "detail_delay_seconds": 0,
-                    "fetch_linkedin_descriptions": True,
-                },
-            }
-        )
-    )
-
-
-@pytest.fixture
-def ctx_off() -> ScrapeContext:
-    """A context with the LinkedIn-description toggle OFF (the default)."""
+    """A context with no throttle delay, so fetches resolve synchronously in tests."""
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
@@ -191,21 +175,6 @@ class TestFetchBehavior:
         assert out[0].description_text.startswith("We run Kubernetes")
         assert stats["filled"] == 1
         assert stats["fetched"] == 1
-
-    def test_disabled_toggle_makes_no_request(self, ctx_off: ScrapeContext) -> None:
-        jobs = [_li_job("42")]
-        with patch(_LINKEDIN_PATCH) as api_get:
-            out, stats = fetch_linkedin_descriptions(jobs, ctx_off, [0])
-        assert api_get.call_count == 0
-        assert out[0].description_text == ""
-        assert stats == {
-            "fetched": 0,
-            "filled": 0,
-            "skipped": 0,
-            "signup_walled": 0,
-            "stopped_early": False,
-            "total": 1,
-        }
 
     def test_fill_missing_only_skips_existing_description(
         self, ctx_on: ScrapeContext

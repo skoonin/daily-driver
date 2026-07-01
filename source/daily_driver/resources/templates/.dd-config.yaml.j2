@@ -258,14 +258,12 @@ tracker:
 #       enrich_is_remote: true
 #       # Cap on fit/notes LLM calls per run (bounds API cost).
 #       max_enrich_fit: 50
+#       # Under `jobs backfill --force-update`, skip rows enriched within the
+#       # last N hours so an interrupted force-update resumes instead of
+#       # restarting. 0 disables the cooldown (re-enrich every active row).
+#       force_recook_cooldown_hours: 24
 #       # Pause between detail-page fetches, in seconds, to avoid rate limits.
 #       detail_delay_seconds: 0.5
-#       # Fetch login-free LinkedIn job pages during enrichment to fill
-#       # missing job descriptions, so the fit/notes pass can write Notes for
-#       # LinkedIn rows. Bounded by max_enrich_fit, fill-missing-only, and
-#       # politely throttled. Anonymous fetches are often redirected to a
-#       # signup wall, so coverage is good-but-partial by nature.
-#       fetch_linkedin_descriptions: false
 #       # Extra things to assess in each job description. Each becomes a
 #       # "Label: value" segment appended to Notes. `assess` is a
 #       # natural-language instruction the LLM reasons about, not a

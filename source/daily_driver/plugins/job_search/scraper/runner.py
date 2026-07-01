@@ -1720,14 +1720,14 @@ def run_backfill(
                 # title + "Enriching jobs" header + the phase rows the wave will
                 # render -- reserve the block in one scroll-region set, as run()
                 # does, to avoid the per-bar resize gap. Phases: detail (always),
-                # fit/notes (when enabled), and LinkedIn descriptions (when fit/
-                # notes runs and the toggle is on).
+                # fit/notes (when enabled), and LinkedIn descriptions (whenever
+                # fit/notes runs -- it has no other consumer). Must match the
+                # fit_enabled gate in _enrich_wave or the reserved row count
+                # drifts from the phases actually rendered.
                 enrich_cfg = plugin.enrichment
                 phase_rows = 1
                 if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
-                    phase_rows += 1
-                    if enrich_cfg.fetch_linkedin_descriptions:
-                        phase_rows += 1
+                    phase_rows += 2
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
                 _enrich_wave(
@@ -1967,9 +1967,9 @@ def _enrich_wave(
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
     # LinkedIn description backfill rides between detail and fit/notes so the
     # descriptions it fills feed Fit/Notes in the same wave. Only meaningful when
-    # fit/notes runs (it has no other consumer) and the toggle is on.
+    # fit/notes runs (it has no other consumer).
     linkedin_phase: Phase | None = None
-    if fit_enabled and enrich_cfg.fetch_linkedin_descriptions:
+    if fit_enabled:
         linkedin_phase = enrich_group.phase(
             f"LinkedIn descriptions{wave_label}", total=total
         )
