@@ -9,9 +9,15 @@ Single-command release workflow. `make release` (interactive) or `make release-c
 - **Cutting a release** (`dev` → `main`):
   1. Create a `release/X.Y.Z` branch from `dev`.
   2. On that branch, run `make release VERSION=X.Y.Z` (interactive) or `make release-ci VERSION=X.Y.Z` (headless — same steps, no confirmation prompt). Either strips the `-dev` suffix to `X.Y.Z`, rewrites the CHANGELOG `[Unreleased]` header to `[X.Y.Z]`, bumps `__version__`, commits `release: vX.Y.Z`, and tags `vX.Y.Z`.
-  3. `make release-push` — pushes the release commit and tag. `release.yaml` fires on the tag and attaches build artifacts to the GitHub Release.
-  4. Open a PR `release/X.Y.Z` → `main` and **merge it with a merge commit — not a squash**. A squash rewrites the commit to a new SHA, so the `vX.Y.Z` tag (which points at the release-branch commit) would no longer sit on `main`'s history; `main` must contain the exact tagged commit. `main` is only ever updated through a `release/*` PR, never a direct `dev` → `main` merge.
-  5. Reconcile `dev`: merge `release/X.Y.Z` back into `dev` (this lands the CHANGELOG `[X.Y.Z]` section and the fresh empty `[Unreleased]` on the trunk), then bump `dev`'s `__version__` to the next `X.Y.Z-dev` marker and commit. **Do not skip this** — without it, `dev`'s `[Unreleased]` still lists the just-released entries and the next cut would double-count them.
+  3. `make release-push` — pushes the release commit and tag. `release.yaml` fires on the tag and attaches build artifacts to the GitHub Release (see "GitHub Actions must be running" below).
+  4. Land the release commit on `main` by **fast-forward**, so `main` points at the exact tagged commit. This repo has merge commits **disabled** (`allow_merge_commit: false`) and keeps `main` linear, so a PR "Merge"/"Squash"/"Rebase" will not work here — squash and rebase both rewrite the commit to a new SHA and float the `vX.Y.Z` tag off `main`'s history, and merge commits are rejected outright. `main` is always behind `dev`, so a fast-forward is always possible:
+
+     ```bash
+     git push origin vX.Y.Z^{commit}:refs/heads/main
+     ```
+
+     Open a `release/X.Y.Z` → `main` PR first for visibility if you like — GitHub auto-marks it merged once the commit lands on `main` via the fast-forward. `main` is only ever updated by a release fast-forward, never a direct `dev` → `main` merge of trunk work.
+  5. Reconcile `dev`: fast-forward `dev` to the tag (`git merge --ff-only vX.Y.Z`) so the CHANGELOG `[X.Y.Z]` section and the fresh empty `[Unreleased]` land on the trunk, then bump `dev`'s `__version__` to the next `X.Y.Z-dev` marker and commit. **Do not skip this** — without it, `dev`'s `[Unreleased]` still lists the just-released entries and the next cut would double-count them.
 
   (`make release` / `make release-ci` refuse to run on `dev` itself — they carry the `-dev` marker, so cut from the `release/*` branch.)
 
@@ -68,6 +74,15 @@ make release-push
 ```
 
 Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push, builds wheel + sdist on macOS-latest, attaches them to a GitHub Release with auto-generated notes. Releases are marked pre-release automatically when the tag contains `dev`, `rc`, `alpha`, or `beta`.
+
+### GitHub Actions must be running
+
+The GitHub Release + artifacts depend on `release.yaml` actually triggering. This repo has had Actions disabled/paused at times — when Actions are off, the tag push creates no run, so no GitHub Release is built (the tag itself still installs fine via `pip install git+https://github.com/skoonin/daily-driver.git@vX.Y.Z`). After `make release-push`, confirm a run started (`gh run list --workflow=release.yaml --limit 1`) and that `gh release view vX.Y.Z` exists. If Actions were off, re-enable them and either re-push the tag or build and attach manually:
+
+```bash
+make build
+gh release create vX.Y.Z dist/* --title vX.Y.Z --generate-notes
+```
 
 ## Semver
 
