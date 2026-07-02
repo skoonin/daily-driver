@@ -7,8 +7,19 @@ build: ## Build sdist + wheel into dist/
 	@.venv/bin/python -m build
 	@ls -la dist/
 
-.PHONY: release
-release: ## Cut a release (usage: make release VERSION=X.Y.Z)
+.PHONY: release release-ci _release
+# ``release`` prompts before the permanent changes; ``release-ci`` skips the
+# prompt for headless / automated cuts (CI, agent-driven). Both share the same
+# preflight, test, build, and cut logic in ``_release``; RELEASE_CONFIRM (a
+# target-specific variable, propagated to the _release prerequisite) is the only
+# difference. Default is to prompt, so an accidental bare ``make _release`` is safe.
+release: RELEASE_CONFIRM := 1
+release: _release ## Cut a release, interactive (usage: make release VERSION=X.Y.Z)
+
+release-ci: RELEASE_CONFIRM := 0
+release-ci: _release ## Cut a release headless, no prompt (usage: make release-ci VERSION=X.Y.Z)
+
+_release:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "ERROR: VERSION is required. Usage: make release VERSION=X.Y.Z" >&2; \
 		exit 1; \
@@ -63,8 +74,12 @@ release: ## Cut a release (usage: make release VERSION=X.Y.Z)
 	@echo "  - commit 'release: v$(VERSION)'"
 	@echo "  - tag v$(VERSION) signed with the changelog section"
 	@echo ""
-	@printf "Proceed? [y/N] "
-	@read ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || { echo "Aborted."; exit 1; }
+	@if [ "$(RELEASE_CONFIRM)" = "0" ]; then \
+		echo "  (release-ci: headless mode, skipping confirmation)"; \
+	else \
+		printf "Proceed? [y/N] "; \
+		read ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || { echo "Aborted."; exit 1; }; \
+	fi
 	@echo ""
 	@echo "[6/6] Rewriting CHANGELOG, bumping version, committing, tagging..."
 	@.venv/bin/python makefiles/_release_helper.py cut "$(VERSION)" "$$(date +%Y-%m-%d)"
