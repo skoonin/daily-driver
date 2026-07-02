@@ -62,6 +62,13 @@ class Console:
     @classmethod
     def _setup_consoles(cls) -> None:
         is_piped = not sys.stdout.isatty()
+        # When stderr is captured/redirected (not a TTY), disable Rich's hard
+        # word-wrap: it inserts newlines at the detected width and can split a
+        # path or command token mid-word (e.g. "jobs-last-run.json" ->
+        # "jobs-la\nst-run.json"), corrupting piped output and making
+        # width-dependent substring assertions flake. Interactive TTYs keep
+        # wrapping; the live display only runs on a TTY, so it is unaffected.
+        stderr_piped = not sys.stderr.isatty()
         # color_system=None handles color suppression; markup and highlight
         # are orthogonal Rich features and stay on regardless of --no-color.
         color: Literal["auto"] | None = None if cls._no_color else "auto"
@@ -76,6 +83,7 @@ class Console:
             theme=theme,
             stderr=True,
             color_system=color,
+            soft_wrap=stderr_piped,
         )
 
     @classmethod
