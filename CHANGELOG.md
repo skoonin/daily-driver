@@ -57,6 +57,10 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 - **`tracker follow-ups` hides finished work**: entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, `closed`) are excluded from `follow-ups` even when they still carry a next action, so the list reflects only work that can still progress. (#115)
 
+### Removed
+
+- **`jobs run` no longer posts a desktop notification for new jobs**: a completed scrape that added rows used to fire a macOS "N new jobs found" notification. That has been removed — the run's summary output (and `jobs status`) is the only report. `jobs.csv` and every other behavior are unchanged.
+
 ### Fixed
 
 - **`init` summary survives `-q`**: the post-scaffold summary (`Initialized workspace at ... / Created / Skipped / Generated`) was emitted via `Console.info`, which quiet mode silences — so `daily-driver init -q` confirmed nothing was written. The summary is now a write-confirmation that prints regardless of `-q` (still on stderr).

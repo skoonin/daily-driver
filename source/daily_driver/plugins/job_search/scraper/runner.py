@@ -26,7 +26,6 @@ from daily_driver.core.logging import (
     live_log_window,
 )
 from daily_driver.core.progress import Group, Item, Phase, RunProgress
-from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
     JobSearchPlugin,
     SourceToggle,
@@ -1408,18 +1407,6 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
         )
         return False
     return True
-
-
-# ── Notification ─────────────────────────────────────────────────────────────
-
-
-def _notify_new_jobs(count: int, csv_path: Path) -> None:
-    desktop_notify(
-        "Job Scraper",
-        f"{count} new jobs found",
-        open_url=csv_path.as_uri(),
-        subtitle=csv_path.name,
-    )
 
 
 # ── Public entry points ──────────────────────────────────────────────────────
@@ -2938,6 +2925,4 @@ def _run_impl(
     if not no_enrich and sink.persistence_degraded:
         return 1
 
-    if written > 0:
-        _notify_new_jobs(written, csv_path)
     return 0
