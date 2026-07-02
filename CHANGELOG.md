@@ -4,6 +4,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-02
+
 ### Fixed
 
 - **Captured/piped output no longer splits tokens across lines**: the stderr log console hard-wrapped at the detected terminal width, which could break a path or command mid-word (e.g. `jobs-last-run.json` -> `jobs-la` / `st-run.json`) in redirected or piped output, and made width-dependent test assertions flake. It now soft-wraps when stderr is not a TTY; interactive terminals and the live progress display are unchanged. (#129)
