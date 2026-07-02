@@ -220,6 +220,7 @@ def test_skip_reason_breakdown_tallied() -> None:
         _job("https://www.linkedin.com/jobs/view/1"),  # linkedin: from scrape
         _job("https://news.ycombinator.com/item?id=1"),  # hn: rate-limited
         _job("https://ca.indeed.com/viewjob?jk=x"),  # indeed: bot-walled
+        _job("https://jobs.apple.com/en-us/details/1/x"),  # apple: SPA, no JSON-LD
         _job(""),  # no url
         _job("https://x.com/j", status="skipped"),  # inactive
         _job("https://boards.greenhouse.io/acme/jobs/9"),  # real fetch
@@ -233,11 +234,12 @@ def test_skip_reason_breakdown_tallied() -> None:
         _out, stats = enrich_job_details(jobs, _ctx(0))
 
     reasons = stats["skip_reasons"]
-    assert sum(reasons.values()) == stats["skipped"] == 7
+    assert sum(reasons.values()) == stats["skipped"] == 8
     assert reasons["already complete"] == 2
     assert reasons["linkedin: from scrape"] == 1
     assert reasons["hn: rate-limited"] == 1
     assert reasons["indeed: bot-walled"] == 1
+    assert reasons["apple: SPA, no server JSON-LD"] == 1
     assert reasons["no url"] == 1
     assert reasons["inactive"] == 1
 

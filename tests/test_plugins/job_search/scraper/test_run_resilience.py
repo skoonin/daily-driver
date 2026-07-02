@@ -315,6 +315,101 @@ def test_run_appends_per_source_then_crash_keeps_first_source(
     assert manifest["new_jobs"] == 1
 
 
+def test_run_gcs_orphaned_descriptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run drops sidecar entries whose URL is no longer in jobs.csv, keyed on
+    the live (pre-scrape) set -- archived rows are excluded from the key."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Status": "found",
+                "Company": "Live",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://example.com/live",
+                "Source": "remoteok",
+                "Date Found": "2026-06-10",
+            }
+        )
+    atomic_write_descriptions(
+        csv_path,
+        {"https://example.com/live": "keep", "https://example.com/orphan": "drop"},
+    )
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        return [], [], []
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    assert load_descriptions(csv_path) == {"https://example.com/live": "keep"}
+
+
+def test_dry_run_leaves_descriptions_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry-run run() must NOT garbage-collect the sidecar (it writes nothing).
+    Mirrors the prune-path guard test; without the ``if not dry_run`` gate an
+    orphan would be dropped under dry-run."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Status": "found",
+                "Company": "Live",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://example.com/live",
+                "Source": "remoteok",
+                "Date Found": "2026-06-10",
+            }
+        )
+    store = {"https://example.com/live": "keep", "https://example.com/orphan": "drop"}
+    atomic_write_descriptions(csv_path, store)
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        return [], [], []
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    runner.run(_us_remote_plugin(), tmp_path, tmp_path, dry_run=True)
+
+    assert load_descriptions(csv_path) == store
+
+
 def test_dry_run_appends_nothing_per_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

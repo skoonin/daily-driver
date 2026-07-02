@@ -147,6 +147,43 @@ def test_falls_back_to_most_recent_when_no_exact_match(monkeypatch: Any) -> None
     assert jobs[0]["company"] == "Acme"
 
 
+def test_full_comment_body_captured_as_description(monkeypatch: Any) -> None:
+    """Only the headline is parsed for company/role/location; the rest of the
+    comment body is carried through as ``description_text`` (HTML stripped,
+    entities decoded), not discarded."""
+
+    def fake_api_get(session: Any, url: str, config: Any, **kwargs: Any) -> MagicMock:
+        if "author_whoishiring" in url:
+            return _stories_response(
+                [{"title": "Ask HN: Who is hiring? (May 2026)", "objectID": "222"}]
+            )
+        if "story_222" in url:
+            return _comments_response(
+                [
+                    {
+                        "objectID": "c1",
+                        "comment_text": (
+                            "Acme | SRE | Remote<p>We run Python &amp; "
+                            "Kubernetes.</p>"
+                        ),
+                    }
+                ]
+            )
+        return None
+
+    monkeypatch.setattr(hn_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(hn_module, "_http_session", lambda cfg: MagicMock())
+    monkeypatch.setattr(hn_module, "today", lambda: date(2026, 5, 9))
+
+    jobs = hn_module.scrape_hn_who_is_hiring(_config())
+
+    assert len(jobs) == 1
+    description = jobs[0]["description_text"]
+    assert "Acme | SRE | Remote" in description
+    assert "We run Python & Kubernetes." in description
+    assert "<p>" not in description
+
+
 def test_returns_empty_when_no_whoishiring_story(monkeypatch: Any) -> None:
     """If Algolia returns no 'who is hiring?' stories at all, return []."""
 

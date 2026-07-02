@@ -9,6 +9,7 @@ import pytest
 from daily_driver.plugins.job_search.scraper.descriptions import (
     atomic_write_descriptions,
     descriptions_path,
+    gc_descriptions,
     load_descriptions,
 )
 
@@ -80,3 +81,46 @@ def test_atomic_write_leaves_no_stray_tmp_file_on_success(tmp_path: Path) -> Non
     sidecar = descriptions_path(csv_path)
     assert sidecar.exists()
     assert not sidecar.with_suffix(sidecar.suffix + ".tmp").exists()
+
+
+def test_gc_drops_orphans_and_keeps_live(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    atomic_write_descriptions(
+        csv_path,
+        {
+            "https://example.com/live": "keep me",
+            "https://example.com/orphan1": "drop me",
+            "https://example.com/orphan2": "drop me too",
+        },
+    )
+    dropped = gc_descriptions(csv_path, {"https://example.com/live"})
+    assert dropped == 2
+    assert load_descriptions(csv_path) == {"https://example.com/live": "keep me"}
+
+
+def test_gc_no_op_when_all_live_leaves_file_untouched(tmp_path: Path) -> None:
+    """A clean store must not be rewritten -- no write, mtime preserved."""
+    csv_path = tmp_path / "jobs.csv"
+    store = {"https://example.com/a": "x", "https://example.com/b": "y"}
+    atomic_write_descriptions(csv_path, store)
+    sidecar = descriptions_path(csv_path)
+    mtime_before = sidecar.stat().st_mtime_ns
+
+    dropped = gc_descriptions(csv_path, set(store))
+    assert dropped == 0
+    assert sidecar.stat().st_mtime_ns == mtime_before
+    assert load_descriptions(csv_path) == store
+
+
+def test_gc_missing_store_is_a_no_op(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    assert gc_descriptions(csv_path, {"https://example.com/live"}) == 0
+    assert not descriptions_path(csv_path).exists()
+
+
+def test_gc_empty_live_set_drops_everything(tmp_path: Path) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    atomic_write_descriptions(csv_path, {"https://example.com/a": "x"})
+    dropped = gc_descriptions(csv_path, set())
+    assert dropped == 1
+    assert load_descriptions(csv_path) == {}

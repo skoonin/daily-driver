@@ -373,6 +373,46 @@ def test_prune_reconciles_drifted_archive_header(tmp_path: Path) -> None:
     assert "https://example.com/old" in urls
 
 
+def test_prune_gcs_orphaned_descriptions(tmp_path: Path) -> None:
+    """Pruning a row drops its description-sidecar entry; live rows keep theirs."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            _row(company="Old", link="old", status="rejected", last_seen="2026-04-01"),
+            _row(company="Active", link="act", status="found", last_seen="2026-04-01"),
+        ],
+    )
+    atomic_write_descriptions(csv_path, {"old": "stale body", "act": "live body"})
+
+    jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+    assert load_descriptions(csv_path) == {"act": "live body"}
+
+
+def test_prune_dry_run_leaves_descriptions_untouched(tmp_path: Path) -> None:
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [_row(company="Old", link="old", status="rejected", last_seen="2026-04-01")],
+    )
+    atomic_write_descriptions(csv_path, {"old": "stale body"})
+
+    jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF, dry_run=True)
+
+    assert load_descriptions(csv_path) == {"old": "stale body"}
+
+
 def test_prune_missing_csv_returns_empty(tmp_path: Path) -> None:
     csv_path = tmp_path / "absent.csv"
 

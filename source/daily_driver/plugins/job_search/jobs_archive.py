@@ -43,6 +43,7 @@ from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_ro
 from daily_driver.plugins.job_search.scraper.csv_io import (
     warn_unknown_job_statuses,
 )
+from daily_driver.plugins.job_search.scraper.descriptions import gc_descriptions
 
 log = get_logger(__name__)
 
@@ -142,6 +143,13 @@ def prune(
 
         _archive_candidates(archive_path_for(jobs_csv), header, candidates)
         _atomic_write_rows(jobs_csv, header, keep)
+        # Drop description-sidecar entries orphaned by the prune. The store is a
+        # pure cache keyed on live jobs.csv URLs; archived rows never need
+        # descriptions, so entries for the just-pruned rows have no consumer.
+        live_urls, _ = dedup_sets_from_rows(keep)
+        dropped = gc_descriptions(jobs_csv, live_urls)
+        if dropped:
+            Console.info(f"Cleaned up {dropped} orphaned description(s).")
     finally:
         lock_stack.close()
 

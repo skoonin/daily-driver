@@ -43,7 +43,10 @@ def add_parser(
     parser = subparsers.add_parser(
         "jobs",
         parents=parents,
-        help="Job search: scrape boards, inspect status, prune stale rows",
+        help=(
+            "Job search: run scrapes, backfill enrichment, promote matches, "
+            "inspect status, prune stale rows"
+        ),
     )
 
     nested = parser.add_subparsers(dest="jobs_action", metavar="<action>")
