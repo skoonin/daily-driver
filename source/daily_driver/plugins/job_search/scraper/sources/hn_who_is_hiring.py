@@ -154,6 +154,10 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
                 "url": url,
                 "source": "HN Who's Hiring",
                 "date_found": today().isoformat(),
+                # The full comment body (HTML already stripped above) is the
+                # posting text; only the headline was parsed for company/role/
+                # location, so carry the rest through for enrichment/scoring.
+                "description_text": raw_text,
             }
         )
 

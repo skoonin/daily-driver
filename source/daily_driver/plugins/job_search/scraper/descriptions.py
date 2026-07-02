@@ -80,8 +80,36 @@ def atomic_write_descriptions(csv_path: Path, store: dict[str, str]) -> None:
         raise
 
 
+def gc_descriptions(
+    csv_path: Path, live_urls: set[str], store: dict[str, str] | None = None
+) -> int:
+    """Drop sidecar entries whose URL is no longer in ``jobs.csv``.
+
+    The store is a pure cache keyed by live jobs.csv URLs; archived rows do not
+    need descriptions, so an entry orphaned by a manual deletion or a prune has
+    no future consumer and only grows the file (LinkedIn-dominated). Reconcile
+    against ``live_urls`` and rewrite atomically, returning the dropped count.
+    No write when nothing is dropped.
+
+    Pass ``store`` when the caller already holds a freshly-loaded copy (the
+    backfill path) to avoid a redundant read of the same file under the same
+    lock; otherwise it is loaded here.
+
+    Callers hold the jobs ``file_lock`` for the read-reconcile-write window
+    already, so this does no locking of its own.
+    """
+    if store is None:
+        store = load_descriptions(csv_path)
+    kept = {url: text for url, text in store.items() if url in live_urls}
+    dropped = len(store) - len(kept)
+    if dropped:
+        atomic_write_descriptions(csv_path, kept)
+    return dropped
+
+
 __all__ = [
     "descriptions_path",
     "load_descriptions",
     "atomic_write_descriptions",
+    "gc_descriptions",
 ]

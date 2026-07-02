@@ -116,6 +116,34 @@ def test_queries_tag_endpoints_and_dedupes(monkeypatch: Any) -> None:
     assert sum(1 for j in jobs if j["company"] == "Acme") == 1
 
 
+def test_description_html_is_captured_and_stripped(monkeypatch: Any) -> None:
+    """The API's HTML ``description`` is mapped to ``description_text`` as plain
+    text so it feeds enrichment/scoring; a row without it stays empty."""
+    payload = [
+        {
+            "id": "1",
+            "position": "Site Reliability Engineer",
+            "company": "Acme",
+            "url": "https://remoteok.com/1",
+            "description": "<p>Run <b>Kubernetes</b> at scale.</p>",
+        },
+        {
+            "id": "2",
+            "position": "Staff Engineer",
+            "company": "Globex",
+            "url": "https://remoteok.com/2",
+        },
+    ]
+    monkeypatch.setattr(
+        remoteok_module, "_api_get", lambda *a, **kw: _api_response(payload)
+    )
+    monkeypatch.setattr(remoteok_module, "_http_session", lambda cfg: MagicMock())
+
+    by_company = {j["company"]: j for j in remoteok_module.scrape_remoteok(_config())}
+    assert by_company["Acme"]["description_text"] == "Run Kubernetes at scale."
+    assert by_company["Globex"]["description_text"] == ""
+
+
 def test_stop_event_skips_remaining_tag_fetches(monkeypatch: Any) -> None:
     """A stop request mid-scrape must stop issuing further endpoint fetches and
     keep what was already collected."""

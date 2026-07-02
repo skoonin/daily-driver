@@ -296,6 +296,100 @@ def test_backfill_no_relinkedin_fetch_for_url_already_in_sidecar(
     linkedin_api_get.assert_not_called()
 
 
+def test_backfill_gcs_orphaned_descriptions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backfill drops sidecar entries whose URL is no longer in jobs.csv."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="Live", link="https://example.com/live")])
+    atomic_write_descriptions(
+        csv_path,
+        {
+            "https://example.com/live": "keep",
+            "https://example.com/orphan": "drop",
+        },
+    )
+    _stub_detail(monkeypatch)
+    _stub_concurrent_noop(monkeypatch)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    assert load_descriptions(csv_path) == {"https://example.com/live": "keep"}
+
+
+def test_backfill_gc_survives_a_dirty_sidecar_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GC'd orphan must stay gone even when enrichment triggers a real sidecar
+    rewrite. Enrichment that sets a new description marks the sink's description
+    store dirty, so its flush rewrites descriptions.jsonl -- if the in-memory
+    store were not pruned alongside the on-disk GC, that flush would resurrect
+    the orphan. This exercises the ``store = {...}`` prune at the GC call site."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="Live", link="https://example.com/live")])
+    atomic_write_descriptions(
+        csv_path,
+        {"https://example.com/live": "existing", "https://example.com/orphan": "drop"},
+    )
+    _stub_detail(monkeypatch)
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        # Change the row (dirties jobs.csv) AND set a new description (dirties the
+        # sidecar), forcing the flush path that could resurrect the orphan.
+        for i, job in enumerate(jobs):
+            jobs[i] = job.with_updates(
+                fit=7, notes="n", description_text="fetched body"
+            )
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {"enriched": len(jobs), "skipped_budget": 0, "failed": 0}
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    store = load_descriptions(csv_path)
+    assert "https://example.com/orphan" not in store
+    assert store["https://example.com/live"] == "fetched body"
+
+
+def test_backfill_dry_run_previews_gc_without_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dry-run reports the would-drop count but leaves the sidecar untouched."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(csv_path, [_row(company="Live", link="https://example.com/live")])
+    store = {
+        "https://example.com/live": "keep",
+        "https://example.com/orphan": "drop",
+    }
+    atomic_write_descriptions(csv_path, store)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path, dry_run=True)
+
+    err = capsys.readouterr().err
+    assert "would clean up 1 orphaned description(s)" in err
+    assert load_descriptions(csv_path) == store
+
+
 def test_backfill_limit_bounds_fit_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

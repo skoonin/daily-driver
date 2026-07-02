@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bs4 import BeautifulSoup
+
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.scraper.comp import _to_int
@@ -85,6 +87,15 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
                 if sal_min is not None and sal_max is not None
                 else ""
             )
+            # The API ships the full posting body as HTML in ``description``;
+            # strip tags so it feeds enrichment/scoring as plain text, matching
+            # the greenhouse source. Absent on some rows -> left empty.
+            desc_html = item.get("description", "")
+            desc_text = (
+                BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)
+                if desc_html
+                else ""
+            )
             job: dict = {
                 "company": item.get("company", ""),
                 "role": role,
@@ -92,6 +103,7 @@ def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
                 "url": item.get("url", ""),
                 "source": "RemoteOK",
                 "date_found": today().isoformat(),
+                "description_text": desc_text,
             }
             if comp:
                 job["comp"] = comp

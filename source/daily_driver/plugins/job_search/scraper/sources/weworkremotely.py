@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
+from bs4 import BeautifulSoup
+
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
 from daily_driver.plugins.job_search.scraper.sources._http import (
@@ -69,6 +71,14 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
             raw_title = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
             region = (item.findtext("region") or "Remote").strip()
+            # The RSS <description> carries the posting body as HTML; strip tags
+            # so it feeds enrichment/scoring as plain text (matches greenhouse).
+            desc_html = item.findtext("description") or ""
+            desc_text = (
+                BeautifulSoup(desc_html, "html.parser").get_text(" ", strip=True)
+                if desc_html
+                else ""
+            )
 
             # Title format: "Company: Role Title"
             if ": " in raw_title:
@@ -91,6 +101,7 @@ def scrape_weworkremotely(ctx: ScrapeContext) -> list[dict]:
                     "url": link,
                     "source": "We Work Remotely",
                     "date_found": today().isoformat(),
+                    "description_text": desc_text,
                 }
             )
 

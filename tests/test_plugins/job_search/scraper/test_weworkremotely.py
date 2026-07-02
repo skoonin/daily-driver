@@ -65,6 +65,17 @@ def test_parses_sample_listing(monkeypatch: Any) -> None:
         assert job["url"].startswith("https://weworkremotely.com/")
 
 
+def test_description_html_is_captured_and_stripped(monkeypatch: Any) -> None:
+    """The RSS <description> is mapped to ``description_text`` as plain text; an
+    item with no <description> element stays empty."""
+    monkeypatch.setattr(wwr_module, "_api_get", lambda *a, **kw: _rss_response())
+    monkeypatch.setattr(wwr_module, "_http_session", lambda cfg: MagicMock())
+
+    by_company = {j["company"]: j for j in wwr_module.scrape_weworkremotely(_config())}
+    assert by_company["Acme Corp"]["description_text"] == "Build reliable systems."
+    assert by_company["Globex"]["description_text"] == ""
+
+
 def test_handles_empty_results(monkeypatch: Any) -> None:
     empty_rss = b"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel><title>Empty</title></channel></rss>"""

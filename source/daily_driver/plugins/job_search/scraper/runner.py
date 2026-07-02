@@ -26,7 +26,6 @@ from daily_driver.core.logging import (
     live_log_window,
 )
 from daily_driver.core.progress import Group, Item, Phase, RunProgress
-from daily_driver.integrations.notify import desktop_notify
 from daily_driver.plugins.job_search.config import (
     JobSearchPlugin,
     SourceToggle,
@@ -1410,18 +1409,6 @@ def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
     return True
 
 
-# ── Notification ─────────────────────────────────────────────────────────────
-
-
-def _notify_new_jobs(count: int, csv_path: Path) -> None:
-    desktop_notify(
-        "Job Scraper",
-        f"{count} new jobs found",
-        open_url=csv_path.as_uri(),
-        subtitle=csv_path.name,
-    )
-
-
 # ── Public entry points ──────────────────────────────────────────────────────
 
 
@@ -1525,7 +1512,10 @@ def run_backfill(
         format_canonicalized_notice,
         read_rows,
     )
-    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        gc_descriptions,
+        load_descriptions,
+    )
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
     if not csv_path.exists():
@@ -1572,7 +1562,15 @@ def run_backfill(
         skipped = len(jobs) - needs["rows"]
         enrich_cfg = plugin.enrichment
         fit_cap = limit if limit is not None else enrich_cfg.max_enrich_fit
+        # Preview the sidecar GC without writing (dry-run mutates nothing).
+        live_urls = {job.url for job in jobs if job.url}
+        would_drop = sum(1 for url in store if url not in live_urls)
         if not emit_json:
+            if would_drop:
+                Console.info(
+                    f"Backfill dry-run: would clean up {would_drop} orphaned "
+                    "description(s). Nothing written."
+                )
             verb = "re-enrich (overwrite)" if force else "need"
             Console.info(
                 f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
@@ -1632,6 +1630,18 @@ def run_backfill(
             )
             for job in jobs
         ]
+        # Reconcile the description sidecar against the live jobs.csv URLs read
+        # above (archived rows never need descriptions -- the store is a pure
+        # cache). Prune the in-memory store to match too, or the sink's later
+        # dirty flush would re-persist the orphans this GC just dropped.
+        live_urls = {job.url for job in jobs if job.url}
+        dropped_descriptions = gc_descriptions(csv_path, live_urls, store=store)
+        if dropped_descriptions:
+            store = {url: text for url, text in store.items() if url in live_urls}
+            if not emit_json:
+                Console.info(
+                    f"Cleaned up {dropped_descriptions} orphaned description(s)."
+                )
         # Backfill lifts every stored row through from_csv_row, which normalizes
         # the Status spelling. That rewrites rows the user did not ask to touch,
         # so collect the spelling changes (old -> canonical) for a visible
@@ -2353,6 +2363,19 @@ def _run_impl(
                 ", ".join(str(r.get("Link") or "(no link)") for r in ragged),
             )
 
+        # Reconcile the description sidecar against the live jobs.csv URLs
+        # BEFORE the archive-dedup merge, so the GC key is the live set only
+        # (archived rows never need descriptions -- the store is a pure cache).
+        # Real runs only: dry-run writes nothing.
+        if not dry_run:
+            from daily_driver.plugins.job_search.scraper.descriptions import (
+                gc_descriptions,
+            )
+
+            dropped = gc_descriptions(csv_path, known_urls)
+            if dropped and not suppress_live:
+                Console.info(f"Cleaned up {dropped} orphaned description(s).")
+
         # Union archive-table dedup state so triaged listings (pruned to
         # jobs.archive.csv) are never re-discovered.
         archive_urls, archive_keys = load_archive_dedup(csv_path)
@@ -2902,6 +2925,4 @@ def _run_impl(
     if not no_enrich and sink.persistence_degraded:
         return 1
 
-    if written > 0:
-        _notify_new_jobs(written, csv_path)
     return 0

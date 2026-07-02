@@ -54,6 +54,12 @@ _HOST_CAPABILITY: dict[str, DescriptionCapability] = {
     "linkedin.com": DescriptionCapability(False, "linkedin: from scrape"),
     "indeed.com": DescriptionCapability(False, "indeed: bot-walled"),
     "news.ycombinator.com": DescriptionCapability(False, "hn: rate-limited"),
+    # Apple details pages are a client-rendered SPA: the server HTML carries no
+    # JSON-LD JobPosting and no description prose (the body loads via an
+    # authenticated api/v1 call). The generic fetch can never recover it, so
+    # skip it rather than spend a request and mislabel the miss (verified live
+    # 2026-07-02).
+    "jobs.apple.com": DescriptionCapability(False, "apple: SPA, no server JSON-LD"),
 }
 _DEFAULT_CAPABILITY = DescriptionCapability(True, "")
 
