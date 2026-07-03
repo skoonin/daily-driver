@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from daily_driver.core.logging import get_logger
 
@@ -45,4 +46,46 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
 }
 
 
-__all__ = ["SCRAPERS"]
+@dataclass(frozen=True)
+class SourceCapability:
+    """How a source enumerates and how a known row's liveness is verifiable.
+
+    ``enumeration``: "full" -- one scrape returns the source's complete
+    current inventory (an ATS board listing), so absence carries signal;
+    "windowed" -- only a recent/top slice (search window, RSS feed), so
+    absence means nothing.
+
+    ``verify``: the liveness channel for a stored row. "board-diff" -- absent
+    from a successful full enumeration = closed (free, rides the scrape);
+    "url-check" -- per-row probe with a source-specific closed detector;
+    "none" -- unverifiable (hard bot-wall), age-based fallback only.
+    """
+
+    enumeration: Literal["full", "windowed"]
+    verify: Literal["board-diff", "url-check", "none"]
+
+
+# Keyed by source_id, NOT attached to the scrape function: linkedin and indeed
+# share one jobspy-backed callable but differ in verify capability. Consumed by
+# the lifecycle phases (saturation reporting, board-diff closure, jobs verify);
+# declaration only -- nothing here changes scrape behavior.
+# Rationale per source: greenhouse/ashby/workable/workday return the complete
+# board listing per configured company. apple returns NEW-only results behind
+# search filters with slug-unstable URLs, so board-diff is impossible. indeed
+# is bot-walled (no anonymous page fetch survives), so it cannot be verified.
+SOURCE_CAPABILITIES: dict[str, SourceCapability] = {
+    "remoteok": SourceCapability(enumeration="windowed", verify="url-check"),
+    "weworkremotely": SourceCapability(enumeration="windowed", verify="url-check"),
+    "hn_who_is_hiring": SourceCapability(enumeration="windowed", verify="url-check"),
+    "hn_jobs": SourceCapability(enumeration="windowed", verify="url-check"),
+    "greenhouse": SourceCapability(enumeration="full", verify="board-diff"),
+    "ashby": SourceCapability(enumeration="full", verify="board-diff"),
+    "workable": SourceCapability(enumeration="full", verify="board-diff"),
+    "workday": SourceCapability(enumeration="full", verify="board-diff"),
+    "linkedin": SourceCapability(enumeration="windowed", verify="url-check"),
+    "indeed": SourceCapability(enumeration="windowed", verify="none"),
+    "apple": SourceCapability(enumeration="windowed", verify="url-check"),
+}
+
+
+__all__ = ["SCRAPERS", "SOURCE_CAPABILITIES", "SourceCapability"]
