@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -146,6 +146,57 @@ def normalize_jobspy_row(row: dict[str, Any]) -> dict[str, Any]:
         "comp": comp,
         "date_found": raw.date_found.isoformat(),
     }
+
+
+# LinkedIn's guest API rate-limits around the 10th page per IP, so a request
+# for more than ~100 rows stalls at ~100 regardless of results_wanted.
+_LINKEDIN_PLATEAU = 100
+
+
+def _record_saturation(
+    ctx: ScrapeContext,
+    frames: list[Any],
+    enabled_sites: list[str],
+    term: str,
+    country_code: str,
+    results_wanted: int,
+) -> None:
+    """Flag truncated (term x country) queries via ``ctx.record_saturation``.
+
+    Counts RAW rows per site (pre role-filter -- truncation happens at the
+    board, before our filters), against the single ``results_wanted`` the
+    call was actually made with. ``returned >= requested`` means the cap cut
+    the result set; a LinkedIn request for more than the ~100/IP wall that
+    stops early at or past the wall is a "plateau" (the cap is unreachable
+    without proxies). Detection only; never changes what is scraped.
+    """
+    counts: dict[str, int] = {site: 0 for site in enabled_sites}
+    for df in frames:
+        if len(enabled_sites) == 1:
+            counts[enabled_sites[0]] += len(df)
+        elif "site" in df.columns:
+            for site, count in df["site"].value_counts().items():
+                if site in counts:
+                    counts[site] += int(count)
+    query = f"{term} x {country_code}"
+    for site, returned in counts.items():
+        if returned >= results_wanted:
+            kind: Literal["cap", "plateau"] = "cap"
+        elif (
+            site == "linkedin"
+            and results_wanted > _LINKEDIN_PLATEAU
+            and returned >= _LINKEDIN_PLATEAU
+        ):
+            kind = "plateau"
+        else:
+            continue
+        ctx.record_saturation(
+            source=site,
+            query=query,
+            returned=returned,
+            requested=results_wanted,
+            kind=kind,
+        )
 
 
 def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
@@ -325,6 +376,10 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             if not frames:
                 log.debug("[%s] no results for %r / %s", site_label, term, country)
                 continue
+
+            _record_saturation(
+                ctx, frames, enabled_sites, term, country_code, results_wanted
+            )
 
             matched_before = len(jobs)
             for df in frames:

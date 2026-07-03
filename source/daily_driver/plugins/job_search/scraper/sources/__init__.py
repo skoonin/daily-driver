@@ -67,8 +67,10 @@ class SourceCapability:
 
 # Keyed by source_id, NOT attached to the scrape function: linkedin and indeed
 # share one jobspy-backed callable but differ in verify capability. Consumed by
-# the lifecycle phases (saturation reporting, board-diff closure, jobs verify);
-# declaration only -- nothing here changes scrape behavior.
+# the lifecycle phases (board-diff closure, jobs verify); declaration only --
+# nothing here changes scrape behavior. Saturation detection is deliberately
+# NOT keyed on this map: workday enumerates fully yet can still hit its page
+# ceiling, so each source flags its own truncation.
 # Rationale per source: greenhouse/ashby/workable/workday return the complete
 # board listing per configured company. apple returns NEW-only results behind
 # search filters with slug-unstable URLs, so board-diff is impossible. indeed

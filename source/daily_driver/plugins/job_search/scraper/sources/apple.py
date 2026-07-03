@@ -195,6 +195,19 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                                 wait_fallbacks += 1
                             if len(api_results) == prev_count:
                                 break
+                        else:
+                            # Every scroll produced new rows and we stopped at
+                            # the page ceiling -- more likely existed. With
+                            # max_pages == 1 no scroll happened, so exhaustion
+                            # vs truncation is unknowable; don't flag.
+                            if max_pages > 1:
+                                ctx.record_saturation(
+                                    source="apple",
+                                    query=f"{term} x {country}",
+                                    returned=len(api_results),
+                                    requested=len(api_results),
+                                    kind="cap",
+                                )
                     except Exception as exc:
                         log.warning(
                             "[apple] search failed for %r (%s): %s", term, country, exc

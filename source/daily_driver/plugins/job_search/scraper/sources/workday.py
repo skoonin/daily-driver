@@ -144,6 +144,16 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
                 board.tenant,
                 _MAX_PAGES,
             )
+            ctx.record_saturation(
+                source="workday",
+                query=board.tenant,
+                returned=seen,
+                # Unknown board total (missing 'total' field): report the
+                # ceiling's capacity so returned/requested still reads as
+                # truncated, never as an exact seen/seen "complete" match.
+                requested=(total if total is not None else _MAX_PAGES * _PAGE_SIZE),
+                kind="cap",
+            )
 
         matched = len(jobs) - matched_before
         if partial:

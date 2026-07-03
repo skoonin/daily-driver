@@ -11,11 +11,13 @@ stage's instance.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
+    Literal,
     Protocol,
     runtime_checkable,
 )
@@ -144,6 +146,24 @@ def _parse_k_salary(s: str) -> int | None:
         return int(float(s))
     except (ValueError, TypeError):
         return None
+
+
+@dataclass(frozen=True)
+class SaturationRecord:
+    """One truncated query: it returned its full cap, so coverage is incomplete.
+
+    ``kind``: "cap" -- returned hit the limit the call was made with (raise
+    the source's limit or split the query); "plateau" -- LinkedIn stopped a
+    larger request early, at or past its ~100-row per-IP rate-limit zone
+    (unreachable without proxies). Both mean the window holds more matches
+    than the run saw.
+    """
+
+    source: str
+    query: str
+    returned: int
+    requested: int
+    kind: Literal["cap", "plateau"]
 
 
 class RawScrapedJob(BaseModel):
