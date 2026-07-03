@@ -12,10 +12,10 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager, ExitStack, nullcontext
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from daily_driver.core.clock import today
 from daily_driver.core.config_models import AIConfig
@@ -40,6 +40,7 @@ from daily_driver.plugins.job_search.jobs_lock import (
 )
 from daily_driver.plugins.job_search.scraper.countries import country_names
 from daily_driver.plugins.job_search.scraper.enrichment.llm import _empty_fit_stats
+from daily_driver.plugins.job_search.scraper.models import SaturationRecord
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
     HTTPError,
@@ -97,6 +98,43 @@ class ScrapeContext:
     # apple) skip this -- their loss window on a crash is seconds, not worth the
     # per-unit lock churn -- and rely on the end-of-source append instead.
     checkpoint: Callable[[list[dict[str, Any]]], None] = _noop_checkpoint
+    # Saturation records appended by sources as they scrape (a query that
+    # returned its full cap was truncated). Mutable shared list on a frozen
+    # dataclass -- the runner reads it after scraping for the run summary and
+    # the manifest's ``saturated_queries``.
+    saturation: list[SaturationRecord] = field(default_factory=list)
+
+    def record_saturation(
+        self,
+        *,
+        source: str,
+        query: str,
+        returned: int,
+        requested: int,
+        kind: Literal["cap", "plateau"],
+    ) -> None:
+        """Record one truncated query: append + one -v log line.
+
+        The single seam for saturation across sources, so every flagged query
+        shows up in the -v log, not only jobspy's.
+        """
+        self.saturation.append(
+            SaturationRecord(
+                source=source,
+                query=query,
+                returned=returned,
+                requested=requested,
+                kind=kind,
+            )
+        )
+        log.info(
+            "[%s] saturated query %s: %d/%d returned (%s) -- coverage incomplete",
+            source,
+            query,
+            returned,
+            requested,
+            kind,
+        )
 
 
 class ScraperError(RuntimeError):
@@ -215,6 +253,25 @@ def dedup_key(company: str, role: str) -> str:
     on RemoteOK and LinkedIn produces an identical key.
     """
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
+
+
+# Remediation hint per (source, kind) for the run-summary Saturated line.
+# Per-source because each has its own limit knob; workday's page ceiling is a
+# code constant, not config.
+_SATURATION_HINTS: dict[tuple[str, str], str] = {
+    ("linkedin", "cap"): (
+        "results capped; raise results_wanted_per_query or split terms"
+    ),
+    ("indeed", "cap"): (
+        "results capped; raise results_wanted_per_query or split terms"
+    ),
+    ("linkedin", "plateau"): (
+        "stopped early at/past the ~100/IP rate-limit zone; "
+        "deeper coverage needs proxies"
+    ),
+    ("workday", "cap"): "page ceiling hit; some postings unfetched",
+    ("apple", "cap"): "scroll cap hit; raise scraper.max_pages",
+}
 
 
 # Cells the enrichment waves may fill on a pre-existing (backlog) row. The
@@ -2252,6 +2309,9 @@ class _RunState:
     # reconciled after it completes.
     backlog_enriched: int = 0
     backlog_remaining: int = 0
+    # Alias of ctx.saturation (shared list), so both manifest paths report
+    # truncated queries.
+    saturation: list[SaturationRecord] = field(default_factory=list)
 
     @property
     def written(self) -> int:
@@ -2271,6 +2331,7 @@ def _write_run_manifest(
     interrupted: bool,
     backlog_enriched: int = 0,
     backlog_remaining: int = 0,
+    saturation: list[SaturationRecord] | None = None,
 ) -> None:
     """Write jobs-last-run.json. Written on BOTH the happy and interrupt paths.
 
@@ -2296,6 +2357,9 @@ def _write_run_manifest(
         "enriched_fit_notes": fn_enriched,
         "backlog_enriched": backlog_enriched,
         "backlog_remaining": backlog_remaining,
+        # Snapshot first: an interrupt-path write can race a still-running
+        # phase-1 worker's append.
+        "saturated_queries": [asdict(rec) for rec in list(saturation or [])],
         "phase_reached": phase_reached,
         "interrupted": interrupted,
     }
@@ -2431,6 +2495,7 @@ def run(
                 fn_enriched=state.fn_stats["enriched"],
                 backlog_enriched=state.backlog_enriched,
                 backlog_remaining=state.backlog_remaining,
+                saturation=state.saturation,
                 phase_reached=state.phase_reached,
                 interrupted=True,
             )
@@ -2575,6 +2640,9 @@ def _run_impl(
     # Expose the cooperative stop signal so run()'s interrupt handler can set it
     # before joining the wave-1 thread (turning the bounded join into a drain).
     state.stop_event = ctx.stop_event
+    # Alias the shared saturation list so the interrupt-path manifest reports
+    # queries flagged before the interrupt.
+    state.saturation = ctx.saturation
 
     # Coarse run phase for the manifest (scraping -> detail -> enrichment ->
     # complete), held on ``state`` so the run() wrapper's exit handler reads the
@@ -3109,6 +3177,24 @@ def _run_impl(
             "  Degraded sources (incomplete results, kept what was scraped): "
             + ", ".join(_display_name(sid) for sid in degraded_sources)
         )
+    # Truncated queries: a query that returned its full cap saw only part of
+    # its window. One line per (source, kind) so a mixed LinkedIn run shows
+    # BOTH remediations (capped terms are fixable for free; the plateau is
+    # not); full per-query detail is in the manifest (saturated_queries) and
+    # the -v log. Hints are per-source: each has its own limit knob.
+    if ctx.saturation:
+        by_group: dict[tuple[str, str], list[SaturationRecord]] = {}
+        for rec in ctx.saturation:
+            by_group.setdefault((rec.source, rec.kind), []).append(rec)
+        for (sid, kind), recs in by_group.items():
+            shown = ", ".join(rec.query for rec in recs[:3])
+            more = f" (+{len(recs) - 3} more)" if len(recs) > 3 else ""
+            hint = _SATURATION_HINTS.get(
+                (sid, kind), "results truncated; coverage incomplete"
+            )
+            Console.warning(
+                f"  Saturated  {_display_name(sid)}: {shown}{more} -- {hint}"
+            )
 
     # ── Enrichment funnel ────────────────────────────────────────────────────
     # Only when enrichment actually ran (a dry-run or --no-enrich pass scores
@@ -3184,6 +3270,7 @@ def _run_impl(
         fn_enriched=fn_stats["enriched"],
         backlog_enriched=state.backlog_enriched,
         backlog_remaining=state.backlog_remaining,
+        saturation=ctx.saturation,
         phase_reached=state.phase_reached,
         interrupted=False,
     )
