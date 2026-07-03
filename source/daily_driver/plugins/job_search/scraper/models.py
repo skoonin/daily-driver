@@ -260,8 +260,10 @@ class EnrichedJob(BaseModel):
     status: str = ""
     skip_reason: str = ""
     date_applied: dt.date | None = None
-    # Drives `jobs prune --older-than`. Defaults to Date Found on write when
-    # unset (no upsert-on-rescan path yet), so prune ages from first-discovery.
+    # Drives `jobs prune --older-than`. `jobs run` refreshes this to today for
+    # every re-seen row (_JobSink._apply_rescan_updates), so prune ages from
+    # last-sighting. Falls back to Date Found on write when unset -- a legacy row,
+    # or one never re-seen since discovery.
     date_last_seen: dt.date | None = None
     # UTC instant of the last fit/notes enrichment write. Distinct from
     # date_last_seen (date-only, prune-aging): this is a full timestamp that
