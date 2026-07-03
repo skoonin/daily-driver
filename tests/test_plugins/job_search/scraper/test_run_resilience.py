@@ -2333,8 +2333,7 @@ def test_reseen_known_url_bumps_date_last_seen(
     assert len(rows) == 1
     assert rows[0]["Date Last Seen"] == "2026-07-03"
     assert rows[0]["Date Found"] == "2026-06-01"
-    assert sink.reseen_live == 1
-    assert sink.reseen_missing == 0
+    assert sink.rescan_summary() == (1, 0, 0)  # (still_visible, not_seen, healed)
 
 
 def test_unseen_row_keeps_old_date_last_seen(
@@ -2380,8 +2379,7 @@ def test_unseen_row_keeps_old_date_last_seen(
     assert rows["Seen"]["Date Last Seen"] == "2026-07-03"
     assert rows["Unseen"]["Date Last Seen"] == "2026-06-01"
     # One re-confirmed live, one carried but not seen this run.
-    assert sink.reseen_live == 1
-    assert sink.reseen_missing == 1
+    assert sink.rescan_summary() == (1, 1, 0)  # (still_visible, not_seen, healed)
 
 
 def test_reseen_known_url_heals_missing_description(
@@ -2422,7 +2420,7 @@ def test_reseen_known_url_heals_missing_description(
 
     assert load_descriptions(csv_path) == {"https://a/1": "Full role body."}
     assert len(_read_csv(csv_path)) == 1
-    assert sink.descriptions_healed == 1
+    assert sink.rescan_summary() == (1, 0, 1)  # (still_visible, not_seen, healed)
 
 
 def test_reseen_emits_verbose_log_lines_on_update(
@@ -2558,4 +2556,69 @@ def test_run_reports_reseen_summary_line(
     )
     assert rc == 0
     err = " ".join(capsys.readouterr().err.split())
-    assert "Re-seen: 1 still visible on the boards, 1 not seen this run" in err
+    # Two labeled funnels; the re-sighting split sits under Scraping.
+    assert "Scraping" in err
+    assert "Enrichment" in err
+    assert "1 still visible, 1 not seen this run" in err
+
+
+def test_run_no_enrich_persists_resightings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Re-sighting is a scrape fact, so a --no-enrich run still refreshes
+    Date Last Seen and heals a missing description (the one full-file rewrite it
+    makes) and reports the Scraping funnel -- but no Enrichment section."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://x/1",
+                "Source": "indeed",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            }
+        )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    rescan = [
+        _scraped("https://x/1", "Acme", description_text="Full body from scrape.")
+    ]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", rescan)
+        return rescan, [], [("remoteok", rescan)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+    assert rc == 0
+
+    rows = _read_csv(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["Date Last Seen"] == "2026-07-03"
+    assert load_descriptions(csv_path) == {"https://x/1": "Full body from scrape."}
+    err = " ".join(capsys.readouterr().err.split())
+    assert "Scraping" in err
+    assert "1 still visible, 0 not seen this run" in err
+    # No enrichment ran, so no Enrichment section.
+    assert "Enrichment" not in err

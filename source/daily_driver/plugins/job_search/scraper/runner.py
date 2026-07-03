@@ -730,14 +730,14 @@ class _JobSink:
         # ``flush`` to refresh Date Last Seen and heal a missing description on the
         # carried pre-existing row. Empty for backfill (it never scrapes).
         self._reseen: dict[str, dict[str, str]] = {}
-        # Re-sighting tallies for the end-of-run summary, set by
-        # ``_apply_rescan_updates`` on the (guaranteed) final flush. ``reseen_live``
-        # / ``reseen_missing`` are recomputed each flush (stable once scraping is
-        # done); ``descriptions_healed`` accumulates once per URL (a heal fires
-        # only while the sidecar entry is still empty).
-        self.reseen_live = 0
-        self.reseen_missing = 0
-        self.descriptions_healed = 0
+        # URLs that already carried a non-empty sidecar description at run start.
+        # ``rescan_summary`` uses this to count how many re-sightings actually
+        # HEAL a gap (fill-only) independently of when the persisting flush runs,
+        # so the scrape-phase summary is accurate even before the final flush and
+        # on --no-enrich runs.
+        self._original_desc_urls: set[str] = {
+            url for url, text in self._descriptions.items() if (text or "").strip()
+        }
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
         # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
@@ -950,17 +950,11 @@ class _JobSink:
         if not self._reseen:
             return
         stamp = today().isoformat()
-        live = 0
-        missing = 0
         for row in leading_rows:
             identity = _csv_row_identity(row)
             job = self._reseen.get(identity)
             if job is None:
-                # A carried row the scrape did not re-return -- may be genuinely
-                # stale, or simply from a source/window this run did not cover.
-                missing += 1
                 continue
-            live += 1
             # Freshness: mark re-seen alive today (drives stale detection / prune).
             # Log only on an actual change so periodic + final flushes don't repeat
             # the line for the same row.
@@ -976,12 +970,44 @@ class _JobSink:
                 if desc and not self._descriptions.get(url, "").strip():
                     self._descriptions[url] = desc
                     self._descriptions_dirty = True
-                    self.descriptions_healed += 1
                     log.info(
                         "Healed missing description (%d chars): %s", len(desc), url
                     )
-        self.reseen_live = live
-        self.reseen_missing = missing
+
+    def has_resightings(self) -> bool:
+        """True when this run re-saw a known row.
+
+        A --no-enrich run makes no final rewrite, so it must flush explicitly to
+        persist the refreshed Date Last Seen / healed description this signals.
+        """
+        return bool(self._reseen)
+
+    def rescan_summary(self) -> tuple[int, int, int]:
+        """Freshness split for the scraping summary, independent of flush timing.
+
+        Returns ``(still_visible, not_seen, healed)``: pre-existing rows the
+        scrape re-confirmed live, pre-existing rows it did not re-return, and
+        re-sightings that fill a previously-empty sidecar description. Derived
+        from the re-sighting collector and the run-start pre-existing rows, so it
+        is accurate before the persisting flush runs (and for --no-enrich runs).
+        """
+        still_visible = 0
+        not_seen = 0
+        healed = 0
+        for row in self.preexisting_rows:
+            job = self._reseen.get(_csv_row_identity(row))
+            if job is None:
+                not_seen += 1
+                continue
+            still_visible += 1
+            url = (row.get("Link") or "").strip()
+            if (
+                url
+                and url not in self._original_desc_urls
+                and (job.get("description_text") or "").strip()
+            ):
+                healed += 1
+        return still_visible, not_seen, healed
 
     def flush(self) -> None:
         """Rewrite jobs.csv -- carried non-run rows then ``rows`` -- through the
@@ -2882,51 +2908,81 @@ def _run_impl(
         fn_stats.get("no_description", 0),
         fn_stats["failed"],
     )
+
+    # ── Scraping funnel ──────────────────────────────────────────────────────
     # Headline that reconciles every job: found (raw scraped) -> new (not already
     # in csv) -> matched location (the only filter that removes jobs). Intra/
     # cross-run duplicates are the remainder. `funnel` (the per-source breakdown)
-    # was computed above while the live bars were up; it is reused here.
+    # was computed above while the live bars were up; it is reused here. The
+    # re-sighting split is a scrape fact, so it lives here (not under Enrichment)
+    # and reports even under --no-enrich.
+    still_visible, not_seen, healed = (
+        sink.rescan_summary() if sink is not None else (0, 0, 0)
+    )
+    label_width = max([len(_display_name(sid)) for sid in funnel] + [len("Re-seen")])
+    Console.info("Scraping")
     summary = (
-        f"Completed: {raw_found} found -> {pre_filter} new "
+        f"  Completed: {raw_found} found -> {pre_filter} new "
         f"-> {len(typed_jobs)} matched location"
     )
     if filtered:
         summary += f" ({filtered} skipped by location)"
     Console.info(summary)
-    if funnel:
-        width = max(len(_display_name(sid)) for sid in funnel)
-        for sid, c in funnel.items():
-            # The grey "other" bar segment (within-run duplicates + url-less rows)
-            # has no count of its own in the funnel; surface it here only when
-            # present so no datum lives in colour alone.
-            other = _funnel_other(c)
-            line = (
-                f"  {_display_name(sid):<{width}}  {c['found']} found, "
-                f"{c['new']} new, {c['known']} already in csv, "
-                f"{c['loc_skip']} skipped (location)"
-            )
-            if other > 0:
-                line += f", {other} other"
-            Console.info(line)
-
-    # Rows with no obtainable description (e.g. a signup-walled posting) are
-    # intentionally left un-scored rather than guessed at; call it out so the
-    # user knows to re-scrape rather than assume the row was simply skipped.
-    no_description_count = fn_stats.get("no_description", 0)
-    if no_description_count:
-        Console.warning(
-            f"{no_description_count} job(s) had no description; Fit/Notes left "
-            "blank. Delete the row and re-run a scrape to retry."
+    for sid, c in funnel.items():
+        # The grey "other" bar segment (within-run duplicates + url-less rows)
+        # has no count of its own in the funnel; surface it here only when
+        # present so no datum lives in colour alone.
+        other = _funnel_other(c)
+        line = (
+            f"  {_display_name(sid):<{label_width}}  {c['found']} found, "
+            f"{c['new']} new, {c['known']} already in csv, "
+            f"{c['loc_skip']} skipped (location)"
         )
-
+        if other > 0:
+            line += f", {other} other"
+        Console.info(line)
+    # Re-sighting freshness split: pre-existing rows the scrape re-confirmed live
+    # vs. did not return. "not seen this run" is deliberately not "gone" -- a live
+    # job from an unscraped source/window looks identical.
+    if still_visible or not_seen:
+        reseen_line = (
+            f"  {'Re-seen':<{label_width}}  {still_visible} still visible, "
+            f"{not_seen} not seen this run"
+        )
+        if healed:
+            reseen_line += f"; {healed} descriptions healed"
+        Console.info(reseen_line)
     # Degraded sources finished with INCOMPLETE results (a partial-pagination or
     # all-units-failed scrape). Their rows are kept, but call it out so a partial
     # run is never mistaken for a clean one. Distinct from failed sources below.
     if degraded_sources:
         Console.warning(
-            "Degraded sources (incomplete results, kept what was scraped): "
+            "  Degraded sources (incomplete results, kept what was scraped): "
             + ", ".join(_display_name(sid) for sid in degraded_sources)
         )
+
+    # ── Enrichment funnel ────────────────────────────────────────────────────
+    # Only when enrichment actually ran (a dry-run or --no-enrich pass scores
+    # nothing, so a zeroed section would be noise).
+    no_description_count = fn_stats.get("no_description", 0)
+    if do_enrich:
+        Console.info("Enrichment")
+        fit_line = (
+            f"  {'Fit/Notes':<{label_width}}  {fn_stats['enriched']} scored, "
+            f"{fn_stats['skipped_budget']} over budget, "
+            f"{no_description_count} no description"
+        )
+        if fn_stats["failed"]:
+            fit_line += f", {fn_stats['failed']} failed"
+        Console.info(fit_line)
+        # Rows with no obtainable description (e.g. a signup-walled posting) are
+        # intentionally left un-scored rather than guessed at; call it out so the
+        # user knows to re-scrape rather than assume the row was simply skipped.
+        if no_description_count:
+            Console.warning(
+                f"  {no_description_count} job(s) had no description; Fit/Notes "
+                "left blank. Delete the row and re-run a scrape to retry."
+            )
 
     if dry_run:
         Console.success(
@@ -2974,21 +3030,19 @@ def _run_impl(
                 f"({sink._degraded_reason}); retrying the final save now"
             )
         sink.flush()
-
-        # Re-sighting summary: the final flush has now refreshed Date Last Seen
-        # for every re-seen row. Report the freshness split so a last-seen prune
-        # is an informed decision. "not seen this run" is deliberately not called
-        # "gone" -- a live job from an unscraped source/window looks the same.
-        if sink.reseen_live or sink.reseen_missing:
-            reseen_line = (
-                f"Re-seen: {sink.reseen_live} still visible on the boards, "
-                f"{sink.reseen_missing} not seen this run"
+    elif sink.has_resightings():
+        # --no-enrich makes no enrichment rewrite, but a re-sighting still needs
+        # persisting: the refreshed Date Last Seen and any healed description are
+        # scrape facts. This is the one full-file rewrite a --no-enrich run makes,
+        # and only when a re-sighting actually needs saving.
+        try:
+            sink.flush()
+        except OSError as exc:
+            log.warning(
+                "PERSISTENCE failure: could not save re-sightings to %s (%s)",
+                sink.csv_path,
+                exc,
             )
-            if sink.descriptions_healed:
-                reseen_line += (
-                    f"; healed {sink.descriptions_healed} missing description(s)"
-                )
-            Console.info(reseen_line)
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))
