@@ -19,8 +19,8 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
-- **`jobs run` now refreshes `Date Last Seen` for jobs it re-sees**, so a row's Date Last Seen reflects when it was last confirmed live rather than first discovery. `jobs prune --older-than` now ages from last-sighting; rows no longer returned by a scrape age out as stale. Re-sighting is a scrape fact, so it also applies under `--no-enrich`. The end-of-run summary is now split into two labeled funnels, `Scraping` (found/new/known/re-seen split) and `Enrichment` (Fit/Notes), and `-v` logs each row whose Date Last Seen or description was updated. (#<PR>)
-- **`jobs run` now heals a missing description for an already-known row** when a scrape re-returns one (e.g. Indeed via JobSpy, bot-walled at enrichment time), folding it into `descriptions.jsonl` so the next `jobs backfill` can score it. Fill-only; an existing cached description is never overwritten. (#<PR>)
+- **`jobs run` now refreshes `Date Last Seen` for jobs it re-sees**, so a row's Date Last Seen reflects when it was last confirmed live rather than first discovery. `jobs prune --older-than` now ages from last-sighting; rows no longer returned by a scrape age out as stale. Re-sighting is a scrape fact, so it also applies under `--no-enrich`. The end-of-run summary is now split into two labeled funnels, `Scraping` (found/new/known/re-seen split) and `Enrichment` (Fit/Notes), and `-v` logs each row whose Date Last Seen or description was updated. (#136)
+- **`jobs run` now heals a missing description for an already-known row** when a scrape re-returns one (e.g. Indeed via JobSpy, bot-walled at enrichment time), folding it into `descriptions.jsonl` so the next `jobs backfill` can score it. Fill-only; an existing cached description is never overwritten. (#136)
 
 ## [0.3.0] — 2026-07-02
 
