@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from daily_driver.core.clock import today
 from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
@@ -723,6 +724,12 @@ class _JobSink:
         # lock that seeds the dedup state; backfill leaves this empty (its
         # ``rows`` holds the whole file).
         self.preexisting_rows: list[dict[str, str]] = list(preexisting_rows or [])
+        # Rows this run re-saw in a scrape (the deduped "known" branch): identity
+        # (_csv_row_identity-compatible -- stripped URL, else (company, role) key)
+        # -> the scraped job dict. Consumed once by ``_apply_rescan_updates`` in
+        # ``flush`` to refresh Date Last Seen and heal a missing description on the
+        # carried pre-existing row. Empty for backfill (it never scrapes).
+        self._reseen: dict[str, dict[str, str]] = {}
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
         # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
@@ -859,6 +866,20 @@ class _JobSink:
                     key and key in self._known_keys
                 ):
                     known += 1
+                    # Record the re-sighting so ``_apply_rescan_updates`` can act
+                    # on the carried row at flush. Prefer a sighting that carries
+                    # a description: within one run the same URL may re-appear
+                    # from a unit that lacks the body, so don't let it clobber an
+                    # earlier sighting that had one.
+                    identity = url or key
+                    if identity:
+                        prev = self._reseen.get(identity)
+                        has_desc = bool((job.get("description_text") or "").strip())
+                        prev_has_desc = bool(
+                            (prev or {}).get("description_text", "").strip()
+                        )
+                        if prev is None or (has_desc and not prev_has_desc):
+                            self._reseen[identity] = job
                     continue
                 if not url:
                     # url-less new jobs cannot be deduped on future runs; drop them.
@@ -911,6 +932,31 @@ class _JobSink:
             self.loc_filtered += loc_skip
             self.pre_filter += new
             return dict(counts)
+
+    def _apply_rescan_updates(self, leading_rows: list[dict[str, str]]) -> None:
+        """Apply updates to rows we re-saw this run (deduped 'known' rows).
+
+        The single seam for on-rescan behavior -- add/remove actions here.
+        Backfill never scrapes, so ``_reseen`` is empty and this is a no-op.
+        """
+        if not self._reseen:
+            return
+        stamp = today().isoformat()
+        for row in leading_rows:
+            job = self._reseen.get(_csv_row_identity(row))
+            if job is None:
+                continue
+            # Freshness: mark re-seen alive today (drives stale detection / prune).
+            row["Date Last Seen"] = stamp
+            # Heal a missing sidecar description (Indeed etc. carry it only at
+            # scrape; the detail enricher is bot-walled). Fill-only; never
+            # overwrite an existing entry (a re-scrape may be truncated).
+            url = (row.get("Link") or "").strip()
+            if url:
+                desc = (job.get("description_text") or "").strip()
+                if desc and not self._descriptions.get(url, "").strip():
+                    self._descriptions[url] = desc
+                    self._descriptions_dirty = True
 
     def flush(self) -> None:
         """Rewrite jobs.csv -- carried non-run rows then ``rows`` -- through the
@@ -979,6 +1025,11 @@ class _JobSink:
                     for row in on_disk_rows
                     if _csv_row_identity(row) not in run_identities
                 ]
+            # Act on rows we re-saw this run BEFORE the no-churn comparison, so a
+            # re-seen-only run (Date Last Seen bumped, no new rows) is detected as
+            # changed and rewrites jobs.csv. Mutates ``leading_rows`` in place
+            # under the held ``_rows_lock``.
+            self._apply_rescan_updates(leading_rows)
             # Carried rows lead, field-for-field; this run's rows follow in append
             # order, so the rewrite preserves the on-disk layout.
             out_rows: list[dict[str, str]] = list(leading_rows)

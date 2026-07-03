@@ -10,6 +10,7 @@ deterministic.
 from __future__ import annotations
 
 import csv
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -2257,3 +2258,201 @@ def test_run_completion_line_reports_total_run_time(
     # Collapse whitespace: the completion line embeds the (long) csv path, so on
     # a narrow console the Rich-wrapped output can split "Total run time:".
     assert "Total run time:" in " ".join(err.split())
+
+
+# ── Upsert-on-rescan: heal descriptions + refresh Date Last Seen ─────────────
+
+
+def _seed_jobs_csv(csv_path: Path, rows: list[dict[str, str]]) -> None:
+    """Write a jobs.csv with the canonical header and the given rows."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _rescan_sink(
+    csv_path: Path,
+    tmp_path: Path,
+    *,
+    descriptions: dict[str, str] | None = None,
+) -> runner._JobSink:
+    """Build a run-path sink seeded from jobs.csv, mirroring run()'s setup."""
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        load_existing_jobs,
+        read_rows,
+    )
+
+    known_urls, known_keys, file_header = load_existing_jobs(csv_path)
+    _, preexisting = read_rows(csv_path)
+    return runner._JobSink(
+        csv_path=csv_path,
+        lock_path=tmp_path / ".lock",
+        header=file_header,
+        known_urls=known_urls,
+        known_keys=known_keys,
+        plugin=_us_remote_plugin(),
+        preexisting_rows=preexisting,
+        descriptions=descriptions,
+    )
+
+
+def test_reseen_known_url_bumps_date_last_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-seeing a known URL bumps its Date Last Seen to today, with no new or
+    duplicate row -- the freshness signal that makes a last-seen prune reliable."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/1",
+                "Source": "remoteok",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    counts = sink.append_source("remoteok", [_scraped("https://a/1", "Acme")])
+    assert counts["known"] == 1
+    assert counts["new"] == 0
+
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["Date Last Seen"] == "2026-07-03"
+    assert rows[0]["Date Found"] == "2026-06-01"
+
+
+def test_unseen_row_keeps_old_date_last_seen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing row NOT returned by the scrape keeps its old Date Last Seen
+    even when other URLs are re-seen -- this is what makes deleting by last-seen
+    safe (a live-but-unscraped row is not silently aged forward)."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            {
+                "Status": "found",
+                "Company": "Seen",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/1",
+                "Source": "remoteok",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            },
+            {
+                "Status": "found",
+                "Company": "Unseen",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/2",
+                "Source": "remoteok",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            },
+        ],
+    )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    # Only a/1 is re-scraped; a/2 is absent from this run's scrape.
+    sink.append_source("remoteok", [_scraped("https://a/1", "Seen")])
+    sink.flush()
+
+    rows = {r["Company"]: r for r in _read_csv(csv_path)}
+    assert rows["Seen"]["Date Last Seen"] == "2026-07-03"
+    assert rows["Unseen"]["Date Last Seen"] == "2026-06-01"
+
+
+def test_reseen_known_url_heals_missing_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-scrape that carries a description heals a known row that had none in
+    the sidecar (the Indeed-via-JobSpy case), so the next backfill can score it.
+    The row is not duplicated."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/1",
+                "Source": "indeed",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            }
+        ],
+    )
+    assert load_descriptions(csv_path) == {}
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source(
+        "indeed",
+        [_scraped("https://a/1", "Acme", description_text="Full role body.")],
+    )
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {"https://a/1": "Full role body."}
+    assert len(_read_csv(csv_path)) == 1
+
+
+def test_reseen_does_not_overwrite_existing_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Healing is fill-only: when the sidecar already holds a description, a
+    re-scrape's (possibly truncated) body must NOT overwrite it."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+        load_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/1",
+                "Source": "indeed",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            }
+        ],
+    )
+    atomic_write_descriptions(csv_path, {"https://a/1": "Original full description."})
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path, descriptions=load_descriptions(csv_path))
+    sink.append_source(
+        "indeed",
+        [_scraped("https://a/1", "Acme", description_text="Trunc")],
+    )
+    sink.flush()
+
+    assert load_descriptions(csv_path) == {"https://a/1": "Original full description."}
