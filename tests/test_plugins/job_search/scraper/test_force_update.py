@@ -274,7 +274,13 @@ def _plugin(max_enrich_fit: int = 50) -> JobSearchPlugin:
 def _stub_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         if progress is not None:
             progress(len(jobs))
         return jobs, {

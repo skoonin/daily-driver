@@ -136,7 +136,13 @@ def _stub_enrichment(monkeypatch: pytest.MonkeyPatch) -> None:
     # No-op detail + LLM enrichment: backfill still runs its read -> rewrite cycle.
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         if progress is not None:
             progress(len(jobs))
         return jobs, {

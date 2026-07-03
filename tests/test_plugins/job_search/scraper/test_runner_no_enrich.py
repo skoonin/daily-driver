@@ -159,7 +159,13 @@ def test_default_path_still_enriches(
 
     detail_calls: list[int] = []
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         detail_calls.append(len(jobs))
         return jobs, {
             "enriched": 0,

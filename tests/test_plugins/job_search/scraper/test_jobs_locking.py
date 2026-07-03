@@ -56,7 +56,13 @@ def _row(*, company: str, link: str, status: str = "found") -> dict[str, str]:
 def _stub_detail_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         if progress is not None:
             progress(len(jobs))
         return jobs, {

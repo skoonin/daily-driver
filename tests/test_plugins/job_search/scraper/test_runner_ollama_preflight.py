@@ -92,7 +92,13 @@ def _spy_list_models(
 def _stub_detail(monkeypatch: pytest.MonkeyPatch, calls: list[int]) -> None:
     """Stub the detail enricher to record invocation and pass jobs through."""
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         calls.append(len(jobs))
         return jobs, {
             "enriched": 0,

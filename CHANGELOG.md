@@ -4,6 +4,14 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+### Changed
+
+- **`jobs backfill` no longer fetches job descriptions over the network — it relies entirely on the `descriptions.jsonl` cache.** Descriptions are now captured only at scrape time (`jobs run`): each source that ships a description does so in its listing/API/RSS payload, and the detail-page enricher fills the rest. During `backfill`, a row whose description is already cached is fully (re-)enriched, while a row with no cached description is left un-scored and reported in a warning (rather than triggering a network fetch). This makes `backfill --force-update` fast and quiet instead of re-hitting thousands of (mostly signup-walled) LinkedIn pages every run. The detail-page fetch still runs during backfill to fill missing `comp`, but no longer writes descriptions there.
+
+### Removed
+
+- **The dedicated anonymous LinkedIn description fetcher is removed.** LinkedIn descriptions are captured by JobSpy at scrape time (it fetches the same login-free `linkedin.com/jobs/view/<id>` page), so the separate enrichment-time fetcher recovered nothing JobSpy couldn't and mostly hit the signup wall. LinkedIn descriptions now come solely from the scrape.
+
 ## [0.3.0] — 2026-07-02
 
 ### Fixed
