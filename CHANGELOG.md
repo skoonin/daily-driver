@@ -6,6 +6,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
+- **`jobs run` now finishes the never-enriched backlog.** After enriching the run's new rows, pre-existing rows with no `Date Enriched` (status `found`/`pending`) are scored in place using the cached descriptions — so a run after `--no-enrich` (or an interrupted run) picks up where it left off instead of silently enriching nothing. New rows keep fit-budget priority; the backlog spends only the leftover budget, the summary shows `Backlog: N scored, M remaining`, and the run manifest gains `backlog_enriched` / `backlog_remaining`. Row order in `jobs.csv` and the `new_jobs` count are unaffected. (#<PR>)
 - **`jobs backfill --cooldown-hours missing`** (and config `plugins.job_search.enrichment.force_recook_cooldown_hours: missing`): under `--force-update`, re-enrich only rows that have no enrichment timestamp yet — useful for catching rows enriched before the `Date Enriched` column existed without re-scoring everything. `--cooldown-hours` now accepts a non-negative integer (hours) or `missing`; `0` still disables the cooldown. Set the config value to `missing` to make it the default.
 
 ### Changed
@@ -19,6 +20,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
+- **`jobs run --no-enrich` no longer silently drops the descriptions it scraped.** The sidecar description store is only written on a flush, and a `--no-enrich` run used to flush only when it re-sighted a known row — a fresh `--no-enrich` run threw away every scraped description, leaving the follow-up run (and `jobs backfill`) nothing to score from. Scrape-captured descriptions now always persist. (#<PR>)
 - **`jobs run` now refreshes `Date Last Seen` for jobs it re-sees**, so a row's Date Last Seen reflects when it was last confirmed live rather than first discovery. `jobs prune --older-than` now ages from last-sighting; rows no longer returned by a scrape age out as stale. Re-sighting is a scrape fact, so it also applies under `--no-enrich`. The end-of-run summary is now split into two labeled funnels, `Scraping` (found/new/known/re-seen split) and `Enrichment` (Fit/Notes), and `-v` logs each row whose Date Last Seen or description was updated. (#136)
 - **`jobs run` now heals a missing description for an already-known row** when a scrape re-returns one (e.g. Indeed via JobSpy, bot-walled at enrichment time), folding it into `descriptions.jsonl` so the next `jobs backfill` can score it. Fill-only; an existing cached description is never overwritten. (#136)
 
