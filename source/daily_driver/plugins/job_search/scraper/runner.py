@@ -730,6 +730,14 @@ class _JobSink:
         # ``flush`` to refresh Date Last Seen and heal a missing description on the
         # carried pre-existing row. Empty for backfill (it never scrapes).
         self._reseen: dict[str, dict[str, str]] = {}
+        # Re-sighting tallies for the end-of-run summary, set by
+        # ``_apply_rescan_updates`` on the (guaranteed) final flush. ``reseen_live``
+        # / ``reseen_missing`` are recomputed each flush (stable once scraping is
+        # done); ``descriptions_healed`` accumulates once per URL (a heal fires
+        # only while the sidecar entry is still empty).
+        self.reseen_live = 0
+        self.reseen_missing = 0
+        self.descriptions_healed = 0
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
         # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
@@ -942,12 +950,23 @@ class _JobSink:
         if not self._reseen:
             return
         stamp = today().isoformat()
+        live = 0
+        missing = 0
         for row in leading_rows:
-            job = self._reseen.get(_csv_row_identity(row))
+            identity = _csv_row_identity(row)
+            job = self._reseen.get(identity)
             if job is None:
+                # A carried row the scrape did not re-return -- may be genuinely
+                # stale, or simply from a source/window this run did not cover.
+                missing += 1
                 continue
+            live += 1
             # Freshness: mark re-seen alive today (drives stale detection / prune).
-            row["Date Last Seen"] = stamp
+            # Log only on an actual change so periodic + final flushes don't repeat
+            # the line for the same row.
+            if row.get("Date Last Seen") != stamp:
+                log.info("Re-seen, Date Last Seen -> %s: %s", stamp, identity)
+                row["Date Last Seen"] = stamp
             # Heal a missing sidecar description (Indeed etc. carry it only at
             # scrape; the detail enricher is bot-walled). Fill-only; never
             # overwrite an existing entry (a re-scrape may be truncated).
@@ -957,6 +976,12 @@ class _JobSink:
                 if desc and not self._descriptions.get(url, "").strip():
                     self._descriptions[url] = desc
                     self._descriptions_dirty = True
+                    self.descriptions_healed += 1
+                    log.info(
+                        "Healed missing description (%d chars): %s", len(desc), url
+                    )
+        self.reseen_live = live
+        self.reseen_missing = missing
 
     def flush(self) -> None:
         """Rewrite jobs.csv -- carried non-run rows then ``rows`` -- through the
@@ -2949,6 +2974,21 @@ def _run_impl(
                 f"({sink._degraded_reason}); retrying the final save now"
             )
         sink.flush()
+
+        # Re-sighting summary: the final flush has now refreshed Date Last Seen
+        # for every re-seen row. Report the freshness split so a last-seen prune
+        # is an informed decision. "not seen this run" is deliberately not called
+        # "gone" -- a live job from an unscraped source/window looks the same.
+        if sink.reseen_live or sink.reseen_missing:
+            reseen_line = (
+                f"Re-seen: {sink.reseen_live} still visible on the boards, "
+                f"{sink.reseen_missing} not seen this run"
+            )
+            if sink.descriptions_healed:
+                reseen_line += (
+                    f"; healed {sink.descriptions_healed} missing description(s)"
+                )
+            Console.info(reseen_line)
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))

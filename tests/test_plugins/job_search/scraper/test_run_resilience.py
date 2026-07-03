@@ -2333,6 +2333,8 @@ def test_reseen_known_url_bumps_date_last_seen(
     assert len(rows) == 1
     assert rows[0]["Date Last Seen"] == "2026-07-03"
     assert rows[0]["Date Found"] == "2026-06-01"
+    assert sink.reseen_live == 1
+    assert sink.reseen_missing == 0
 
 
 def test_unseen_row_keeps_old_date_last_seen(
@@ -2377,6 +2379,9 @@ def test_unseen_row_keeps_old_date_last_seen(
     rows = {r["Company"]: r for r in _read_csv(csv_path)}
     assert rows["Seen"]["Date Last Seen"] == "2026-07-03"
     assert rows["Unseen"]["Date Last Seen"] == "2026-06-01"
+    # One re-confirmed live, one carried but not seen this run.
+    assert sink.reseen_live == 1
+    assert sink.reseen_missing == 1
 
 
 def test_reseen_known_url_heals_missing_description(
@@ -2417,6 +2422,47 @@ def test_reseen_known_url_heals_missing_description(
 
     assert load_descriptions(csv_path) == {"https://a/1": "Full role body."}
     assert len(_read_csv(csv_path)) == 1
+    assert sink.descriptions_healed == 1
+
+
+def test_reseen_emits_verbose_log_lines_on_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """At verbose (INFO) level, each re-seen row's Date Last Seen refresh and each
+    healed description is logged per-row, so ``-v`` shows exactly what changed."""
+    import logging
+
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://a/1",
+                "Source": "indeed",
+                "Date Found": "2026-06-01",
+                "Date Last Seen": "2026-06-01",
+            }
+        ],
+    )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source(
+        "indeed",
+        [_scraped("https://a/1", "Acme", description_text="Full role body.")],
+    )
+    with caplog.at_level(logging.INFO, logger="daily_driver"):
+        sink.flush()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Date Last Seen -> 2026-07-03" in m for m in messages), messages
+    assert any("Healed missing description" in m for m in messages), messages
 
 
 def test_reseen_does_not_overwrite_existing_description(
@@ -2456,3 +2502,60 @@ def test_reseen_does_not_overwrite_existing_description(
     sink.flush()
 
     assert load_descriptions(csv_path) == {"https://a/1": "Original full description."}
+
+
+def test_run_reports_reseen_summary_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A full run prints the re-sighting freshness split: one pre-existing row is
+    re-scraped (still visible), one is not returned (not seen this run)."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set()),
+    )
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        for company, link in (("SeenCo", "https://x/1"), ("GoneCo", "https://x/2")):
+            writer.writerow(
+                {
+                    "Status": "found",
+                    "Company": company,
+                    "Role": "SRE",
+                    "Location": "Remote",
+                    "Link": link,
+                    "Source": "remoteok",
+                    "Date Found": "2026-06-01",
+                    "Date Last Seen": "2026-06-01",
+                }
+            )
+
+    # Re-scrape only x/1; x/2 is absent this run. comp set -> detail enricher
+    # skips the network fetch.
+    rescan = [_scraped("https://x/1", "SeenCo", comp="$200k", description_text="infra")]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", rescan)
+        return rescan, [], [("remoteok", rescan)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+    from daily_driver.integrations import ai_provider
+
+    monkeypatch.setattr(
+        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 7, "notes": "ok"}'
+    )
+
+    rc = runner.run(
+        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+    )
+    assert rc == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert "Re-seen: 1 still visible on the boards, 1 not seen this run" in err
