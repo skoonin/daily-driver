@@ -26,7 +26,7 @@ from concurrent.futures import (
     wait,
 )
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
@@ -773,8 +773,10 @@ def _build_fit_plan(
             return
         # Stamp the enrichment instant on every real write so the force-update
         # cooldown can skip rows re-cooked within its window. Reached only when a
-        # cell actually changed, so a no-op result never churns the row.
-        updates["date_enriched"] = datetime.now(timezone.utc)
+        # cell actually changed, so a no-op result never churns the row. Local
+        # time (system tz, timezone-aware) so the CSV reads in the user's clock;
+        # aware, so it still compares correctly against the UTC cooldown cutoff.
+        updates["date_enriched"] = datetime.now().astimezone()
         # Validation (or any non-interrupt error) applying one result must
         # fail only this job, never abort the run — run() has no incremental
         # flush, so an escape would lose every scraped+enriched job.

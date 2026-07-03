@@ -260,7 +260,8 @@ tracker:
 #       max_enrich_fit: 50
 #       # Under `jobs backfill --force-update`, skip rows enriched within the
 #       # last N hours so an interrupted force-update resumes instead of
-#       # restarting. 0 disables the cooldown (re-enrich every active row).
+#       # restarting. 0 disables the cooldown (re-enrich every active row);
+#       # `missing` re-enriches only rows with no enrichment timestamp yet.
 #       force_recook_cooldown_hours: 24
 #       # Pause between detail-page fetches, in seconds, to avoid rate limits.
 #       detail_delay_seconds: 0.5

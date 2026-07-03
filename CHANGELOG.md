@@ -4,6 +4,19 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ## [Unreleased]
 
+### Added
+
+- **`jobs backfill --cooldown-hours missing`** (and config `plugins.job_search.enrichment.force_recook_cooldown_hours: missing`): under `--force-update`, re-enrich only rows that have no enrichment timestamp yet — useful for catching rows enriched before the `Date Enriched` column existed without re-scoring everything. `--cooldown-hours` now accepts a non-negative integer (hours) or `missing`; `0` still disables the cooldown. Set the config value to `missing` to make it the default.
+
+### Changed
+
+- **The `Date Enriched` timestamp is now written in local time** (the machine's timezone, e.g. PST) instead of UTC, so `jobs.csv` reads in your own clock. It stays timezone-aware, so the force-update cooldown comparison is unaffected; existing UTC timestamps continue to work.
+- **`jobs backfill` no longer fetches job descriptions over the network — it relies entirely on the `descriptions.jsonl` cache.** Descriptions are now captured only at scrape time (`jobs run`): each source that ships a description does so in its listing/API/RSS payload, and the detail-page enricher fills the rest. During `backfill`, a row whose description is already cached is fully (re-)enriched, while a row with no cached description is left un-scored and reported in a warning (rather than triggering a network fetch). This makes `backfill --force-update` fast and quiet instead of re-hitting thousands of (mostly signup-walled) LinkedIn pages every run. The detail-page fetch still runs during backfill to fill missing `comp`, but no longer writes descriptions there.
+
+### Removed
+
+- **The dedicated anonymous LinkedIn description fetcher is removed.** LinkedIn descriptions are captured by JobSpy at scrape time (it fetches the same login-free `linkedin.com/jobs/view/<id>` page), so the separate enrichment-time fetcher recovered nothing JobSpy couldn't and mostly hit the signup wall. LinkedIn descriptions now come solely from the scrape.
+
 ## [0.3.0] — 2026-07-02
 
 ### Fixed

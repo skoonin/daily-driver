@@ -159,6 +159,38 @@ def test_cache_hit_returns_without_fetch() -> None:
     assert stats["enriched"] == 2
 
 
+def test_capture_descriptions_false_writes_comp_not_description() -> None:
+    """The backfill path passes capture_descriptions=False: a detail fetch still
+    fills comp/posted_date but never writes description_text."""
+    jobs = [_job("https://boards.greenhouse.io/acme/jobs/1")]  # no comp -> fetched
+    resp = MagicMock()
+    resp.text = "<html></html>"
+    details = {"comp": "$200k", "description_text": "Full role body."}
+    with (
+        patch(f"{_DETAIL}._api_get", return_value=resp),
+        patch(f"{_DETAIL}._parse_detail_page", return_value=details),
+    ):
+        out, stats = enrich_job_details(jobs, _ctx(0), capture_descriptions=False)
+    assert out[0].comp == "$200k"
+    assert out[0].description_text == ""
+    assert stats["enriched"] == 1  # comp still counted
+
+
+def test_capture_descriptions_true_writes_description() -> None:
+    """The run path (default True) writes description_text from the detail page."""
+    jobs = [_job("https://boards.greenhouse.io/acme/jobs/1")]
+    resp = MagicMock()
+    resp.text = "<html></html>"
+    details = {"comp": "$200k", "description_text": "Full role body."}
+    with (
+        patch(f"{_DETAIL}._api_get", return_value=resp),
+        patch(f"{_DETAIL}._parse_detail_page", return_value=details),
+    ):
+        out, _ = enrich_job_details(jobs, _ctx(0), capture_descriptions=True)
+    assert out[0].comp == "$200k"
+    assert out[0].description_text == "Full role body."
+
+
 def test_skip_paths_unchanged() -> None:
     """comp-present, inactive, url-less, and bot-walled hosts skip the fetch."""
     jobs = [

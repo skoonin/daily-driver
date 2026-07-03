@@ -32,8 +32,28 @@ def _int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
 # backfill better expressed by not running it -- and a negative limit is
 # nonsense, so reject both at the parser.
 _positive_limit = _int_at_least(1, "--limit")
-# 0 disables the force-update cooldown (re-enrich every active row).
-_nonneg_hours = _int_at_least(0, "--cooldown-hours")
+
+
+def _cooldown_hours(value: str) -> int | str:
+    """--cooldown-hours: a non-negative int (hours), or the literal ``missing``.
+
+    ``0`` disables the cooldown (re-enrich every active row); ``missing``
+    re-enriches only rows with no enrichment timestamp yet.
+    """
+    if value.strip().lower() == "missing":
+        return "missing"
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "--cooldown-hours must be a non-negative integer or 'missing' "
+            f"(got {value!r})"
+        ) from None
+    if n < 0:
+        raise argparse.ArgumentTypeError(
+            f"--cooldown-hours must be >= 0 or 'missing' (got {n})"
+        )
+    return n
 
 
 def add_parser(
@@ -141,13 +161,14 @@ def add_parser(
     )
     p_backfill.add_argument(
         "--cooldown-hours",
-        type=_nonneg_hours,
+        type=_cooldown_hours,
         default=None,
-        metavar="N",
+        metavar="N|missing",
         help=(
             "Only with --force-update (no effect otherwise): skip rows enriched "
             "within the last N hours, so an interrupted force-update resumes "
-            "instead of restarting (default: config force_recook_cooldown_hours, "
+            "instead of restarting; 'missing' re-enriches only rows with no "
+            "enrichment timestamp yet (default: config force_recook_cooldown_hours, "
             "normally 24; 0 disables)"
         ),
     )

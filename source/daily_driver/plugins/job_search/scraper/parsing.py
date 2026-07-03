@@ -108,8 +108,8 @@ def _parse_detail_page(html: str, url: str) -> dict:
     Greenhouse job-boards pages lack JSON-LD; we try JSON-LD first
     (covers any Greenhouse board that does publish structured data) and fall
     back to the text-pattern parser. Everything else uses JSON-LD only.
-    LinkedIn descriptions/comp now come from JobSpy's
-    ``linkedin_fetch_description=True``; the vendored HTML parser was deleted.
+    LinkedIn descriptions/comp come entirely from JobSpy's scrape-time
+    ``linkedin_fetch_description=True``; no LinkedIn HTML parser runs here.
     """
     host = urllib.parse.urlparse(url).hostname or ""
     if "greenhouse.io" in host:
@@ -185,35 +185,10 @@ def parse_jsonld_jobposting(html: str) -> dict:
     return out
 
 
-def parse_linkedin_description(html: str) -> dict:
-    """Extract the job description text from a login-free LinkedIn job page.
-
-    LinkedIn's anonymous ``/jobs/view/<id>`` pages emit no JSON-LD; the
-    description body lives in ``div.show-more-less-html__markup``. Returns
-    ``{"description_text": text}`` when present and non-empty, else ``{}`` so a
-    miss (signup-wall redirect, layout change) reads as "no data", not an error.
-    """
-    if not html:
-        return {}
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-    except Exception as exc:  # pragma: no cover - defensive only
-        log.debug("[enrich] BeautifulSoup failed (linkedin): %s", exc)
-        return {}
-    node = soup.select_one("div.show-more-less-html__markup")
-    if node is None:
-        return {}
-    text = node.get_text(" ", strip=True)
-    if not text:
-        return {}
-    return {"description_text": text}
-
-
 __all__ = [
     "_fix_mojibake",
     "_find_jobposting",
     "parse_greenhouse_html",
     "_parse_detail_page",
     "parse_jsonld_jobposting",
-    "parse_linkedin_description",
 ]

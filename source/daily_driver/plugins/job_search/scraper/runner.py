@@ -1004,10 +1004,10 @@ class _JobSink:
                 self._pre_write_done = True
                 self.pre_write_hook()
             atomic_write_rows(self.csv_path, out_header, out_rows)
-            # Detail/LinkedIn enrichment sets description_text via with_updates
-            # directly on sink.rows, never through append_source -- fold the
-            # snapshot's current descriptions in here so flush is the one place
-            # that reliably observes every description, however it was filled.
+            # Detail enrichment sets description_text via with_updates directly
+            # on sink.rows, never through append_source -- fold the snapshot's
+            # current descriptions in here so flush is the one place that
+            # reliably observes every description, however it was filled.
             for enriched_job in snapshot:
                 if (
                     enriched_job.url
@@ -1466,7 +1466,7 @@ def run_backfill(
     dry_run: bool = False,
     limit: int | None = None,
     force: bool = False,
-    cooldown_hours: int | None = None,
+    cooldown_hours: int | str | None = None,
     emit_json: bool = False,
 ) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
@@ -1529,18 +1529,24 @@ def run_backfill(
 
     # Force-update cooldown: skip rows enriched within the window so an
     # interrupted force-update resumes instead of restarting. CLI --cooldown-hours
-    # overrides the config default; the cutoff is only meaningful under force, and
-    # 0 hours disables it (re-enrich every active row, the legacy behavior).
-    resolved_cooldown_hours = (
+    # overrides the config default; the cutoff is only meaningful under force.
+    # `0` disables it (re-enrich every active row); `missing` re-enriches only
+    # rows with no enrichment timestamp yet -- modelled as a cutoff before any
+    # real timestamp, so every already-enriched row falls "within cooldown".
+    resolved_cooldown: int | str = (
         cooldown_hours
         if cooldown_hours is not None
         else plugin.enrichment.force_recook_cooldown_hours
     )
-    cooldown_cutoff = (
-        backfill_started_at - timedelta(hours=resolved_cooldown_hours)
-        if force and resolved_cooldown_hours > 0
-        else None
-    )
+    cooldown_cutoff: datetime | None
+    if not force:
+        cooldown_cutoff = None
+    elif resolved_cooldown == "missing":
+        cooldown_cutoff = datetime.min.replace(tzinfo=timezone.utc)
+    elif isinstance(resolved_cooldown, int) and resolved_cooldown > 0:
+        cooldown_cutoff = backfill_started_at - timedelta(hours=resolved_cooldown)
+    else:  # 0 (or unexpected) -> cooldown disabled
+        cooldown_cutoff = None
 
     # Dry-run reads outside the lock: it never writes, so a concurrent run can't
     # be clobbered by it. The real path reads INSIDE the lock (below).
@@ -1732,15 +1738,14 @@ def run_backfill(
             ):
                 # title + "Enriching jobs" header + the phase rows the wave will
                 # render -- reserve the block in one scroll-region set, as run()
-                # does, to avoid the per-bar resize gap. Phases: detail (always),
-                # fit/notes (when enabled), and LinkedIn descriptions (whenever
-                # fit/notes runs -- it has no other consumer). Must match the
-                # fit_enabled gate in _enrich_wave or the reserved row count
-                # drifts from the phases actually rendered.
+                # does, to avoid the per-bar resize gap. Phases: detail (always)
+                # and fit/notes (when enabled). Must match the fit_enabled gate in
+                # _enrich_wave or the reserved row count drifts from the phases
+                # actually rendered.
                 enrich_cfg = plugin.enrichment
                 phase_rows = 1
                 if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
-                    phase_rows += 2
+                    phase_rows += 1
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
                 _, fit_stats = _enrich_wave(
@@ -1755,6 +1760,7 @@ def run_backfill(
                     fit_budget=fit_budget,
                     force=force,
                     cooldown_cutoff=cooldown_cutoff,
+                    capture_descriptions=False,
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -1814,14 +1820,19 @@ def run_backfill(
             f"Backfill complete: +{enriched} Fit/Notes. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
-        # Rows with no obtainable description (e.g. a signup-walled posting) are
-        # left un-scored rather than guessed at; call it out so the phase-line
-        # count isn't mistaken for ordinary skips. Mirrors the run() path.
+        # Backfill relies solely on the cached descriptions (descriptions.jsonl):
+        # it never fetches over the network. A row with no cached description is
+        # left un-scored (and gets no enrichment timestamp) rather than guessed
+        # at; call it out so the phase-line count isn't mistaken for ordinary
+        # skips. Descriptions are captured at scrape time; a row already in
+        # jobs.csv is deduped by a re-run, so recovering it means deleting it so
+        # the next scrape re-adds (and describes) it.
         no_description_count = fit_stats.get("no_description", 0)
         if no_description_count:
             Console.warning(
-                f"{no_description_count} job(s) had no description; Fit/Notes "
-                "left blank. Delete the row and re-run a scrape to retry."
+                f"{no_description_count} job(s) had no cached description; "
+                "Fit/Notes left blank. Descriptions are captured during "
+                "`jobs run`; delete a row so a re-scrape re-adds and describes it."
             )
         # The rewrite ran (this point is reached only past the no-enrichment early
         # return), so any status spellings it canonicalized are now on disk. Make
@@ -1963,6 +1974,7 @@ def _enrich_wave(
     attempted: dict[str, set[str]] | None = None,
     force: bool = False,
     cooldown_cutoff: datetime | None = None,
+    capture_descriptions: bool = True,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -1972,7 +1984,10 @@ def _enrich_wave(
     remaining slice of the shared running total (None = the config cap; an
     explicit 0 spends nothing). ``set_phase`` records the coarse run phase for
     the manifest. ``force`` re-enriches and overwrites every active row's
-    Fit/Notes/Remote (backfill --force-update). Flushes per phase and on the
+    Fit/Notes/Remote (backfill --force-update). ``capture_descriptions`` False
+    (the backfill path) keeps descriptions cache-only: the detail phase fills
+    comp but not description_text, and a row with no cached description is left
+    un-enriched by fit/notes rather than fetched. Flushes per phase and on the
     periodic hook; the caller's try/except flushes once more on interrupt.
     Returns ``(detail_stats, fn_stats)``.
     """
@@ -1990,50 +2005,20 @@ def _enrich_wave(
     fit_phase: Phase | None = None
     if fit_enabled:
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
-    # LinkedIn description backfill rides between detail and fit/notes so the
-    # descriptions it fills feed Fit/Notes in the same wave. Only meaningful when
-    # fit/notes runs (it has no other consumer).
-    linkedin_phase: Phase | None = None
-    if fit_enabled:
-        linkedin_phase = enrich_group.phase(
-            f"LinkedIn descriptions{wave_label}", total=total
-        )
 
     if set_phase is not None:
         set_phase("detail")
     detail_phase.start()
-    _, detail_stats = enrich_job_details(jobs, ctx, progress=detail_phase.advance)
+    _, detail_stats = enrich_job_details(
+        jobs,
+        ctx,
+        progress=detail_phase.advance,
+        capture_descriptions=capture_descriptions,
+    )
     detail_phase.done(render_detail_summary(detail_stats))
     # Persist detail comp/posted_date before the LLM phase; a disk error here
     # degrades rather than aborting (the final flush retries and propagates).
     sink.flush_periodic()
-
-    if linkedin_phase is not None:
-        from daily_driver.plugins.job_search.scraper.enrichment.linkedin import (
-            fetch_linkedin_descriptions,
-            render_linkedin_summary,
-        )
-        from daily_driver.plugins.job_search.scraper.enrichment.llm import (
-            fit_notes_target_indices,
-        )
-
-        # Same slice the fit/notes pass will enrich this wave, so the two never
-        # drift: fill descriptions for exactly those rows, not the full backlog.
-        target_idx = fit_notes_target_indices(
-            jobs,
-            fit_budget,
-            enrich_cfg,
-            exclude_fit_urls,
-            force=force,
-            cooldown_cutoff=cooldown_cutoff,
-        )
-        linkedin_phase.start()
-        linkedin_phase.set_total(len(target_idx))
-        _, linkedin_stats = fetch_linkedin_descriptions(
-            jobs, ctx, target_idx, progress=linkedin_phase.advance
-        )
-        linkedin_phase.done(render_linkedin_summary(linkedin_stats))
-        sink.flush_periodic()
 
     if set_phase is not None:
         set_phase("enrichment")

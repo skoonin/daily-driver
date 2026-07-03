@@ -135,9 +135,9 @@ def test_append_source_scraped_description_lands_in_sidecar_on_flush(
 def test_flush_persists_description_set_after_construction_by_enrichment(
     tmp_path: Path,
 ) -> None:
-    """detail.py / linkedin.py fill description_text by replacing a sink.rows
-    slot with ``with_updates`` in place, never through ``append_source``. flush
-    must still observe and persist it -- the regression this fix closes."""
+    """detail.py fills description_text by replacing a sink.rows slot with
+    ``with_updates`` in place, never through ``append_source``. flush must still
+    observe and persist it -- the regression this fix closes."""
     from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
     from daily_driver.plugins.job_search.scraper.descriptions import (
         load_descriptions,

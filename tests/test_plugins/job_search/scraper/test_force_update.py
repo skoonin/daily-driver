@@ -160,6 +160,36 @@ def test_cooldown_config_rejects_negative() -> None:
         EnrichmentConfig(force_recook_cooldown_hours=-1)
 
 
+def test_cooldown_config_accepts_missing() -> None:
+    from daily_driver.plugins.job_search.config import EnrichmentConfig
+
+    cfg = EnrichmentConfig(force_recook_cooldown_hours="missing")
+    assert cfg.force_recook_cooldown_hours == "missing"
+
+
+def test_cooldown_config_rejects_other_strings() -> None:
+    from pydantic import ValidationError
+
+    from daily_driver.plugins.job_search.config import EnrichmentConfig
+
+    with pytest.raises(ValidationError):
+        EnrichmentConfig(force_recook_cooldown_hours="nope")
+
+
+def test_cli_cooldown_parser_accepts_missing_and_ints() -> None:
+    import argparse
+
+    from daily_driver.plugins.job_search.cli import _cooldown_hours
+
+    assert _cooldown_hours("missing") == "missing"
+    assert _cooldown_hours("MISSING") == "missing"
+    assert _cooldown_hours("12") == 12
+    assert _cooldown_hours("0") == 0
+    for bad in ("nope", "-1", "1.5"):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _cooldown_hours(bad)
+
+
 # --- Force-update cooldown eligibility ---------------------------------------
 
 _NOW = dt.datetime(2026, 6, 30, 12, 0, tzinfo=dt.timezone.utc)
@@ -197,6 +227,23 @@ def test_none_cutoff_preserves_overwrite_all() -> None:
     assert _fit_notes_eligible(fresh, force=True, cooldown_cutoff=None) is True
 
 
+def test_missing_sentinel_cutoff_only_never_enriched_eligible() -> None:
+    """--cooldown-hours=missing is modelled as a cutoff before any real timestamp,
+    so every already-enriched row is skipped and only never-enriched rows
+    (date_enriched=None) are eligible."""
+    missing_cutoff = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+    enriched = _enriched(fit=8, notes="n", date_enriched=_NOW - dt.timedelta(days=999))
+    assert (
+        _fit_notes_eligible(enriched, force=True, cooldown_cutoff=missing_cutoff)
+        is False
+    )
+    never = _enriched(fit=8, notes="n")
+    assert never.date_enriched is None
+    assert (
+        _fit_notes_eligible(never, force=True, cooldown_cutoff=missing_cutoff) is True
+    )
+
+
 def test_cooldown_ignored_without_force() -> None:
     """Plain backfill ignores the cutoff; a fully-filled row is still skipped."""
     fresh = _enriched(fit=8, notes="n", date_enriched=_NOW - dt.timedelta(hours=2))
@@ -205,8 +252,11 @@ def test_cooldown_ignored_without_force() -> None:
     assert _fit_notes_eligible(empty, force=False, cooldown_cutoff=_CUTOFF) is True
 
 
-def test_enrich_stamps_date_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A successful fit/notes write stamps date_enriched (UTC-aware)."""
+def test_enrich_stamps_date_enriched_in_local_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful fit/notes write stamps date_enriched in local time (tz-aware),
+    so the CSV reads in the user's clock rather than UTC."""
 
     def fake(prompt: str, *a: Any, **k: Any) -> str:
         return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
@@ -217,6 +267,10 @@ def test_enrich_stamps_date_enriched(monkeypatch: pytest.MonkeyPatch) -> None:
     out, _ = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
     assert out[0].date_enriched is not None
     assert out[0].date_enriched.tzinfo is not None
+    # Local system time -> matches the current local UTC offset (env-agnostic).
+    assert (
+        out[0].date_enriched.utcoffset() == dt.datetime.now().astimezone().utcoffset()
+    )
 
 
 # --- Driver-level threading (run_backfill -> enrich_fit_and_notes) -----------
@@ -274,7 +328,13 @@ def _plugin(max_enrich_fit: int = 50) -> JobSearchPlugin:
 def _stub_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -421,3 +481,48 @@ def test_no_cooldown_cutoff_without_force(
     """Plain backfill never computes a cutoff regardless of config."""
     cutoff = _capture_cooldown(tmp_path, monkeypatch, filled=False)
     assert cutoff is None
+
+
+def test_cooldown_missing_resolves_to_sentinel_cutoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--cooldown-hours missing under force resolves to a pre-epoch cutoff, so
+    only never-enriched rows survive eligibility."""
+    cutoff = _capture_cooldown(
+        tmp_path, monkeypatch, force=True, cooldown_hours="missing"
+    )
+    assert cutoff == dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+
+def test_cooldown_missing_from_config_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """config force_recook_cooldown_hours='missing' takes effect with no CLI flag."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="C", link="https://example.com/c", fit="8", notes="done")],
+    )
+    _stub_detail(monkeypatch)
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    captured: dict[str, Any] = {}
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        captured["cooldown_cutoff"] = kwargs.get("cooldown_cutoff")
+        return jobs, {"enriched": 0, "skipped_budget": 0, "failed": 0}
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "scraper": {"enabled": True},
+            "enrichment": {"force_recook_cooldown_hours": "missing"},
+        }
+    )
+    runner.run_backfill(plugin, csv_path, tmp_path, force=True)
+
+    assert captured["cooldown_cutoff"] == dt.datetime.min.replace(
+        tzinfo=dt.timezone.utc
+    )

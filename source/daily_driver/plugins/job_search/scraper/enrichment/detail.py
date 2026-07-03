@@ -169,8 +169,15 @@ def enrich_job_details(
     ctx: ScrapeContext,
     *,
     progress: ProgressCallback | None = None,
+    capture_descriptions: bool = True,
 ) -> tuple[list[EnrichedJob], dict[str, Any]]:
     """Fetch each job's detail page and fill comp/posted_date/description.
+
+    ``capture_descriptions`` gates only the ``description_text`` write: with it
+    False (the backfill path), a detail fetch still fills comp/posted_date but
+    never writes a description, so backfill relies solely on the sidecar cache
+    for descriptions. The fetch itself is unchanged — it is gated by comp
+    presence, not description — so comp still backfills.
 
     Fetches run on a small thread pool (``min(4, n_hosts)`` workers) with
     per-host politeness: requests to the same host stay ``detail_delay_seconds``
@@ -284,7 +291,7 @@ def enrich_job_details(
         if isinstance(posted, dt.date) and job.posted_date is None:
             updates["posted_date"] = posted
         desc = details.get("description_text", "") or ""
-        if desc and not job.description_text:
+        if capture_descriptions and desc and not job.description_text:
             updates["description_text"] = desc
         if updates:
             out[idx] = job.with_updates(**updates)

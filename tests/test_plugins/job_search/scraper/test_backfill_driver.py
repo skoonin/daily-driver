@@ -78,7 +78,13 @@ def _stub_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     """No-op detail enrichment: leaves rows unchanged, reports zero fetched."""
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(jobs: list[Any], ctx: Any, *, progress: Any = None) -> Any:
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -172,7 +178,7 @@ def test_backfill_warns_when_rows_have_no_description(
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     err = capsys.readouterr().err
-    assert "2 job(s) had no description" in err
+    assert "2 job(s) had no cached description" in err
 
 
 def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
@@ -239,61 +245,68 @@ def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
     assert seen_descriptions["Prefilled"] == "Already-fetched description."
 
 
-def test_backfill_no_relinkedin_fetch_for_url_already_in_sidecar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_backfill_is_description_cache_only_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Sidecar-hydrated description feeds the real (unstubbed)
-    ``fetch_linkedin_descriptions`` fill-missing-only gate, so the LinkedIn HTTP
-    seam is never hit for a URL the sidecar already has -- the "no re-fetch"
-    regression."""
-    from unittest.mock import MagicMock
-
-    from daily_driver.plugins.job_search.scraper.descriptions import (
-        atomic_write_descriptions,
-    )
+    """Backfill never fetches or writes descriptions: it drives the detail phase
+    with ``capture_descriptions=False``, writes nothing to the sidecar, and warns
+    that an uncached row is left un-enriched. (The dedicated LinkedIn fetcher was
+    removed; descriptions are captured only during ``jobs run``.)"""
+    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
 
     csv_path = tmp_path / "jobs.csv"
-    _write_jobs_csv(
-        csv_path,
-        [_row(company="LI", link="https://www.linkedin.com/jobs/view/999")],
-    )
-    atomic_write_descriptions(
-        csv_path, {"https://www.linkedin.com/jobs/view/999": "Stored description."}
-    )
-    _stub_detail(monkeypatch)
+    # No descriptions.jsonl seeded -> the row has no cached description.
+    _write_jobs_csv(csv_path, [_row(company="NoDesc", link="https://example.com/x")])
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
+    captured: dict[str, Any] = {}
+
+    def fake_detail(
+        jobs: list[Any],
+        ctx: Any,
+        *,
+        progress: Any = None,
+        capture_descriptions: bool = True,
+    ) -> Any:
+        captured["capture_descriptions"] = capture_descriptions
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 0,
+            "enriched": 0,
+            "failed": 0,
+            "skipped": len(jobs),
+            "skip_reasons": {},
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+
     def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        # Model the real no-description skip: no LLM call, no write, counted.
         progress = kwargs.get("progress")
         if progress is not None:
             progress(len(jobs))
-        return (
-            jobs,
-            {"enriched": 0, "skipped_budget": 0, "failed": 0},
-        )
+        return jobs, {
+            "enriched": 0,
+            "skipped_budget": 0,
+            "no_description": 1,
+            "failed": 0,
+        }
 
     monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
-    linkedin_api_get = MagicMock()
-    monkeypatch.setattr(
-        "daily_driver.plugins.job_search.scraper.enrichment.linkedin._api_get",
-        linkedin_api_get,
-    )
+    runner.run_backfill(_plugin(), csv_path, tmp_path)
 
-    plugin = JobSearchPlugin.model_validate(
-        {
-            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
-            "enrichment": {
-                "max_enrich_fit": 50,
-                "detail_delay_seconds": 0,
-            },
-        }
-    )
-
-    runner.run_backfill(plugin, csv_path, tmp_path)
-
-    linkedin_api_get.assert_not_called()
+    # Backfill told the detail phase not to capture descriptions.
+    assert captured["capture_descriptions"] is False
+    # No description was written to the sidecar.
+    assert load_descriptions(csv_path) == {}
+    # The user is told the row has no cached description.
+    assert "no cached description" in capsys.readouterr().err
 
 
 def test_backfill_gcs_orphaned_descriptions(
