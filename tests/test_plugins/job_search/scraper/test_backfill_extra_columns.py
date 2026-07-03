@@ -77,7 +77,7 @@ def _write_with_extra(csv_path: Path) -> list[str]:
                 "Role": "SRE",
                 "Location": "Berlin, Germany",
                 "Date Found": "2026-01-02",
-                "Date Last Seen": "2026-01-02",
+                "Date Verified": "2026-01-02",
                 "Link": "https://example.com/job/1",
                 "Source": "remoteok",
                 "Priority": "high",

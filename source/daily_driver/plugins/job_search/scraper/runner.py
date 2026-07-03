@@ -796,7 +796,7 @@ class _JobSink:
         # Rows this run re-saw in a scrape (the deduped "known" branch): identity
         # (_csv_row_identity-compatible -- stripped URL, else (company, role) key)
         # -> the scraped job dict. Consumed once by ``_apply_rescan_updates`` in
-        # ``flush`` to refresh Date Last Seen and heal a missing description on the
+        # ``flush`` to refresh Date Verified and heal a missing description on the
         # carried pre-existing row. Empty for backfill (it never scrapes).
         self._reseen: dict[str, dict[str, str]] = {}
         # URLs that already carried a non-empty sidecar description at run start.
@@ -1032,12 +1032,12 @@ class _JobSink:
             job = self._reseen.get(identity)
             if job is None:
                 continue
-            # Freshness: mark re-seen alive today (drives stale detection / prune).
-            # Log only on an actual change so periodic + final flushes don't repeat
-            # the line for the same row.
-            if row.get("Date Last Seen") != stamp:
-                log.info("Re-seen, Date Last Seen -> %s: %s", stamp, identity)
-                row["Date Last Seen"] = stamp
+            # Freshness: a re-sighting is affirmative liveness evidence (drives
+            # stale detection / prune). Log only on an actual change so periodic
+            # + final flushes don't repeat the line for the same row.
+            if row.get("Date Verified") != stamp:
+                log.info("Re-seen, Date Verified -> %s: %s", stamp, identity)
+                row["Date Verified"] = stamp
             # Heal a missing sidecar description (Indeed etc. carry it only at
             # scrape; the detail enricher is bot-walled). Fill-only; never
             # overwrite an existing entry (a re-scrape may be truncated).
@@ -1079,7 +1079,7 @@ class _JobSink:
         """True when this run re-saw a known row.
 
         A --no-enrich run makes no final rewrite, so it must flush explicitly to
-        persist the refreshed Date Last Seen / healed description this signals.
+        persist the refreshed Date Verified / healed description this signals.
         """
         return bool(self._reseen)
 
@@ -1178,10 +1178,10 @@ class _JobSink:
                     if _csv_row_identity(row) not in run_identities
                 ]
             # Act on rows we re-saw this run BEFORE the no-churn comparison, so a
-            # re-seen-only run (Date Last Seen bumped, no new rows) is detected as
+            # re-seen-only run (Date Verified bumped, no new rows) is detected as
             # changed and rewrites jobs.csv. Mutates ``leading_rows`` in place
             # under the held ``_rows_lock``. The two update seams touch
-            # disjoint cells (folded: enrichment-owned; rescan: Date Last Seen
+            # disjoint cells (folded: enrichment-owned; rescan: Date Verified
             # + description heal), so their order is not load-bearing.
             self._apply_folded_updates(leading_rows)
             self._apply_rescan_updates(leading_rows)
@@ -1716,6 +1716,7 @@ def run_backfill(
         CANONICAL_HEADER,
         _make_backup,
         format_canonicalized_notice,
+        migrate_legacy_header,
         read_rows,
     )
     from daily_driver.plugins.job_search.scraper.descriptions import (
@@ -1828,6 +1829,10 @@ def run_backfill(
     except TimeoutError:
         raise ScraperError(LOCK_GIVEUP_MESSAGE) from None
     try:
+        # One-time schema upgrade before the snapshot: without it the old
+        # "Date Last Seen" column would be classified as an unknown extra and
+        # accreted as a stray 16th column on the rewrite.
+        migrate_legacy_header(csv_path)
         # READ INSIDE THE LOCK: the snapshot the rewrite is built from must be
         # consistent with the lock window, or a concurrent run's append between
         # an out-of-lock read and the rewrite would be lost.
@@ -2521,6 +2526,7 @@ def _run_impl(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
+        migrate_legacy_header,
         read_rows,
     )
 
@@ -2554,6 +2560,13 @@ def _run_impl(
         Console.error(LOCK_GIVEUP_MESSAGE)
         return 1
     try:
+        # One-time schema upgrade (Date Last Seen -> Date Verified + Date
+        # Closed) BEFORE the header is captured: the run path reuses the
+        # on-disk header for every write, so an un-migrated header would
+        # silently drop new-column writes for the whole run. Never on
+        # dry-run -- a preview must not rewrite the file.
+        if not dry_run:
+            migrate_legacy_header(csv_path)
         known_urls, known_keys, header = load_existing_jobs(csv_path)
         # Captured under the same lock as the dedup seed: the sink's flush
         # rewrites the WHOLE file, so it must carry these rows through
@@ -3290,7 +3303,7 @@ def _run_impl(
         sink.flush()
     elif sink.has_resightings() or sink._descriptions_dirty:
         # --no-enrich makes no enrichment rewrite, but scrape facts still need
-        # persisting: a re-sighting's refreshed Date Last Seen / healed
+        # persisting: a re-sighting's refreshed Date Verified / healed
         # description, and any description captured at scrape (the sidecar is
         # only written by flush -- skipping it here would silently drop every
         # scraped description, leaving the backlog wave and backfill nothing

@@ -2260,7 +2260,7 @@ def test_run_completion_line_reports_total_run_time(
     assert "Total run time:" in " ".join(err.split())
 
 
-# ── Upsert-on-rescan: heal descriptions + refresh Date Last Seen ─────────────
+# ── Upsert-on-rescan: heal descriptions + refresh Date Verified ─────────────
 
 
 def _seed_jobs_csv(csv_path: Path, rows: list[dict[str, str]]) -> None:
@@ -2299,10 +2299,10 @@ def _rescan_sink(
     )
 
 
-def test_reseen_known_url_bumps_date_last_seen(
+def test_reseen_known_url_bumps_date_verified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Re-seeing a known URL bumps its Date Last Seen to today, with no new or
+    """Re-seeing a known URL bumps its Date Verified to today, with no new or
     duplicate row -- the freshness signal that makes a last-seen prune reliable."""
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(
@@ -2316,7 +2316,7 @@ def test_reseen_known_url_bumps_date_last_seen(
                 "Link": "https://a/1",
                 "Source": "remoteok",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             }
         ],
     )
@@ -2331,15 +2331,15 @@ def test_reseen_known_url_bumps_date_last_seen(
 
     rows = _read_csv(csv_path)
     assert len(rows) == 1
-    assert rows[0]["Date Last Seen"] == "2026-07-03"
+    assert rows[0]["Date Verified"] == "2026-07-03"
     assert rows[0]["Date Found"] == "2026-06-01"
     assert sink.rescan_summary() == (1, 0, 0)  # (still_visible, not_seen, healed)
 
 
-def test_unseen_row_keeps_old_date_last_seen(
+def test_unseen_row_keeps_old_date_verified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A pre-existing row NOT returned by the scrape keeps its old Date Last Seen
+    """A pre-existing row NOT returned by the scrape keeps its old Date Verified
     even when other URLs are re-seen -- this is what makes deleting by last-seen
     safe (a live-but-unscraped row is not silently aged forward)."""
     csv_path = tmp_path / "jobs.csv"
@@ -2354,7 +2354,7 @@ def test_unseen_row_keeps_old_date_last_seen(
                 "Link": "https://a/1",
                 "Source": "remoteok",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             },
             {
                 "Status": "found",
@@ -2364,7 +2364,7 @@ def test_unseen_row_keeps_old_date_last_seen(
                 "Link": "https://a/2",
                 "Source": "remoteok",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             },
         ],
     )
@@ -2376,8 +2376,8 @@ def test_unseen_row_keeps_old_date_last_seen(
     sink.flush()
 
     rows = {r["Company"]: r for r in _read_csv(csv_path)}
-    assert rows["Seen"]["Date Last Seen"] == "2026-07-03"
-    assert rows["Unseen"]["Date Last Seen"] == "2026-06-01"
+    assert rows["Seen"]["Date Verified"] == "2026-07-03"
+    assert rows["Unseen"]["Date Verified"] == "2026-06-01"
     # One re-confirmed live, one carried but not seen this run.
     assert sink.rescan_summary() == (1, 1, 0)  # (still_visible, not_seen, healed)
 
@@ -2404,7 +2404,7 @@ def test_reseen_known_url_heals_missing_description(
                 "Link": "https://a/1",
                 "Source": "indeed",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             }
         ],
     )
@@ -2428,7 +2428,7 @@ def test_reseen_emits_verbose_log_lines_on_update(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """At verbose (INFO) level, each re-seen row's Date Last Seen refresh and each
+    """At verbose (INFO) level, each re-seen row's Date Verified refresh and each
     healed description is logged per-row, so ``-v`` shows exactly what changed."""
     import logging
 
@@ -2444,7 +2444,7 @@ def test_reseen_emits_verbose_log_lines_on_update(
                 "Link": "https://a/1",
                 "Source": "indeed",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             }
         ],
     )
@@ -2459,7 +2459,7 @@ def test_reseen_emits_verbose_log_lines_on_update(
         sink.flush()
 
     messages = [r.getMessage() for r in caplog.records]
-    assert any("Date Last Seen -> 2026-07-03" in m for m in messages), messages
+    assert any("Date Verified -> 2026-07-03" in m for m in messages), messages
     assert any("Healed missing description" in m for m in messages), messages
 
 
@@ -2485,7 +2485,7 @@ def test_reseen_does_not_overwrite_existing_description(
                 "Link": "https://a/1",
                 "Source": "indeed",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             }
         ],
     )
@@ -2529,7 +2529,7 @@ def test_run_reports_reseen_summary_line(
                     "Link": link,
                     "Source": "remoteok",
                     "Date Found": "2026-06-01",
-                    "Date Last Seen": "2026-06-01",
+                    "Date Verified": "2026-06-01",
                 }
             )
 
@@ -2568,7 +2568,7 @@ def test_run_no_enrich_persists_resightings(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Re-sighting is a scrape fact, so a --no-enrich run still refreshes
-    Date Last Seen and heals a missing description (the one full-file rewrite it
+    Date Verified and heals a missing description (the one full-file rewrite it
     makes) and reports the Scraping funnel -- but no Enrichment section."""
     from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
     from daily_driver.plugins.job_search.scraper.descriptions import (
@@ -2592,7 +2592,7 @@ def test_run_no_enrich_persists_resightings(
                 "Link": "https://x/1",
                 "Source": "indeed",
                 "Date Found": "2026-06-01",
-                "Date Last Seen": "2026-06-01",
+                "Date Verified": "2026-06-01",
             }
         )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
@@ -2615,7 +2615,7 @@ def test_run_no_enrich_persists_resightings(
 
     rows = _read_csv(csv_path)
     assert len(rows) == 1
-    assert rows[0]["Date Last Seen"] == "2026-07-03"
+    assert rows[0]["Date Verified"] == "2026-07-03"
     assert load_descriptions(csv_path) == {"https://x/1": "Full body from scrape."}
     err = " ".join(capsys.readouterr().err.split())
     assert "Scraping" in err

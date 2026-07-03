@@ -230,7 +230,7 @@ def add_parser(
         required=True,
         metavar="SPEC",
         help=(
-            "Prune rows last seen before SPEC "
+            "Prune rows last verified before SPEC "
             "(today, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
         ),
     )
@@ -548,13 +548,15 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     )
     table.add_column("Company")
     table.add_column("Status")
-    table.add_column("Date Last Seen")
+    table.add_column("Date Verified")
     table.add_column("Role")
     for row in candidates:
         table.add_row(
             row.get("Company", ""),
             row.get("Status", ""),
-            row.get("Date Last Seen", "") or row.get("Date Found", ""),
+            row.get("Date Verified", "")
+            or row.get("Date Last Seen", "")
+            or row.get("Date Found", ""),
             row.get("Role", ""),
         )
     console.print(table)

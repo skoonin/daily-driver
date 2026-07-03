@@ -283,7 +283,9 @@ Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut sh
 
 ### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run] [-j|--json]`
 
-Moves stale rows from `jobs.csv` to `jobs.archive.csv`. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`. `--json` emits the candidate/archived set (`dry_run`, `candidates`, `archived`) in the `{schema, data}` envelope.
+Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Staleness ages from the `Date Verified` column — the last date the job was affirmatively confirmed live (a scrape re-sighting today; board-listing and URL checks when the verify phases land) — falling back to `Date Found` for rows never confirmed since discovery. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`. `--json` emits the candidate/archived set (`dry_run`, `candidates`, `archived`) in the `{schema, data}` envelope.
+
+**Schema note:** `Date Verified` replaced the pre-0.4 `Date Last Seen` column, and a `Date Closed` column (written by the upcoming verify phases) was added. Existing files are upgraded automatically — the first `jobs run`, `jobs backfill`, or `jobs prune` renames the header cell in place (values preserved) and appends the empty `Date Closed` column.
 
 ## Scheduler (macOS)
 

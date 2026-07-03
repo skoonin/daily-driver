@@ -280,20 +280,28 @@ class EnrichedJob(BaseModel):
     status: str = ""
     skip_reason: str = ""
     date_applied: dt.date | None = None
-    # Drives `jobs prune --older-than`. `jobs run` refreshes this to today for
-    # every re-seen row (_JobSink._apply_rescan_updates), so prune ages from
-    # last-sighting. Falls back to Date Found on write when unset -- a legacy row,
-    # or one never re-seen since discovery.
-    date_last_seen: dt.date | None = None
+    # Last AFFIRMATIVE evidence this job is live: a search re-sighting, presence
+    # in a full board listing, or a direct URL check. Drives `jobs prune
+    # --older-than`. `jobs run` refreshes it to today for every re-seen row
+    # (_JobSink._apply_rescan_updates). Falls back to Date Found on write when
+    # unset -- a legacy row, or one never confirmed since discovery. Replaces
+    # the pre-0.4 "Date Last Seen" column (renamed in place on first write).
+    date_verified: dt.date | None = None
+    # Set when verification affirmatively found the posting gone (board-diff
+    # miss or URL check). None == never verified closed. Written by the
+    # lifecycle/verify phases; enrichment never touches it.
+    date_closed: dt.date | None = None
     # UTC instant of the last fit/notes enrichment write. Distinct from
-    # date_last_seen (date-only, prune-aging): this is a full timestamp that
+    # date_verified (date-only, prune-aging): this is a full timestamp that
     # drives the `backfill --force-update` cooldown (skip rows re-cooked within
     # the window). None == never enriched / pre-migration row.
     date_enriched: dt.datetime | None = None
 
     # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
-    # derived from this map's key order and must stay byte-for-byte identical to
-    # existing jobs.csv files.
+    # derived from this map's key order. "Date Verified" occupies the old
+    # "Date Last Seen" slot so the one-time header migration is a rename in
+    # place (values stay put); "Date Closed" appends at the end for the same
+    # reason. csv_io.migrate_legacy_header upgrades old files on first write.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
         "Company": "company",
@@ -305,10 +313,11 @@ class EnrichedJob(BaseModel):
         "Notes": "notes",
         "Date Found": "date_found",
         "Date Applied": "date_applied",
-        "Date Last Seen": "date_last_seen",
+        "Date Verified": "date_verified",
         "Date Enriched": "date_enriched",
         "Link": "url",
         "Source": "source",
+        "Date Closed": "date_closed",
     }
     CANONICAL_HEADER: ClassVar[list[str]] = list(CSV_COLUMN_TO_ATTR)
 
@@ -367,12 +376,15 @@ class EnrichedJob(BaseModel):
                 "" if self.date_applied is None else self.date_applied.isoformat()
             ),
             # Seed from Date Found on insert so prune ages from first-discovery.
-            "Date Last Seen": (self.date_last_seen or self.date_found).isoformat(),
+            "Date Verified": (self.date_verified or self.date_found).isoformat(),
             "Date Enriched": (
                 "" if self.date_enriched is None else self.date_enriched.isoformat()
             ),
             "Link": self.url,
             "Source": self.source,
+            "Date Closed": (
+                "" if self.date_closed is None else self.date_closed.isoformat()
+            ),
         }
 
     @classmethod
@@ -426,7 +438,12 @@ class EnrichedJob(BaseModel):
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
-            date_last_seen=_opt_date(row.get("Date Last Seen", "")),
+            # Legacy fallback: archive rows (and any not-yet-migrated file) may
+            # still carry the pre-0.4 "Date Last Seen" column.
+            date_verified=_opt_date(
+                row.get("Date Verified", "") or row.get("Date Last Seen", "")
+            ),
+            date_closed=_opt_date(row.get("Date Closed", "")),
             date_enriched=_opt_dt(row.get("Date Enriched", "")),
             url=row.get("Link", ""),
             source=source,

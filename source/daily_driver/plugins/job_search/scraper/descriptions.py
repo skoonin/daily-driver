@@ -1,6 +1,6 @@
 """Sidecar persistence for scraped/fetched job description text.
 
-``EnrichedJob.description_text`` is not a jobs.csv column (the 14-column
+``EnrichedJob.description_text`` is not a jobs.csv column (the 15-column
 canonical header is frozen), so it would otherwise be re-fetched on every
 backfill. This module persists it separately, keyed by URL, as
 ``descriptions.jsonl`` beside ``jobs.csv`` -- one ``{"url": ..., "text": ...}``

@@ -28,7 +28,7 @@ def _write_minimal_csv(path: Path, *, needs_enrichment: bool = True) -> None:
         row["Link"] = "https://example.com/j"
         row["Source"] = "test"
         row["Date Found"] = "2026-01-01"
-        row["Date Last Seen"] = "2026-01-01"
+        row["Date Verified"] = "2026-01-01"
         if not needs_enrichment:
             row["Fit"] = "8"
             row["Notes"] = "done"

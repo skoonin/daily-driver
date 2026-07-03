@@ -55,7 +55,7 @@ def _row(
         "Fit": fit,
         "Comp": "",
         "Date Found": "2026-04-01",
-        "Date Last Seen": "2026-04-01",
+        "Date Verified": "2026-04-01",
         "Date Applied": "",
         "Link": link,
         "Source": "remoteok",
