@@ -217,6 +217,18 @@ def dedup_key(company: str, role: str) -> str:
     return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
 
 
+# Cells the enrichment waves may fill on a pre-existing (backlog) row. The
+# in-place write-back is restricted to these so a concurrent hand-edit to any
+# other cell (Status, Location, dates, ...) survives the run.
+_ENRICHMENT_OWNED_CELLS: tuple[str, ...] = (
+    "Fit",
+    "Comp",
+    "Notes",
+    "Remote",
+    "Date Enriched",
+)
+
+
 def _csv_row_identity(row: dict[str, str]) -> str:
     """Stable identity for a jobs.csv row: stripped Link URL, else dedup key.
 
@@ -740,6 +752,14 @@ class _JobSink:
         }
         # Master list every enricher mutates in place; also the flush source.
         self.rows: list[EnrichedJob] = []
+        # Never-enriched backlog rows this run re-enriches in place. Kept OFF
+        # ``rows``: routing them there would append them at the bottom of
+        # jobs.csv (reorder) and inflate ``written``/new_jobs. Must be THE
+        # SAME list object the backlog wave mutates via slot replacement so
+        # flush_periodic observes in-flight results (cf. backfill's
+        # ``sink.rows = jobs``). Landed at flush by _apply_folded_updates:
+        # enrichment-owned cells only, position preserved.
+        self.folded_rows: list[EnrichedJob] = []
         # Unknown / hand-added columns (e.g. a user's "Priority"), one dict per
         # row in ``rows``, aligned POSITIONALLY and 1:1. Positional (not Link-
         # keyed) carry-through is the only lossless identity: an empty-Link row
@@ -974,6 +994,30 @@ class _JobSink:
                         "Healed missing description (%d chars): %s", len(desc), url
                     )
 
+    def _apply_folded_updates(self, leading_rows: list[dict[str, str]]) -> None:
+        """Land backlog-wave enrichment on the matching leading rows in place.
+
+        Writes ONLY the enrichment-owned cells: leading_rows is a fresh disk
+        re-read, so a full-row overwrite from the run-start snapshot would
+        revert any concurrent hand-edit (e.g. a Status flip mid-run). Rows are
+        matched by identity and iterated row-side (like _apply_rescan_updates)
+        so duplicate-identity rows all update. A folded row whose identity
+        vanished from disk (concurrent prune) matches nothing -- its
+        enrichment is discarded, never resurrected.
+        """
+        if not self.folded_rows:
+            return
+        by_identity: dict[str, dict[str, str]] = {}
+        for job in self.folded_rows:
+            csv_row = job.to_csv_row()
+            by_identity[_csv_row_identity(csv_row)] = csv_row
+        for row in leading_rows:
+            src = by_identity.get(_csv_row_identity(row))
+            if src is None:
+                continue
+            for cell in _ENRICHMENT_OWNED_CELLS:
+                row[cell] = src[cell]
+
     def has_resightings(self) -> bool:
         """True when this run re-saw a known row.
 
@@ -1079,7 +1123,10 @@ class _JobSink:
             # Act on rows we re-saw this run BEFORE the no-churn comparison, so a
             # re-seen-only run (Date Last Seen bumped, no new rows) is detected as
             # changed and rewrites jobs.csv. Mutates ``leading_rows`` in place
-            # under the held ``_rows_lock``.
+            # under the held ``_rows_lock``. The two update seams touch
+            # disjoint cells (folded: enrichment-owned; rescan: Date Last Seen
+            # + description heal), so their order is not load-bearing.
+            self._apply_folded_updates(leading_rows)
             self._apply_rescan_updates(leading_rows)
             # Carried rows lead, field-for-field; this run's rows follow in append
             # order, so the rewrite preserves the on-disk layout.
@@ -2199,6 +2246,12 @@ class _RunState:
     # folds here after the join, guarded by the flag against double-counting).
     wave1_result: dict[str, Any] = field(default_factory=dict)
     wave1_accumulated: bool = False
+    # Backlog-wave counters, carried on state (like fn_stats) so the interrupt
+    # manifest reflects backlog progress the teardown flush actually persisted.
+    # remaining is set to the full scoreable count before the wave starts and
+    # reconciled after it completes.
+    backlog_enriched: int = 0
+    backlog_remaining: int = 0
 
     @property
     def written(self) -> int:
@@ -2216,6 +2269,8 @@ def _write_run_manifest(
     fn_enriched: int,
     phase_reached: str,
     interrupted: bool,
+    backlog_enriched: int = 0,
+    backlog_remaining: int = 0,
 ) -> None:
     """Write jobs-last-run.json. Written on BOTH the happy and interrupt paths.
 
@@ -2239,6 +2294,8 @@ def _write_run_manifest(
         "sources_degraded": degraded_sources,
         "new_jobs": written,
         "enriched_fit_notes": fn_enriched,
+        "backlog_enriched": backlog_enriched,
+        "backlog_remaining": backlog_remaining,
         "phase_reached": phase_reached,
         "interrupted": interrupted,
     }
@@ -2372,6 +2429,8 @@ def run(
                 degraded_sources=state.degraded_sources,
                 written=state.written,
                 fn_enriched=state.fn_stats["enriched"],
+                backlog_enriched=state.backlog_enriched,
+                backlog_remaining=state.backlog_remaining,
                 phase_reached=state.phase_reached,
                 interrupted=True,
             )
@@ -2824,6 +2883,13 @@ def _run_impl(
         # Accumulate enrichment counters straight into state so the run()
         # wrapper's manifest reflects partial progress on an interrupt.
         fn_stats = state.fn_stats
+        # Backlog (never-enriched pre-existing rows) counters. Disjoint from
+        # fn_stats/written by design: those must stay new-rows-only.
+        folded_candidates: list[EnrichedJob] = []
+        folded_stats = _empty_fit_stats()
+        folded_leftover_budget = 0
+        backlog_scoreable_total = 0
+        backlog_no_desc = 0
         if not do_enrich:
             # dry-run avoids writes entirely; --no-enrich appends the lifted rows
             # unenriched for a later backfill. Render no enrichment bars and
@@ -2842,6 +2908,10 @@ def _run_impl(
             # Wave 1 (phase-1 rows) may already be running in a background thread
             # (started at on_phase1_done). Join it, then enrich the remaining
             # (Apple) rows as wave 2 with the budget wave 1 left.
+            # Cumulative fit attempts across the new-row waves: sizes the
+            # backlog wave's leftover budget, so missing a wave here would
+            # over-grant it.
+            fit_attempted_all: set[str] = set()
             if wave1_thread is not None:
                 wave1_thread.join()
                 if wave1_error:
@@ -2849,6 +2919,7 @@ def _run_impl(
                 assert enrich_group is not None
                 _accumulate_enrich_stats(fn_stats, wave1_result)
                 state.wave1_accumulated = True
+                fit_attempted_all |= wave1_result.get("fit_attempted_urls", set())
                 # Wave 2 receives the WHOLE row list (so its slot mutations and
                 # the periodic flush both target sink.rows directly). Rows ALREADY
                 # ATTEMPTED in wave 1 -- enriched or failed -- are excluded so a
@@ -2859,6 +2930,7 @@ def _run_impl(
                     fit_attempted = frozenset(
                         wave1_result.get("fit_attempted_urls", set())
                     )
+                    wave2_attempted: dict[str, set[str]] = {}
                     _, f2 = _enrich_wave(
                         plugin,
                         ai_cfg,
@@ -2876,12 +2948,15 @@ def _run_impl(
                         ),
                         set_phase=_set_phase,
                         exclude_fit_urls=fit_attempted,
+                        attempted=wave2_attempted,
                     )
                     _add_stats(fn_stats, f2)
+                    fit_attempted_all |= wave2_attempted.get("fit_urls", set())
             else:
                 # No overlap (no Apple phase, or it landed nothing): one wave
                 # over every row on the main thread, same as the classic path.
                 enrich_group = rp.group("Enriching jobs")
+                single_attempted: dict[str, set[str]] = {}
                 _, f1 = _enrich_wave(
                     plugin,
                     ai_cfg,
@@ -2893,10 +2968,84 @@ def _run_impl(
                     run_preflight=True,
                     fit_budget=None,
                     set_phase=_set_phase,
+                    attempted=single_attempted,
                 )
                 _add_stats(fn_stats, f1)
+                fit_attempted_all |= single_attempted.get("fit_urls", set())
             if enrich_group is not None:
                 enrich_group.done()
+
+            # Backlog wave: never-enriched pre-existing rows, lifted from the
+            # run-start snapshot and hydrated read-only from the sidecar.
+            # Enriched with ONLY the fit budget the new-row waves left,
+            # cache-only descriptions (backfill parity). Kept off sink.rows so
+            # jobs.csv order and new_jobs stay new-rows-only; landed in place
+            # at flush via _apply_folded_updates.
+            from daily_driver.plugins.job_search.scraper.models import (
+                ENRICH_ELIGIBLE_STATUSES,
+                EnrichedJob,
+            )
+
+            backlog_scoreable: list[EnrichedJob] = []
+            for raw_row in sink.preexisting_rows:
+                # Raw-cell gate first: the enriched majority of a mature
+                # jobs.csv never pays a model lift.
+                if (raw_row.get("Date Enriched") or "").strip():
+                    continue
+                job = EnrichedJob.from_csv_row(raw_row)
+                if job.status not in ENRICH_ELIGIBLE_STATUSES:
+                    continue
+                if job.fit and job.notes:
+                    # Scored before the Date Enriched column existed; only
+                    # backfill --force-update re-scores. Counting it here
+                    # would inflate "remaining" forever.
+                    continue
+                if not job.description_text:
+                    cached = sink._descriptions.get(job.url, "")
+                    if cached.strip():
+                        job = job.with_updates(description_text=cached)
+                if not job.description_text.strip():
+                    # Unscorable until a re-scrape heals the description;
+                    # entering the wave would re-fetch its detail page every
+                    # run for nothing.
+                    backlog_no_desc += 1
+                    continue
+                backlog_scoreable.append(job)
+            folded_leftover_budget = max(
+                0, enrich_cfg.max_enrich_fit - len(fit_attempted_all)
+            )
+            backlog_scoreable_total = len(backlog_scoreable)
+            # Cap candidates to the leftover budget: the wave's detail phase
+            # is otherwise unbudgeted, so this bounds its fetches to rows the
+            # fit pass can actually score this run. Zero leftover (or zero
+            # scoreable) skips the wave entirely.
+            folded_candidates = backlog_scoreable[:folded_leftover_budget]
+            state.backlog_remaining = backlog_scoreable_total
+            if folded_candidates:
+                # The SAME list object the wave mutates via slot replacement --
+                # flush_periodic reads sink.folded_rows, so a copy would lose
+                # mid-run progress (cf. backfill's sink.rows = jobs).
+                sink.folded_rows = folded_candidates
+                folded_group = rp.group("Enriching backlog")
+                _, folded_stats = _enrich_wave(
+                    plugin,
+                    ai_cfg,
+                    folded_candidates,
+                    ctx,
+                    sink,
+                    folded_group,
+                    wave_label=" (backlog)",
+                    run_preflight=False,
+                    fit_budget=folded_leftover_budget,
+                    set_phase=_set_phase,
+                    exclude_fit_urls=frozenset(fit_attempted_all),
+                    capture_descriptions=False,
+                )
+                folded_group.done()
+                state.backlog_enriched = folded_stats["enriched"]
+                state.backlog_remaining = (
+                    backlog_scoreable_total - folded_stats["enriched"]
+                )
 
     n = len(typed_jobs)
     log.info(
@@ -2975,6 +3124,26 @@ def _run_impl(
         if fn_stats["failed"]:
             fit_line += f", {fn_stats['failed']} failed"
         Console.info(fit_line)
+        # Backlog: pre-existing never-enriched rows folded into this run.
+        # Remaining rows stay eligible -- the next run (or jobs backfill)
+        # picks them up; awaiting-description rows need a re-scrape to heal
+        # their description first.
+        if backlog_scoreable_total or backlog_no_desc:
+            backlog_line = (
+                f"  {'Backlog':<{label_width}}  "
+                f"{folded_stats['enriched']} scored, "
+                f"{state.backlog_remaining} remaining"
+            )
+            detail_bits = []
+            if backlog_no_desc:
+                detail_bits.append(f"{backlog_no_desc} awaiting description")
+            if folded_stats["failed"]:
+                detail_bits.append(f"{folded_stats['failed']} failed")
+            if state.backlog_remaining and folded_leftover_budget == 0:
+                detail_bits.append("no fit budget left this run")
+            if detail_bits:
+                backlog_line += " (" + ", ".join(detail_bits) + ")"
+            Console.info(backlog_line)
         # Rows with no obtainable description (e.g. a signup-walled posting) are
         # intentionally left un-scored rather than guessed at; call it out so the
         # user knows to re-scrape rather than assume the row was simply skipped.
@@ -3013,6 +3182,8 @@ def _run_impl(
         degraded_sources=state.degraded_sources,
         written=written,
         fn_enriched=fn_stats["enriched"],
+        backlog_enriched=state.backlog_enriched,
+        backlog_remaining=state.backlog_remaining,
         phase_reached=state.phase_reached,
         interrupted=False,
     )
@@ -3030,11 +3201,13 @@ def _run_impl(
                 f"({sink._degraded_reason}); retrying the final save now"
             )
         sink.flush()
-    elif sink.has_resightings():
-        # --no-enrich makes no enrichment rewrite, but a re-sighting still needs
-        # persisting: the refreshed Date Last Seen and any healed description are
-        # scrape facts. This is the one full-file rewrite a --no-enrich run makes,
-        # and only when a re-sighting actually needs saving.
+    elif sink.has_resightings() or sink._descriptions_dirty:
+        # --no-enrich makes no enrichment rewrite, but scrape facts still need
+        # persisting: a re-sighting's refreshed Date Last Seen / healed
+        # description, and any description captured at scrape (the sidecar is
+        # only written by flush -- skipping it here would silently drop every
+        # scraped description, leaving the backlog wave and backfill nothing
+        # to score). This is the one rewrite a --no-enrich run makes.
         try:
             sink.flush()
         except OSError as exc:
