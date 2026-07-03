@@ -361,15 +361,23 @@ class EnrichmentConfig(BaseModel):
         default=50,
         description="Cap on fit/notes LLM calls per run (bounds API cost).",
     )
-    force_recook_cooldown_hours: int = Field(
+    force_recook_cooldown_hours: int | Literal["missing"] = Field(
         default=24,
-        ge=0,
         description=(
             "Under `jobs backfill --force-update`, skip rows enriched within the\n"
             "last N hours so an interrupted force-update resumes instead of\n"
-            "restarting. 0 disables the cooldown (re-enrich every active row)."
+            "restarting. 0 disables the cooldown (re-enrich every active row);\n"
+            "`missing` re-enriches only rows with no enrichment timestamp yet."
         ),
     )
+
+    @field_validator("force_recook_cooldown_hours")
+    @classmethod
+    def _cooldown_non_negative(cls, v: int | str) -> int | str:
+        if isinstance(v, int) and v < 0:
+            raise ValueError("force_recook_cooldown_hours must be >= 0 or 'missing'")
+        return v
+
     detail_delay_seconds: float = Field(
         default=0.5,
         description="Pause between detail-page fetches, in seconds, to avoid rate limits.",

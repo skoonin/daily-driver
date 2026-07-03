@@ -1466,7 +1466,7 @@ def run_backfill(
     dry_run: bool = False,
     limit: int | None = None,
     force: bool = False,
-    cooldown_hours: int | None = None,
+    cooldown_hours: int | str | None = None,
     emit_json: bool = False,
 ) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
@@ -1529,18 +1529,24 @@ def run_backfill(
 
     # Force-update cooldown: skip rows enriched within the window so an
     # interrupted force-update resumes instead of restarting. CLI --cooldown-hours
-    # overrides the config default; the cutoff is only meaningful under force, and
-    # 0 hours disables it (re-enrich every active row, the legacy behavior).
-    resolved_cooldown_hours = (
+    # overrides the config default; the cutoff is only meaningful under force.
+    # `0` disables it (re-enrich every active row); `missing` re-enriches only
+    # rows with no enrichment timestamp yet -- modelled as a cutoff before any
+    # real timestamp, so every already-enriched row falls "within cooldown".
+    resolved_cooldown: int | str = (
         cooldown_hours
         if cooldown_hours is not None
         else plugin.enrichment.force_recook_cooldown_hours
     )
-    cooldown_cutoff = (
-        backfill_started_at - timedelta(hours=resolved_cooldown_hours)
-        if force and resolved_cooldown_hours > 0
-        else None
-    )
+    cooldown_cutoff: datetime | None
+    if not force:
+        cooldown_cutoff = None
+    elif resolved_cooldown == "missing":
+        cooldown_cutoff = datetime.min.replace(tzinfo=timezone.utc)
+    elif isinstance(resolved_cooldown, int) and resolved_cooldown > 0:
+        cooldown_cutoff = backfill_started_at - timedelta(hours=resolved_cooldown)
+    else:  # 0 (or unexpected) -> cooldown disabled
+        cooldown_cutoff = None
 
     # Dry-run reads outside the lock: it never writes, so a concurrent run can't
     # be clobbered by it. The real path reads INSIDE the lock (below).
