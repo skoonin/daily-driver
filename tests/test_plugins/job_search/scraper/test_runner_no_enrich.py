@@ -154,10 +154,13 @@ def test_no_enrich_summary_notes_skip(
 def test_default_path_still_enriches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without the flag, the detail enricher is still invoked (guards the skip)."""
+    """Without the flag, the detail enricher is still invoked (guards the skip),
+    and the run path captures descriptions (capture_descriptions defaults True) --
+    the mirror of backfill passing False."""
     _stub_scrapers(monkeypatch, [_scraped_job()])
 
     detail_calls: list[int] = []
+    detail_capture: list[bool] = []
 
     def fake_detail(
         jobs: list[Any],
@@ -167,6 +170,7 @@ def test_default_path_still_enriches(
         capture_descriptions: bool = True,
     ) -> Any:
         detail_calls.append(len(jobs))
+        detail_capture.append(capture_descriptions)
         return jobs, {
             "enriched": 0,
             "skipped": len(jobs),
@@ -209,3 +213,6 @@ def test_default_path_still_enriches(
 
     assert rc == 0
     assert detail_calls == [1]
+    # The run path must NOT suppress description capture (backfill is what passes
+    # False); a regression adding capture_descriptions=False to run would fail here.
+    assert detail_capture == [True]

@@ -1004,10 +1004,10 @@ class _JobSink:
                 self._pre_write_done = True
                 self.pre_write_hook()
             atomic_write_rows(self.csv_path, out_header, out_rows)
-            # Detail/LinkedIn enrichment sets description_text via with_updates
-            # directly on sink.rows, never through append_source -- fold the
-            # snapshot's current descriptions in here so flush is the one place
-            # that reliably observes every description, however it was filled.
+            # Detail enrichment sets description_text via with_updates directly
+            # on sink.rows, never through append_source -- fold the snapshot's
+            # current descriptions in here so flush is the one place that
+            # reliably observes every description, however it was filled.
             for enriched_job in snapshot:
                 if (
                     enriched_job.url
@@ -1818,13 +1818,15 @@ def run_backfill(
         # it never fetches over the network. A row with no cached description is
         # left un-scored (and gets no enrichment timestamp) rather than guessed
         # at; call it out so the phase-line count isn't mistaken for ordinary
-        # skips. Descriptions are captured at scrape time -- run `jobs run`.
+        # skips. Descriptions are captured at scrape time; a row already in
+        # jobs.csv is deduped by a re-run, so recovering it means deleting it so
+        # the next scrape re-adds (and describes) it.
         no_description_count = fit_stats.get("no_description", 0)
         if no_description_count:
             Console.warning(
                 f"{no_description_count} job(s) had no cached description; "
                 "Fit/Notes left blank. Descriptions are captured during "
-                "`jobs run` -- backfill does not fetch them."
+                "`jobs run`; delete a row so a re-scrape re-adds and describes it."
             )
         # The rewrite ran (this point is reached only past the no-enrichment early
         # return), so any status spellings it canonicalized are now on disk. Make

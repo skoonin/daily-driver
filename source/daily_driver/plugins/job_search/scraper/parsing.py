@@ -108,8 +108,8 @@ def _parse_detail_page(html: str, url: str) -> dict:
     Greenhouse job-boards pages lack JSON-LD; we try JSON-LD first
     (covers any Greenhouse board that does publish structured data) and fall
     back to the text-pattern parser. Everything else uses JSON-LD only.
-    LinkedIn descriptions/comp now come from JobSpy's
-    ``linkedin_fetch_description=True``; the vendored HTML parser was deleted.
+    LinkedIn descriptions/comp come entirely from JobSpy's scrape-time
+    ``linkedin_fetch_description=True``; no LinkedIn HTML parser runs here.
     """
     host = urllib.parse.urlparse(url).hostname or ""
     if "greenhouse.io" in host:
