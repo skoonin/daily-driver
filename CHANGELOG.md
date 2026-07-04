@@ -6,7 +6,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
-- **`jobs discover-boards` now sweeps Lever boards too.** The slug universe grows by ~4.4k Lever company slugs (same upstream lists, same local cache); each is probed via the public postings endpoint at the aggregator's production worker cap (30), with the standing dead-slug rule (only HTTP 404/410 is permanent; an empty live board or any transient failure retries next sweep). Matched Lever boards feed `jobs run` automatically through the matched cache, alongside your `lever_boards` pins.
+- **`jobs discover-boards` now sweeps Lever boards too.** The slug universe grows by ~4.4k Lever company slugs (same upstream lists, same local cache); each is probed via the public postings endpoint at the aggregator's production worker cap (30), with the standing dead-slug rule (only HTTP 404/410 is permanent; an empty live board or any transient failure retries next sweep). Matched Lever boards feed `jobs run` automatically through the matched cache, alongside your `lever_boards` pins. (#159)
 
 - **New `lever` source: scrape Lever job boards.** Each configured board slug (`sources.lever.lever_boards`, the `<slug>` in jobs.lever.co/<slug>) is fetched in one request via Lever's public Postings API, with full plain-text descriptions (including the requirements/benefits list sections) captured at scrape time, remote roles labeled from Lever's workplace-type field so the location filter never drops them, and board-diff closure verifying stored rows against the complete listing. Like Greenhouse and Ashby, it scrapes the union of pins and the discovery matched cache minus `exclude_boards`; the sweep itself learns Lever in a follow-up. (#158)
 
