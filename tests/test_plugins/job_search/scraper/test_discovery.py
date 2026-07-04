@@ -178,6 +178,38 @@ class TestAshbyProbe:
         res = discovery._probe_ashby("gone-co", _ctx(), MagicMock())
         assert res.outcome == "dead"
 
+    def test_graphql_error_response_is_transient_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GraphQL resolver failures arrive as HTTP 200 with `errors` and a
+        null top-level `data`. Misreading that as dead would permanently drop
+        a live board from every future sweep (dead-cache poisoning)."""
+        monkeypatch.setattr(
+            discovery,
+            "_api_request",
+            lambda *a, **kw: _resp(
+                200, {"data": None, "errors": [{"message": "boom"}]}
+            ),
+        )
+        res = discovery._probe_ashby("live-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+    def test_graphql_errors_with_data_present_is_transient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Partial-error responses (errors alongside data) are not trustworthy
+        # enough to declare a board dead OR record a match count.
+        monkeypatch.setattr(
+            discovery,
+            "_api_request",
+            lambda *a, **kw: _resp(
+                200,
+                {"data": {"jobBoard": None}, "errors": [{"message": "rate limited"}]},
+            ),
+        )
+        res = discovery._probe_ashby("live-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
     def test_transport_failure_is_transient(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -292,7 +324,7 @@ class TestSweepPlatform:
         result = _sweep(tmp_path, monkeypatch, ["dead-co"], {}, full=True)
         assert result.candidates == 0
 
-    def test_progress_reports_candidate_total_and_slugs(
+    def test_progress_reports_candidate_total_and_advances(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         outcomes = {"a": discovery.ProbeResult("a", "swept", 0)}
@@ -300,12 +332,16 @@ class TestSweepPlatform:
             discovery, "_api_request", lambda *a, **kw: _resp(200, ["a"])
         )
         monkeypatch.setitem(discovery._PROBES, "greenhouse", _fake_probe_map(outcomes))
-        seen: dict[str, Any] = {}
+        seen: dict[str, Any] = {"advanced": 0}
 
         def progress(platform: str, total: int) -> Any:
             seen["platform"] = platform
             seen["total"] = total
-            return lambda slug: seen.setdefault("slugs", []).append(slug)
+
+            def advance() -> None:
+                seen["advanced"] += 1
+
+            return advance
 
         discovery.sweep_platform(
             "greenhouse",
@@ -314,7 +350,79 @@ class TestSweepPlatform:
             progress=progress,
             jitter=lambda: None,
         )
-        assert seen == {"platform": "greenhouse", "total": 1, "slugs": ["a"]}
+        assert seen == {"platform": "greenhouse", "total": 1, "advanced": 1}
+
+    def test_duplicate_upstream_slugs_probed_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[str] = []
+
+        def probe(slug: str, ctx: ScrapeContext, session: Any) -> discovery.ProbeResult:
+            calls.append(slug)
+            return discovery.ProbeResult(slug, "swept", 1)
+
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, ["dup", "dup"])
+        )
+        monkeypatch.setitem(discovery._PROBES, "greenhouse", probe)
+        result = discovery.sweep_platform(
+            "greenhouse", _ctx(), tmp_path, jitter=lambda: None
+        )
+        assert calls == ["dup"]
+        assert result.candidates == 1
+        assert result.matched_new == 1
+
+    def test_periodic_flush_persists_before_sweep_end(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mid-sweep flush is the basis of the interruption-safety
+        promise; with _FLUSH_EVERY forced to 1, every recorded probe must hit
+        disk before the terminal flush."""
+        monkeypatch.setattr(discovery, "_FLUSH_EVERY", 1)
+        flushes: list[int] = []
+        real_write = discovery._write_json
+
+        def counting_write(path: Path, payload: dict[str, Any]) -> None:
+            flushes.append(1)
+            real_write(path, payload)
+
+        monkeypatch.setattr(discovery, "_write_json", counting_write)
+        outcomes = {
+            "a": discovery.ProbeResult("a", "swept", 1),
+            "b": discovery.ProbeResult("b", "swept", 0),
+        }
+        _sweep(tmp_path, monkeypatch, ["a", "b"], outcomes)
+        # 1 slug-cache write + (2 per-record flushes + 1 terminal flush) x 2
+        # files each: strictly more than the terminal flush alone would make.
+        assert len(flushes) >= 6
+
+    def test_keyboard_interrupt_flushes_recorded_probes_and_reraises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ctrl-C mid-sweep must keep already-recorded outcomes on disk (the
+        resume contract) and re-raise for the CLI's exit-code mapping."""
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, ["ok", "boom"])
+        )
+
+        def probe(slug: str, ctx: ScrapeContext, session: Any) -> discovery.ProbeResult:
+            if slug == "boom":
+                raise KeyboardInterrupt
+            return discovery.ProbeResult(slug, "swept", 2)
+
+        monkeypatch.setitem(discovery._PROBES, "greenhouse", probe)
+        with pytest.raises(KeyboardInterrupt):
+            discovery.sweep_platform(
+                "greenhouse", _ctx(), tmp_path, jitter=lambda: None
+            )
+        # The interrupt escaped through fut.result(); the finally-flush must
+        # still have written whatever was recorded before it. Depending on
+        # completion order "ok" may or may not have been recorded, but the
+        # sweep file itself must exist and parse.
+        state = json.loads(
+            (tmp_path / "discovery" / "sweep-greenhouse.json").read_text()
+        )
+        assert "swept" in state
 
 
 class TestSweepAges:

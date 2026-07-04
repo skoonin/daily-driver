@@ -30,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -298,12 +298,17 @@ def _probe_ashby(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult
     if resp.status_code != 200:
         return ProbeResult(slug, "transient")
     try:
-        board = (resp.json().get("data") or {}).get("jobBoard")
+        body = resp.json()
     except ValueError:
         return ProbeResult(slug, "transient")
+    # GraphQL reports resolver failures as HTTP 200 with `errors` and/or a
+    # null top-level `data` — transient conditions that must NEVER feed the
+    # permanent dead cache. Only a present `data` whose `jobBoard` is null is
+    # the endpoint's true 404 (verified live for unknown orgs).
+    if body.get("errors") or not isinstance(body.get("data"), dict):
+        return ProbeResult(slug, "transient")
+    board = body["data"].get("jobBoard")
     if board is None:
-        # The GraphQL endpoint answers 200 for unknown orgs; a null board is
-        # its 404 — permanent, so it feeds the dead cache like an HTTP 404.
         return ProbeResult(slug, "dead")
     postings = board.get("jobPostings") or []
     titles = [p.get("title", "") for p in postings if isinstance(p, dict)]
@@ -332,7 +337,6 @@ class PlatformSweep:
     matched_total: int = 0
     dead_new: int = 0
     transient: int = 0
-    interrupted: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return dict(vars(self))
@@ -345,11 +349,16 @@ _FLUSH_EVERY = 200
 
 @dataclass
 class _SweepState:
-    """Mutable per-platform sweep bookkeeping shared across worker futures."""
+    """Mutable per-platform sweep bookkeeping.
+
+    Mutated ONLY on the main thread: workers run probes and return results;
+    ``_record``/``_flush`` consume them in the main-thread wait loop, so no
+    lock is needed. Moving ``_record`` into workers would make ``_flush``'s
+    ``json.dumps`` race the mutations — keep recording on the main thread.
+    """
 
     sweep: dict[str, Any]
     dead: dict[str, Any]
-    lock: threading.Lock = field(default_factory=threading.Lock)
     dirty: int = 0
 
 
@@ -360,7 +369,7 @@ def sweep_platform(
     *,
     full: bool = False,
     stop_event: threading.Event | None = None,
-    progress: Callable[[str, int], Callable[[str], None]] | None = None,
+    progress: Callable[[str, int], Callable[[], None]] | None = None,
     jitter: Callable[[], None] | None = None,
 ) -> PlatformSweep:
     """Sweep one platform's slug universe into its sweep/dead caches.
@@ -369,7 +378,8 @@ def sweep_platform(
     every non-dead slug so stale matches age out. ``progress(platform, total)``
     is called once the candidate count is known and returns the per-slug
     advance callback; ``jitter`` overrides the pre-probe pacing sleep (tests
-    pass a no-op).
+    pass a no-op). ``stop_event`` defaults to ``ctx.stop_event`` so callers
+    share one cooperative stop signal.
     """
     session = _http_session(ctx)
     result = PlatformSweep(platform=platform)
@@ -395,15 +405,31 @@ def sweep_platform(
         slug for slug, info in swept.items() if (info.get("matched") or 0) > 0
     }
 
+    # dict.fromkeys dedups a slug the upstream list repeats while preserving
+    # order, so summary counts never double-count a board.
     candidates = [
-        slug for slug in slugs if slug not in dead and (full or slug not in swept)
+        slug
+        for slug in dict.fromkeys(slugs)
+        if slug not in dead and (full or slug not in swept)
     ]
     result.candidates = len(candidates)
     advance = progress(platform, len(candidates)) if progress is not None else None
 
     state = _SweepState(sweep=swept, dead=dead)
     probe = _PROBES[platform]
-    stop = stop_event or threading.Event()
+    stop = stop_event if stop_event is not None else ctx.stop_event
+
+    # One requests.Session per worker thread: requests documents no
+    # thread-safety guarantee for a shared Session, and one shared session's
+    # default 10-connection pool would thrash under 30 workers anyway.
+    thread_state = threading.local()
+
+    def _thread_session() -> Session:
+        sess = getattr(thread_state, "session", None)
+        if sess is None:
+            sess = _http_session(ctx)
+            thread_state.session = sess
+        return sess
 
     def _pace() -> None:
         if jitter is not None:
@@ -419,27 +445,38 @@ def sweep_platform(
         if stop.is_set():
             return ProbeResult(slug, "transient")
         _pace()
-        return probe(slug, ctx, session)
+        return probe(slug, ctx, _thread_session())
 
     def _record(res: ProbeResult) -> None:
         stamp = now().isoformat()
-        with state.lock:
-            if res.outcome == "swept":
-                state.sweep[res.slug] = {"last_swept": stamp, "matched": res.matched}
-                result.swept += 1
-                if res.matched > 0 and res.slug not in previously_matched:
+        if res.outcome == "swept":
+            state.sweep[res.slug] = {"last_swept": stamp, "matched": res.matched}
+            result.swept += 1
+            if res.matched > 0:
+                # INFO so -v answers "which boards matched, how strongly".
+                log.info(
+                    "[discover/%s] %s: %d matching titles",
+                    platform,
+                    res.slug,
+                    res.matched,
+                )
+                if res.slug not in previously_matched:
                     result.matched_new += 1
-            elif res.outcome == "dead":
-                state.dead[res.slug] = stamp
-                state.sweep.pop(res.slug, None)
-                result.dead_new += 1
             else:
-                result.transient += 1
-            state.dirty += 1
-            flush_due = state.dirty >= _FLUSH_EVERY
-            if flush_due:
-                state.dirty = 0
-        if flush_due:
+                log.debug("[discover/%s] %s: no matching titles", platform, res.slug)
+        elif res.outcome == "dead":
+            state.dead[res.slug] = stamp
+            state.sweep.pop(res.slug, None)
+            result.dead_new += 1
+            log.debug("[discover/%s] %s: gone (cached dead)", platform, res.slug)
+        else:
+            result.transient += 1
+            # INFO so -v lists WHICH slugs will retry next sweep (the request
+            # itself already warned with the failure detail).
+            log.info("[discover/%s] %s: transient failure", platform, res.slug)
+        state.dirty += 1
+        if state.dirty >= _FLUSH_EVERY:
+            state.dirty = 0
             _flush()
 
     workers = _WORKER_CAPS.get(platform, 10)
@@ -452,18 +489,18 @@ def sweep_platform(
                 while pending:
                     done, pending = wait(pending, return_when=FIRST_COMPLETED)
                     for fut in done:
-                        res = fut.result()
-                        _record(res)
+                        _record(fut.result())
                         if advance is not None:
-                            advance(res.slug)
+                            advance()
             except KeyboardInterrupt:
-                # Keep completed probes: cancel what has not started, let
-                # in-flight requests finish (bounded by the HTTP timeout),
-                # flush below, and re-raise so the CLI reports interruption.
+                # Keep recorded probes: cancel what has not started and flush
+                # below. In-flight requests still run to completion on pool
+                # shutdown (worst case: HTTP timeout plus remaining retry
+                # backoff each), but their results are NOT recorded — those
+                # slugs simply stay unswept and retry next sweep.
                 stop.set()
                 for fut in pending:
                     fut.cancel()
-                result.interrupted = True
                 raise
             finally:
                 _flush()
@@ -482,18 +519,19 @@ def run_discovery(
     *,
     full: bool = False,
     platforms: tuple[str, ...] = SWEEP_PLATFORMS,
-    stop_event: threading.Event | None = None,
-    progress: Callable[[str, int], Callable[[str], None]] | None = None,
+    progress: Callable[[str, int], Callable[[], None]] | None = None,
 ) -> dict[str, Any]:
     """Run the sweep across platforms under the discovery lock.
 
     ``progress(platform, total)`` returns the per-slug advance callback for
     that platform's phase (the CLI binds live bars here; None = quiet).
-    Returns the summary payload for the CLI table / ``--json``.
+    Returns the summary payload for the CLI table / ``--json``. Interruption
+    (Ctrl-C / SIGTERM raising KeyboardInterrupt on the main thread) unwinds
+    through ``sweep_platform``'s drain-and-flush handler.
     """
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
-    ctx = ScrapeContext(plugin=plugin, stop_event=stop_event or threading.Event())
+    ctx = ScrapeContext(plugin=plugin)
     started = now()
     summaries: list[PlatformSweep] = []
     with file_lock(_lock_path(state_dir), timeout=10):
@@ -504,7 +542,6 @@ def run_discovery(
                     ctx,
                     state_dir,
                     full=full,
-                    stop_event=stop_event,
                     progress=progress,
                 )
             )

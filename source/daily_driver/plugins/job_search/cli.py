@@ -212,7 +212,9 @@ def add_parser(
         parents=parents,
         help=(
             "Sweep the ATS slug universe (Greenhouse + Ashby) for boards "
-            "listing in-scope roles; matched boards are cached for jobs run"
+            "listing in-scope roles; matched boards are cached for jobs run. "
+            "Incremental after the first sweep (only never-probed slugs); the "
+            "first sweep probes everything and takes tens of minutes"
         ),
     )
     p_discover.add_argument(
@@ -220,9 +222,9 @@ def add_parser(
         action="store_true",
         default=False,
         help=(
-            "Re-probe every known slug instead of only slugs never swept, so "
-            "boards that stopped matching drop out of the cache. A full sweep "
-            "takes tens of minutes"
+            "Re-probe every known slug (except cached-dead ones) instead of "
+            "only slugs never swept, so boards that stopped matching drop out "
+            "of the cache. Takes tens of minutes, like a first sweep"
         ),
     )
     p_discover.add_argument(
@@ -625,7 +627,7 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
 
             def _progress(platform: str, total: int):  # type: ignore[no-untyped-def]
                 phase = group.phase(platform, total=total)
-                return lambda _slug: phase.advance()
+                return phase.advance
 
             summary = run_discovery(
                 plugin,
@@ -642,9 +644,13 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         return 1
     except KeyboardInterrupt:
         sigterm = interrupted_by_sigterm()
+        signal_name = "terminated" if sigterm else "interrupted"
+        # An interrupted --full sweep must resume WITH --full: a plain rerun
+        # skips everything already swept, including the stale entries the
+        # full re-probe was meant to refresh.
         Console.warning(
-            "\ninterrupted; completed probes are saved -- rerun "
-            "jobs discover-boards to continue the sweep."
+            f"\n{signal_name}; recorded probes are saved -- rerun "
+            "jobs discover-boards with the same flags to continue the sweep."
         )
         return 143 if sigterm else 130
     finally:
@@ -658,16 +664,20 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         source_note = (
             " (cached slug list)" if stats["universe_source"] == "cache" else ""
         )
+        skipped = stats["universe"] - stats["candidates"]
+        skip_note = f"; {skipped} already swept or dead" if skipped > 0 else ""
         Console.info(
             f"{platform}: {stats['swept']} probed of {stats['candidates']} "
-            f"candidates ({stats['universe']} known slugs{source_note}) -> "
-            f"{stats['matched_new']} newly matched, "
-            f"{stats['matched_total']} boards in cache, "
-            f"{stats['dead_new']} dead, {stats['transient']} transient failures"
+            f"candidates ({stats['universe']} known slugs{source_note}"
+            f"{skip_note}) -> {stats['matched_new']} newly matched "
+            f"({stats['matched_total']} total in cache), "
+            f"{stats['dead_new']} newly dead, "
+            f"{stats['transient']} transient failures (retry next sweep)"
         )
     Console.info(
-        "Matched boards are scraped by jobs run alongside your configured "
-        "*_boards pins."
+        "Matched boards are cached for jobs run (the run-side union with "
+        "your *_boards pins lands in a follow-up change). Use --full to "
+        "re-probe already-swept boards."
     )
     return 0
 
