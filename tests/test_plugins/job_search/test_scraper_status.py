@@ -77,3 +77,45 @@ def test_build_status_counts_awaiting_action(tmp_path: Path) -> None:
     assert status["awaiting_action"] == 2
     assert status["last_run"] is None
     assert status["job_counts"]["rejected"] == 1
+
+
+def _write_backlog_csv(path: Path, rows: list[tuple[str, str, str, str]]) -> None:
+    """Rows are (Status, Date Enriched, Fit, Notes) under the canonical header."""
+    lines = ["Company,Status,Date Enriched,Fit,Notes"]
+    lines.extend(
+        f"Acme,{status},{enriched},{fit},{notes}"
+        for status, enriched, fit, notes in rows
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_count_unscored_backlog_counts_eligible_unenriched_rows(
+    tmp_path: Path,
+) -> None:
+    """Only enrichment-eligible rows with no Date Enriched count; a stamped row,
+    a triaged row, and a pre-column scored row (Fit AND Notes filled) do not."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_backlog_csv(
+        csv_path,
+        [
+            ("found", "", "", ""),  # backlog
+            ("pending", "", "", ""),  # backlog
+            ("found", "", "7", ""),  # Fit alone is not "scored" -> backlog
+            ("found", "", "N/A", "notes"),  # unparseable Fit -> still backlog
+            ("found", "2026-06-01", "", ""),  # enriched -> out
+            ("applied", "", "", ""),  # triaged -> out
+            ("found", "", "7", "Great fit"),  # pre-column scored -> out
+            ("", "", "", ""),  # blank status -> out (mirrors runner gate)
+        ],
+    )
+    assert scraper_status.count_unscored_backlog(csv_path) == 4
+
+
+def test_count_unscored_backlog_missing_csv_returns_zero(tmp_path: Path) -> None:
+    assert scraper_status.count_unscored_backlog(tmp_path / "jobs.csv") == 0
+
+
+def test_build_status_includes_unscored_backlog(tmp_path: Path) -> None:
+    _write_backlog_csv(tmp_path / "jobs.csv", [("found", "", "", "")])
+    status = scraper_status.build_status(tmp_path)
+    assert status["unscored_backlog"] == 1

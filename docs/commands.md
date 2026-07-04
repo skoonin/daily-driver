@@ -281,7 +281,7 @@ Promotes a `jobs.csv` row into a tracker `job` entry once it needs active drivin
 
 ### `jobs status [--json]`
 
-Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment.
+Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment. Below the per-status table it prints the cumulative unscored backlog — active (`found`/`pending`) rows with no `Date Enriched` yet — so a fit budget that cannot keep up with inflow is visible before the review queue starves (`--json` key: `unscored_backlog`). The count includes rows with no cached description, which neither a bigger fit budget nor `jobs backfill` can score (only a re-scrape can); it is therefore an upper bound on the run summary's `Backlog: N remaining`.
 
 ### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run] [-j|--json]`
 
