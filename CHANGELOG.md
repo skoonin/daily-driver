@@ -6,7 +6,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Added
 
-- **Lever rows now carry the posting's advertised pay at scrape time.** Lever's API ships a structured `salaryRange` (min/max/currency/interval) on postings that publish pay (~14% observed); the Comp column is filled directly from it — same formatting as every other source — so those rows never need a detail-page fetch, and hourly wages are labeled `/hr`, never mislabeled annual.
+- **Lever rows now carry the posting's advertised pay at scrape time.** Lever's API ships a structured `salaryRange` (min/max/currency/interval) on postings that publish pay (~14% observed); the Comp column is filled directly from it — same formatting as every other source — so those rows never need a detail-page fetch, and hourly wages are labeled `/hr`, never mislabeled annual. (#162)
 
 - **Comp now fills from the scraped description first — and Greenhouse detail-page 403s are gone.** Pay-transparency text in a job's cached description (e.g. "Base Salary: $150,000–$205,000") is parsed into the Comp column before any detail-page fetch, deliberately conservative: the figure must be salary-anchored, currency-marked, and annual-sized, else the cell stays blank rather than guessing. Greenhouse hosted pages (`job-boards.greenhouse.io`) are no longer fetched at all — the single shared host bot-walls at run volume (the source of the repeated `[detail] ... 403` warnings), its pages carry no structured data, and the description the API already delivers contains the pay text. The detail-page summary now shows the split, e.g. `212 enriched (198 from cached descriptions)`. (#161)
 
