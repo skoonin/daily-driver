@@ -1,4 +1,4 @@
-"""jobs subcommand: job-search workflows (run, backfill, promote, status, prune)."""
+"""jobs subcommand: job-search workflows (run, discover-boards, backfill, promote, status, prune)."""
 
 from __future__ import annotations
 
@@ -64,8 +64,8 @@ def add_parser(
         "jobs",
         parents=parents,
         help=(
-            "Job search: run scrapes, backfill enrichment, promote matches, "
-            "inspect status, prune stale rows"
+            "Job search: run scrapes, discover boards, backfill enrichment, "
+            "promote matches, inspect status, prune stale rows"
         ),
     )
 
@@ -206,6 +206,39 @@ def add_parser(
     )
     add_global_flags(p_promote)
     p_promote.set_defaults(func=_run_promote)
+
+    p_discover = nested.add_parser(
+        "discover-boards",
+        parents=parents,
+        help=(
+            "Sweep the ATS slug universe (Greenhouse + Ashby) for boards "
+            "listing in-scope roles; matched boards are cached for jobs run. "
+            "Incremental after the first sweep (only never-probed slugs); the "
+            "first sweep probes everything and takes tens of minutes"
+        ),
+    )
+    p_discover.add_argument(
+        "--full",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-probe every known slug (except cached-dead ones) instead of "
+            "only slugs never swept, so boards that stopped matching drop out "
+            "of the cache. Takes tens of minutes, like a first sweep"
+        ),
+    )
+    p_discover.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help=(
+            "Emit the sweep summary as JSON. Suppresses the live progress "
+            "block; diagnostics still go to stderr."
+        ),
+    )
+    add_global_flags(p_discover)
+    p_discover.set_defaults(func=_run_discover_boards)
 
     p_status = nested.add_parser(
         "status", parents=parents, help="Show last-run metadata and job counts"
@@ -565,13 +598,97 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     return 0
 
 
+def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from daily_driver.core.progress import RunProgress
+    from daily_driver.plugins.job_search.scraper.discovery import (
+        DiscoveryError,
+        run_discovery,
+    )
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
+
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, _ai, _context_text = resolved
+    state_dir = workspace.ephemeral_dir
+    emit_json = getattr(args, "json", False)
+
+    tty = Console.live_progress_enabled(suppress=emit_json)
+    sigterm_prev = install_sigterm_handler()
+    try:
+        with RunProgress(
+            Console.get_log_console(), tty=tty, title="Board discovery sweep"
+        ) as rp:
+            group = rp.group("Sweeping slug universe")
+
+            def _progress(platform: str, total: int):  # type: ignore[no-untyped-def]
+                phase = group.phase(platform, total=total)
+                return phase.advance
+
+            summary = run_discovery(
+                plugin,
+                state_dir,
+                full=args.full,
+                progress=_progress,
+            )
+            group.done()
+    except DiscoveryError as exc:
+        Console.error(str(exc))
+        return 1
+    except TimeoutError:
+        Console.error("another discovery sweep holds the lock; wait for it to finish")
+        return 1
+    except KeyboardInterrupt:
+        sigterm = interrupted_by_sigterm()
+        signal_name = "terminated" if sigterm else "interrupted"
+        # An interrupted --full sweep must resume WITH --full: a plain rerun
+        # skips everything already swept, including the stale entries the
+        # full re-probe was meant to refresh.
+        Console.warning(
+            f"\n{signal_name}; recorded probes are saved -- rerun "
+            "jobs discover-boards with the same flags to continue the sweep."
+        )
+        return 143 if sigterm else 130
+    finally:
+        restore_sigterm_handler(sigterm_prev)
+
+    if emit_json:
+        Console.emit_json(summary)
+        return 0
+
+    for platform, stats in summary["platforms"].items():
+        source_note = (
+            " (cached slug list)" if stats["universe_source"] == "cache" else ""
+        )
+        skipped = stats["universe"] - stats["candidates"]
+        skip_note = f"; {skipped} already swept or dead" if skipped > 0 else ""
+        Console.info(
+            f"{platform}: {stats['swept']} probed of {stats['candidates']} "
+            f"candidates ({stats['universe']} known slugs{source_note}"
+            f"{skip_note}) -> {stats['matched_new']} newly matched "
+            f"({stats['matched_total']} total in cache), "
+            f"{stats['dead_new']} newly dead, "
+            f"{stats['transient']} transient failures (retry next sweep)"
+        )
+    Console.info(
+        "Matched boards are cached for jobs run (the run-side union with "
+        "your *_boards pins lands in a follow-up change). Use --full to "
+        "re-probe already-swept boards."
+    )
+    return 0
+
+
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from rich.table import Table
 
     from daily_driver.plugins.job_search.scraper_status import build_status
 
     output_dir = workspace.output_dir
-    status = build_status(output_dir)
+    status = build_status(output_dir, workspace.ephemeral_dir)
 
     emit_json = getattr(args, "json", False)
     if emit_json:
@@ -629,6 +746,19 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     else:
         console.print("[dim]No jobs.csv found.[/dim]")
 
+    discovery = status.get("discovery") or {}
+    if discovery:
+        console.print("[bold]Discovered boards:[/bold]")
+        for platform, stats in sorted(discovery.items()):
+            last = stats.get("last_swept") or "never"
+            # ISO stamp -> date for the human line; --json keeps the full stamp.
+            last_day = last[:10] if last != "never" else last
+            console.print(
+                f"  {platform}: {stats.get('boards_matched', 0)} boards matched "
+                f"({stats.get('slugs_swept', 0)} slugs swept, "
+                f"last sweep {last_day})"
+            )
+
     return 0
 
 
@@ -637,7 +767,7 @@ def run(args: argparse.Namespace) -> int:
 
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver jobs <action> ...")
-        Console.error("actions: run, backfill, promote, status, prune")
+        Console.error("actions: run, discover-boards, backfill, promote, status, prune")
         return 2
 
     try:

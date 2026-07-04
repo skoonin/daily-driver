@@ -1431,3 +1431,98 @@ def test_jobs_promote_no_link_row_notes_and_dedups(
     assert "already promoted as job-001" in err
     entries = Tracker(Workspace.discover_or_fail(override=ws)).list(category="job")
     assert len(entries) == 1
+
+
+# ---------------------------------------------------------------------------
+# discover-boards
+# ---------------------------------------------------------------------------
+
+
+def _discover_summary() -> dict:
+    return {
+        "started_at": "2026-07-04T00:00:00",
+        "full": False,
+        "platforms": {
+            "greenhouse": {
+                "platform": "greenhouse",
+                "universe": 3,
+                "universe_source": "fetched",
+                "candidates": 2,
+                "swept": 2,
+                "matched_new": 1,
+                "matched_total": 1,
+                "dead_new": 0,
+                "transient": 0,
+            }
+        },
+    }
+
+
+def test_discover_boards_success_prints_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        return_value=_discover_summary(),
+    ) as run_mock:
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 0
+    assert run_mock.call_args.kwargs["full"] is False
+    err = " ".join(capsys.readouterr().err.split())
+    assert "1 newly matched" in err
+    assert "1 already swept or dead" in err
+
+
+def test_discover_boards_json_emits_envelope(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        return_value=_discover_summary(),
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards", "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == 1
+    assert payload["data"]["platforms"]["greenhouse"]["matched_total"] == 1
+
+
+def test_discover_boards_discovery_error_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.plugins.job_search.scraper.discovery import DiscoveryError
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        side_effect=DiscoveryError("no slug list for greenhouse"),
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 1
+    assert "no slug list" in capsys.readouterr().err
+
+
+def test_discover_boards_lock_contention_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        side_effect=TimeoutError,
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 1
+    assert "another discovery sweep holds the lock" in capsys.readouterr().err

@@ -57,6 +57,7 @@ def _api_request(
     max_retries: int | None = None,
     sleep: Any = time.sleep,
     headers: dict[str, str] | None = None,
+    return_error_responses: bool = False,
 ) -> requests.Response | None:
     """Issue an HTTP request with retry on 429/503; log + return None on failure.
 
@@ -67,6 +68,12 @@ def _api_request(
     are merged onto the session headers for this request only (e.g. the
     browser-like set a login-free LinkedIn page expects). `sleep` is a seam for
     tests.
+
+    With ``return_error_responses`` the final response comes back even on a
+    non-2xx status (transport failures still return None): callers that need
+    the status code itself — board discovery caching a 404/410 slug as
+    permanently dead, which must never be conflated with a timeout — read it
+    off the response instead of losing it to the None collapse.
     """
     timeout = ctx.plugin.scraper.timeout
     retries = ctx.plugin.scraper.max_retries if max_retries is None else max_retries
@@ -107,6 +114,8 @@ def _api_request(
             resp.raise_for_status()
             return resp
         except requests.RequestException as exc:
+            if return_error_responses:
+                return resp
             last_exc = exc
             break
 

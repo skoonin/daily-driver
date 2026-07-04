@@ -93,7 +93,7 @@ def count_unscored_backlog(csv_path: Path) -> int:
     return backlog
 
 
-def build_status(output_dir: Path) -> dict[str, Any]:
+def build_status(output_dir: Path, state_dir: Path | None = None) -> dict[str, Any]:
     """Assemble the full status payload for ``jobs status``.
 
     Schema version 1. Keys:
@@ -101,7 +101,12 @@ def build_status(output_dir: Path) -> dict[str, Any]:
       job_counts    - {state: count} from jobs.csv
       awaiting_action - count of jobs in applied/interviewing states
       unscored_backlog - count of active rows with no fit scoring yet
+      discovery     - per-platform board-discovery sweep state (boards matched,
+                      slugs swept, last sweep timestamp); {} when no sweep has
+                      run or ``state_dir`` is not given
     """
+    from daily_driver.plugins.job_search.scraper.discovery import sweep_ages
+
     csv_path = output_dir / "jobs.csv"
     last_run = load_last_run(output_dir)
     counts = count_jobs_by_state(csv_path)
@@ -111,6 +116,7 @@ def build_status(output_dir: Path) -> dict[str, Any]:
         "job_counts": counts,
         "awaiting_action": awaiting,
         "unscored_backlog": count_unscored_backlog(csv_path),
+        "discovery": sweep_ages(state_dir) if state_dir is not None else {},
     }
 
 
