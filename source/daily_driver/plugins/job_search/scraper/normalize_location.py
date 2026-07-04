@@ -80,15 +80,50 @@ def _tokens(text: str) -> list[str]:
     return out
 
 
+# US state/territory + Canadian province/territory postal abbreviations. After
+# the comma split these appear as standalone 2-letter tokens ("San Francisco,
+# CA"), where many collide with ISO country codes (CA=Canada, MA=Morocco,
+# IL=Israel, SK=Slovakia...). A wrong country is worse than none (it feeds the
+# location filter summary and the fit prompt), so these never resolve as
+# countries — the token passes through verbatim instead.
+_SUBDIVISION_CODES: frozenset[str] = frozenset(
+    {
+        # fmt: off
+        "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID",
+        "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS",
+        "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK",
+        "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
+        "WI", "WY", "DC", "PR", "GU", "VI", "AS", "MP",
+        "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK",
+        "YT",
+        # fmt: on
+    }
+)
+
+
 def _bare_iso_country(token: str) -> str | None:
     """Canonical name when ``token`` is exactly a 2-letter ISO code, else None.
 
     The alias tables deliberately exclude bare 2-char codes (so "us" can't match
     "Austin"), but a standalone token like "US" in "Remote (US)" is an
-    unambiguous country reference, so resolve it here.
+    unambiguous country reference, so resolve it here. State/province postal
+    abbreviations are NOT unambiguous — "CA" in "San Francisco, CA" is
+    California, not Canada — so ``_SUBDIVISION_CODES`` never resolve.
     """
     t = token.strip()
     if len(t) == 2 and t.isalpha():
+        if t.upper() in _SUBDIVISION_CODES:
+            # Observability for the lossy branch (matches the module's
+            # normalize_location logging): only worth a line when the code
+            # WOULD have resolved — i.e. a real collision was suppressed.
+            suppressed = canonical_country_name(t)
+            if suppressed:
+                log.debug(
+                    "bare code %r is a US/CA subdivision; not resolving as %s",
+                    t,
+                    suppressed,
+                )
+            return None
         return canonical_country_name(t)
     return None
 
