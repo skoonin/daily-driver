@@ -22,7 +22,7 @@ from .workable import scrape_workable
 from .workday import scrape_workday
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -30,7 +30,7 @@ log = get_logger(__name__)
 # linkedin/indeed are site-named user-surface sources backed by python-jobspy.
 # Each registry entry scrapes only its own site: the runner always fetches each
 # enabled site in its own backend call under its own row (see
-# runner._jobspy_scrape_plan), so each keeps its own progress row, retry, and
+# scrape_all._jobspy_scrape_plan), so each keeps its own progress row, retry, and
 # failure isolation.
 SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "remoteok": scrape_remoteok,

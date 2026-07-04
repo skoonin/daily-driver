@@ -34,7 +34,7 @@ from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -235,7 +235,7 @@ class NormalizedJob(BaseModel):
 
     @classmethod
     def from_raw(cls, raw: RawScrapedJob) -> NormalizedJob:
-        from daily_driver.plugins.job_search.scraper.runner import (
+        from daily_driver.plugins.job_search.scraper.rows import (
             _REMOTE_LOCATION_ALIASES,
             _REMOTE_ROLE_SUFFIXES,
         )
@@ -459,7 +459,7 @@ class Source(Protocol):
     The callable receives a ``ScrapeContext`` carrying the validated
     ``JobSearchPlugin`` model plus the run's known-URL dedup set; sources read
     their transport/role knobs off ``ctx.plugin``. Adapters emit wire-format
-    dicts; ``runner._enriched_from_scraped`` performs the one dict -> model
+    dicts; ``rows._enriched_from_scraped`` performs the one dict -> model
     validation step downstream.
     """
 

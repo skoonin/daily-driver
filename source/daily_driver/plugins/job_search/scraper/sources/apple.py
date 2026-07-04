@@ -14,7 +14,7 @@ from daily_driver.plugins.job_search.scraper.countries import (
 from daily_driver.plugins.job_search.scraper.sources._http import _playwright_browser
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -69,11 +69,11 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
 
     Iterates each configured country's locale x search term.
     """
+    from daily_driver.plugins.job_search.scraper.context import countries_list
     from daily_driver.plugins.job_search.scraper.roles import (
         _search_terms,
         matches_roles,
     )
-    from daily_driver.plugins.job_search.scraper.runner import countries_list
 
     cfg = ctx.plugin.scraper
     terms = _search_terms(ctx.plugin)

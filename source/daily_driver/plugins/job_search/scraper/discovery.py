@@ -46,7 +46,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.config import JobSearchPlugin
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -582,7 +582,7 @@ def run_discovery(
     (Ctrl-C / SIGTERM raising KeyboardInterrupt on the main thread) unwinds
     through ``sweep_platform``'s drain-and-flush handler.
     """
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
     ctx = ScrapeContext(plugin=plugin)
     started = now()

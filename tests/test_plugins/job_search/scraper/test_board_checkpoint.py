@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper import runner
+from daily_driver.plugins.job_search.scraper import runner, scrape_all
 from daily_driver.plugins.job_search.scraper.runner import (
     CheckpointAborted,
     ScrapeContext,
@@ -158,7 +158,7 @@ def test_greenhouse_failed_board_checkpoints_nothing_for_it(
 ) -> None:
     """A failed board contributes no batch; the surviving boards' batches are
     already persisted when PartialSourceError raises at end-of-source."""
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
         return None if "/down/" in url else _gh_response([_gh_job("ok", 1)])
@@ -287,7 +287,7 @@ def test_workday_checkpoints_per_board_including_partial(
     monkeypatch.setattr(workday_module, "_http_session", lambda cfg: MagicMock())
 
     batches, checkpoint = _recorder()
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     boards = [
         {"tenant": "brokenco", "host": "wd1", "site": "careers"},
@@ -397,7 +397,7 @@ def test_non_checkpointing_source_still_appends_at_end(
 ) -> None:
     """The fast single-call sources keep the end-of-source append path."""
     monkeypatch.setitem(
-        runner.SCRAPERS,
+        scrape_all.SCRAPERS,
         "remoteok",
         lambda ctx: [
             {

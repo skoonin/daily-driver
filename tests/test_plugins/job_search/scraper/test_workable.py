@@ -122,7 +122,7 @@ def test_workable_failed_account_raises_degraded_keeping_data(
     rather than a clean "0 found" indistinguishable from no match."""
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     ok_jobs = [
         {
@@ -154,7 +154,7 @@ def test_workable_all_accounts_failed_raises_degraded_empty(
     the all-failed case is never read as a clean, complete scrape."""
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     monkeypatch.setattr(workable_module, "_api_get", lambda *a, **kw: None)
     monkeypatch.setattr(workable_module, "_http_session", lambda cfg: MagicMock())

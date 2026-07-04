@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.runner import (
+from daily_driver.plugins.job_search.scraper.context import (
     PartialSourceError,
     ScrapeContext,
 )

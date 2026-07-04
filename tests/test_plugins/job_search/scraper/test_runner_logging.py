@@ -18,6 +18,7 @@ import time
 import pytest
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.scraper import scrape_all
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
@@ -38,7 +39,6 @@ def _cfg_with_sources(enabled_ids: list[str], *, workers: int = 4) -> ScrapeCont
 
 def test_run_one_logs_starting_at_info(caplog) -> None:
     """`_run_one` emits `[<source>] starting` at INFO before the scraper runs."""
-    from daily_driver.plugins.job_search.scraper import runner
 
     caplog.set_level(logging.INFO, logger="daily_driver")
 
@@ -46,8 +46,8 @@ def test_run_one_logs_starting_at_info(caplog) -> None:
     monkeyed = {"remoteok": fake}
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(runner, "SCRAPERS", monkeyed)
-        runner._run_one("remoteok", _cfg_with_sources(["remoteok"]))
+        mp.setattr(scrape_all, "SCRAPERS", monkeyed)
+        scrape_all._run_one("remoteok", _cfg_with_sources(["remoteok"]))
 
     starting = [r for r in caplog.records if "[remoteok] starting" in r.getMessage()]
     assert starting, "expected a `[remoteok] starting` INFO line"
@@ -64,7 +64,7 @@ def test_parallel_workers_knob_drives_phase1_pool_size(caplog, monkeypatch) -> N
 
     caplog.set_level(logging.INFO, logger="daily_driver")
     fake = lambda _cfg: []  # noqa: E731
-    monkeypatch.setattr(runner, "SCRAPERS", {"remoteok": fake})
+    monkeypatch.setattr(scrape_all, "SCRAPERS", {"remoteok": fake})
 
     runner.run_all_scrapers(_cfg_with_sources(["remoteok"], workers=3))
 
@@ -92,7 +92,7 @@ def test_disabled_source_is_skipped(caplog, monkeypatch) -> None:
         return _scraper
 
     monkeypatch.setattr(
-        runner,
+        scrape_all,
         "SCRAPERS",
         {"remoteok": _make("remoteok"), "greenhouse": _make("greenhouse")},
     )
@@ -123,7 +123,7 @@ def test_run_all_scrapers_phase1_summary_lists_source_names(
 
     fake = lambda _cfg: []  # noqa: E731
     monkeypatch.setattr(
-        runner,
+        scrape_all,
         "SCRAPERS",
         {"remoteok": fake, "greenhouse": fake, "weworkremotely": fake},
     )
@@ -150,7 +150,7 @@ def test_run_all_scrapers_phase2_summary_lists_source_names(
     caplog.set_level(logging.INFO, logger="daily_driver")
 
     fake = lambda _cfg: []  # noqa: E731
-    monkeypatch.setattr(runner, "SCRAPERS", {"apple": fake})
+    monkeypatch.setattr(scrape_all, "SCRAPERS", {"apple": fake})
 
     runner.run_all_scrapers(_cfg_with_sources(["apple"], workers=1))
 
@@ -162,7 +162,7 @@ def test_run_all_scrapers_phase2_summary_lists_source_names(
 
 def test_apple_is_classified_as_playwright_source() -> None:
     """apple is always classified as non-headless via the code-level registry."""
-    from daily_driver.plugins.job_search.scraper.runner import _PLAYWRIGHT_SOURCES
+    from daily_driver.plugins.job_search.scraper.scrape_all import _PLAYWRIGHT_SOURCES
 
     assert "apple" in _PLAYWRIGHT_SOURCES
 
@@ -174,7 +174,7 @@ def test_phase2_runs_visible_browser_by_default(monkeypatch) -> None:
 
     seen: list[bool] = []
     monkeypatch.setattr(
-        runner,
+        scrape_all,
         "SCRAPERS",
         {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
     )
@@ -191,7 +191,7 @@ def test_phase2_forces_headless_when_block_active(monkeypatch) -> None:
 
     seen: list[bool] = []
     monkeypatch.setattr(
-        runner,
+        scrape_all,
         "SCRAPERS",
         {"apple": lambda ctx: seen.append(ctx.plugin.scraper.headless) or []},
     )
@@ -233,9 +233,9 @@ def test_run_all_scrapers_adopts_jobspy_loggers(monkeypatch) -> None:
     ddlog.configure("normal")
     our_handler = ddlog._handler
 
-    # The jobspy-backed group routes through runner.scrape_jobspy; stub it so no
+    # The jobspy-backed group routes through scrape_all.scrape_jobspy; stub it so no
     # network call fires while logger adoption is exercised.
-    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
+    monkeypatch.setattr(scrape_all, "scrape_jobspy", lambda _ctx, sites=None: [])
     try:
         runner.run_all_scrapers(
             _cfg_with_sources(["linkedin"], workers=1),
@@ -281,7 +281,7 @@ def test_run_all_scrapers_notes_jobspy_query_count_once(monkeypatch) -> None:
     from daily_driver.plugins.job_search.scraper import runner
 
     notes: list[str] = []
-    monkeypatch.setattr(runner, "scrape_jobspy", lambda _ctx, sites=None: [])
+    monkeypatch.setattr(scrape_all, "scrape_jobspy", lambda _ctx, sites=None: [])
     runner.run_all_scrapers(
         _cfg_with_sources(["linkedin", "indeed"], workers=1),
         sources_override=["linkedin", "indeed"],
@@ -335,8 +335,8 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
         started.wait(timeout=5)
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"slow_src": slow, "quick_src": slow})
-    monkeypatch.setattr(runner, "as_completed", kb_as_completed)
+    monkeypatch.setattr(scrape_all, "SCRAPERS", {"slow_src": slow, "quick_src": slow})
+    monkeypatch.setattr(scrape_all, "as_completed", kb_as_completed)
     monkeypatch.setattr(ThreadPoolExecutor, "shutdown", recording_shutdown)
 
     cfg = _cfg_with_sources(["slow_src", "quick_src"], workers=2)
@@ -362,11 +362,10 @@ def test_run_all_scrapers_keyboard_interrupt_cancels_and_reraises(
 def test_run_one_reports_completion_via_callback(capsys, monkeypatch) -> None:
     """`_run_one` reports success through on_source_done(sid, ok, detail) and
     no longer prints per-source progress to stdout."""
-    from daily_driver.plugins.job_search.scraper import runner
 
-    monkeypatch.setattr(runner, "SCRAPERS", {"fake_src": lambda _cfg: [{"x": 1}]})
+    monkeypatch.setattr(scrape_all, "SCRAPERS", {"fake_src": lambda _cfg: [{"x": 1}]})
     calls: list[tuple[str, bool, str]] = []
-    runner._run_one(
+    scrape_all._run_one(
         "fake_src",
         _cfg_with_sources(["fake_src"]),
         lambda sid, ok, detail: calls.append((sid, ok, detail)),
@@ -388,10 +387,10 @@ def test_run_all_scrapers_invokes_callback_per_source(monkeypatch) -> None:
     from daily_driver.plugins.job_search.scraper import runner
 
     def _boom(_cfg):
-        raise runner.HTTPTimeout("slow")
+        raise scrape_all.HTTPTimeout("slow")
 
     monkeypatch.setattr(
-        runner,
+        scrape_all,
         "SCRAPERS",
         {"ok_src": lambda _cfg: [{"x": 1}], "bad_src": _boom},
     )
@@ -511,7 +510,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
         if on_source_done is not None:
             on_source_done("remoteok", False, "failed (timed out)")
         # No jobs, one failed source.
-        return ([], ["remoteok"], [("remoteok", runner.HTTPTimeout("slow"))])
+        return ([], ["remoteok"], [("remoteok", scrape_all.HTTPTimeout("slow"))])
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
     monkeypatch.setattr(

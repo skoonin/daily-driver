@@ -13,8 +13,8 @@ from daily_driver.plugins.job_search.scraper.countries import (
 )
 
 if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
     from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -205,7 +205,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     One ``scrape_jobs`` call per (search term x country) requests every site in
     ``sites`` at once via ``site_name=[...]``. ``sites`` is the site list the
     caller decided to fetch together — the runner always hands a single-site list
-    (one row per enabled site; see ``runner._jobspy_scrape_plan``), but the
+    (one row per enabled site; see ``scrape_all._jobspy_scrape_plan``), but the
     adapter still accepts a multi-site list (e.g. a direct test call). When
     ``sites`` is None the enabled set is read from the top-level ``linkedin`` /
     ``indeed`` source toggles. Per-row Source attribution comes from JobSpy's own
@@ -222,14 +222,14 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     JobSpy handles its own HTTP session and returns a pandas DataFrame.
     """
     from daily_driver.plugins.job_search.config import IndeedToggle, LinkedInToggle
-    from daily_driver.plugins.job_search.scraper.roles import (
-        _search_terms,
-        matches_roles,
-    )
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
         countries_list,
         source_toggle,
+    )
+    from daily_driver.plugins.job_search.scraper.roles import (
+        _search_terms,
+        matches_roles,
     )
 
     # Lazy import: keeps --help and other scrapers functional without the package.

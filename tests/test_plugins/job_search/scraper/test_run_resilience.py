@@ -18,7 +18,10 @@ import pytest
 
 from daily_driver.core.config_models import AIConfig
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper import runner
+from daily_driver.plugins.job_search.scraper import context as context_mod
+from daily_driver.plugins.job_search.scraper import rows as rows_mod
+from daily_driver.plugins.job_search.scraper import runner, scrape_all
+from daily_driver.plugins.job_search.scraper import sink as sink_mod
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from tests.test_plugins.job_search.scraper import make_enriched
 
@@ -224,7 +227,7 @@ def test_enriched_from_scraped_coerces_whitespace_only_role() -> None:
     A bare-truthy '   ' skipped the `or '(unknown)'` fallback, then stripped to
     '' and tripped the NonEmptyStr validator -- a ValidationError that escapes
     append_source (which only catches ScraperError) and aborts the run."""
-    job = runner._enriched_from_scraped(
+    job = rows_mod._enriched_from_scraped(
         {
             "company": "Acme",
             "role": "   ",
@@ -1434,13 +1437,13 @@ def test_csv_row_identity_tolerates_short_rows() -> None:
     """
     # Link present -> URL identity, even with None Company/Role.
     assert (
-        runner._csv_row_identity(
+        rows_mod._csv_row_identity(
             {"Link": "https://x/1", "Company": None, "Role": None}  # type: ignore[dict-item]
         )
         == "https://x/1"
     )
     # No Link, None Company/Role (row truncated before those cells) -> no crash.
-    ident = runner._csv_row_identity(
+    ident = rows_mod._csv_row_identity(
         {"Link": None, "Company": None, "Role": None}  # type: ignore[dict-item]
     )
     assert isinstance(ident, str)
@@ -1769,7 +1772,7 @@ def test_run_one_marks_interrupted_finish_when_stop_set() -> None:
     ctx = ScrapeContext(plugin=_us_remote_plugin(), stop_event=stop)
     done: list[tuple[str, bool, str]] = []
 
-    out = runner._run_one(
+    out = scrape_all._run_one(
         "src",
         ctx,
         on_source_done=lambda sid, ok, detail: done.append((sid, ok, detail)),
@@ -1789,11 +1792,11 @@ def test_run_one_records_degraded_and_keeps_partial_jobs() -> None:
     degraded: list[tuple[str, str]] = []
 
     def scraper_fn(_ctx: ScrapeContext) -> list[dict[str, Any]]:
-        raise runner.PartialSourceError(
+        raise context_mod.PartialSourceError(
             [_scraped("https://a/1", "Acme")], "1 of 2 boards failed: down"
         )
 
-    out = runner._run_one(
+    out = scrape_all._run_one(
         "ashby",
         ctx,
         on_source_done=lambda sid, ok, detail: done.append((sid, ok, detail)),
@@ -1883,8 +1886,8 @@ def test_orchestrator_drains_partial_on_first_interrupt(
             ctx.stop_event.wait(timeout=0.05)
         return [_scraped("https://b/1", "Bravo")]
 
-    monkeypatch.setitem(runner.SCRAPERS, "src_a", source_a)
-    monkeypatch.setitem(runner.SCRAPERS, "src_b", source_b)
+    monkeypatch.setitem(scrape_all.SCRAPERS, "src_a", source_a)
+    monkeypatch.setitem(scrape_all.SCRAPERS, "src_b", source_b)
 
     collected: list[tuple[str, list[dict[str, Any]]]] = []
 
@@ -2057,9 +2060,9 @@ def test_run_source_crash_after_checkpointed_units_keeps_them(
         ctx.checkpoint([_scraped("https://l/u2", "Unit2Co")])
         raise RuntimeError("worker crashed two hours in")
 
-    # The jobspy plan binds runner.scrape_jobspy (not the SCRAPERS registry), so
+    # The jobspy plan binds scrape_all.scrape_jobspy (not the SCRAPERS registry), so
     # patch the symbol the per-site call closure invokes.
-    monkeypatch.setattr(runner, "scrape_jobspy", fake_linkedin)
+    monkeypatch.setattr(scrape_all, "scrape_jobspy", fake_linkedin)
 
     # Only linkedin runs; it is a jobspy site so _run_one binds ctx.checkpoint.
     rc = runner.run(
@@ -2100,7 +2103,7 @@ def test_checkpointed_source_not_double_appended_at_end(
             ctx.checkpoint([row])
         return list(rows_out)  # full list also returned (for manifest/results)
 
-    monkeypatch.setattr(runner, "scrape_jobspy", fake_linkedin)
+    monkeypatch.setattr(scrape_all, "scrape_jobspy", fake_linkedin)
 
     rc = runner.run(
         _us_remote_plugin(),
@@ -2138,8 +2141,8 @@ def test_first_interrupt_emits_user_note_before_draining(
             ctx.stop_event.wait(timeout=0.05)
         return [_scraped("https://b/1", "Bravo")]
 
-    monkeypatch.setitem(runner.SCRAPERS, "src_a", source_a)
-    monkeypatch.setitem(runner.SCRAPERS, "src_b", source_b)
+    monkeypatch.setitem(scrape_all.SCRAPERS, "src_a", source_a)
+    monkeypatch.setitem(scrape_all.SCRAPERS, "src_b", source_b)
 
     notes: list[str] = []
 
@@ -2212,7 +2215,7 @@ def test_checkpoint_disk_error_stops_source_at_failure(
                 return jobs
         return jobs
 
-    monkeypatch.setattr(runner, "scrape_jobspy", fake_linkedin)
+    monkeypatch.setattr(scrape_all, "scrape_jobspy", fake_linkedin)
 
     rc = runner.run(
         _us_remote_plugin(),
@@ -2321,6 +2324,7 @@ def test_reseen_known_url_bumps_date_verified(
         ],
     )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     counts = sink.append_source("remoteok", [_scraped("https://a/1", "Acme")])
@@ -2369,6 +2373,7 @@ def test_unseen_row_keeps_old_date_verified(
         ],
     )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     # Only a/1 is re-scraped; a/2 is absent from this run's scrape.
@@ -2410,6 +2415,7 @@ def test_reseen_known_url_heals_missing_description(
     )
     assert load_descriptions(csv_path) == {}
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source(
@@ -2449,6 +2455,7 @@ def test_reseen_emits_verbose_log_lines_on_update(
         ],
     )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source(
@@ -2491,6 +2498,7 @@ def test_reseen_does_not_overwrite_existing_description(
     )
     atomic_write_descriptions(csv_path, {"https://a/1": "Original full description."})
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path, descriptions=load_descriptions(csv_path))
     sink.append_source(
@@ -2596,6 +2604,7 @@ def test_run_no_enrich_persists_resightings(
             }
         )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     rescan = [
         _scraped("https://x/1", "Acme", description_text="Full body from scrape.")
@@ -2661,6 +2670,7 @@ def test_cross_run_board_twin_upgrades_stored_aggregator_row(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [_linkedin_row()])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     counts = sink.append_source("greenhouse", [_board_twin()])
@@ -2684,6 +2694,7 @@ def test_same_run_aggregator_then_board_ends_upgraded(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     first = sink.append_source(
@@ -2721,6 +2732,7 @@ def test_aggregator_twin_never_downgrades_board_row(
         ],
     )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source(
@@ -2750,6 +2762,7 @@ def test_board_to_board_twin_keeps_first_record(
         ],
     )
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source(
@@ -2772,6 +2785,7 @@ def test_triaged_row_bumps_date_verified_but_never_upgrades(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [_linkedin_row(Status="applied")])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source("greenhouse", [_board_twin()])
@@ -2790,6 +2804,7 @@ def test_upgrade_fills_blank_comp_only(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [_linkedin_row()])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source("greenhouse", [_board_twin(comp="$100,000–200,000/yr USD")])
@@ -2812,6 +2827,7 @@ def test_upgrade_heals_description_under_new_url(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [_linkedin_row()])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     # Seeded non-empty: the sink treats a falsy descriptions dict as absent.
     descriptions: dict[str, str] = {"https://other/1": "unrelated"}
@@ -2832,6 +2848,7 @@ def test_board_sighting_wins_reseen_slot_over_aggregator(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [_linkedin_row()])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     # Aggregator re-sighting first (with a description -- the old tiebreak).
@@ -2863,6 +2880,7 @@ def test_periodic_flush_before_board_twin_leaves_no_duplicate(
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(csv_path, [])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
     sink = _rescan_sink(csv_path, tmp_path)
     sink.append_source(

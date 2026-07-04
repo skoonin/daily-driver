@@ -271,7 +271,7 @@ Rows alone is a tracker category (no code needed); rows plus a source to scrape 
 
 ## Adding a scraper source
 
-This recipe applies to the `job_search` plugin. Each scraper lives in its own module under `source/daily_driver/plugins/job_search/scraper/sources/`. The `SCRAPERS` dict is assembled in that package's `sources/__init__.py`. Shared HTTP / Playwright helpers live in `sources/_http.py`; orchestration (`run_all_scrapers`, dedup, filters) lives in `scraper/runner.py`.
+This recipe applies to the `job_search` plugin. Each scraper lives in its own module under `source/daily_driver/plugins/job_search/scraper/sources/`. The `SCRAPERS` dict is assembled in that package's `sources/__init__.py`. Shared HTTP / Playwright helpers live in `sources/_http.py`; orchestration (`run_all_scrapers`, dedup, filters) lives in `scraper/scrape_all.py` and `scraper/rows.py`; the `run` entry point and summary stay in `scraper/runner.py`.
 
 ### Pipeline
 
@@ -286,7 +286,7 @@ merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/J
     → enrich_fit_and_notes (headless claude, optional) → append_jobs_typed (flock-guarded)
 ```
 
-Phase assignment is code-driven: a source listed in `scraper.runner._PLAYWRIGHT_SOURCES` routes to phase 2. (`SourceToggle` is `extra="forbid"`, so there is no `type:` config knob for this.)
+Phase assignment is code-driven: a source listed in `scraper.scrape_all._PLAYWRIGHT_SOURCES` routes to phase 2. (`SourceToggle` is `extra="forbid"`, so there is no `type:` config knob for this.)
 
 ### Scraper interface
 
@@ -324,7 +324,7 @@ Monkeypatch the HTTP client or Playwright context to return fixture bytes; asser
 
 ### JobSpy vs native parser
 
-**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes — Google for Jobs is currently broken upstream (token/JS-gated; returns 0) and is *not* shipped. The library is a developer-facing implementation detail: it surfaces to users only as the two site-named sources `linkedin` and `indeed`. Each registers in `SCRAPERS` as its own site (the `jobs run -S linkedin` / `-S indeed` selectors), both backed by `scrape_jobspy`. The runner (`runner._jobspy_scrape_plan`) always fetches each enabled site in its own `scrape_jobs(site_name=[<site>])` call under its own progress row, so each keeps its own retry and failure isolation. Per-row Source attribution comes from JobSpy's own `site` field via `normalize_jobspy_row`, so each row is labeled `linkedin` / `indeed` individually. In `.dd-config.yaml` they are top-level source keys (`sources.linkedin`, `sources.indeed`); `country` (Indeed's `country_indeed`) lives on the `indeed` toggle only.
+**Use JobSpy** when the source is supported (LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google Jobs) and you don't need custom field extraction. Tradeoff: opaque internals break when upstream changes — Google for Jobs is currently broken upstream (token/JS-gated; returns 0) and is *not* shipped. The library is a developer-facing implementation detail: it surfaces to users only as the two site-named sources `linkedin` and `indeed`. Each registers in `SCRAPERS` as its own site (the `jobs run -S linkedin` / `-S indeed` selectors), both backed by `scrape_jobspy`. The orchestrator (`scrape_all._jobspy_scrape_plan`) always fetches each enabled site in its own `scrape_jobs(site_name=[<site>])` call under its own progress row, so each keeps its own retry and failure isolation. Per-row Source attribution comes from JobSpy's own `site` field via `normalize_jobspy_row`, so each row is labeled `linkedin` / `indeed` individually. In `.dd-config.yaml` they are top-level source keys (`sources.linkedin`, `sources.indeed`); `country` (Indeed's `country_indeed`) lives on the `indeed` toggle only.
 
 **Write a native scraper** when:
 

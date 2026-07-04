@@ -15,7 +15,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 

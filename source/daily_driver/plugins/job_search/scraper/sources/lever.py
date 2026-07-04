@@ -15,7 +15,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -118,13 +118,13 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
     derived from the board slug.
     """
     from daily_driver.plugins.job_search.config import LeverToggle
-    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
-    from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
+    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
     toggle = source_toggle(ctx.plugin, "lever", LeverToggle)
     boards = resolve_boards(

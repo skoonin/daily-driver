@@ -73,7 +73,7 @@ def test_greenhouse_failed_board_raises_degraded_keeping_data(
     """
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     ok_jobs = [
         {
@@ -102,7 +102,7 @@ def test_greenhouse_all_boards_failed_raises_degraded_empty(
 ) -> None:
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     monkeypatch.setattr(gh_module, "_api_get", lambda *a, **kw: None)
     monkeypatch.setattr(gh_module, "_http_session", lambda cfg: MagicMock())
