@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -15,6 +15,26 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
+
+
+def _location(entry: dict[str, Any]) -> str:
+    """Location string with Ashby's remote flag folded in (pattern: lever).
+
+    ``location`` is often a bare country/city ("Canada") while ``isRemote`` /
+    ``workplaceType: Remote`` carries the remote fact. The location filter is
+    the only filter that drops jobs, and a city-narrowed country admits a bare
+    country name only when the row reads as remote — so a remote posting must
+    say so in its location string or the city map silently drops it (observed
+    live: docker's remote-Canada Staff Infrastructure posting).
+    """
+    # secondaryLocations deliberately not folded: primary location only.
+    location = (entry.get("location") or "").strip()
+    if not location:
+        return "Remote"
+    is_remote = entry.get("isRemote") is True or entry.get("workplaceType") == "Remote"
+    if is_remote and "remote" not in location.lower():
+        return f"{location} (Remote)"
+    return location
 
 
 def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
@@ -100,7 +120,7 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
                     "company": company_name,
                     "role": title,
                     # Ashby `location` is a plain string (Greenhouse nests it).
-                    "location": entry.get("location", "") or "Remote",
+                    "location": _location(entry),
                     "url": entry.get("jobUrl", ""),
                     "source": f"Ashby ({board})",
                     "date_found": today().isoformat(),
