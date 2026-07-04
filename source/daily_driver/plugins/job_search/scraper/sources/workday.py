@@ -75,6 +75,11 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
         seen = 0
         total: int | None = None
         partial = False
+        ceiling = False
+        # Raw listing pre role-filter, for board-diff closure. Recorded only
+        # when the board's pagination completed cleanly -- a partial or
+        # page-capped walk is an incomplete inventory and must not close rows.
+        board_urls: set[str] = set()
         for page in range(_MAX_PAGES):
             # Interrupt promptly even mid-board on a large, many-page tenant.
             if ctx.stop_event.is_set():
@@ -111,13 +116,16 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
             seen += len(postings)
 
             for entry in postings:
+                # externalPath is site-relative; the public posting lives under
+                # the localized careers path. Built before the role filter so
+                # the enumeration covers the board's whole inventory.
+                path = entry.get("externalPath", "")
+                url = f"{base}/en-US/{board.site}{path}" if path else ""
+                if url:
+                    board_urls.add(url)
                 title = entry.get("title", "")
                 if not title or not matches_roles(title, ctx.plugin):
                     continue
-                # externalPath is site-relative; the public posting lives under
-                # the localized careers path.
-                path = entry.get("externalPath", "")
-                url = f"{base}/en-US/{board.site}{path}" if path else ""
                 jobs.append(
                     {
                         "company": company_name,
@@ -138,6 +146,7 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
             if total is not None and offset >= total:
                 break
         else:
+            ceiling = True
             log.warning(
                 "[workday] %s: hit the %d-page ceiling; some postings may be"
                 " unfetched",
@@ -154,6 +163,9 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
                 requested=(total if total is not None else _MAX_PAGES * _PAGE_SIZE),
                 kind="cap",
             )
+
+        if not partial and not ceiling:
+            ctx.record_enumeration(f"Workday ({board.tenant})", board_urls)
 
         matched = len(jobs) - matched_before
         if partial:

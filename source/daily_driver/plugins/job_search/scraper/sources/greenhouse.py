@@ -65,6 +65,13 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
         data = resp.json()
 
         board_jobs = data.get("jobs", [])
+        # Raw listing BEFORE the role filter: board-diff closure must compare
+        # against everything the board lists, or a live job whose title merely
+        # stopped matching the configured roles would read as closed.
+        ctx.record_enumeration(
+            f"Greenhouse ({board})",
+            {entry.get("absolute_url", "") for entry in board_jobs},
+        )
         company_name = board.replace("-", " ").title()
         # Use the first job's metadata to get the real company name if available.
         if board_jobs:

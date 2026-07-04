@@ -64,6 +64,11 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
         data = resp.json()
 
         account_jobs = data.get("jobs", [])
+        # Raw listing pre role-filter for board-diff closure.
+        ctx.record_enumeration(
+            f"Workable ({slug})",
+            {entry.get("url", "") for entry in account_jobs},
+        )
         # Workable provides the company name; fall back to the slug only if absent.
         company_name = data.get("name") or slug.replace("-", " ").title()
 
