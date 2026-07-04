@@ -33,6 +33,7 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.config import WorkableToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
@@ -72,6 +73,7 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
         # Workable provides the company name; fall back to the slug only if absent.
         company_name = data.get("name") or slug.replace("-", " ").title()
 
+        matched_before = len(jobs)
         for entry in account_jobs:
             title = entry.get("title", "")
             if not title or not matches_roles(title, ctx.plugin):
@@ -94,12 +96,24 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
                 }
             )
 
+        account_new = jobs[matched_before:]
         log.info(
             "[workable] %s: %d jobs matched out of %d returned",
             slug,
-            sum(1 for j in jobs if j["source"] == f"Workable ({slug})"),
+            len(account_new),
             len(account_jobs),
         )
+        # Per-account durable checkpoint (pattern: scrape_jobspy). On a persist
+        # failure stop AT this account rather than fetch on against a dead disk.
+        if account_new:
+            try:
+                ctx.checkpoint(account_new)
+            except CheckpointAborted:
+                log.warning(
+                    "[workable] checkpoint persist failed; stopping after %d jobs",
+                    len(jobs),
+                )
+                return jobs
 
     if failed_accounts:
         # Incomplete scrape (one or more accounts failed) -> degraded, not a clean

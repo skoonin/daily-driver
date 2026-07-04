@@ -33,6 +33,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
@@ -86,6 +87,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
             if first_meta:
                 company_name = first_meta
 
+        matched_before = len(jobs)
         for entry in board_jobs:
             title = entry.get("title", "")
             if not title or not matches_roles(title, ctx.plugin):
@@ -114,12 +116,24 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
                 }
             )
 
+        board_new = jobs[matched_before:]
         log.info(
             "[greenhouse] %s: %d jobs matched out of %d listed",
             board,
-            sum(1 for j in jobs if j["source"] == f"Greenhouse ({board})"),
+            len(board_new),
             len(board_jobs),
         )
+        # Per-board durable checkpoint (pattern: scrape_jobspy). On a persist
+        # failure stop AT this board rather than fetch on against a dead disk.
+        if board_new:
+            try:
+                ctx.checkpoint(board_new)
+            except CheckpointAborted:
+                log.warning(
+                    "[greenhouse] checkpoint persist failed; stopping after %d jobs",
+                    len(jobs),
+                )
+                return jobs
 
     if failed_boards:
         # Incomplete scrape (one or more boards failed) -> degraded, not a

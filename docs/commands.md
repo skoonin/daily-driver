@@ -244,7 +244,7 @@ After the new rows are enriched, the run also picks up the **backlog**: pre-exis
 
 **Resilience.** `jobs run` writes as it works, so an interrupt keeps what finished:
 
-- Each source appends as it completes. LinkedIn and Indeed (the multi-hour sources) checkpoint after every finished search unit (one search term × country), so a crash two hours in loses at most the one in-flight unit. Fast single-call sources (RemoteOK, the HN sources, Greenhouse, WeWorkRemotely, Apple) append once on finish; their loss window is seconds.
+- Each source appends as it completes. LinkedIn and Indeed (the multi-hour sources) checkpoint after every finished search unit (one search term × country), and the board-backed sources (Greenhouse, Ashby, Lever, Workable, Workday) checkpoint after every finished board — so a crash deep into a multi-hour scrape or a discovery-scale board walk loses at most the one in-flight unit. Fast single-call sources (RemoteOK, the HN sources, WeWorkRemotely, Apple) append once on finish; their loss window is seconds.
 - Enrichment rewrites the file after each phase and periodically within the long LLM phases.
 - Ctrl-C or a scheduled `SIGTERM` drains gracefully: each running source finishes its current unit, its rows are deduped and appended, and the run exits. An interrupt during scraping skips enrichment (fill with `jobs backfill`); during enrichment it loses at most the last save window. A second Ctrl-C quits immediately.
 - Exit codes: `0` when every source succeeded and saves were clean; `1` when any source failed or persistence degraded (even if the final save recovered the data); `130` for `SIGINT`, `143` for `SIGTERM`.

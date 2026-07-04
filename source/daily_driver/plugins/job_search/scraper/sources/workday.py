@@ -42,6 +42,7 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.config import WorkdayToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
@@ -82,8 +83,18 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
         board_urls: set[str] = set()
         for page in range(_MAX_PAGES):
             # Interrupt promptly even mid-board on a large, many-page tenant.
+            # The in-flight board's fetched rows are kept (partial rows are
+            # kept by design), so checkpoint them before returning -- a
+            # checkpointed source's end-of-source append is skipped, and
+            # without this the graceful stop would silently drop them.
             if ctx.stop_event.is_set():
                 log.info("[workday] stop requested; keeping %d jobs so far", len(jobs))
+                board_new = jobs[matched_before:]
+                if board_new:
+                    try:
+                        ctx.checkpoint(board_new)
+                    except CheckpointAborted:
+                        pass  # already stopping; rows were kept in memory only
                 return jobs
             body = {
                 "limit": _PAGE_SIZE,
@@ -188,6 +199,20 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
                 matched,
                 seen,
             )
+
+        # Per-board durable checkpoint (pattern: scrape_jobspy); a partial
+        # board's rows are kept by design, so they checkpoint too. On a persist
+        # failure stop AT this board rather than fetch on against a dead disk.
+        board_new = jobs[matched_before:]
+        if board_new:
+            try:
+                ctx.checkpoint(board_new)
+            except CheckpointAborted:
+                log.warning(
+                    "[workday] checkpoint persist failed; stopping after %d jobs",
+                    len(jobs),
+                )
+                return jobs
 
     if degraded_boards:
         # Signal the orchestrator this scrape is incomplete (kept jobs, but some
