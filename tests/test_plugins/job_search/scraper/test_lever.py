@@ -152,6 +152,84 @@ def test_lever_remote_workplace_type_surfaces_in_location(monkeypatch: Any) -> N
     assert [j["location"] for j in results] == ["US (Remote)", "US, Remote", "Remote"]
 
 
+def test_lever_salary_range_maps_to_comp(monkeypatch: Any) -> None:
+    """The native salaryRange field fills Comp at scrape time (live shape
+    2026-07-04: min/max/currency/interval), so these rows never need the
+    detail pass. Formatting matches the JSON-LD comp style."""
+    board_jobs = [
+        _posting(
+            salaryRange={
+                "min": 120500,
+                "max": 160000,
+                "currency": "USD",
+                "interval": "per-year-salary",
+            }
+        ),
+        _posting(
+            hostedUrl="https://jobs.lever.co/acme/2",
+            salaryRange={
+                "min": 55,
+                "max": 65,
+                "currency": "CAD",
+                "interval": "per-hour-wage",
+            },
+        ),
+        # Equal bounds collapse to a single figure.
+        _posting(
+            hostedUrl="https://jobs.lever.co/acme/3",
+            salaryRange={
+                "min": 150000,
+                "max": 150000,
+                "currency": "USD",
+                "interval": "per-year-salary",
+            },
+        ),
+        # Unknown interval: amount without a guessed period suffix.
+        _posting(
+            hostedUrl="https://jobs.lever.co/acme/4",
+            salaryRange={
+                "min": 90000,
+                "max": 110000,
+                "currency": "EUR",
+                "interval": "one-time",
+            },
+        ),
+        # A compound period word must not borrow a suffix (the match is
+        # anchored on Lever's "per-<word>" enum form).
+        _posting(
+            hostedUrl="https://jobs.lever.co/acme/5",
+            salaryRange={
+                "min": 40000,
+                "max": 50000,
+                "currency": "USD",
+                "interval": "biweekly",
+            },
+        ),
+        # Absent / malformed salaryRange leaves Comp blank for the pre-pass.
+        _posting(hostedUrl="https://jobs.lever.co/acme/6"),
+        _posting(hostedUrl="https://jobs.lever.co/acme/7", salaryRange="n/a"),
+    ]
+
+    monkeypatch.setattr(
+        lever_module, "_api_get", lambda *a, **kw: _response(board_jobs)
+    )
+    monkeypatch.setattr(lever_module, "_http_session", lambda cfg: MagicMock())
+
+    results = lever_module.scrape_lever(_config(["acme"]))
+
+    # Prefix-once style ("$120,500\u2013160,000/yr") matches the existing
+    # JSON-LD comp cells -- reusing _format_comp is the point.
+    assert [j["comp"] for j in results] == [
+        "$120,500\u2013160,000/yr",
+        "CA$55\u201365/hr",
+        "$150,000/yr",
+        "\u20ac90,000\u2013110,000",
+        "$40,000\u201350,000",
+        "",
+        "",
+    ]
+
+
 def test_lever_records_raw_enumeration_pre_role_filter(monkeypatch: Any) -> None:
     """Board-diff closure needs the COMPLETE listing, including postings the
     role filter drops; an empty board records an empty (still valid) set."""

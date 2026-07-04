@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
+from daily_driver.plugins.job_search.scraper.comp import _format_comp
 from daily_driver.plugins.job_search.scraper.sources._http import (
     _api_get,
     _http_session,
@@ -43,6 +44,46 @@ def _description_text(entry: dict[str, Any]) -> str:
             parts.append(f"{heading}\n{content}".strip())
     parts.append((entry.get("additionalPlain") or "").strip())
     return "\n\n".join(part for part in parts if part)
+
+
+# Lever's salaryRange interval -> the schema.org unitText _format_comp
+# renders ("/yr", "/hr", ...). Matched on the "per-<word>" enum form (observed
+# live: "per-year-salary", "per-hour-wage") so a compound period word like
+# "biweekly" can never borrow a wrong suffix; an unknown interval renders with
+# no period suffix rather than a guessed one.
+_INTERVAL_UNITS: dict[str, str] = {
+    "year": "YEAR",
+    "month": "MONTH",
+    "week": "WEEK",
+    "day": "DAY",
+    "hour": "HOUR",
+}
+
+
+def _comp(entry: dict[str, Any]) -> str:
+    """The posting's advertised pay from the native ``salaryRange`` field.
+
+    Present on ~14% of postings (observed live 2026-07-04); the description
+    pre-pass covers the rest. Reuses the JSON-LD formatter so the Comp cell
+    reads identically across sources ("$120,500\u2013160,000/yr").
+    """
+    salary_range = entry.get("salaryRange")
+    if not isinstance(salary_range, dict):
+        return ""
+    interval = str(salary_range.get("interval") or "").lower()
+    unit = next(
+        (u for word, u in _INTERVAL_UNITS.items() if f"per-{word}" in interval), ""
+    )
+    return _format_comp(
+        {
+            "currency": salary_range.get("currency"),
+            "value": {
+                "minValue": salary_range.get("min"),
+                "maxValue": salary_range.get("max"),
+                "unitText": unit,
+            },
+        }
+    )
 
 
 def _location(entry: dict[str, Any]) -> str:
@@ -144,6 +185,7 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
                     "url": entry.get("hostedUrl", ""),
                     "source": f"Lever ({board})",
                     "date_found": today().isoformat(),
+                    "comp": _comp(entry),
                     "description_text": _description_text(entry),
                 }
             )
