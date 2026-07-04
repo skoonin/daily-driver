@@ -42,7 +42,7 @@ End-user reference: `docs/commands.md`. Short list:
   prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of
   `voice-profile.md` from writing samples.
-- `daily-driver jobs {run,backfill,status,prune}` — search the configured job
+- `daily-driver jobs {run,discover-boards,backfill,status,prune}` — search the configured job
   boards, re-enrich empty fields on existing rows, show last-run metadata, or
   archive stale rows from `jobs.csv`.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths

@@ -64,6 +64,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `jobs run` | `--dry-run` | `-n` |
 | `jobs run` | `--json` | `-j` |
 | `jobs backfill` | `--json` | `-j` |
+| `jobs discover-boards` | `--json` | `-j` |
 | `jobs promote` | `--dry-run` | `-n` |
 | `jobs status` | `--json` | `-j` |
 | `jobs prune` | `--status` | `-s` |
@@ -279,9 +280,19 @@ Promotes a `jobs.csv` row into a tracker `job` entry once it needs active drivin
 - **Idempotent**: the `extras` URL is the durable key, so promoting the same URL twice reports `already promoted as <id>` and exits `0`. A row with no Link falls back to a weaker `(company, role)` key, noted in the success line as `(row has no Link)`.
 - **Never mutates `jobs.csv`** — `promote` only writes the tracker. `-n` / `--dry-run` prints the entry that would be created and writes nothing.
 
+### `jobs discover-boards [--full] [-j|--json]`
+
+Sweeps the ATS slug universe — every known Greenhouse and Ashby board slug, seeded from the job-board-aggregator project's published lists (~8.3k + ~3.1k slugs, refreshed daily upstream and cached locally under the workspace state dir for offline reuse) — probing each board's public titles listing and recording boards with at least one role-matching title in a per-platform sweep cache. Matched boards feed `jobs run` (union with your hand-pinned `*_boards` config entries), so discovery never requires a config edit.
+
+- **On-demand and long-running.** A first full sweep probes thousands of boards at per-platform worker caps (greenhouse 30, ashby 5) with jittered pacing and takes tens of minutes; that is why it is a separate command, not part of `jobs run`. Later sweeps are incremental by default: only slugs never probed before (new upstream additions, and transient failures from earlier sweeps) are fetched.
+- **`--full`** re-probes every known non-dead slug, so a board that stopped listing matching roles drops out of the cache. Rows already in `jobs.csv` are untouched either way — board-diff closure only operates on boards actually enumerated by a `jobs run`.
+- **Dead-slug cache.** A board answering HTTP 404/410 (or Ashby's unknown-org response) is recorded as permanently dead and never probed again. Rate limits, timeouts, and server errors are NEVER cached as dead — those slugs simply retry on the next sweep and are reported as transient failures.
+- **Interruption-safe.** Completed probes flush periodically and on Ctrl-C/SIGTERM; rerunning continues where the sweep stopped.
+- **`--json`** emits the per-platform sweep summary (universe size and source, candidates, probed, newly matched, total matched, newly dead, transient failures) in the `{schema, data}` envelope.
+
 ### `jobs status [--json]`
 
-Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment. Below the per-status table it prints the cumulative unscored backlog — active (`found`/`pending`) rows with no `Date Enriched` yet — so a fit budget that cannot keep up with inflow is visible before the review queue starves (`--json` key: `unscored_backlog`). The count includes rows with no cached description, which neither a bigger fit budget nor `jobs backfill` can score (only a re-scrape can); it is therefore an upper bound on the run summary's `Backlog: N remaining`.
+Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment. Below the per-status table it prints the cumulative unscored backlog — active (`found`/`pending`) rows with no `Date Enriched` yet — so a fit budget that cannot keep up with inflow is visible before the review queue starves (`--json` key: `unscored_backlog`). The count includes rows with no cached description, which neither a bigger fit budget nor `jobs backfill` can score (only a re-scrape can); it is therefore an upper bound on the run summary's `Backlog: N remaining`. When a discovery sweep has run, a `Discovered boards` section shows per-platform matched-board counts, slugs swept, and the last sweep date (`--json` key: `discovery`).
 
 ### `jobs prune --older-than SPEC [--status STATUS]... [-n|--dry-run] [-j|--json]`
 
