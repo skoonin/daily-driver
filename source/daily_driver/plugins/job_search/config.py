@@ -13,15 +13,21 @@ _WWR_CATEGORIES_DESC = (
     "scrapes nothing; this source needs at least one category."
 )
 _GREENHOUSE_BOARDS_DESC = (
-    'Greenhouse board slugs to scrape (the "<slug>" in\n'
-    "boards.greenhouse.io/<slug>). Each board's full posting list is fetched\n"
-    "in one request; add the companies you are targeting."
+    'Greenhouse board slugs to always scrape (the "<slug>" in\n'
+    "boards.greenhouse.io/<slug>). Pins: scraped every run regardless of the\n"
+    "jobs discover-boards matched cache, which is unioned in automatically."
 )
 _ASHBY_BOARDS_DESC = (
-    'AshbyHQ board slugs to scrape (the "<slug>" in\n'
-    "jobs.ashbyhq.com/<slug>). Each board's full posting list is fetched in\n"
-    "one request; add the companies you are targeting. Slugs are\n"
-    "case-sensitive (e.g. Notion)."
+    'AshbyHQ board slugs to always scrape (the "<slug>" in\n'
+    "jobs.ashbyhq.com/<slug>). Pins: scraped every run regardless of the\n"
+    "jobs discover-boards matched cache, which is unioned in automatically.\n"
+    "Slugs are case-sensitive (e.g. Notion)."
+)
+_EXCLUDE_BOARDS_DESC = (
+    "Board slugs to NEVER scrape, even when pinned or present in the\n"
+    "discovery matched cache — the blocklist for noisy or broken boards.\n"
+    "Matched exactly, case included: to silence an Ashby board named\n"
+    "Notion, write Notion, not notion."
 )
 _WORKABLE_ACCOUNTS_DESC = (
     'Workable account slugs to scrape (the "<slug>" in\n'
@@ -91,17 +97,19 @@ class WeWorkRemotelyToggle(SourceToggle):
 
 
 class GreenhouseToggle(SourceToggle):
-    """Greenhouse source toggle plus its per-source board slug list."""
+    """Greenhouse source toggle plus its pinned/excluded board slug lists."""
 
     greenhouse_boards: list[str] = Field(
         default=["anthropic"], description=_GREENHOUSE_BOARDS_DESC
     )
+    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
 
 
 class AshbyToggle(SourceToggle):
-    """AshbyHQ source toggle plus its per-source board slug list."""
+    """AshbyHQ source toggle plus its pinned/excluded board slug lists."""
 
     ashby_boards: list[str] = Field(default=[], description=_ASHBY_BOARDS_DESC)
+    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
 
 
 class WorkableToggle(SourceToggle):
@@ -479,8 +487,16 @@ class JobSearchPlugin(BaseModel):
                 "weworkremotely": {"enabled": False, "wwr_categories": []},
                 "hn_who_is_hiring": {"enabled": False, "hn_max_posts": 500},
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
-                "greenhouse": {"enabled": False, "greenhouse_boards": ["anthropic"]},
-                "ashby": {"enabled": False, "ashby_boards": []},
+                "greenhouse": {
+                    "enabled": False,
+                    "greenhouse_boards": ["anthropic"],
+                    "exclude_boards": [],
+                },
+                "ashby": {
+                    "enabled": False,
+                    "ashby_boards": [],
+                    "exclude_boards": [],
+                },
                 "workable": {"enabled": False, "workable_accounts": []},
                 "workday": {
                     "enabled": False,
@@ -508,8 +524,14 @@ class JobSearchPlugin(BaseModel):
             },
             "template_example_field_comments": {
                 "weworkremotely": {"wwr_categories": _WWR_CATEGORIES_DESC},
-                "greenhouse": {"greenhouse_boards": _GREENHOUSE_BOARDS_DESC},
-                "ashby": {"ashby_boards": _ASHBY_BOARDS_DESC},
+                "greenhouse": {
+                    "greenhouse_boards": _GREENHOUSE_BOARDS_DESC,
+                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
+                },
+                "ashby": {
+                    "ashby_boards": _ASHBY_BOARDS_DESC,
+                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
+                },
                 "workable": {"workable_accounts": _WORKABLE_ACCOUNTS_DESC},
                 "workday": {"workday_boards": _WORKDAY_BOARDS_DESC},
             },

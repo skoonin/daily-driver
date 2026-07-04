@@ -216,3 +216,47 @@ def test_default_path_still_enriches(
     # The run path must NOT suppress description capture (backfill is what passes
     # False); a regression adding capture_descriptions=False to run would fail here.
     assert detail_capture == [True]
+
+
+def test_run_threads_discovery_matched_cache_onto_ctx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A board the discovery sweep matched must reach the scrape context: the
+    sweep cache seeded here is exactly what the greenhouse adapter unions
+    with its config pins (the discover-boards -> jobs run seam)."""
+    seen_ctx: list[Any] = []
+
+    def fake_run_all(ctx: Any, **_kw: Any) -> Any:
+        seen_ctx.append(ctx)
+        return [], [], []
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_run_all)
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set(), {}),
+    )
+
+    state_dir = tmp_path / "state"
+    sweep = state_dir / "discovery" / "sweep-greenhouse.json"
+    sweep.parent.mkdir(parents=True)
+    sweep.write_text(
+        json.dumps(
+            {
+                "swept": {
+                    "movableink": {"last_swept": "2026-07-04", "matched": 1},
+                    "nomatch-co": {"last_swept": "2026-07-04", "matched": 0},
+                }
+            }
+        )
+    )
+
+    rc = runner.run(
+        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        tmp_path,
+        state_dir,
+        no_enrich=True,
+    )
+
+    assert rc == 0
+    assert seen_ctx[0].discovered_boards["greenhouse"] == ("movableink",)
+    assert seen_ctx[0].discovered_boards["ashby"] == ()

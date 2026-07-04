@@ -112,3 +112,42 @@ def test_greenhouse_all_boards_failed_raises_degraded_empty(
 
     assert excinfo.value.jobs == []
     assert "2 of 2" in excinfo.value.reason
+
+
+def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
+    """The matched cache on ctx extends the pinned config boards; the
+    exclude_boards blocklist trumps both."""
+    fetched: list[str] = []
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        fetched.append(url)
+        return _empty_response()
+
+    monkeypatch.setattr(gh_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(gh_module, "_http_session", lambda cfg: MagicMock())
+
+    from dataclasses import replace
+
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "roles": ["Engineer"],
+            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "sources": {
+                "greenhouse": {
+                    "greenhouse_boards": ["stripe"],
+                    "exclude_boards": ["noisy-co"],
+                }
+            },
+        }
+    )
+    ctx = replace(
+        ScrapeContext(plugin=plugin),
+        discovered_boards={"greenhouse": ("movableink", "noisy-co")},
+    )
+
+    gh_module.scrape_greenhouse(ctx)
+
+    assert [u.split("/boards/")[1].split("/")[0] for u in fetched] == [
+        "stripe",
+        "movableink",
+    ]

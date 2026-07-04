@@ -159,6 +159,21 @@ def load_matched_boards(state_dir: Path, platform: str) -> dict[str, dict[str, A
     }
 
 
+def resolve_boards(
+    pins: list[str], discovered: tuple[str, ...], excludes: list[str]
+) -> list[str]:
+    """Effective board list for one platform: (pins ∪ discovered) − excludes.
+
+    Pins keep their configured order and come first (they are the boards the
+    user always wants, role matches or not); discovered boards follow in their
+    given (sorted) order. The exclude blocklist trumps both.
+    """
+    excluded = set(excludes)
+    return [
+        slug for slug in dict.fromkeys([*pins, *discovered]) if slug not in excluded
+    ]
+
+
 def sweep_ages(state_dir: Path) -> dict[str, dict[str, Any]]:
     """Per-platform sweep metadata for `jobs status`.
 
@@ -560,6 +575,7 @@ __all__ = [
     "discovery_dir",
     "fetch_slug_universe",
     "load_matched_boards",
+    "resolve_boards",
     "run_discovery",
     "sweep_ages",
     "sweep_platform",

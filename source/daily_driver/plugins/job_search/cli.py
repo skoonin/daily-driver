@@ -675,8 +675,8 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
             f"{stats['transient']} transient failures (retry next sweep)"
         )
     Console.info(
-        "Matched boards are cached for jobs run (the run-side union with "
-        "your *_boards pins lands in a follow-up change). Use --full to "
+        "Matched boards are scraped by jobs run alongside your configured "
+        "*_boards pins (exclude_boards drops noisy ones). Use --full to "
         "re-probe already-swept boards."
     )
     return 0

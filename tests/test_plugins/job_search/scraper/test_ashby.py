@@ -167,3 +167,38 @@ def test_ashby_all_boards_failed_raises_degraded_empty(monkeypatch: Any) -> None
 
     assert excinfo.value.jobs == []
     assert "2 of 2" in excinfo.value.reason
+
+
+def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
+    """The matched cache on ctx extends the pinned config boards; the
+    exclude_boards blocklist trumps both."""
+    from dataclasses import replace
+
+    fetched: list[str] = []
+
+    def fake_api_get(session, url, *a, **kw):  # type: ignore[no-untyped-def]
+        fetched.append(url)
+        resp = MagicMock()
+        resp.json.return_value = {"jobs": []}
+        return resp
+
+    monkeypatch.setattr(ashby_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())
+
+    plugin = JobSearchPlugin.model_validate(
+        {
+            "roles": ["Engineer"],
+            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "sources": {
+                "ashby": {"ashby_boards": ["ramp"], "exclude_boards": ["noisy-co"]}
+            },
+        }
+    )
+    ctx = replace(
+        ScrapeContext(plugin=plugin),
+        discovered_boards={"ashby": ("linear", "noisy-co")},
+    )
+
+    ashby_module.scrape_ashby(ctx)
+
+    assert [u.rsplit("/", 1)[1] for u in fetched] == ["ramp", "linear"]

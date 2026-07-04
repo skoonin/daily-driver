@@ -488,3 +488,27 @@ class TestRunDiscovery:
         assert result.swept == 0
         assert result.transient == 2
         assert discovery.load_matched_boards(tmp_path, "greenhouse") == {}
+
+
+# ── Board resolution (jobs run seam) ─────────────────────────────────────────
+
+
+class TestResolveBoards:
+    def test_union_pins_first_then_discovered(self) -> None:
+        assert discovery.resolve_boards(
+            ["pin-a", "pin-b"], ("disc-a", "disc-b"), []
+        ) == ["pin-a", "pin-b", "disc-a", "disc-b"]
+
+    def test_pin_discovered_overlap_dedups(self) -> None:
+        assert discovery.resolve_boards(["both"], ("both", "disc"), []) == [
+            "both",
+            "disc",
+        ]
+
+    def test_exclude_trumps_pins_and_discovered(self) -> None:
+        assert discovery.resolve_boards(
+            ["pin", "noisy"], ("noisy", "disc"), ["noisy"]
+        ) == ["pin", "disc"]
+
+    def test_empty_everything(self) -> None:
+        assert discovery.resolve_boards([], (), []) == []
