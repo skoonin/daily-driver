@@ -90,13 +90,16 @@ class ScrapeContext:
     # and returns the jobs accumulated so far (keeping completed work). Sources
     # mid-unit finish that one unit (bounded by the unit's own duration).
     stop_event: threading.Event = field(default_factory=threading.Event)
-    # Per-unit durable checkpoint for the multi-HOUR jobspy-backed sources
-    # (linkedin / indeed). Bound per source by the orchestrator (``_run_one``) to
-    # hand each finished (term x country) unit's rows straight to the sink, so a
-    # crash / kill two hours in keeps every completed unit instead of losing the
-    # whole source. The fast single-call sources (remoteok, hn, greenhouse, wwr,
-    # apple) skip this -- their loss window on a crash is seconds, not worth the
-    # per-unit lock churn -- and rely on the end-of-source append instead.
+    # Per-unit durable checkpoint for the long-running sources: the jobspy-
+    # backed sites (linkedin / indeed, unit = term x country) and the multi-
+    # board sources (greenhouse/ashby/lever/workable/workday, unit = one
+    # board). Bound per source by the orchestrator (``_run_one``) to hand each
+    # finished unit's rows straight to the sink, so a crash / kill deep into a
+    # multi-hour scrape or a ~1,200-board walk keeps every completed unit
+    # instead of losing the whole source. The fast single-call sources
+    # (remoteok, hn, wwr, apple) skip this -- their loss window on a crash is
+    # seconds, not worth the per-unit lock churn -- and rely on the
+    # end-of-source append instead.
     checkpoint: Callable[[list[dict[str, Any]]], None] = _noop_checkpoint
     # Saturation records appended by sources as they scrape (a query that
     # returned its full cap was truncated). Mutable shared list on a frozen
@@ -170,8 +173,9 @@ class ScraperError(RuntimeError):
 class CheckpointAborted(Exception):
     """Raised out of ``ctx.checkpoint`` when a per-unit append fails.
 
-    Signals a checkpointing source (jobspy) to stop AT the failing unit and
-    return what it has already persisted, instead of scraping on against a dead
+    Signals a checkpointing source (jobspy, the board sources) to stop AT the
+    failing unit and return what it has already persisted, instead of
+    scraping on against a dead
     disk and then reporting "failed" while later units still land rows. The
     orchestrator has already recorded the source as failed by the time this is
     raised; the source catches it and returns early, so "failed" means "stopped
@@ -438,6 +442,17 @@ _PLAYWRIGHT_SOURCES: frozenset[str] = frozenset({"apple"})
 # its own backend call under its own row (see _jobspy_scrape_plan); the library
 # is an implementation detail, never part of the user surface.
 _JOBSPY_SITES: tuple[str, ...] = ("linkedin", "indeed")
+
+# Board-backed sources that checkpoint each finished board/account through
+# ctx.checkpoint. The discovery expansion turned these into long multi-board
+# walks (a full run enumerates ~1,200 discovered boards), so an interrupt or
+# crash mid-loop would otherwise lose the whole source's scrape. Coincides
+# with SOURCE_CAPABILITIES' enumeration="full" rows today, but deliberately
+# NOT derived from that map (declaration-only; a new board source must be
+# added here too).
+_BOARD_CHECKPOINT_SOURCES: frozenset[str] = frozenset(
+    {"greenhouse", "ashby", "lever", "workable", "workday"}
+)
 
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
@@ -950,8 +965,8 @@ class _JobSink:
 
         Safe to call repeatedly for the SAME ``source_id``: the funnel/totals
         accumulate (``setdefault`` + ``+=``) and the dedup sets grow, so the slow
-        jobspy-backed sources checkpoint each finished (term x country) unit by
-        calling this per unit. Later units dedup against earlier ones through the
+        jobspy-backed sources checkpoint each finished (term x country) unit
+        and the board sources each finished board by calling this per unit. Later units dedup against earlier ones through the
         grown ``_known_urls`` / ``_known_keys``, so an intra-source duplicate
         spanning units is counted "known", never double-appended.
 
@@ -1459,8 +1474,9 @@ def run_all_scrapers(
 
     results: list[tuple[str, list[dict[str, Any]] | Exception]] = []
 
-    # Sources that checkpoint per unit (the slow jobspy-backed ones) append
-    # incrementally as they run, so the coordinator must SKIP their end-of-source
+    # Sources that checkpoint per unit (the jobspy sites and the board
+    # sources) append incrementally as they run, so the coordinator must SKIP
+    # their end-of-source
     # append (else every checkpointed row would be appended twice). The wrapper
     # records the source id the first time it checkpoints anything; the sink's
     # append_source dedups within a call, but a second whole-source append would
@@ -1504,12 +1520,15 @@ def run_all_scrapers(
             ):
                 on_source_result(sid, result)
 
-        # Only the jobspy-backed (multi-hour) sites checkpoint per unit; the fast
-        # headless sources rely on the end-of-source append (seconds of loss).
+        # The jobspy-backed (multi-hour) sites and the multi-board sources
+        # checkpoint per unit; the fast single-call sources rely on the
+        # end-of-source append (seconds of loss).
         def _checkpoint_for(
             row_id: str,
         ) -> Callable[[str, list[dict[str, Any]]], None] | None:
-            return _checkpoint if row_id in _JOBSPY_SITES else None
+            if row_id in _JOBSPY_SITES or row_id in _BOARD_CHECKPOINT_SOURCES:
+                return _checkpoint
+            return None
 
         try:
             futures = {
@@ -2982,8 +3001,9 @@ def _run_impl(
             on_note=rp.note,
             on_source_result=on_source_result,
             on_source_degraded=_on_degraded,
-            # Slow jobspy sources checkpoint each finished (term x country) unit
-            # through the failure-isolated append path, so a crash/kill keeps every
+            # Slow jobspy sources checkpoint each finished (term x country)
+            # unit and the multi-board sources each finished board through the
+            # failure-isolated append path, so a crash/kill keeps every
             # completed unit (not the whole-source-or-nothing of before). On a
             # persist failure the checkpoint path stops the source (raises
             # CheckpointAborted) rather than scraping on against a dead disk.

@@ -80,6 +80,7 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
+        CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
@@ -129,6 +130,7 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
         # No company field in the Lever payload; derive from the slug.
         company_name = board.replace("-", " ").title()
 
+        matched_before = len(jobs)
         for entry in board_jobs:
             title = entry.get("text", "")
             if not title or not matches_roles(title, ctx.plugin):
@@ -146,12 +148,24 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
                 }
             )
 
+        board_new = jobs[matched_before:]
         log.info(
             "[lever] %s: %d jobs matched out of %d returned",
             board,
-            sum(1 for j in jobs if j["source"] == f"Lever ({board})"),
+            len(board_new),
             len(board_jobs),
         )
+        # Per-board durable checkpoint (pattern: scrape_jobspy). On a persist
+        # failure stop AT this board rather than fetch on against a dead disk.
+        if board_new:
+            try:
+                ctx.checkpoint(board_new)
+            except CheckpointAborted:
+                log.warning(
+                    "[lever] checkpoint persist failed; stopping after %d jobs",
+                    len(jobs),
+                )
+                return jobs
 
     if failed_boards:
         # Incomplete scrape (one or more boards failed) -> degraded, not a clean
