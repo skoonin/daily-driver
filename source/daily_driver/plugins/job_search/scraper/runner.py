@@ -104,6 +104,22 @@ class ScrapeContext:
     # the manifest's ``saturated_queries``.
     saturation: list[SaturationRecord] = field(default_factory=list)
 
+    # Raw board enumerations recorded by full-listing adapters this run:
+    # exact Source-cell label -> the COMPLETE pre-role-filter URL set of a
+    # SUCCESSFULLY fetched board. Consumed by board-diff closure; a failed or
+    # partial board records nothing, so its rows can never read as "gone".
+    enumerations: dict[str, set[str]] = field(default_factory=dict)
+
+    def record_enumeration(self, source_label: str, urls: set[str]) -> None:
+        """Record one board's complete raw listing (pre role-filter).
+
+        An empty set is a valid enumeration: a healthy board with zero open
+        postings really has closed everything it once listed.
+        """
+        self.enumerations[source_label] = {
+            url.strip() for url in urls if url and url.strip()
+        }
+
     def record_saturation(
         self,
         *,
@@ -865,6 +881,10 @@ class _JobSink:
         # but announced loudly, never silently slipped back in.
         self.reopen_watch: dict[str, str] = {}
         self.reopened = 0
+        # Board-diff closures decided this run: row URL -> the cell updates
+        # (Status/Date Closed/Notes) the flush applies to the matching leading
+        # row in place. Populated after the scrape by the closure engine.
+        self.closures: dict[str, dict[str, str]] = {}
         self.pre_filter = 0  # new (deduped, url-bearing, pre-location) survivors
         self.loc_filtered = 0
         # Sticky: a periodic flush hit an OSError and the rows it would have
@@ -1094,6 +1114,20 @@ class _JobSink:
             for cell in _ENRICHMENT_OWNED_CELLS:
                 row[cell] = src[cell]
 
+    def _apply_closure_updates(self, leading_rows: list[dict[str, str]]) -> None:
+        """Land board-diff closures on the matching leading rows in place.
+
+        Writes only Status / Date Closed / Notes, keyed by the row's Link, so
+        position, extras, and every other cell survive. A closed row later
+        leaves for the archive via prune (closed is a default prune status).
+        """
+        if not self.closures:
+            return
+        for row in leading_rows:
+            updates = self.closures.get((row.get("Link") or "").strip())
+            if updates:
+                row.update(updates)
+
     def has_resightings(self) -> bool:
         """True when this run re-saw a known row.
 
@@ -1204,6 +1238,7 @@ class _JobSink:
             # + description heal), so their order is not load-bearing.
             self._apply_folded_updates(leading_rows)
             self._apply_rescan_updates(leading_rows)
+            self._apply_closure_updates(leading_rows)
             # Carried rows lead, field-for-field; this run's rows follow in append
             # order, so the rewrite preserves the on-disk layout.
             out_rows: list[dict[str, str]] = list(leading_rows)
@@ -2331,6 +2366,8 @@ class _RunState:
     # Alias of ctx.saturation (shared list), so both manifest paths report
     # truncated queries.
     saturation: list[SaturationRecord] = field(default_factory=list)
+    # Rows verified closed by board-diff this run (manifest counter).
+    closed_verified: int = 0
 
     @property
     def written(self) -> int:
@@ -2351,6 +2388,7 @@ def _write_run_manifest(
     backlog_enriched: int = 0,
     backlog_remaining: int = 0,
     saturation: list[SaturationRecord] | None = None,
+    closed_verified: int = 0,
 ) -> None:
     """Write jobs-last-run.json. Written on BOTH the happy and interrupt paths.
 
@@ -2379,6 +2417,7 @@ def _write_run_manifest(
         # Snapshot first: an interrupt-path write can race a still-running
         # phase-1 worker's append.
         "saturated_queries": [asdict(rec) for rec in list(saturation or [])],
+        "closed_verified": closed_verified,
         "phase_reached": phase_reached,
         "interrupted": interrupted,
     }
@@ -2515,6 +2554,7 @@ def run(
                 backlog_enriched=state.backlog_enriched,
                 backlog_remaining=state.backlog_remaining,
                 saturation=state.saturation,
+                closed_verified=state.closed_verified,
                 phase_reached=state.phase_reached,
                 interrupted=True,
             )
@@ -2906,6 +2946,36 @@ def _run_impl(
             force_headless=tty,
         )
         state.all_jobs = all_jobs
+
+        # Board-diff closure: diff stored rows against this run's successful
+        # raw board enumerations. Two consecutive misses close a row (Status +
+        # Date Closed + Notes annotation, applied in place at flush). A scrape
+        # fact like re-sighting, so it runs for --no-enrich too; dry-run has no
+        # sink and skips.
+        closure_stats: dict[str, Any] = {"closed": 0, "pending_misses": 0}
+        if sink is not None and ctx.enumerations:
+            from daily_driver.plugins.job_search.scraper.closure import (
+                decide_closures,
+                load_misses,
+                save_misses,
+            )
+
+            closures, new_misses, closure_stats = decide_closures(
+                preexisting_rows,
+                ctx.enumerations,
+                load_misses(csv_path),
+                today().isoformat(),
+            )
+            sink.closures = closures
+            state.closed_verified = closure_stats["closed"]
+            try:
+                with sink._disk_lock():
+                    save_misses(csv_path, new_misses)
+            except OSError as exc:
+                # Losing the miss ledger only restarts the 2-miss clock; the
+                # run itself is healthy.
+                log.warning("Could not persist board-diff miss counts: %s", exc)
+
         # Merge scraper-level failures with any append-persistence failures the
         # source-result callback recorded; preserve order, no duplicates.
         for sid in scrape_failed:
@@ -3198,6 +3268,17 @@ def _run_impl(
             f"  {'Reopened':<{label_width}}  {sink.reopened} previously-closed "
             "job(s) re-discovered (see log for identities)"
         )
+    # Verified-closed: absent from a successful full board listing twice in a
+    # row. The rows stay in jobs.csv as Status=closed until prune archives
+    # them; a false positive resurfaces loudly as Reopened.
+    if closure_stats["closed"] or closure_stats["pending_misses"]:
+        line = (
+            f"  {'Closed':<{label_width}}  {closure_stats['closed']} verified "
+            "gone (board-diff)"
+        )
+        if closure_stats["pending_misses"]:
+            line += f", {closure_stats['pending_misses']} pending a second miss"
+        Console.warning(line)
     # Degraded sources finished with INCOMPLETE results (a partial-pagination or
     # all-units-failed scrape). Their rows are kept, but call it out so a partial
     # run is never mistaken for a clean one. Distinct from failed sources below.
@@ -3300,6 +3381,7 @@ def _run_impl(
         backlog_enriched=state.backlog_enriched,
         backlog_remaining=state.backlog_remaining,
         saturation=ctx.saturation,
+        closed_verified=state.closed_verified,
         phase_reached=state.phase_reached,
         interrupted=False,
     )
@@ -3317,7 +3399,7 @@ def _run_impl(
                 f"({sink._degraded_reason}); retrying the final save now"
             )
         sink.flush()
-    elif sink.has_resightings() or sink._descriptions_dirty:
+    elif sink.has_resightings() or sink._descriptions_dirty or sink.closures:
         # --no-enrich makes no enrichment rewrite, but scrape facts still need
         # persisting: a re-sighting's refreshed Date Verified / healed
         # description, and any description captured at scrape (the sidecar is

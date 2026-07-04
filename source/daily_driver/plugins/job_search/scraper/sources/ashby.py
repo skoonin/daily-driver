@@ -63,6 +63,17 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
         data = resp.json()
 
         board_jobs = data.get("jobs", [])
+        # Raw listing pre role-filter for board-diff closure. De-listed
+        # postings (isListed False) are NOT publicly present, so they count as
+        # absent -- exactly the signal closure needs.
+        ctx.record_enumeration(
+            f"Ashby ({board})",
+            {
+                entry.get("jobUrl", "")
+                for entry in board_jobs
+                if entry.get("isListed") is not False
+            },
+        )
         # No per-job company field in the Ashby response; derive from the slug.
         company_name = board.replace("-", " ").title()
 
