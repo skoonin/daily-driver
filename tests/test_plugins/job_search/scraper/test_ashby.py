@@ -117,6 +117,64 @@ def test_ashby_empty_location_falls_back_to_remote(monkeypatch: Any) -> None:
     assert results[0]["location"] == "Remote"
 
 
+def test_ashby_remote_flag_folds_into_location(monkeypatch: Any) -> None:
+    """A remote posting whose location is a bare country must SAY remote, or a
+    city-narrowed country in the location map silently drops it (observed
+    live: docker's remote-Canada Staff Infrastructure posting)."""
+    board_jobs = [
+        {
+            "title": "Staff Software Engineer, Infrastructure",
+            "location": "Canada",
+            "isRemote": True,
+            "workplaceType": "Remote",
+            "jobUrl": "https://jobs.ashbyhq.com/docker/9bbe3ad7",
+            "descriptionPlain": "",
+            "isListed": True,
+        },
+        # workplaceType alone (no isRemote key) also marks remote.
+        {
+            "title": "Platform Engineer",
+            "location": "United States",
+            "workplaceType": "Remote",
+            "jobUrl": "https://jobs.ashbyhq.com/docker/2",
+            "descriptionPlain": "",
+            "isListed": True,
+        },
+        # Location already says remote: no duplicate suffix.
+        {
+            "title": "Cloud Engineer",
+            "location": "Remote - Canada",
+            "isRemote": True,
+            "jobUrl": "https://jobs.ashbyhq.com/docker/3",
+            "descriptionPlain": "",
+            "isListed": True,
+        },
+        # On-site posting: location passes through untouched.
+        {
+            "title": "Infrastructure Engineer",
+            "location": "San Francisco",
+            "isRemote": False,
+            "workplaceType": "Onsite",
+            "jobUrl": "https://jobs.ashbyhq.com/docker/4",
+            "descriptionPlain": "",
+            "isListed": True,
+        },
+    ]
+
+    monkeypatch.setattr(
+        ashby_module, "_api_get", lambda *a, **kw: _response(board_jobs)
+    )
+    monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())
+
+    results = ashby_module.scrape_ashby(_config(["docker"]))
+
+    locations = {job["url"]: job["location"] for job in results}
+    assert locations["https://jobs.ashbyhq.com/docker/9bbe3ad7"] == "Canada (Remote)"
+    assert locations["https://jobs.ashbyhq.com/docker/2"] == "United States (Remote)"
+    assert locations["https://jobs.ashbyhq.com/docker/3"] == "Remote - Canada"
+    assert locations["https://jobs.ashbyhq.com/docker/4"] == "San Francisco"
+
+
 def test_ashby_failed_board_raises_degraded_keeping_data(monkeypatch: Any) -> None:
     """A board whose request fails raises PartialSourceError carrying the jobs
     matched from the boards that succeeded, so a partial/all-failed scrape is
