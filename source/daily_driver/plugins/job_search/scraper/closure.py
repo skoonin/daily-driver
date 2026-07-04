@@ -1,6 +1,6 @@
 """Board-diff closure: rows absent from their board's full listing get closed.
 
-A full-enumeration board (greenhouse/ashby/workable/workday) returns its
+A full-enumeration board (greenhouse/ashby/lever/workable/workday) returns its
 complete current inventory each scrape, so a stored row absent from a
 SUCCESSFULLY-fetched listing carries real signal. Closure is deliberately
 guarded three ways:

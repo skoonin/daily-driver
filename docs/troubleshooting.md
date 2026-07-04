@@ -49,7 +49,7 @@ Other sources keep working without Playwright. To restrict a run to
 non-Playwright sources while debugging:
 
 ```bash
-daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring,greenhouse,ashby,workable,workday,linkedin,indeed
+daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring,greenhouse,ashby,lever,workable,workday,linkedin,indeed
 ```
 
 ## launchd plist won't load

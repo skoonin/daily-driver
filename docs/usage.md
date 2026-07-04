@@ -175,6 +175,7 @@ Full field reference: [configuration.md](configuration.md#pluginsjob_search).
 | `hn_jobs` | YC-funded jobs |
 | `greenhouse` | One row per `greenhouse_boards` entry |
 | `ashby` | One row per `ashby_boards` entry (AshbyHQ public API) |
+| `lever` | One row per `lever_boards` entry (Lever Postings API) |
 | `workable` | One row per `workable_accounts` entry (Workable widget API) |
 | `workday` | Paginated Workday careers site; one `workday_boards` entry per company |
 | `linkedin` | LinkedIn via JobSpy |

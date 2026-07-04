@@ -224,6 +224,9 @@ class NormalizedJob(BaseModel):
         elif src.startswith("Ashby (") and src.endswith(")"):
             canonical = "ashby"
             board = src[len("Ashby (") : -1]
+        elif src.startswith("Lever (") and src.endswith(")"):
+            canonical = "lever"
+            board = src[len("Lever (") : -1]
         elif src.startswith("Workable (") and src.endswith(")"):
             canonical = "workable"
             board = src[len("Workable (") : -1]
@@ -410,6 +413,9 @@ class EnrichedJob(BaseModel):
         elif source.startswith("Ashby (") and source.endswith(")"):
             canonical = "ashby"
             board = source[len("Ashby (") : -1]
+        elif source.startswith("Lever (") and source.endswith(")"):
+            canonical = "lever"
+            board = source[len("Lever (") : -1]
         elif source.startswith("Workable (") and source.endswith(")"):
             canonical = "workable"
             board = source[len("Workable (") : -1]
