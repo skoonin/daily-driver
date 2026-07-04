@@ -2622,3 +2622,260 @@ def test_run_no_enrich_persists_resightings(
     assert "1 still visible, 0 not seen this run" in err
     # No enrichment ran, so no Enrichment section.
     assert "Enrichment" not in err
+
+
+# ── Source-upgrade preference: board record beats aggregator row ─────────────
+
+
+def _linkedin_row(**overrides: str) -> dict[str, str]:
+    row = {
+        "Status": "found",
+        "Company": "Acme",
+        "Role": "SRE",
+        "Location": "Remote",
+        "Link": "https://linkedin.com/jobs/view/1",
+        "Source": "linkedin",
+        "Date Found": "2026-06-01",
+        "Date Verified": "2026-06-01",
+    }
+    row.update(overrides)
+    return row
+
+
+def _board_twin(**extra: Any) -> dict[str, Any]:
+    """The same Acme SRE job as its greenhouse board record (different URL)."""
+    return _scraped(
+        "https://boards.greenhouse.io/acme/jobs/9",
+        "Acme",
+        source="Greenhouse (acme)",
+        **extra,
+    )
+
+
+def test_cross_run_board_twin_upgrades_stored_aggregator_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stored LinkedIn row whose company+role twin arrives from a board source
+    gets its Source/Link replaced by the board record -- the URL that board-diff
+    closure can verify -- while triage-owned cells stay untouched."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [_linkedin_row()])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    counts = sink.append_source("greenhouse", [_board_twin()])
+    assert counts["known"] == 1  # key collision, not appended
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+    assert rows[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+    assert rows[0]["Status"] == "found"
+    assert rows[0]["Date Found"] == "2026-06-01"
+    assert rows[0]["Date Verified"] == "2026-07-03"
+
+
+def test_same_run_aggregator_then_board_ends_upgraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Append-as-completed lands the fast aggregator row first; the board twin
+    arriving later the same run still wins by flush time."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    first = sink.append_source(
+        "linkedin",
+        [_scraped("https://linkedin.com/jobs/view/1", "Acme", source="linkedin")],
+    )
+    assert first["new"] == 1
+    second = sink.append_source(
+        "greenhouse", [_board_twin(description_text="Board body.")]
+    )
+    assert second["known"] == 1
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+    assert rows[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+    # The fill-only description landed on the in-run row (model field), so the
+    # sidecar fold files it under the board URL.
+    assert sink.rows[0].description_text == "Board body."
+    assert sink.upgraded == 1
+
+
+def test_aggregator_twin_never_downgrades_board_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            _linkedin_row(
+                Link="https://boards.greenhouse.io/acme/jobs/9",
+                Source="Greenhouse (acme)",
+            )
+        ],
+    )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source(
+        "linkedin",
+        [_scraped("https://linkedin.com/jobs/view/1", "Acme", source="linkedin")],
+    )
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+    assert rows[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+    assert rows[0]["Date Verified"] == "2026-07-03"  # still a re-sighting
+
+
+def test_board_to_board_twin_keeps_first_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No preference between two board sources: first record stays."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path,
+        [
+            _linkedin_row(
+                Link="https://boards.greenhouse.io/acme/jobs/9",
+                Source="Greenhouse (acme)",
+            )
+        ],
+    )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source(
+        "lever",
+        [_scraped("https://jobs.lever.co/acme/9", "Acme", source="Lever (acme)")],
+    )
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+    assert rows[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+
+
+def test_triaged_row_bumps_date_verified_but_never_upgrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The record behind an application never changes under the user -- but the
+    cross-source re-sighting still counts as liveness evidence (the Date
+    Verified bump cross-source key collisions previously missed entirely)."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [_linkedin_row(Status="applied")])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source("greenhouse", [_board_twin()])
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert rows[0]["Source"] == "linkedin"
+    assert rows[0]["Link"] == "https://linkedin.com/jobs/view/1"
+    assert rows[0]["Date Verified"] == "2026-07-03"
+    assert sink.rescan_summary() == (1, 0, 0)
+
+
+def test_upgrade_fills_blank_comp_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [_linkedin_row()])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source("greenhouse", [_board_twin(comp="$100,000–200,000/yr USD")])
+    sink.flush()
+    assert _read_csv(csv_path)[0]["Comp"] == "$100,000–200,000/yr USD"
+
+    # A hand-set or already-filled Comp is never overwritten.
+    _seed_jobs_csv(csv_path, [_linkedin_row(Comp="$1/yr")])
+    sink2 = _rescan_sink(csv_path, tmp_path)
+    sink2.append_source("greenhouse", [_board_twin(comp="$100,000–200,000/yr USD")])
+    sink2.flush()
+    assert _read_csv(csv_path)[0]["Comp"] == "$1/yr"
+
+
+def test_upgrade_heals_description_under_new_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The heal keys off the row's post-upgrade Link, so the board description
+    lands under the board URL, not the dead aggregator one."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [_linkedin_row()])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    # Seeded non-empty: the sink treats a falsy descriptions dict as absent.
+    descriptions: dict[str, str] = {"https://other/1": "unrelated"}
+    sink = _rescan_sink(csv_path, tmp_path, descriptions=descriptions)
+    sink.append_source("greenhouse", [_board_twin(description_text="Board body.")])
+    sink.flush()
+
+    assert _read_csv(csv_path)[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+    assert descriptions.get("https://boards.greenhouse.io/acme/jobs/9") == "Board body."
+
+
+def test_board_sighting_wins_reseen_slot_over_aggregator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the SAME key is re-seen by an aggregator and a board source in one
+    run, the board sighting owns the collector slot regardless of order, so the
+    upgrade still fires."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [_linkedin_row()])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    # Aggregator re-sighting first (with a description -- the old tiebreak).
+    sink.append_source(
+        "linkedin",
+        [
+            _scraped(
+                "https://linkedin.com/jobs/view/1",
+                "Acme",
+                source="linkedin",
+                description_text="Aggregator body.",
+            )
+        ],
+    )
+    sink.append_source("greenhouse", [_board_twin()])
+    sink.flush()
+
+    rows = _read_csv(csv_path)
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+
+
+def test_periodic_flush_before_board_twin_leaves_no_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A periodic flush lands the aggregator append on disk mid-run; the board
+    twin then arrives and the upgrade rewrites the row. The pre-upgrade on-disk
+    append must be excluded by its OLD identity on every later flush -- one row,
+    upgraded, across repeated flushes."""
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(csv_path, [])
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+
+    sink = _rescan_sink(csv_path, tmp_path)
+    sink.append_source(
+        "linkedin",
+        [_scraped("https://linkedin.com/jobs/view/1", "Acme", source="linkedin")],
+    )
+    sink.flush()  # periodic: pre-upgrade row now on disk
+    sink.append_source("greenhouse", [_board_twin()])
+    sink.flush()  # upgrade fires here
+    sink.flush()  # and must stay idempotent
+
+    rows = _read_csv(csv_path)
+    assert len(rows) == 1
+    assert rows[0]["Source"] == "Greenhouse (acme)"
+    assert rows[0]["Link"] == "https://boards.greenhouse.io/acme/jobs/9"
+    assert sink.upgraded == 1

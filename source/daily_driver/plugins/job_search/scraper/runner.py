@@ -40,7 +40,12 @@ from daily_driver.plugins.job_search.jobs_lock import (
 )
 from daily_driver.plugins.job_search.scraper.countries import country_names
 from daily_driver.plugins.job_search.scraper.enrichment.llm import _empty_fit_stats
-from daily_driver.plugins.job_search.scraper.models import SaturationRecord
+from daily_driver.plugins.job_search.scraper.models import (
+    BOARD_SOURCE_CANONICALS,
+    ENRICH_ELIGIBLE_STATUSES,
+    SaturationRecord,
+    split_source,
+)
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from daily_driver.plugins.job_search.scraper.sources._http import (
     HTTPError,
@@ -350,6 +355,49 @@ def _csv_row_identity(row: dict[str, str]) -> str:
     return dedup_key(row.get("Company") or "", row.get("Role") or "")
 
 
+def _is_board_source(source: str) -> bool:
+    """True when a Source string names a full-enumeration board (ATS) source."""
+    return split_source((source or "").strip())[0] in BOARD_SOURCE_CANONICALS
+
+
+def _board_upgrade_target(
+    current_source: str, job: dict[str, Any]
+) -> tuple[str, str] | None:
+    """``(new_source, new_url)`` when ``job`` is a board record that should
+    replace an aggregator row's Source/Link, else None.
+
+    The one eligibility rule for both upgrade paths (carried CSV-dict rows and
+    this-run EnrichedJob rows); the untriaged-status gate stays with the
+    callers, which hold the row in different shapes.
+    """
+    new_source = job.get("source") or ""
+    new_url = (job.get("url") or "").strip()
+    if not new_url or not _is_board_source(new_source):
+        return None
+    if _is_board_source(current_source):
+        return None
+    return new_source, new_url
+
+
+def _better_sighting(prev: dict[str, Any] | None, job: dict[str, Any]) -> bool:
+    """Should ``job`` replace ``prev`` in the re-sighting collector?
+
+    A board-source sighting always beats an aggregator one (it is the record
+    the source-upgrade preference acts on); within the same tier, prefer a
+    sighting that carries a description -- the same job may re-appear from a
+    unit that lacks the body, and the heal must not lose the fuller record.
+    """
+    if prev is None:
+        return True
+    prev_board = _is_board_source(prev.get("source", ""))
+    job_board = _is_board_source(job.get("source", ""))
+    if job_board != prev_board:
+        return job_board
+    has_desc = bool((job.get("description_text") or "").strip())
+    prev_has_desc = bool((prev.get("description_text") or "").strip())
+    return has_desc and not prev_has_desc
+
+
 # Location strings scrapers emit for fully-remote roles. All collapse to "Remote"
 # so downstream consumers see one canonical value.
 _REMOTE_LOCATION_ALIASES: frozenset[str] = frozenset(
@@ -449,10 +497,10 @@ _JOBSPY_SITES: tuple[str, ...] = ("linkedin", "indeed")
 # crash mid-loop would otherwise lose the whole source's scrape. Coincides
 # with SOURCE_CAPABILITIES' enumeration="full" rows today, but deliberately
 # NOT derived from that map (declaration-only; a new board source must be
-# added here too).
-_BOARD_CHECKPOINT_SOURCES: frozenset[str] = frozenset(
-    {"greenhouse", "ashby", "lever", "workable", "workday"}
-)
+# added there AND to models._BOARD_SOURCE_PREFIXES). Shares membership with
+# the dedup source-upgrade preference -- both are facets of "full-enumeration
+# board-backed source" -- so both read the models set.
+_BOARD_CHECKPOINT_SOURCES: frozenset[str] = BOARD_SOURCE_CANONICALS
 
 # Display names for the live scraping rows. Source ids are pipeline-internal;
 # these are what a user reads. Unmapped ids fall back to a de-underscored form.
@@ -856,7 +904,12 @@ class _JobSink:
         # -> the scraped job dict. Consumed once by ``_apply_rescan_updates`` in
         # ``flush`` to refresh Date Verified and heal a missing description on the
         # carried pre-existing row. Empty for backfill (it never scrapes).
-        self._reseen: dict[str, dict[str, str]] = {}
+        self._reseen: dict[str, dict[str, Any]] = {}
+        # Pre-upgrade identities of THIS-RUN rows whose Source/Link the board
+        # preference replaced. flush must exclude the on-disk pre-upgrade row
+        # by its OLD identity too, or it would survive as a carried row beside
+        # the upgraded rewrite (a duplicate).
+        self._upgraded_identities: set[str] = set()
         # URLs that already carried a non-empty sidecar description at run start.
         # ``rescan_summary`` uses this to count how many re-sightings actually
         # HEAL a gap (fill-only) independently of when the persisting flush runs,
@@ -923,6 +976,11 @@ class _JobSink:
         # but announced loudly, never silently slipped back in.
         self.reopen_watch: dict[str, str] = {}
         self.reopened = 0
+        # Aggregator rows rewritten to their board twin's record this run
+        # (see _maybe_upgrade_source / _apply_run_row_upgrades). Surfaced in
+        # the run summary and manifest -- a Source/Link rewrite on the durable
+        # record must never be invisible to the user auditing jobs.csv.
+        self.upgraded = 0
         # Board-diff closures decided this run: row URL -> the cell updates
         # (Status/Date Closed/Notes) the flush applies to the matching leading
         # row in place. Populated after the scrape by the closure engine.
@@ -1019,18 +1077,14 @@ class _JobSink:
                 ):
                     known += 1
                     # Record the re-sighting so ``_apply_rescan_updates`` can act
-                    # on the carried row at flush. Prefer a sighting that carries
-                    # a description: within one run the same URL may re-appear
-                    # from a unit that lacks the body, so don't let it clobber an
-                    # earlier sighting that had one.
-                    identity = url or key
-                    if identity:
-                        prev = self._reseen.get(identity)
-                        has_desc = bool((job.get("description_text") or "").strip())
-                        prev_has_desc = bool(
-                            (prev or {}).get("description_text", "").strip()
-                        )
-                        if prev is None or (has_desc and not prev_has_desc):
+                    # on the carried row at flush -- under BOTH identities: a
+                    # cross-source twin matches by company+role key while the
+                    # stored row's identity is its own (different) Link, so the
+                    # key entry is the only handle that row can find it by.
+                    for identity in (url, key):
+                        if identity and _better_sighting(
+                            self._reseen.get(identity), job
+                        ):
                             self._reseen[identity] = job
                     continue
                 if not url:
@@ -1109,15 +1163,19 @@ class _JobSink:
             return
         stamp = today().isoformat()
         for row in leading_rows:
-            identity = _csv_row_identity(row)
-            job = self._reseen.get(identity)
+            job = self._reseen_for(row)
             if job is None:
                 continue
+            # Before the description heal: the upgrade rewrites Link, and the
+            # heal must file the description under the URL the row ends up with.
+            self._maybe_upgrade_source(row, job)
             # Freshness: a re-sighting is affirmative liveness evidence (drives
             # stale detection / prune). Log only on an actual change so periodic
             # + final flushes don't repeat the line for the same row.
             if row.get("Date Verified") != stamp:
-                log.info("Re-seen, Date Verified -> %s: %s", stamp, identity)
+                log.info(
+                    "Re-seen, Date Verified -> %s: %s", stamp, _csv_row_identity(row)
+                )
                 row["Date Verified"] = stamp
             # Heal a missing sidecar description (Indeed etc. carry it only at
             # scrape; the detail enricher is bot-walled). Fill-only; never
@@ -1131,6 +1189,113 @@ class _JobSink:
                     log.info(
                         "Healed missing description (%d chars): %s", len(desc), url
                     )
+
+    def _reseen_for(self, row: dict[str, str]) -> dict[str, Any] | None:
+        """This run's best re-sighting for a stored row: Link slot vs key slot.
+
+        A cross-source twin was classified known via the company+role key but
+        carries its own URL, so the stored row's Link never appears in the
+        collector -- the key entry is the only handle. When BOTH slots hit
+        (the row's own source re-saw it AND a twin arrived), the same
+        preference that fills the slots picks between them, so a board
+        sighting is never shadowed by a same-URL aggregator one.
+        """
+        url_job = self._reseen.get(_csv_row_identity(row))
+        key = dedup_key(row.get("Company") or "", row.get("Role") or "")
+        key_job = self._reseen.get(key) if key else None
+        if url_job is None:
+            return key_job
+        if (
+            key_job is not None
+            and key_job is not url_job
+            and _better_sighting(url_job, key_job)
+        ):
+            return key_job
+        return url_job
+
+    def _maybe_upgrade_source(self, row: dict[str, str], job: dict[str, Any]) -> None:
+        """Upgrade an aggregator row in place to the board record that re-sighted it.
+
+        Board sources enumerate a company's complete listing: their hosted URL
+        is stable and board-diff closure can verify it, while an aggregator
+        Link (LinkedIn especially) rots behind a signup wall and verifies
+        nothing. First-arrival-wins dedup means the aggregator row is already
+        on disk when the board twin lands -- so preference is applied here, at
+        flush, by rewriting Source/Link on the stored row. Untriaged rows only
+        (the record behind a user's application never changes under them);
+        board-to-board collisions keep first-wins; there is no downgrade path.
+        """
+        from daily_driver.core.statuses import normalize_status
+
+        target = _board_upgrade_target(row.get("Source") or "", job)
+        if target is None:
+            return
+        if normalize_status(row.get("Status") or "") not in ENRICH_ELIGIBLE_STATUSES:
+            return
+        new_source, new_url = target
+        log.info(
+            "Upgraded to board record: %s -- %s (%s %s -> %s %s)",
+            row.get("Company", ""),
+            row.get("Role", ""),
+            row.get("Source", ""),
+            row.get("Link", ""),
+            new_source,
+            new_url,
+        )
+        row["Source"] = new_source
+        row["Link"] = new_url
+        # Fill-only comp: the board record may carry scrape-time pay
+        # (greenhouse/lever) the aggregator row never had.
+        if not (row.get("Comp") or "").strip() and (job.get("comp") or "").strip():
+            row["Comp"] = job["comp"]
+        self.upgraded += 1
+
+    def _apply_run_row_upgrades(self) -> None:
+        """Apply the board-record upgrade to rows appended THIS run.
+
+        ``_apply_rescan_updates`` sees only carried (pre-run) rows; a fast
+        aggregator source's row appended earlier this same run collides the
+        same way when the slow board walk reaches its twin, so it is upgraded
+        here in the in-memory list flush writes out. Caller holds _rows_lock.
+        """
+        if not self._reseen:
+            return
+        for i, enriched in enumerate(self.rows):
+            if enriched.status not in ENRICH_ELIGIBLE_STATUSES:
+                continue
+            key = dedup_key(enriched.company, enriched.role)
+            job = self._reseen.get(key) if key else None
+            if job is None:
+                continue
+            target = _board_upgrade_target(enriched.source, job)
+            if target is None:
+                continue
+            new_source, new_url = target
+            canonical, board = split_source(new_source)
+            updates: dict[str, Any] = {
+                "source": new_source,
+                "url": new_url,
+                "source_canonical": canonical,
+                "source_board": board,
+            }
+            if not enriched.comp.strip() and (job.get("comp") or "").strip():
+                updates["comp"] = job["comp"]
+            if not enriched.description_text.strip():
+                desc = (job.get("description_text") or "").strip()
+                if desc:
+                    updates["description_text"] = desc
+            log.info(
+                "Upgraded to board record: %s -- %s (%s %s -> %s %s)",
+                enriched.company,
+                enriched.role,
+                enriched.source,
+                enriched.url,
+                new_source,
+                new_url,
+            )
+            self._upgraded_identities.add(_csv_row_identity(enriched.to_csv_row()))
+            self.rows[i] = enriched.model_copy(update=updates)
+            self.upgraded += 1
 
     def _apply_folded_updates(self, leading_rows: list[dict[str, str]]) -> None:
         """Land backlog-wave enrichment on the matching leading rows in place.
@@ -1191,7 +1356,7 @@ class _JobSink:
         not_seen = 0
         healed = 0
         for row in self.preexisting_rows:
-            job = self._reseen.get(_csv_row_identity(row))
+            job = self._reseen_for(row)
             if job is None:
                 not_seen += 1
                 continue
@@ -1243,6 +1408,9 @@ class _JobSink:
         )
 
         with self._rows_lock, self._disk_lock():
+            # Board-record upgrades for this run's own rows, BEFORE the
+            # snapshot, so the rewrite below carries the upgraded records.
+            self._apply_run_row_upgrades()
             snapshot = list(self.rows)
             extras_snapshot = list(self.row_extras)
             out_header = self.header + self.extra_columns
@@ -1267,6 +1435,9 @@ class _JobSink:
                     for job in snapshot
                     if (ident := _csv_row_identity(job.to_csv_row()))
                 }
+                # An upgraded run row changed its Link mid-run: its on-disk
+                # pre-upgrade append must be excluded by the OLD identity too.
+                run_identities |= self._upgraded_identities
                 leading_rows = [
                     row
                     for row in on_disk_rows
@@ -1275,9 +1446,13 @@ class _JobSink:
             # Act on rows we re-saw this run BEFORE the no-churn comparison, so a
             # re-seen-only run (Date Verified bumped, no new rows) is detected as
             # changed and rewrites jobs.csv. Mutates ``leading_rows`` in place
-            # under the held ``_rows_lock``. The two update seams touch
-            # disjoint cells (folded: enrichment-owned; rescan: Date Verified
-            # + description heal), so their order is not load-bearing.
+            # under the held ``_rows_lock``. Order IS load-bearing since the
+            # source-upgrade preference: folded updates match rows by identity
+            # (Link), so they must land before rescan rewrites Link on upgraded
+            # rows. Closures stay safe after either: they are decided from the
+            # pre-upgrade disk state, and an aggregator-sourced row matches no
+            # enumerated board, so no closure ever targets a Link the upgrade
+            # replaces.
             self._apply_folded_updates(leading_rows)
             self._apply_rescan_updates(leading_rows)
             self._apply_closure_updates(leading_rows)
@@ -2435,6 +2610,7 @@ def _write_run_manifest(
     backlog_remaining: int = 0,
     saturation: list[SaturationRecord] | None = None,
     closed_verified: int = 0,
+    upgraded: int = 0,
 ) -> None:
     """Write jobs-last-run.json. Written on BOTH the happy and interrupt paths.
 
@@ -2464,6 +2640,7 @@ def _write_run_manifest(
         # phase-1 worker's append.
         "saturated_queries": [asdict(rec) for rec in list(saturation or [])],
         "closed_verified": closed_verified,
+        "upgraded": upgraded,
         "phase_reached": phase_reached,
         "interrupted": interrupted,
     }
@@ -2601,6 +2778,7 @@ def run(
                 backlog_remaining=state.backlog_remaining,
                 saturation=state.saturation,
                 closed_verified=state.closed_verified,
+                upgraded=state.sink.upgraded if state.sink is not None else 0,
                 phase_reached=state.phase_reached,
                 interrupted=True,
             )
@@ -3208,10 +3386,7 @@ def _run_impl(
             # cache-only descriptions (backfill parity). Kept off sink.rows so
             # jobs.csv order and new_jobs stay new-rows-only; landed in place
             # at flush via _apply_folded_updates.
-            from daily_driver.plugins.job_search.scraper.models import (
-                ENRICH_ELIGIBLE_STATUSES,
-                EnrichedJob,
-            )
+            from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
             backlog_scoreable: list[EnrichedJob] = []
             for raw_row in sink.preexisting_rows:
@@ -3328,6 +3503,13 @@ def _run_impl(
         if healed:
             reseen_line += f"; {healed} descriptions healed"
         Console.info(reseen_line)
+    # Upgraded: aggregator rows rewritten to their board twin's Source/Link.
+    # A durable-record rewrite the user should hear about, not discover.
+    if sink is not None and sink.upgraded:
+        Console.info(
+            f"  {'Upgraded':<{label_width}}  {sink.upgraded} row(s) switched to "
+            "the company board's record (see log for identities)"
+        )
     # Reopened: a job that verification once closed came back in a scrape.
     # Loud -- a genuinely re-posted role or a false-positive closure healing.
     if sink is not None and sink.reopened:
@@ -3449,6 +3631,7 @@ def _run_impl(
         backlog_remaining=state.backlog_remaining,
         saturation=ctx.saturation,
         closed_verified=state.closed_verified,
+        upgraded=sink.upgraded,
         phase_reached=state.phase_reached,
         interrupted=False,
     )
