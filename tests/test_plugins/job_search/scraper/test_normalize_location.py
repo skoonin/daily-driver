@@ -122,6 +122,62 @@ class TestRealWorldStrings:
             assert normalize_location(once) == once, raw
 
 
+class TestSubdivisionCodesNeverResolveAsCountries:
+    """US-state / Canadian-province postal codes colliding with ISO country codes.
+
+    Observed live (2026-07-04): "San Francisco, CA" persisted as
+    "Canada, San Francisco" and fed the wrong country to the fit prompt. A
+    subdivision abbreviation must pass through verbatim, never mint a country.
+    """
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "San Francisco, CA",  # CA = Canada
+            "Boston, MA",  # MA = Morocco
+            "Chicago, IL",  # IL = Israel
+            "Pittsburgh, PA",  # PA = Panama
+            "Denver, CO",  # CO = Colombia
+            "Saskatoon, SK",  # SK = Slovakia
+            "Charlottetown, PE",  # PE = Peru
+            "san francisco, ca",  # guard must catch lowercase codes too
+        ],
+    )
+    def test_city_state_passes_through_verbatim(self, raw: str) -> None:
+        assert normalize_location(raw) == raw
+
+    def test_subdivision_set_shape(self) -> None:
+        # Hand-kept list (unlike the enum-derived country table): lock the
+        # shape so a dropped or mistyped entry fails loudly instead of
+        # silently re-minting wrong countries. 50 US states + DC + 5 US
+        # territories + 10 CA provinces + 3 CA territories.
+        from daily_driver.plugins.job_search.scraper.normalize_location import (
+            _SUBDIVISION_CODES,
+        )
+
+        assert len(_SUBDIVISION_CODES) == 69
+        assert all(
+            len(code) == 2 and code.isalpha() and code.isupper()
+            for code in _SUBDIVISION_CODES
+        )
+
+    def test_bare_subdivision_code_alone_stays_verbatim(self) -> None:
+        # Even standalone, "CA" is ambiguous (California vs Canada): no country.
+        assert normalize_location("CA") == "CA"
+
+    def test_non_subdivision_iso_codes_still_resolve(self) -> None:
+        # The Remote (US) contract and city+code countries survive the guard.
+        assert normalize_location("Remote (US)") == "United States"
+        assert normalize_location("London, UK") == "United Kingdom, London"
+
+    def test_origin_country_hint_unaffected(self) -> None:
+        # The hint is an explicit ISO code from the scrape context, not location
+        # text — "CA" as a hint still means Canada.
+        assert (
+            normalize_location("Vancouver", origin_country="CA") == "Canada, Vancouver"
+        )
+
+
 class TestNormalizationLogging:
     def test_logs_when_nonempty_input_yields_empty(
         self, caplog: pytest.LogCaptureFixture
