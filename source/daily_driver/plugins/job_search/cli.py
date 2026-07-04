@@ -211,7 +211,7 @@ def add_parser(
         "discover-boards",
         parents=parents,
         help=(
-            "Sweep the ATS slug universe (Greenhouse + Ashby) for boards "
+            "Sweep the ATS slug universe (Greenhouse + Ashby + Lever) for boards "
             "listing in-scope roles; matched boards are cached for jobs run. "
             "Incremental after the first sweep (only never-probed slugs); the "
             "first sweep probes everything and takes tens of minutes"

@@ -111,9 +111,9 @@ class ScrapeContext:
     enumerations: dict[str, set[str]] = field(default_factory=dict)
 
     # Boards found by `jobs discover-boards` (matched cache), keyed by
-    # platform. Populated by run() from the workspace state dir; the
-    # greenhouse/ashby adapters union these with their hand-pinned config
-    # boards, minus the per-platform exclude_boards blocklist.
+    # platform. Populated by run() from the workspace state dir; the board
+    # adapters (greenhouse/ashby/lever) union these with their hand-pinned
+    # config boards, minus the per-platform exclude_boards blocklist.
     discovered_boards: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def record_enumeration(self, source_label: str, urls: set[str]) -> None:
@@ -2722,7 +2722,7 @@ def _run_impl(
     )
 
     # Boards the discovery sweep matched: sorted for a stable scrape order,
-    # keyed by platform for the greenhouse/ashby adapters to union with pins.
+    # keyed by platform for the board adapters to union with pins.
     discovered_boards = {
         platform: tuple(sorted(load_matched_boards(ephemeral_dir, platform)))
         for platform in SWEEP_PLATFORMS

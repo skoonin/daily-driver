@@ -50,9 +50,7 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-# Platforms swept in v1. Lever joins once its adapter exists (ratified
-# sequencing: adapter first, then sweep).
-SWEEP_PLATFORMS: tuple[str, ...] = ("greenhouse", "ashby")
+SWEEP_PLATFORMS: tuple[str, ...] = ("greenhouse", "ashby", "lever")
 
 # Upstream slug lists: flat JSON arrays of board slugs, refreshed daily by the
 # job-board-aggregator project (MIT code / CC BY-NC data — fine for this
@@ -67,11 +65,16 @@ _SLUG_LIST_URLS: dict[str, str] = {
         "https://raw.githubusercontent.com/Feashliaa/job-board-aggregator/"
         "main/data/ashby_companies.json"
     ),
+    "lever": (
+        "https://raw.githubusercontent.com/Feashliaa/job-board-aggregator/"
+        "main/data/lever_companies.json"
+    ),
 }
 
-# Per-platform worker caps (aggregator production defaults): greenhouse's API
-# tolerates wide fan-out; Ashby's GraphQL endpoint rate-limits aggressively.
-_WORKER_CAPS: dict[str, int] = {"greenhouse": 30, "ashby": 5}
+# Per-platform worker caps (aggregator production defaults): the greenhouse
+# and lever APIs tolerate wide fan-out; Ashby's GraphQL endpoint rate-limits
+# aggressively.
+_WORKER_CAPS: dict[str, int] = {"greenhouse": 30, "ashby": 5, "lever": 30}
 
 # Jitter before each probe spreads concurrent workers so a full sweep never
 # fires request bursts in lockstep (aggregator-proven pacing).
@@ -330,9 +333,44 @@ def _probe_ashby(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult
     return ProbeResult(slug, "swept", _count_matches(titles, ctx.plugin))
 
 
+def _probe_lever(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult:
+    """Full postings listing; titles come from each entry's ``text``.
+
+    Lever has no lighter titles-only variant (unlike greenhouse's no-content
+    listing or Ashby's GraphQL query), so the probe fetches the same postings
+    endpoint the adapter scrapes -- the aggregator runs this in production at
+    the same worker cap. A non-list 200 body is a broken fetch, classified
+    transient (never dead) so it cannot poison the permanent dead cache.
+    """
+    url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+    resp = _api_request(
+        session,
+        "GET",
+        url,
+        ctx,
+        label=f"discover/lever/{slug}",
+        return_error_responses=True,
+    )
+    if resp is None:
+        return ProbeResult(slug, "transient")
+    if resp.status_code in _DEAD_STATUSES:
+        return ProbeResult(slug, "dead")
+    if resp.status_code != 200:
+        return ProbeResult(slug, "transient")
+    try:
+        postings = resp.json()
+    except ValueError:
+        return ProbeResult(slug, "transient")
+    if not isinstance(postings, list):
+        return ProbeResult(slug, "transient")
+    titles = [entry.get("text", "") for entry in postings if isinstance(entry, dict)]
+    return ProbeResult(slug, "swept", _count_matches(titles, ctx.plugin))
+
+
 _PROBES: dict[str, Callable[[str, ScrapeContext, Session], ProbeResult]] = {
     "greenhouse": _probe_greenhouse,
     "ashby": _probe_ashby,
+    "lever": _probe_lever,
 }
 
 

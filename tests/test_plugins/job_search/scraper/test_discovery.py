@@ -3,7 +3,9 @@
 Payload shapes mirror the live APIs (verified 2026-07-04): the greenhouse
 titles-only listing (`{"jobs": [{"title": ...}]}`), the Ashby GraphQL titles
 query (`{"data": {"jobBoard": {"jobPostings": [...]}}}`, ``jobBoard: null``
-for an unknown org), and the aggregator slug lists (flat JSON string arrays).
+for an unknown org), the Lever postings endpoint (a bare JSON array; ``[]``
+for a live-but-empty board, 404 for a gone slug), and the aggregator slug
+lists (flat JSON string arrays).
 """
 
 from __future__ import annotations
@@ -215,6 +217,83 @@ class TestAshbyProbe:
     ) -> None:
         monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: None)
         res = discovery._probe_ashby("flaky-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+
+def test_sweep_platform_registries_stay_in_sync() -> None:
+    """Every swept platform needs all three per-platform seams: a slug-list
+    URL and a probe (KeyError mid-sweep if missing) and an explicit worker cap
+    (a missing cap silently falls back to 10 instead of failing loudly)."""
+    platforms = set(discovery.SWEEP_PLATFORMS)
+    assert set(discovery._SLUG_LIST_URLS) == platforms
+    assert set(discovery._PROBES) == platforms
+    assert set(discovery._WORKER_CAPS) == platforms
+
+
+class TestLeverProbe:
+    def test_counts_matching_titles(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = [
+            {"text": "Senior Site Reliability Engineer"},
+            {"text": "Account Executive"},
+            {"text": "Staff SRE"},
+        ]
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, payload)
+        )
+        res = discovery._probe_lever("some-co", _ctx(["SRE"]), MagicMock())
+        assert res.outcome == "swept"
+        assert res.matched == 2
+
+    def test_empty_board_is_swept_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A live board with nothing open returns [] (verified live); only
+        # 404/410 means the slug is gone.
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(200, []))
+        res = discovery._probe_lever("quiet-co", _ctx(), MagicMock())
+        assert res.outcome == "swept"
+        assert res.matched == 0
+
+    def test_404_is_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(404))
+        res = discovery._probe_lever("gone-co", _ctx(), MagicMock())
+        assert res.outcome == "dead"
+
+    def test_410_is_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(410))
+        res = discovery._probe_lever("gone-co", _ctx(), MagicMock())
+        assert res.outcome == "dead"
+
+    def test_exhausted_429_is_transient_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(429))
+        res = discovery._probe_lever("busy-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+    def test_transport_failure_is_transient(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: None)
+        res = discovery._probe_lever("flaky-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+    def test_corrupt_body_is_transient(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(200))
+        res = discovery._probe_lever("weird-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+    def test_non_list_body_is_transient_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An error object served with HTTP 200 is a broken fetch, never a
+        # permanent-dead verdict (dead-cache poisoning).
+        monkeypatch.setattr(
+            discovery,
+            "_api_request",
+            lambda *a, **kw: _resp(200, {"ok": False, "error": "oops"}),
+        )
+        res = discovery._probe_lever("live-co", _ctx(), MagicMock())
         assert res.outcome == "transient"
 
 
