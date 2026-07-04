@@ -37,7 +37,7 @@ plugins:
     locations:
       home_city: "Vancouver, BC"
       remote: true
-      countries: [CA, US]
+      countries: {CA: [], US: []}
 """,
         encoding="utf-8",
     )

@@ -78,7 +78,7 @@ def _us_plugin() -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "locations": {"countries": ["US"]},
+            "locations": {"countries": {"US": []}},
         }
     )
 

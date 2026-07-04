@@ -60,7 +60,7 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["software engineer"],
-            "locations": {"countries": ["US"]},
+            "locations": {"countries": {"US": []}},
             "scraper": {
                 "enabled": True,
                 "search_terms": ["software engineer"],

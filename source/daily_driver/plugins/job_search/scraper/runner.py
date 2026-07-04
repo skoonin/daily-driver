@@ -219,17 +219,34 @@ def home_city(plugin: JobSearchPlugin) -> str:
 
 
 def countries_list(plugin: JobSearchPlugin) -> list[str]:
-    """Return the configured ISO country codes, defaulting to US + CA."""
+    """Return the configured ISO country codes (map keys), defaulting to US + CA."""
     loc = plugin.locations
     return list(loc.countries) if loc and loc.countries else ["US", "CA"]
 
 
+def _city_in_location(city: str, loc_lower: str) -> bool:
+    """Whole-word city match against a lowercased location string.
+
+    Word boundaries keep "Vancouver" from hitting "Vancouverish"; a bare
+    substring test is too loose once city lists drive acceptance.
+    """
+    pattern = rf"(?<![a-z0-9]){re.escape(city.strip().lower())}(?![a-z0-9])"
+    return re.search(pattern, loc_lower) is not None
+
+
 def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
-    """Check whether a job's location matches the configured allow-list.
+    """Check whether a job's location matches the configured allow-map.
 
     Accepts if any of:
       - remote: true and job location contains "remote" (or is empty/missing)
-      - job location contains a country name from locations.countries
+      - job location contains a country name from locations.countries whose
+        city list is empty (whole-country acceptance)
+      - job location names a listed city of a mapped country. The city match
+        stands alone — real ATS location strings usually name the city
+        WITHOUT the country ("Movable Ink - Toronto", "New York, New York"),
+        so requiring both would drop nearly everything. Conversely, for a
+        city-narrowed country the bare country name does NOT pass: naming
+        cities means "only these cities (or remote)".
     Returns True (accept) when no locations block is configured.
     """
     loc_cfg = plugin.locations
@@ -244,10 +261,14 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
     if loc_cfg.remote and "remote" in loc:
         return True
 
-    for code in loc_cfg.countries:
-        for name in country_names(code):
-            if name.lower() in loc:
+    for code, cities in loc_cfg.countries.items():
+        if cities:
+            if any(_city_in_location(city, loc) for city in cities):
                 return True
+        else:
+            for name in country_names(code):
+                if name.lower() in loc:
+                    return True
 
     return False
 

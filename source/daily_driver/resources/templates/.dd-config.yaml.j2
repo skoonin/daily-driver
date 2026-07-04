@@ -197,7 +197,14 @@ tracker:
 #     locations:
 #       home_city: "Vancouver, BC"
 #       remote: true
-#       countries: [CA, US]
+#       # Allowed countries as a map of ISO code -> city allow-list. An
+#       # empty list accepts jobs anywhere in that country; a non-empty
+#       # list narrows that country to ONLY the listed cities (the bare
+#       # country name stops passing). Remote roles pass regardless when
+#       # `remote` is true.
+#       countries:
+#         CA: [Vancouver, Victoria]
+#         US: []
 #     scraper:
 #       enabled: false
 #       # Retries for HTTP 429/503 responses (rate limits). Honors the

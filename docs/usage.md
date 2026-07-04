@@ -149,7 +149,8 @@ plugins:
     locations:
       home_city: Vancouver, BC
       remote: true
-      countries: [US, CA]
+      # ISO code -> city allow-list; [] = whole country, cities = only those
+      countries: {US: [], CA: [Vancouver, Victoria]}
     scraper:
       enabled: true
     sources:

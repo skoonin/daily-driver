@@ -157,7 +157,9 @@ class TestMergedJobspyScraper:
     def _config(countries: list[str] | None = None, **sources: object) -> ScrapeContext:
         cfg: dict[str, object] = {
             "roles": ["software engineer"],
-            "locations": {"countries": countries or ["US"]},
+            # countries is a per-country city map; these tests only exercise
+            # the country codes, so every entry maps to whole-country ([]).
+            "locations": {"countries": {c: [] for c in (countries or ["US"])}},
             "scraper": {
                 "enabled": True,
                 "search_terms": ["software engineer"],
@@ -243,7 +245,7 @@ class TestMergedJobspyScraper:
             plugin=JobSearchPlugin.model_validate(
                 {
                     "roles": ["ignored role"],
-                    "locations": {"countries": ["US"]},
+                    "locations": {"countries": {"US": []}},
                     "scraper": {
                         "enabled": True,
                         "search_terms": ["platform engineer"],
