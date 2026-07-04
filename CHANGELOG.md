@@ -41,7 +41,7 @@ Daily Driver is a pre-1.0 personal tool with no external users. This file is a r
 
 ### Fixed
 
-- **Remote Ashby postings are no longer dropped by city-level location filtering.** Ashby's API often reports a remote posting's location as a bare country ("Canada") while carrying the remote fact in separate `isRemote`/`workplaceType` fields the scraper ignored — so a city-narrowed country in `locations.countries` silently dropped remote roles (observed live: Docker's remote-Canada Staff Infrastructure posting). The remote flag now folds into the location string ("Canada (Remote)"), the same treatment Lever's `workplaceType` already gets, so `remote: true` admits these rows.
+- **Remote Ashby postings are no longer dropped by city-level location filtering.** Ashby's API often reports a remote posting's location as a bare country ("Canada") while carrying the remote fact in separate `isRemote`/`workplaceType` fields the scraper ignored — so a city-narrowed country in `locations.countries` silently dropped remote roles (observed live: Docker's remote-Canada Staff Infrastructure posting). The remote flag now folds into the location string ("Canada (Remote)"), the same treatment Lever's `workplaceType` already gets, so `remote: true` admits these rows. (#167)
 
 - **The scaffolded workspace config template now documents the Lever source.** The template shipped to new workspaces (`daily-driver init`) was generated before the `lever` source existed, so a fresh config had no `lever:` block to uncomment — and an absent source toggle means the source never runs. The template is regenerated, and the pre-commit freshness check now also watches plugin config modules so a future source addition cannot ship with a stale template again. (#166)
 
