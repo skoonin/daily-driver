@@ -94,7 +94,7 @@ def test_indeed_url_is_skipped_without_fetch(
 
 def test_other_urls_route_through_api_get(fake_config: ScrapeContext) -> None:
     """Non-skipped hosts must fetch via `_api_get`, not bare `requests.get`."""
-    jobs = [_job("https://boards.greenhouse.io/acme/jobs/123")]
+    jobs = [_job("https://apply.workable.com/acme/j/123")]
 
     fake_resp = MagicMock()
     fake_resp.text = "<html></html>"
@@ -114,7 +114,7 @@ def test_other_urls_route_through_api_get(fake_config: ScrapeContext) -> None:
     assert api_get.call_count == 1
     # First positional arg is a Session built once for the run.
     session_arg, url_arg = api_get.call_args.args[0], api_get.call_args.args[1]
-    assert url_arg == "https://boards.greenhouse.io/acme/jobs/123"
+    assert url_arg == "https://apply.workable.com/acme/j/123"
     assert session_arg is not None
     assert parse.call_count == 1
 
@@ -124,8 +124,8 @@ def test_progress_callback_fires_once_per_real_fetch(
 ) -> None:
     """progress() advances per fetched job; skipped jobs only bump the skip tally."""
     jobs = [
-        _job("https://boards.greenhouse.io/acme/jobs/1"),
-        _job("https://boards.greenhouse.io/acme/jobs/2"),
+        _job("https://apply.workable.com/acme/j/1"),
+        _job("https://apply.workable.com/acme/j/2"),
         _job("https://news.ycombinator.com/item?id=1"),  # skipped (no fetch)
         _job("https://acme.com/job", comp="$200k"),  # skipped (has comp)
     ]
@@ -147,7 +147,7 @@ def test_progress_callback_fires_once_per_real_fetch(
             jobs, fake_config, progress=lambda n, d: calls.append((n, d))
         )
 
-    assert len(calls) == 2  # only the two greenhouse jobs do real work
+    assert len(calls) == 2  # only the two workable jobs do real work
     assert all(n == 1 for n, _ in calls)
     assert stats["fetched"] == 2
     assert stats["skipped"] == 2
@@ -156,7 +156,7 @@ def test_progress_callback_fires_once_per_real_fetch(
 
 def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
     """When `_api_get` gives up (None), enrichment continues without mutating the job."""
-    jobs = [_job("https://boards.greenhouse.io/acme/jobs/123")]
+    jobs = [_job("https://apply.workable.com/acme/j/123")]
 
     with (
         patch(
@@ -177,7 +177,7 @@ def test_api_get_returning_none_is_handled(fake_config: ScrapeContext) -> None:
 def test_session_is_reused_across_jobs(fake_config: ScrapeContext) -> None:
     """A single requests.Session is built once and reused across all fetches."""
     jobs = [
-        _job("https://boards.greenhouse.io/acme/jobs/1"),
+        _job("https://apply.workable.com/acme/j/1"),
         _job("https://lever.co/acme/jobs/2"),
         _job("https://example.com/jobs/3"),
     ]
@@ -205,3 +205,124 @@ def test_session_is_reused_across_jobs(fake_config: ScrapeContext) -> None:
     assert api_get.call_count == 3
     sessions_used = {call.args[0] for call in api_get.call_args_list}
     assert len(sessions_used) == 1
+
+
+def test_greenhouse_hosted_page_is_skipped_without_fetch(
+    fake_config: ScrapeContext,
+) -> None:
+    """job-boards.greenhouse.io sits behind volume-based bot protection (403s
+    at run scale, verified live 2026-07-04); its rows must never reach the
+    HTTP seam. Applies to the legacy boards.greenhouse.io host too."""
+    jobs = [
+        _job("https://job-boards.greenhouse.io/trueanomalyinc/jobs/5108466007"),
+        _job("https://boards.greenhouse.io/anthropic/jobs/123"),
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
+    ) as api_get:
+        _, stats = enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 0
+    assert stats["skip_reasons"].get("greenhouse: comp from scrape") == 2
+
+
+def test_comp_filled_from_description_without_fetch(
+    fake_config: ScrapeContext,
+) -> None:
+    """A comp-less row whose scraped description carries pay-transparency text
+    gets its Comp cell from that text -- zero HTTP requests."""
+    jobs = [
+        _job(
+            "https://job-boards.greenhouse.io/acme/jobs/1",
+            description_text=(
+                "About the role... California Base Salary: Senior: "
+                "$150,000\u2013$205,000, Staff: $170,000 to $245,000."
+            ),
+        )
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
+    ) as api_get:
+        out, stats = enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 0
+    assert out[0].comp == "$150,000\u2013$205,000/yr"
+    assert stats["enriched"] == 1
+    assert stats["from_description"] == 1
+    # A text-filled row is enriched, not skipped: it gained data.
+    assert stats["skipped"] == 0
+
+
+def test_description_comp_prevents_fetch_on_unblocked_hosts_too(
+    fake_config: ScrapeContext,
+) -> None:
+    """The pre-pass runs before fetch targets are built, so any host's row
+    with pay text in its description costs no request."""
+    jobs = [
+        _job(
+            "https://example-ats.example.com/jobs/1",
+            description_text="Salary: $120,000 - $150,000 plus benefits.",
+        )
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
+    ) as api_get:
+        out, _ = enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 0
+    assert out[0].comp == "$120,000\u2013$150,000/yr"
+
+
+def test_row_with_existing_comp_untouched_by_pre_pass(
+    fake_config: ScrapeContext,
+) -> None:
+    """A row that already has comp keeps it verbatim (no re-derivation)."""
+    jobs = [
+        _job(
+            "https://job-boards.greenhouse.io/acme/jobs/1",
+            comp="$999,999/yr",
+            description_text="Salary: $120,000 - $150,000.",
+        )
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
+    ) as api_get:
+        out, _ = enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 0
+    assert out[0].comp == "$999,999/yr"
+
+
+def test_triaged_row_not_touched_by_pre_pass(fake_config: ScrapeContext) -> None:
+    """The detail pass never wrote to triaged rows; the description pre-pass
+    keeps that footprint (status gate mirrors the fetch gate)."""
+    jobs = [
+        _job(
+            "https://job-boards.greenhouse.io/acme/jobs/1",
+            status="applied",
+            description_text="Salary: $120,000 - $150,000.",
+        )
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"
+    ) as api_get:
+        out, _ = enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 0
+    assert out[0].comp == ""
+
+
+def test_description_without_pay_text_still_fetches_elsewhere(
+    fake_config: ScrapeContext,
+) -> None:
+    """No pay text in the description -> the row remains a fetch target on a
+    host that allows it (workable/workday-class hosts keep their fetch)."""
+    resp = MagicMock()
+    resp.text = "<html></html>"
+    jobs = [
+        _job(
+            "https://apply.workable.com/acme/j/1",
+            description_text="A great role on a great team.",
+        )
+    ]
+    with patch(
+        "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get",
+        return_value=resp,
+    ) as api_get:
+        enrich_job_details(jobs, fake_config)
+    assert api_get.call_count == 1

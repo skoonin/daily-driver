@@ -16,7 +16,10 @@ from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_ELIGIBLE_STATUSES,
     EnrichedJob,
 )
-from daily_driver.plugins.job_search.scraper.parsing import _parse_detail_page
+from daily_driver.plugins.job_search.scraper.parsing import (
+    _parse_detail_page,
+    comp_from_text,
+)
 from daily_driver.plugins.job_search.scraper.sources._http import (
     Session,
     _api_get,
@@ -60,6 +63,15 @@ _HOST_CAPABILITY: dict[str, DescriptionCapability] = {
     # skip it rather than spend a request and mislabel the miss (verified live
     # 2026-07-02).
     "jobs.apple.com": DescriptionCapability(False, "apple: SPA, no server JSON-LD"),
+    # Greenhouse hosted pages sit behind volume-based bot protection on ONE
+    # shared host (job-boards.greenhouse.io serves every board), so a
+    # discovery-scale run gets 403s after the first requests (verified live
+    # 2026-07-04: single requests return 200 with any UA). The pages carry no
+    # JSON-LD anyway; comp comes from the scraped description via the
+    # comp-from-text pre-pass, and the description itself comes from the API
+    # at scrape time. Matches boards.greenhouse.io too (same protection, same
+    # data already in hand).
+    "greenhouse.io": DescriptionCapability(False, "greenhouse: comp from scrape"),
 }
 _DEFAULT_CAPABILITY = DescriptionCapability(True, "")
 
@@ -99,6 +111,12 @@ def render_detail_summary(stats: dict[str, Any]) -> str:
     per-reason counts in ``stats['skip_reasons']`` sum to ``stats['skipped']``.
     """
     base = f"{stats['enriched']} enriched, {stats['skipped']} skipped"
+    from_desc = stats.get("from_description") or 0
+    if from_desc:
+        base = (
+            f"{stats['enriched']} enriched ({from_desc} from cached "
+            f"descriptions), {stats['skipped']} skipped"
+        )
     reasons = stats.get("skip_reasons") or {}
     if not reasons:
         return base
@@ -205,7 +223,25 @@ def enrich_job_details(
     skipped_count = 0
     skip_reasons: dict[str, int] = {}
     fetch_targets: list[tuple[int, str]] = []  # (slot index, url)
+    text_filled = 0
     for i, job in enumerate(out):
+        # Comp is often already in the scraped description (pay-transparency
+        # text); fill it from there first so the row needs no page fetch at
+        # all. Same active-status gate as the fetch path -- this pass never
+        # touched triaged rows before and still doesn't. A filled row counts
+        # as enriched (not skipped): it gained data, it just cost no request.
+        # (JobSpy rows get a scrape-time shot via its own extract_salary; the
+        # `not job.comp` gate means this pass only sees what that one missed.)
+        if (
+            not job.comp
+            and job.description_text
+            and job.status in ENRICH_ELIGIBLE_STATUSES
+        ):
+            text_comp = comp_from_text(job.description_text)
+            if text_comp:
+                out[i] = job.with_updates(comp=text_comp)
+                text_filled += 1
+                continue
         url = (job.url or "").strip()
         reason = _skip_reason(job)
         if reason is not None:
@@ -341,14 +377,17 @@ def enrich_job_details(
             _apply(idx, url, _fetch(url))
 
     log.info(
-        "[detail] fetched %d pages, enriched %d of %d jobs",
+        "[detail] fetched %d pages, enriched %d of %d jobs "
+        "(%d comp from cached descriptions)",
         fetched_count[0],
-        enriched_count,
+        enriched_count + text_filled,
         len(out),
+        text_filled,
     )
     return out, {
         "fetched": fetched_count[0],
-        "enriched": enriched_count,
+        "enriched": enriched_count + text_filled,
+        "from_description": text_filled,
         "skipped": skipped_count,
         "skip_reasons": skip_reasons,
         "total": len(out),
