@@ -46,6 +46,7 @@ def test_capability_map_matches_plan() -> None:
     expect = {
         "greenhouse": ("full", "board-diff"),
         "ashby": ("full", "board-diff"),
+        "lever": ("full", "board-diff"),
         "workable": ("full", "board-diff"),
         "workday": ("full", "board-diff"),
         "apple": ("windowed", "url-check"),

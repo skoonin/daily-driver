@@ -15,6 +15,7 @@ from .greenhouse import scrape_greenhouse
 from .hn_jobs import scrape_hn_jobs
 from .hn_who_is_hiring import scrape_hn_who_is_hiring
 from .jobspy import scrape_jobspy
+from .lever import scrape_lever
 from .remoteok import scrape_remoteok
 from .weworkremotely import scrape_weworkremotely
 from .workable import scrape_workable
@@ -38,6 +39,7 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict[str, Any]]]] = {
     "hn_jobs": scrape_hn_jobs,
     "greenhouse": scrape_greenhouse,
     "ashby": scrape_ashby,
+    "lever": scrape_lever,
     "workable": scrape_workable,
     "workday": scrape_workday,
     "linkedin": partial(scrape_jobspy, sites=["linkedin"]),
@@ -71,9 +73,9 @@ class SourceCapability:
 # nothing here changes scrape behavior. Saturation detection is deliberately
 # NOT keyed on this map: workday enumerates fully yet can still hit its page
 # ceiling, so each source flags its own truncation.
-# Rationale per source: greenhouse/ashby/workable/workday return the complete
-# board listing per configured company. apple returns NEW-only results behind
-# search filters with slug-unstable URLs, so board-diff is impossible. indeed
+# Rationale per source: greenhouse/ashby/lever/workable/workday return the
+# complete board listing per configured company. apple returns NEW-only results
+# behind search filters with slug-unstable URLs, so board-diff is impossible. indeed
 # is bot-walled (no anonymous page fetch survives), so it cannot be verified.
 SOURCE_CAPABILITIES: dict[str, SourceCapability] = {
     "remoteok": SourceCapability(enumeration="windowed", verify="url-check"),
@@ -82,6 +84,7 @@ SOURCE_CAPABILITIES: dict[str, SourceCapability] = {
     "hn_jobs": SourceCapability(enumeration="windowed", verify="url-check"),
     "greenhouse": SourceCapability(enumeration="full", verify="board-diff"),
     "ashby": SourceCapability(enumeration="full", verify="board-diff"),
+    "lever": SourceCapability(enumeration="full", verify="board-diff"),
     "workable": SourceCapability(enumeration="full", verify="board-diff"),
     "workday": SourceCapability(enumeration="full", verify="board-diff"),
     "linkedin": SourceCapability(enumeration="windowed", verify="url-check"),

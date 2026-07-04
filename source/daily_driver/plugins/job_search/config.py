@@ -23,6 +23,11 @@ _ASHBY_BOARDS_DESC = (
     "jobs discover-boards matched cache, which is unioned in automatically.\n"
     "Slugs are case-sensitive (e.g. Notion)."
 )
+_LEVER_BOARDS_DESC = (
+    'Lever board slugs to always scrape (the "<slug>" in\n'
+    "jobs.lever.co/<slug>). Pins: scraped every run regardless of the\n"
+    "jobs discover-boards matched cache, which is unioned in automatically."
+)
 _EXCLUDE_BOARDS_DESC = (
     "Board slugs to NEVER scrape, even when pinned or present in the\n"
     "discovery matched cache — the blocklist for noisy or broken boards.\n"
@@ -112,6 +117,13 @@ class AshbyToggle(SourceToggle):
     exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
 
 
+class LeverToggle(SourceToggle):
+    """Lever source toggle plus its pinned/excluded board slug lists."""
+
+    lever_boards: list[str] = Field(default=[], description=_LEVER_BOARDS_DESC)
+    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
+
+
 class WorkableToggle(SourceToggle):
     """Workable source toggle plus its per-source account slug list."""
 
@@ -193,6 +205,7 @@ _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
     "weworkremotely": WeWorkRemotelyToggle,
     "greenhouse": GreenhouseToggle,
     "ashby": AshbyToggle,
+    "lever": LeverToggle,
     "workable": WorkableToggle,
     "workday": WorkdayToggle,
     "hn_who_is_hiring": HackerNewsToggle,
@@ -497,6 +510,11 @@ class JobSearchPlugin(BaseModel):
                     "ashby_boards": [],
                     "exclude_boards": [],
                 },
+                "lever": {
+                    "enabled": False,
+                    "lever_boards": [],
+                    "exclude_boards": [],
+                },
                 "workable": {"enabled": False, "workable_accounts": []},
                 "workday": {
                     "enabled": False,
@@ -532,6 +550,10 @@ class JobSearchPlugin(BaseModel):
                     "ashby_boards": _ASHBY_BOARDS_DESC,
                     "exclude_boards": _EXCLUDE_BOARDS_DESC,
                 },
+                "lever": {
+                    "lever_boards": _LEVER_BOARDS_DESC,
+                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
+                },
                 "workable": {"workable_accounts": _WORKABLE_ACCOUNTS_DESC},
                 "workday": {"workday_boards": _WORKDAY_BOARDS_DESC},
             },
@@ -542,6 +564,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": "HN curated jobs (YC-funded company posts)",
                 "greenhouse": "Greenhouse boards (configurable list)",
                 "ashby": "AshbyHQ boards (configurable list)",
+                "lever": "Lever boards (configurable list)",
                 "workable": "Workable accounts (configurable list)",
                 "workday": "Workday careers sites (configurable list)",
                 "apple": "jobs.apple.com (API intercept)",
