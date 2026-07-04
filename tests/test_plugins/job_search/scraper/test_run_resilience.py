@@ -47,7 +47,7 @@ def _us_remote_plugin() -> JobSearchPlugin:
         {
             "scraper": {"enabled": True},
             "roles": ["Engineer"],
-            "locations": {"countries": ["US"], "remote": True},
+            "locations": {"countries": {"US": []}, "remote": True},
         }
     )
 
@@ -272,7 +272,7 @@ def runner_us_only_plugin() -> JobSearchPlugin:
         {
             "scraper": {"enabled": True},
             "roles": ["Engineer"],
-            "locations": {"countries": ["US"], "remote": False},
+            "locations": {"countries": {"US": []}, "remote": False},
         }
     )
 

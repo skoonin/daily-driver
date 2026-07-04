@@ -115,7 +115,9 @@ def _extract_json_payload(raw: str) -> str:
 
 
 def _location_summary(ctx: ScrapeContext) -> str:
-    from daily_driver.plugins.job_search.scraper.countries import country_names
+    from daily_driver.plugins.job_search.scraper.countries import (
+        canonical_country_name,
+    )
     from daily_driver.plugins.job_search.scraper.runner import home_city
 
     loc_cfg = ctx.plugin.locations
@@ -129,15 +131,25 @@ def _location_summary(ctx: ScrapeContext) -> str:
         parts.append("remote roles are acceptable")
         return "; ".join(parts)
     if loc_cfg.countries:
-        # Aliases are stored lowercase for matching; the longest is the full
-        # country name (not the "usa"/"uk" abbrev). Title-case it for the prompt.
-        names = [
-            max(country_names(c), key=len, default=c).title() for c in loc_cfg.countries
-        ]
+        # `or c` keeps a JobSpy-unknown code visible in the prompt as-is.
+        names = [canonical_country_name(c) or c for c in loc_cfg.countries]
         parts.append(
             "a job located in any of these countries is acceptable and is NOT a "
             "location mismatch: " + ", ".join(names)
         )
+        # City-narrowed countries: the filter only admits these cities (or
+        # remote), so tell the model the same rule or it will score an
+        # already-admitted city as a partial mismatch.
+        city_bits = [
+            f"{canonical_country_name(c) or c}: " + ", ".join(cities)
+            for c, cities in loc_cfg.countries.items()
+            if cities
+        ]
+        if city_bits:
+            parts.append(
+                "within those countries only these cities (or remote roles) are "
+                "in scope: " + "; ".join(city_bits)
+            )
     if loc_cfg.remote:
         parts.append("remote roles are acceptable from anywhere")
     return "; ".join(parts)

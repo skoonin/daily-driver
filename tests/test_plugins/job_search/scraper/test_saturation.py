@@ -49,7 +49,7 @@ def _frame(site: str, n: int) -> Any:
 def _ctx(results_wanted: int, sites: dict[str, Any] | None = None) -> ScrapeContext:
     cfg: dict[str, Any] = {
         "roles": ["sre"],
-        "locations": {"countries": ["US"]},
+        "locations": {"countries": {"US": []}},
         "scraper": {"enabled": True, "search_terms": ["sre"]},
         "sources": sites
         or {"linkedin": {"enabled": True, "results_wanted_per_query": results_wanted}},

@@ -413,7 +413,7 @@ def test_location_summary_states_listed_countries_are_acceptable() -> None:
                 "locations": {
                     "home_city": "Vancouver, BC",
                     "remote": True,
-                    "countries": ["ES", "CA"],
+                    "countries": {"ES": [], "CA": []},
                 },
             }
         )
@@ -422,6 +422,33 @@ def test_location_summary_states_listed_countries_are_acceptable() -> None:
     assert "Spain" in summary
     assert "NOT a location mismatch" in summary
     assert "remote roles are acceptable" in summary
+
+
+def test_location_summary_states_city_narrowing() -> None:
+    """A city-narrowed country must reach the prompt too: the filter only
+    admits the listed cities (or remote), and an uninformed model would score
+    an admitted city as a partial mismatch — or bless a city the filter would
+    never pass."""
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+        _location_summary,
+    )
+
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "locations": {
+                    "home_city": "Vancouver, BC",
+                    "remote": True,
+                    "countries": {"CA": ["Vancouver", "Victoria"], "US": []},
+                },
+            }
+        )
+    )
+    summary = _location_summary(ctx)
+    assert "only these cities" in summary
+    assert "Canada: Vancouver, Victoria" in summary
+    # Whole-country entries stay out of the city clause.
+    assert "United States:" not in summary
 
 
 def test_fit_parses_markdown_fenced_json(

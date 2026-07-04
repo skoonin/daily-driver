@@ -42,7 +42,7 @@ def _config(roles: list[str] | None = None) -> ScrapeContext:
                     "max_pages": 1,
                 },
                 "locations": {
-                    "countries": ["US"],
+                    "countries": {"US": []},
                 },
             }
         )

@@ -65,7 +65,7 @@ class TestLocationMatchesUnaffected:
         # The filter sees the raw "Remote" location and accepts (remote enabled),
         # exactly as before this change — even though the lifted Location is blank.
         plugin = JobSearchPlugin.model_validate(
-            {"locations": {"remote": True, "countries": ["US"]}}
+            {"locations": {"remote": True, "countries": {"US": []}}}
         )
         raw = {"location": "Remote"}
         assert location_matches(raw, plugin) is True
@@ -75,7 +75,7 @@ class TestLocationMatchesUnaffected:
         # invisible to it. A bare "Seattle" (no country alias in text) fails the
         # country filter exactly as it does today.
         plugin = JobSearchPlugin.model_validate(
-            {"locations": {"remote": False, "countries": ["US"]}}
+            {"locations": {"remote": False, "countries": {"US": []}}}
         )
         assert (
             location_matches({"location": "Seattle", "origin_country": "US"}, plugin)

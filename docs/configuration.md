@@ -215,7 +215,9 @@ filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
 |-----|------|---------|
 | `home_city` | string or null | null |
 | `remote` | bool | false |
-| `countries` | list[string] | `[]` |
+| `countries` | dict[string, list[string]] | `{}` |
+
+`countries` maps an ISO country code to a city allow-list, e.g. `{CA: [Vancouver, Victoria], US: []}`. An empty list accepts jobs anywhere in that country; a non-empty list accepts only jobs whose location names one of the cities (matched whole-word against the scraped location string — real ATS strings usually name the city without the country, so a listed city stands alone, and conversely the bare country name does not pass for a city-narrowed country). Remote jobs pass regardless when `remote: true`. Cities are matched literally, so use the spelling the boards use (e.g. `Montréal` if that is how postings render it). Note the asymmetry at the top level: an empty city list accepts a whole country, but an empty `countries: {}` map accepts NO country — only remote jobs survive the filter, and only when `remote: true`. Blank city entries are rejected at config load. This replaced the flat `countries: [CA, US]` list with no migration: wrap each code as a map key with `[]` to keep whole-country behavior.
 
 ### `scraper` (`ScraperConfig`)
 
@@ -387,7 +389,7 @@ plugins:
     locations:
       home_city: Vancouver, BC
       remote: true
-      countries: [US, CA]
+      countries: {US: [], CA: [Vancouver, Victoria]}
     scraper:
       enabled: true
     enrichment:

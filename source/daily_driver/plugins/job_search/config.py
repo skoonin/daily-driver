@@ -50,11 +50,30 @@ class Locations(BaseModel):
         description="",
         json_schema_extra={"template_example": True},
     )
-    countries: list[str] = Field(
-        default=[],
-        description="",
-        json_schema_extra={"template_example": ["CA", "US"]},
+    countries: dict[str, list[str]] = Field(
+        default={},
+        description=(
+            "Allowed countries as a map of ISO code -> city allow-list. An\n"
+            "empty list accepts jobs anywhere in that country; a non-empty\n"
+            "list narrows that country to ONLY the listed cities (the bare\n"
+            "country name stops passing). Remote roles pass regardless when\n"
+            "`remote` is true."
+        ),
+        json_schema_extra={
+            "template_example": {"CA": ["Vancouver", "Victoria"], "US": []}
+        },
     )
+
+    @field_validator("countries")
+    @classmethod
+    def _no_blank_cities(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        # A blank city compiles to a zero-width match in the location filter
+        # and silently accepts nearly everything — the exact opposite of
+        # narrowing. Reject loudly instead of guessing intent.
+        for code, cities in value.items():
+            if any(not city.strip() for city in cities):
+                raise ValueError(f"countries.{code} contains a blank city entry")
+        return value
 
 
 class SourceToggle(BaseModel):

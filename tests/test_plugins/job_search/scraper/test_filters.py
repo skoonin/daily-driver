@@ -8,6 +8,9 @@ Covers the filter path that decides which scraped jobs survive to the CSV:
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.roles import matches_roles
 from daily_driver.plugins.job_search.scraper.runner import (
@@ -28,7 +31,7 @@ def _plugin(**kwargs: object) -> JobSearchPlugin:
 
 class TestLocationMatches:
     def test_accepts_remote_when_remote_enabled(self) -> None:
-        plugin = _plugin(locations={"remote": True, "countries": []})
+        plugin = _plugin(locations={"remote": True, "countries": {}})
         assert location_matches({"location": "Remote, Worldwide"}, plugin) is True
 
     def test_empty_location_accepted_when_remote_enabled(self) -> None:
@@ -37,29 +40,85 @@ class TestLocationMatches:
         assert location_matches({}, plugin) is True
 
     def test_empty_location_rejected_when_remote_disabled(self) -> None:
-        plugin = _plugin(locations={"remote": False, "countries": []})
+        plugin = _plugin(locations={"remote": False, "countries": {}})
         assert location_matches({"location": ""}, plugin) is False
 
     def test_country_match(self) -> None:
-        plugin = _plugin(locations={"remote": False, "countries": ["CA"]})
+        plugin = _plugin(locations={"remote": False, "countries": {"CA": []}})
         assert location_matches({"location": "Toronto, Canada"}, plugin) is True
         assert location_matches({"location": "New York, NY"}, plugin) is False
 
     def test_country_beyond_original_six_matches(self) -> None:
         # Countries are derived from JobSpy's enum, so NL (and ~70 others) work
         # without a hand-maintained entry.
-        plugin = _plugin(locations={"remote": False, "countries": ["NL"]})
+        plugin = _plugin(locations={"remote": False, "countries": {"NL": []}})
         assert location_matches({"location": "Amsterdam, Netherlands"}, plugin) is True
 
     def test_bare_iso_code_not_false_matched(self) -> None:
         # "US" matches via "usa"/"united states", never the 2-char "us" — which
         # would spuriously hit "Austin".
-        plugin = _plugin(locations={"remote": False, "countries": ["US"]})
+        plugin = _plugin(locations={"remote": False, "countries": {"US": []}})
         assert location_matches({"location": "Austin, TX"}, plugin) is False
         assert location_matches({"location": "Denver, USA"}, plugin) is True
 
     def test_no_locations_block_accepts_everything(self) -> None:
         assert location_matches({"location": "Mars"}, _plugin()) is True
+
+    def test_listed_city_matches_without_country_name(self) -> None:
+        # Real ATS strings usually name the city, never the country
+        # ("Movable Ink - Toronto"); a listed city must stand alone.
+        plugin = _plugin(
+            locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
+        )
+        assert location_matches({"location": "Movable Ink - Vancouver"}, plugin) is True
+        assert (
+            location_matches({"location": "Vancouver, British Columbia"}, plugin)
+            is True
+        )
+
+    def test_unlisted_city_rejected_for_city_narrowed_country(self) -> None:
+        plugin = _plugin(
+            locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
+        )
+        assert location_matches({"location": "Movable Ink - Toronto"}, plugin) is False
+
+    def test_country_name_alone_rejected_when_cities_listed(self) -> None:
+        # Naming cities means "only these cities (or remote)": a bare
+        # country-wide location no longer passes.
+        plugin = _plugin(
+            locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
+        )
+        assert location_matches({"location": "Canada"}, plugin) is False
+
+    def test_remote_passes_regardless_of_city_narrowing(self) -> None:
+        plugin = _plugin(locations={"remote": True, "countries": {"CA": ["Vancouver"]}})
+        assert location_matches({"location": "Toronto (Remote)"}, plugin) is True
+
+    def test_city_match_is_whole_word(self) -> None:
+        plugin = _plugin(
+            locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
+        )
+        assert (
+            location_matches({"location": "Vancouverish, Elsewhere"}, plugin) is False
+        )
+
+    def test_blank_city_entry_rejected_at_config_load(self) -> None:
+        # A blank city would compile to a zero-width regex that accepts nearly
+        # everything — the opposite of narrowing. The model rejects it loudly.
+        with pytest.raises(ValidationError, match="blank city"):
+            _plugin(locations={"remote": False, "countries": {"CA": ["  "]}})
+
+    def test_city_narrowing_does_not_leak_across_countries(self) -> None:
+        # DK is whole-country, CA is city-narrowed: Copenhagen passes via the
+        # DK country name; a non-listed CA city still fails.
+        plugin = _plugin(
+            locations={
+                "remote": False,
+                "countries": {"CA": ["Vancouver"], "DK": []},
+            }
+        )
+        assert location_matches({"location": "Copenhagen, Denmark"}, plugin) is True
+        assert location_matches({"location": "Ottawa"}, plugin) is False
 
 
 # ---------------------------------------------------------------------------
