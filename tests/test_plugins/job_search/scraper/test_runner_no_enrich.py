@@ -48,7 +48,7 @@ def _stub_scrapers(monkeypatch: pytest.MonkeyPatch, jobs: list[dict[str, Any]]) 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_run_all)
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
 

@@ -175,7 +175,7 @@ def test_run_uses_shared_jobs_lock_path(
     monkeypatch.setattr(runner, "run_all_scrapers", lambda *_a, **_kw: ([], [], []))
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     rc = runner.run(
@@ -230,7 +230,7 @@ def test_run_emits_contention_notice_to_stderr(
     monkeypatch.setattr(runner, "run_all_scrapers", lambda *_a, **_kw: ([], [], []))
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     lock_path = jobs_lock_path(tmp_path)

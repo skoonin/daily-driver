@@ -52,7 +52,7 @@ def _fake_scrape_returning(jobs: list[dict[str, Any]]) -> Any:
 def _no_archive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
 

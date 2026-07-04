@@ -368,7 +368,7 @@ def test_prune_reconciles_drifted_archive_header(tmp_path: Path) -> None:
 
     # Both the prior and newly-archived URLs must be recoverable from the dedup
     # set (so neither triaged job is re-discovered on a later scrape).
-    urls, _keys = jobs_archive.load_archive_dedup(csv_path)
+    urls, _keys, _watch = jobs_archive.load_archive_dedup(csv_path)
     assert "https://example.com/prior" in urls
     assert "https://example.com/old" in urls
 
@@ -552,9 +552,12 @@ def test_load_archive_dedup_extracts_urls_and_keys(tmp_path: Path) -> None:
             )
         ],
     )
-    urls, keys = jobs_archive.load_archive_dedup(csv_path)
+    urls, keys, _watch = jobs_archive.load_archive_dedup(csv_path)
     assert "https://x/old" in urls
-    assert keys
+    # 2026-04-01 is past REOPEN_KEY_SUPPRESSION_DAYS: the URL suppresses
+    # forever (user-triaged), but the (company, role) key has been released so
+    # a re-posted role under a new URL can resurface.
+    assert keys == set()
 
 
 def test_load_archive_dedup_missing_archive_is_silent(
@@ -563,8 +566,8 @@ def test_load_archive_dedup_missing_archive_is_silent(
     import logging
 
     with caplog.at_level(logging.WARNING):
-        urls, keys = jobs_archive.load_archive_dedup(tmp_path / "jobs.csv")
-    assert urls == set() and keys == set()
+        urls, keys, watch = jobs_archive.load_archive_dedup(tmp_path / "jobs.csv")
+    assert urls == set() and keys == set() and watch == {}
     assert not caplog.records
 
 
@@ -583,7 +586,7 @@ def test_load_archive_dedup_warns_on_non_empty_archive_without_links(
         writer.writerow({"Status": "rejected", "Company": "OldCo", "Role": "SRE"})
 
     with caplog.at_level(logging.WARNING):
-        urls, _keys = jobs_archive.load_archive_dedup(csv_path)
+        urls, _keys, _watch = jobs_archive.load_archive_dedup(csv_path)
     assert urls == set()
     assert any("no usable Link values" in r.getMessage() for r in caplog.records), [
         r.getMessage() for r in caplog.records
