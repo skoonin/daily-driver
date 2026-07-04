@@ -189,6 +189,37 @@ class RawScrapedJob(BaseModel):
         return v.strip()
 
 
+# Source-cell prefixes of the board-backed (ATS) sources. These sources
+# enumerate a company's complete listing, so their record of a job (stable
+# hosted URL, full description) is authoritative over an aggregator sighting
+# of the same job (LinkedIn/Indeed URLs rot behind signup walls, and board-diff
+# closure can only verify rows whose Link points at the board).
+_BOARD_SOURCE_PREFIXES: dict[str, str] = {
+    "Greenhouse (": "greenhouse",
+    "Ashby (": "ashby",
+    "Lever (": "lever",
+    "Workable (": "workable",
+    "Workday (": "workday",
+}
+
+BOARD_SOURCE_CANONICALS: frozenset[str] = frozenset(_BOARD_SOURCE_PREFIXES.values())
+
+
+def split_source(source: str) -> tuple[str, str]:
+    """Split a Source string into ``(canonical source id, board slug)``.
+
+    Board-backed sources render as ``"Greenhouse (<board>)"``; everything else
+    canonicalizes to its lowercased head ("linkedin", "remoteok", "hn jobs")
+    with no board. The one parser for both the scrape wire format and the
+    stored Source cell, so dedup preference and model normalization can never
+    disagree about what a source string means.
+    """
+    for prefix, canonical in _BOARD_SOURCE_PREFIXES.items():
+        if source.startswith(prefix) and source.endswith(")"):
+            return canonical, source[len(prefix) : -1]
+    return source.split("/")[0].lower(), ""
+
+
 class NormalizedJob(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -217,25 +248,7 @@ class NormalizedJob(BaseModel):
             if rl.endswith(suf):
                 role = role[: -len(suf)].rstrip()
                 break
-        src = raw.source
-        if src.startswith("Greenhouse (") and src.endswith(")"):
-            canonical = "greenhouse"
-            board = src[len("Greenhouse (") : -1]
-        elif src.startswith("Ashby (") and src.endswith(")"):
-            canonical = "ashby"
-            board = src[len("Ashby (") : -1]
-        elif src.startswith("Lever (") and src.endswith(")"):
-            canonical = "lever"
-            board = src[len("Lever (") : -1]
-        elif src.startswith("Workable (") and src.endswith(")"):
-            canonical = "workable"
-            board = src[len("Workable (") : -1]
-        elif src.startswith("Workday (") and src.endswith(")"):
-            canonical = "workday"
-            board = src[len("Workday (") : -1]
-        else:
-            canonical = src.split("/")[0].lower()
-            board = ""
+        canonical, board = split_source(raw.source)
         return cls(
             company=raw.company,
             role=role,
@@ -407,24 +420,7 @@ class EnrichedJob(BaseModel):
             return parsed
 
         source = row.get("Source", "").strip() or "unknown"
-        if source.startswith("Greenhouse (") and source.endswith(")"):
-            canonical = "greenhouse"
-            board = source[len("Greenhouse (") : -1]
-        elif source.startswith("Ashby (") and source.endswith(")"):
-            canonical = "ashby"
-            board = source[len("Ashby (") : -1]
-        elif source.startswith("Lever (") and source.endswith(")"):
-            canonical = "lever"
-            board = source[len("Lever (") : -1]
-        elif source.startswith("Workable (") and source.endswith(")"):
-            canonical = "workable"
-            board = source[len("Workable (") : -1]
-        elif source.startswith("Workday (") and source.endswith(")"):
-            canonical = "workday"
-            board = source[len("Workday (") : -1]
-        else:
-            canonical = source.split("/")[0].lower() or "unknown"
-            board = ""
+        canonical, board = split_source(source)
         return cls(
             # The validator normalizes spelling (e.g. `ruled_out` -> `ruled-out`).
             # A blank/missing cell stays blank — never relabelled to a default.
