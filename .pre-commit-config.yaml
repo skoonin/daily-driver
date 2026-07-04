@@ -63,4 +63,4 @@ repos:
         entry: make check-config-template
         language: system
         pass_filenames: false
-        files: ^(source/daily_driver/core/config_models\.py|source/daily_driver/core/config_template\.py|source/daily_driver/resources/templates/\.dd-config\.yaml\.j2)$
+        files: ^(source/daily_driver/core/config_models\.py|source/daily_driver/core/config_template\.py|source/daily_driver/plugins/.*/config\.py|source/daily_driver/resources/templates/\.dd-config\.yaml\.j2)$

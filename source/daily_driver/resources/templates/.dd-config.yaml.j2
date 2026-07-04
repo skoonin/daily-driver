@@ -321,6 +321,17 @@ tracker:
 #         # Matched exactly, case included: to silence an Ashby board named
 #         # Notion, write Notion, not notion.
 #         exclude_boards: []
+#       lever:            # Lever boards (configurable list)
+#         enabled: false
+#         # Lever board slugs to always scrape (the "<slug>" in
+#         # jobs.lever.co/<slug>). Pins: scraped every run regardless of the
+#         # jobs discover-boards matched cache, which is unioned in automatically.
+#         lever_boards: []
+#         # Board slugs to NEVER scrape, even when pinned or present in the
+#         # discovery matched cache — the blocklist for noisy or broken boards.
+#         # Matched exactly, case included: to silence an Ashby board named
+#         # Notion, write Notion, not notion.
+#         exclude_boards: []
 #       workable:            # Workable accounts (configurable list)
 #         enabled: false
 #         # Workable account slugs to scrape (the "<slug>" in
