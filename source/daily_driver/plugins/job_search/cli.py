@@ -554,9 +554,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         table.add_row(
             row.get("Company", ""),
             row.get("Status", ""),
-            row.get("Date Verified", "")
-            or row.get("Date Last Seen", "")
-            or row.get("Date Found", ""),
+            row.get("Date Verified", "") or row.get("Date Found", ""),
             row.get("Role", ""),
         )
     console.print(table)

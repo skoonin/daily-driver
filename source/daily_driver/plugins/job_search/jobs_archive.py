@@ -38,7 +38,6 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     canonicalize_status_cells,
     dedup_sets_from_rows,
     format_canonicalized_notice,
-    migrate_legacy_header,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
 from daily_driver.plugins.job_search.scraper.csv_io import (
@@ -72,18 +71,15 @@ def _is_stale(
 ) -> bool:
     """Row qualifies for prune when status matches AND last-verified date < cutoff.
 
-    Fallback chain: ``Date Verified`` (current) -> ``Date Last Seen`` (pre-0.4
-    legacy, e.g. an archive row never rewritten) -> ``Date Found`` (a row never
-    confirmed since discovery).
+    Falls back to ``Date Found`` when ``Date Verified`` is empty -- a row never
+    confirmed since discovery.
     """
     # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
     status = normalize_status(row.get("Status") or "")
     if status not in {normalize_status(s) for s in statuses}:
         return False
-    seen = (
-        _parse_iso(row.get("Date Verified", ""))
-        or _parse_iso(row.get("Date Last Seen", ""))
-        or _parse_iso(row.get("Date Found", ""))
+    seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
+        row.get("Date Found", "")
     )
     return seen is not None and seen < cutoff
 
@@ -116,13 +112,6 @@ def prune(
     except TimeoutError:
         raise JobsLockTimeout(LOCK_GIVEUP_MESSAGE) from None
     try:
-        # One-time schema upgrade (Date Last Seen -> Date Verified + Date
-        # Closed) for both files before classification, so the candidate
-        # selection and the header-union rewrite speak one schema. Skipped in
-        # dry-run: a preview must not mutate either file.
-        if not dry_run:
-            migrate_legacy_header(jobs_csv)
-            migrate_legacy_header(archive_path_for(jobs_csv))
         header, rows = _read_rows(jobs_csv)
         if not header:
             return [], 0

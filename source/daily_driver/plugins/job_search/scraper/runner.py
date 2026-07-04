@@ -1716,7 +1716,6 @@ def run_backfill(
         CANONICAL_HEADER,
         _make_backup,
         format_canonicalized_notice,
-        migrate_legacy_header,
         read_rows,
     )
     from daily_driver.plugins.job_search.scraper.descriptions import (
@@ -1829,10 +1828,6 @@ def run_backfill(
     except TimeoutError:
         raise ScraperError(LOCK_GIVEUP_MESSAGE) from None
     try:
-        # One-time schema upgrade before the snapshot: without it the old
-        # "Date Last Seen" column would be classified as an unknown extra and
-        # accreted as a stray 16th column on the rewrite.
-        migrate_legacy_header(csv_path)
         # READ INSIDE THE LOCK: the snapshot the rewrite is built from must be
         # consistent with the lock window, or a concurrent run's append between
         # an out-of-lock read and the rewrite would be lost.
@@ -2526,7 +2521,6 @@ def _run_impl(
     from daily_driver.plugins.job_search.scraper.csv_io import (
         CANONICAL_HEADER,
         load_existing_jobs,
-        migrate_legacy_header,
         read_rows,
     )
 
@@ -2560,13 +2554,6 @@ def _run_impl(
         Console.error(LOCK_GIVEUP_MESSAGE)
         return 1
     try:
-        # One-time schema upgrade (Date Last Seen -> Date Verified + Date
-        # Closed) BEFORE the header is captured: the run path reuses the
-        # on-disk header for every write, so an un-migrated header would
-        # silently drop new-column writes for the whole run. Never on
-        # dry-run -- a preview must not rewrite the file.
-        if not dry_run:
-            migrate_legacy_header(csv_path)
         known_urls, known_keys, header = load_existing_jobs(csv_path)
         # Captured under the same lock as the dedup seed: the sink's flush
         # rewrites the WHOLE file, so it must carry these rows through
