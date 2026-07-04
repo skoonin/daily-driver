@@ -1084,8 +1084,9 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
             }
         )
 
-    urls, keys = load_archive_dedup(csv_path)
+    urls, keys, _watch = load_archive_dedup(csv_path)
     assert "https://archived/1" in urls
+    # No date cells at all -> conservative: the key suppresses (never released).
     assert any("pruned" in k for k in keys)
 
 

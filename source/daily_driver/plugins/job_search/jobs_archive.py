@@ -15,7 +15,7 @@ so a concurrent scrape cannot append rows between the read and the rewrite
 from __future__ import annotations
 
 from contextlib import ExitStack
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from daily_driver.core.console import Console
@@ -179,25 +179,71 @@ def _archive_candidates(
     _atomic_write_rows(archive, union_header, existing_rows + candidates)
 
 
-def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str]]:
-    """Return (urls, dedup_keys) from jobs.archive.csv.
+# How long an archived row's (company, role) fallback key suppresses
+# re-discovery. URL-exact suppression for user-triaged rows is permanent, but
+# a company re-posting the same role under a NEW URL months later is a
+# genuinely reopened role the user wants to see again.
+REOPEN_KEY_SUPPRESSION_DAYS = 45
 
-    Empty sets when archive is missing. Reads and extracts dedup state through
-    the shared csv path so jobs.csv and jobs.archive.csv stay in lockstep.
 
-    Loud on a malformed-but-present archive: a non-empty file that yields no
-    URLs (missing/renamed Link column) would silently let archived/rejected
-    jobs be re-discovered, so warn naming the path — the live jobs.csv raises
-    for the same defect.
+def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str], dict[str, str]]:
+    """Return (urls, dedup_keys, reopen_watch) from jobs.archive.csv.
+
+    Suppression splits by WHY a row left jobs.csv (the Status cell):
+
+    - USER-TRIAGED rows (dropped/rejected/skipped/... — any status except
+      closed) suppress their URL forever: the user decided, never re-pull.
+      Their (company, role) fallback key suppresses for
+      REOPEN_KEY_SUPPRESSION_DAYS (aged from the row's newest date cell — the
+      archive carries no archived-at stamp, so Date Closed / Date Verified /
+      Date Found is the proxy), then releases so a re-posted role resurfaces.
+    - VERIFICATION-CLOSED rows (Status == closed) suppress NOTHING: a
+      closure is machine evidence, not a user decision, and a false positive
+      must be able to resurface. Their URLs are returned in reopen_watch
+      (url -> the closed/verified date) so the sink can announce a reopen
+      loudly instead of silently re-adding.
+
+    Empty when the archive is missing. Loud on a malformed-but-present
+    archive: a non-empty file that yields no URLs (missing/renamed Link
+    column) would silently let archived/rejected jobs be re-discovered, so
+    warn naming the path — the live jobs.csv raises for the same defect.
     """
+    from daily_driver.plugins.job_search.scraper.runner import dedup_key
+
     archive = archive_path_for(jobs_csv)
     header, rows = _read_rows(archive)
-    urls, keys = dedup_sets_from_rows(rows)
-    if rows and not urls:
+    urls: set[str] = set()
+    keys: set[str] = set()
+    reopen_watch: dict[str, str] = {}
+    key_cutoff = date.today() - timedelta(days=REOPEN_KEY_SUPPRESSION_DAYS)
+    for row in rows:
+        url = (row.get("Link") or "").strip()
+        status = normalize_status(row.get("Status") or "")
+        if status == "closed":
+            if url:
+                reopen_watch[url] = (
+                    row.get("Date Closed", "") or row.get("Date Verified", "")
+                ).strip()
+            continue
+        if url:
+            urls.add(url)
+        newest = (
+            _parse_iso(row.get("Date Closed", ""))
+            or _parse_iso(row.get("Date Verified", ""))
+            or _parse_iso(row.get("Date Found", ""))
+        )
+        # An undatable row never releases its key (conservative: suppress).
+        if newest is not None and newest < key_cutoff:
+            continue
+        company = (row.get("Company") or "").strip()
+        role = (row.get("Role") or "").strip()
+        if company or role:
+            keys.add(dedup_key(company, role))
+    if rows and not urls and not reopen_watch:
         log.warning(
             "%s has %d rows but no usable Link values (column missing or empty); "
             "archived jobs may be re-discovered",
             archive,
             len(rows),
         )
-    return urls, keys
+    return urls, keys, reopen_watch

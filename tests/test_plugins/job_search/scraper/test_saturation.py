@@ -184,7 +184,7 @@ def test_run_reports_saturation_in_manifest(
     ``saturated_queries`` -- on the happy path and with an empty default."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [_scraped("https://x/1", "Acme")]
 
@@ -226,7 +226,7 @@ def test_run_manifest_saturation_empty_by_default(
 ) -> None:
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [_scraped("https://x/1", "Acme")]
 

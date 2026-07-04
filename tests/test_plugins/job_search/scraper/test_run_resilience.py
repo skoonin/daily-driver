@@ -288,7 +288,7 @@ def test_run_appends_per_source_then_crash_keeps_first_source(
     """
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -329,7 +329,7 @@ def test_run_gcs_orphaned_descriptions(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     csv_path = tmp_path / "jobs.csv"
@@ -378,7 +378,7 @@ def test_dry_run_leaves_descriptions_untouched(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     csv_path = tmp_path / "jobs.csv"
@@ -417,7 +417,7 @@ def test_dry_run_appends_nothing_per_source(
     """--dry-run keeps the in-memory single-pass behavior: no writes at all."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     results = [("remoteok", [_scraped("https://a/1", "Acme")])]
 
@@ -497,7 +497,7 @@ def test_run_flushes_enrichment_progress_to_disk(
     """After enrichment, run() rewrites jobs.csv so Fit/Notes land on disk."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     # comp set -> detail enricher skips the page fetch (no real network);
     # description_text set -> the fit/notes pass reaches the provider.
@@ -541,7 +541,7 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
     """
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     plugin = JobSearchPlugin.model_validate(
         {
@@ -619,7 +619,7 @@ def _overlap_run(
     fit URLs, mimicking the real fit pass's attempted out-param."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -738,7 +738,7 @@ def test_overlap_wave1_enrichment_reaches_disk(
     stubs the coordinator. comp set -> detail enricher skips network."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     apple = [
@@ -799,7 +799,7 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_in_flight = threading.Event()
@@ -864,7 +864,7 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     # Shorten the bound so the test does not wait the real 30s; the stuck call
     # below outlives it.
@@ -930,7 +930,7 @@ def test_overlap_interrupt_logs_relayed_wave1_exception(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
     wave1_failed = threading.Event()
@@ -989,7 +989,7 @@ def test_disabled_passes_render_no_bars(
     fit/notes off, only the Detail pages bar renders."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
 
@@ -1080,7 +1080,7 @@ def test_manifest_records_phase_reached_complete(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [_scraped("https://x/1", "Acme", comp="$x")]
 
@@ -1113,7 +1113,7 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     plugin = JobSearchPlugin.model_validate(
         {
@@ -1207,7 +1207,7 @@ def test_manifest_written_when_interrupted_during_scraping(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -1244,7 +1244,7 @@ def test_csv_init_failure_overwrites_stale_manifest(
     )
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     real_open = open
@@ -1273,7 +1273,7 @@ def test_append_failure_isolates_source_keeps_others(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     real_append = csv_io.append_jobs_typed
@@ -1536,7 +1536,7 @@ def test_run_enrichment_flush_preserves_preexisting_rows(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     csv_path = tmp_path / "jobs.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -1592,7 +1592,7 @@ def test_run_warns_on_ragged_preexisting_rows(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     csv_path = tmp_path / "jobs.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -1636,7 +1636,7 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
     """
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [
         _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
@@ -1691,7 +1691,7 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     jobs = [
         _scraped(f"https://x/{i}", f"Co{i}", comp="$x", description_text="infra")
@@ -1821,7 +1821,7 @@ def test_run_records_degraded_sources_in_manifest(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -1920,7 +1920,7 @@ def test_run_interrupt_during_scrape_keeps_partial_and_marks_manifest(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -1955,7 +1955,7 @@ def test_cli_run_scrape_returns_130_on_interrupt(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -2048,7 +2048,7 @@ def test_run_source_crash_after_checkpointed_units_keeps_them(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_linkedin(ctx: ScrapeContext, *, sites: Any = None) -> list[dict[str, Any]]:
@@ -2090,7 +2090,7 @@ def test_checkpointed_source_not_double_appended_at_end(
     for a checkpointed source."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     rows_out = [_scraped("https://l/1", "Acme"), _scraped("https://l/2", "Bravo")]
@@ -2180,7 +2180,7 @@ def test_checkpoint_disk_error_stops_source_at_failure(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     real_append = csv_io.append_jobs_typed
@@ -2241,7 +2241,7 @@ def test_run_completion_line_reports_total_run_time(
     """The end-of-run summary names the total wall-clock duration."""
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
 
     def fake_scrape(
@@ -2513,7 +2513,7 @@ def test_run_reports_reseen_summary_line(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     csv_path = tmp_path / "jobs.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -2577,7 +2577,7 @@ def test_run_no_enrich_persists_resightings(
 
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     csv_path = tmp_path / "jobs.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as f:

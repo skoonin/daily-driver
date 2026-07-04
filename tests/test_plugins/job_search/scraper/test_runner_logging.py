@@ -452,7 +452,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
 
@@ -516,7 +516,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
 
@@ -574,7 +574,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
     )
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
-        lambda _csv_path: (set(), set()),
+        lambda _csv_path: (set(), set(), {}),
     )
     monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
 

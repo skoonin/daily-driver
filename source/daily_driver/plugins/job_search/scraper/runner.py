@@ -860,6 +860,11 @@ class _JobSink:
         self.funnel: dict[str, dict[str, int]] = {}
         # Run totals for the reconciling Completed line.
         self.raw_found = 0
+        # URLs of previously VERIFICATION-CLOSED archived rows (url -> closed
+        # date). A re-discovered watch URL is a reopened job: appended normally
+        # but announced loudly, never silently slipped back in.
+        self.reopen_watch: dict[str, str] = {}
+        self.reopened = 0
         self.pre_filter = 0  # new (deduped, url-bearing, pre-location) survivors
         self.loc_filtered = 0
         # Sticky: a periodic flush hit an OSError and the rows it would have
@@ -981,6 +986,20 @@ class _JobSink:
                 if key:
                     commit_keys.append(key)
                 to_append.append(_enriched_from_scraped(job))
+
+            # A watch-listed URL belongs to a job that verification once
+            # closed: announce the reopen loudly (it still appends below).
+            for enriched_job in to_append:
+                closed_on = self.reopen_watch.get(enriched_job.url)
+                if closed_on is not None:
+                    self.reopened += 1
+                    log.warning(
+                        "Reopened (previously closed %s): %s -- %s %s",
+                        closed_on or "unknown date",
+                        enriched_job.company,
+                        enriched_job.role,
+                        enriched_job.url,
+                    )
 
             # Fold any scrape-time descriptions (e.g. JobSpy's LinkedIn body)
             # into the sidecar store so flush persists them alongside the row.
@@ -2588,8 +2607,10 @@ def _run_impl(
                 Console.info(f"Cleaned up {dropped} orphaned description(s).")
 
         # Union archive-table dedup state so triaged listings (pruned to
-        # jobs.archive.csv) are never re-discovered.
-        archive_urls, archive_keys = load_archive_dedup(csv_path)
+        # jobs.archive.csv) are never re-discovered. Verification-closed rows
+        # are deliberately absent from the union (re-discoverable); their URLs
+        # arrive in reopen_watch so a re-discovery is announced loudly.
+        archive_urls, archive_keys, reopen_watch = load_archive_dedup(csv_path)
         known_urls |= archive_urls
         known_keys |= archive_keys
 
@@ -2727,6 +2748,7 @@ def _run_impl(
                 preexisting_rows=preexisting_rows,
                 descriptions=load_descriptions(csv_path),
             )
+            sink.reopen_watch = reopen_watch
             state.sink = sink
 
             def _on_source_result(source_id: str, jobs: list[dict[str, Any]]) -> None:
@@ -3169,6 +3191,13 @@ def _run_impl(
         if healed:
             reseen_line += f"; {healed} descriptions healed"
         Console.info(reseen_line)
+    # Reopened: a job that verification once closed came back in a scrape.
+    # Loud -- a genuinely re-posted role or a false-positive closure healing.
+    if sink is not None and sink.reopened:
+        Console.warning(
+            f"  {'Reopened':<{label_width}}  {sink.reopened} previously-closed "
+            "job(s) re-discovered (see log for identities)"
+        )
     # Degraded sources finished with INCOMPLETE results (a partial-pagination or
     # all-units-failed scrape). Their rows are kept, but call it out so a partial
     # run is never mistaken for a clean one. Distinct from failed sources below.
