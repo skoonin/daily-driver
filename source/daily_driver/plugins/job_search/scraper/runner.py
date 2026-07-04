@@ -110,6 +110,12 @@ class ScrapeContext:
     # partial board records nothing, so its rows can never read as "gone".
     enumerations: dict[str, set[str]] = field(default_factory=dict)
 
+    # Boards found by `jobs discover-boards` (matched cache), keyed by
+    # platform. Populated by run() from the workspace state dir; the
+    # greenhouse/ashby adapters union these with their hand-pinned config
+    # boards, minus the per-platform exclude_boards blocklist.
+    discovered_boards: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
     def record_enumeration(self, source_label: str, urls: set[str]) -> None:
         """Record one board's complete raw listing (pre role-filter).
 
@@ -2710,6 +2716,25 @@ def _run_impl(
         csv_path,
     )
 
+    from daily_driver.plugins.job_search.scraper.discovery import (
+        SWEEP_PLATFORMS,
+        load_matched_boards,
+    )
+
+    # Boards the discovery sweep matched: sorted for a stable scrape order,
+    # keyed by platform for the greenhouse/ashby adapters to union with pins.
+    discovered_boards = {
+        platform: tuple(sorted(load_matched_boards(ephemeral_dir, platform)))
+        for platform in SWEEP_PLATFORMS
+    }
+    for platform, boards in discovered_boards.items():
+        if boards:
+            log.info(
+                "[%s] %d discovered boards from the matched cache",
+                platform,
+                len(boards),
+            )
+
     # Carry the merged dedup set on the context so adapters that build their
     # URL deterministically (Apple, Wellfound) can short-circuit during
     # pagination instead of waiting for the post-scrape filter below.
@@ -2718,6 +2743,7 @@ def _run_impl(
         ai=ai_cfg,
         context_text=context_text,
         known_urls=frozenset(known_urls),
+        discovered_boards=discovered_boards,
     )
     # Expose the cooperative stop signal so run()'s interrupt handler can set it
     # before joining the wave-1 thread (turning the bounded join into a drain).

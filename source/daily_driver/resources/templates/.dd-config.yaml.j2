@@ -300,17 +300,27 @@ tracker:
 #         hn_max_posts: 500
 #       greenhouse:            # Greenhouse boards (configurable list)
 #         enabled: false
-#         # Greenhouse board slugs to scrape (the "<slug>" in
-#         # boards.greenhouse.io/<slug>). Each board's full posting list is fetched
-#         # in one request; add the companies you are targeting.
+#         # Greenhouse board slugs to always scrape (the "<slug>" in
+#         # boards.greenhouse.io/<slug>). Pins: scraped every run regardless of the
+#         # jobs discover-boards matched cache, which is unioned in automatically.
 #         greenhouse_boards: [anthropic]
+#         # Board slugs to NEVER scrape, even when pinned or present in the
+#         # discovery matched cache — the blocklist for noisy or broken boards.
+#         # Matched exactly, case included: to silence an Ashby board named
+#         # Notion, write Notion, not notion.
+#         exclude_boards: []
 #       ashby:            # AshbyHQ boards (configurable list)
 #         enabled: false
-#         # AshbyHQ board slugs to scrape (the "<slug>" in
-#         # jobs.ashbyhq.com/<slug>). Each board's full posting list is fetched in
-#         # one request; add the companies you are targeting. Slugs are
-#         # case-sensitive (e.g. Notion).
+#         # AshbyHQ board slugs to always scrape (the "<slug>" in
+#         # jobs.ashbyhq.com/<slug>). Pins: scraped every run regardless of the
+#         # jobs discover-boards matched cache, which is unioned in automatically.
+#         # Slugs are case-sensitive (e.g. Notion).
 #         ashby_boards: []
+#         # Board slugs to NEVER scrape, even when pinned or present in the
+#         # discovery matched cache — the blocklist for noisy or broken boards.
+#         # Matched exactly, case included: to silence an Ashby board named
+#         # Notion, write Notion, not notion.
+#         exclude_boards: []
 #       workable:            # Workable accounts (configurable list)
 #         enabled: false
 #         # Workable account slugs to scrape (the "<slug>" in

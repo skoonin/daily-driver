@@ -297,14 +297,16 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | Source key | Toggle | Per-source knob (default) |
 |-----------|--------|---------------------------|
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
-| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`) |
-| `ashby` | `AshbyToggle` | `ashby_boards` (`[]`) |
+| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`), `exclude_boards` (`[]`) |
+| `ashby` | `AshbyToggle` | `ashby_boards` (`[]`), `exclude_boards` (`[]`) |
 | `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |
 | `workday` | `WorkdayToggle` | `workday_boards` (`[]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
 | `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
 | `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
 | any other | `SourceToggle` | (enable/disable only) |
+
+For `greenhouse` and `ashby`, the `*_boards` lists are pins: those boards are always enumerated, even when a `jobs discover-boards` sweep found no matching roles on them (rows still pass the role filter — pinning only guarantees the board is fetched). Each run scrapes the union of the pins and the discovery matched cache, minus `exclude_boards`, which trumps both.
 
 `linkedin` and `indeed` are the two site-named sources fetched via the
 `python-jobspy` library (an implementation detail). Their query knobs:
@@ -326,7 +328,8 @@ sources:
     wwr_categories: [devops, sysadmin]
   greenhouse:
     enabled: true
-    greenhouse_boards: [anthropic, stripe]
+    greenhouse_boards: [anthropic, stripe]  # pins: always scraped
+    exclude_boards: []  # blocklist: never scraped, even when discovery matches them
   ashby:
     enabled: true
     ashby_boards: [ramp, linear]  # slugs are case-sensitive (e.g. Notion)

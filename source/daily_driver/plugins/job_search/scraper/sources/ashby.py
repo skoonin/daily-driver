@@ -20,8 +20,10 @@ log = get_logger(__name__)
 def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
     """Scrape jobs from the AshbyHQ Job Posting API (public, no auth required).
 
-    Reads board slugs from config at
-    job_search.sources.ashby.ashby_boards (default: []). Each slug maps to
+    Scrapes the union of the hand-pinned config boards
+    (job_search.sources.ashby.ashby_boards, default []) and the boards the
+    `jobs discover-boards` sweep matched (ctx.discovered_boards), minus the
+    exclude_boards blocklist. Each slug maps to
     https://api.ashbyhq.com/posting-api/job-board/{slug} which returns all
     listed postings with plain-text descriptions in a single request.
 
@@ -30,13 +32,19 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
     is derived from the board slug.
     """
     from daily_driver.plugins.job_search.config import AshbyToggle
+    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
         PartialSourceError,
         source_toggle,
     )
 
-    boards = source_toggle(ctx.plugin, "ashby", AshbyToggle).ashby_boards
+    toggle = source_toggle(ctx.plugin, "ashby", AshbyToggle)
+    boards = resolve_boards(
+        toggle.ashby_boards,
+        ctx.discovered_boards.get("ashby", ()),
+        toggle.exclude_boards,
+    )
     session = _http_session(ctx)
     jobs: list[dict] = []
     # Boards whose request failed -> the source is degraded (its result is

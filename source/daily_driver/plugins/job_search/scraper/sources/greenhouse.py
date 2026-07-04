@@ -22,20 +22,27 @@ log = get_logger(__name__)
 def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
 
-    Reads board slugs from config at
-    job_search.sources.greenhouse.greenhouse_boards (default: ["anthropic"]).
-    Each slug maps to
-    https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
+    Scrapes the union of the hand-pinned config boards
+    (job_search.sources.greenhouse.greenhouse_boards, default ["anthropic"])
+    and the boards the `jobs discover-boards` sweep matched
+    (ctx.discovered_boards), minus the exclude_boards blocklist. Each slug
+    maps to https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
     which returns all jobs with full HTML descriptions in a single request.
     """
     from daily_driver.plugins.job_search.config import GreenhouseToggle
+    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
     from daily_driver.plugins.job_search.scraper.runner import (
         PartialSourceError,
         source_toggle,
     )
 
-    boards = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle).greenhouse_boards
+    toggle = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle)
+    boards = resolve_boards(
+        toggle.greenhouse_boards,
+        ctx.discovered_boards.get("greenhouse", ()),
+        toggle.exclude_boards,
+    )
     session = _http_session(ctx)
     jobs: list[dict] = []
     # Boards whose fetch failed -> the source is degraded (its result is
