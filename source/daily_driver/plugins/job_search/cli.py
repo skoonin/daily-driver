@@ -617,6 +617,15 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         console.print(
             f"Awaiting action (applied/interviewing): {status['awaiting_action']}"
         )
+        # Cumulative across runs, not a last-run stat: rows no fit pass has
+        # reached yet. Growth means inflow is outpacing the fit budget. This
+        # count includes rows awaiting a description re-scrape, which neither
+        # a bigger budget nor jobs backfill can score (the run summary's
+        # "awaiting description" bucket).
+        console.print(
+            f"Unscored backlog (found/pending, no fit score yet): "
+            f"{status['unscored_backlog']}"
+        )
     else:
         console.print("[dim]No jobs.csv found.[/dim]")
 

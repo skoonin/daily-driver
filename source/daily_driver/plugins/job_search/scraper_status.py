@@ -51,6 +51,48 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
     return counts
 
 
+def count_unscored_backlog(csv_path: Path) -> int:
+    """Count active rows still awaiting their first fit scoring.
+
+    Mirrors the runner's backlog-wave gate (empty ``Date Enriched``, status
+    still enrichment-eligible, not scored before the column existed) minus the
+    description check: a row with no cached description is still unscored
+    backlog — it just cannot be scored until a re-scrape heals it.
+
+    Missing or unreadable csv returns 0 rather than raising.
+    """
+    from daily_driver.core.statuses import normalize_status
+    from daily_driver.plugins.job_search.scraper.models import (
+        ENRICH_ELIGIBLE_STATUSES,
+        parse_fit,
+    )
+
+    if not csv_path.exists():
+        return 0
+    backlog = 0
+    try:
+        with open(csv_path, newline="", encoding="utf-8") as fh:
+            for row in csv.DictReader(fh):
+                if (row.get("Date Enriched") or "").strip():
+                    continue
+                status = normalize_status(row.get("Status") or "")
+                if status not in ENRICH_ELIGIBLE_STATUSES:
+                    continue
+                # Scored before the Date Enriched column existed; counting it
+                # would inflate the backlog forever. parse_fit (not raw-cell
+                # truthiness) mirrors the runner's gate: a hand-edited
+                # unparseable Fit cell is still unscored there.
+                if (
+                    parse_fit(row.get("Fit")) is not None
+                    and (row.get("Notes") or "").strip()
+                ):
+                    continue
+                backlog += 1
+    except OSError:
+        return 0
+    return backlog
+
+
 def build_status(output_dir: Path) -> dict[str, Any]:
     """Assemble the full status payload for ``jobs status``.
 
@@ -58,6 +100,7 @@ def build_status(output_dir: Path) -> dict[str, Any]:
       last_run      - dict from jobs-last-run.json, or null
       job_counts    - {state: count} from jobs.csv
       awaiting_action - count of jobs in applied/interviewing states
+      unscored_backlog - count of active rows with no fit scoring yet
     """
     csv_path = output_dir / "jobs.csv"
     last_run = load_last_run(output_dir)
@@ -67,7 +110,13 @@ def build_status(output_dir: Path) -> dict[str, Any]:
         "last_run": last_run,
         "job_counts": counts,
         "awaiting_action": awaiting,
+        "unscored_backlog": count_unscored_backlog(csv_path),
     }
 
 
-__all__ = ["build_status", "count_jobs_by_state", "load_last_run"]
+__all__ = [
+    "build_status",
+    "count_jobs_by_state",
+    "count_unscored_backlog",
+    "load_last_run",
+]
