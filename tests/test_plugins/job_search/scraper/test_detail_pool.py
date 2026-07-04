@@ -50,8 +50,8 @@ def test_same_host_requests_spaced_at_least_delay() -> None:
         return resp
 
     jobs = [
-        _job("https://boards.greenhouse.io/acme/jobs/1"),
-        _job("https://boards.greenhouse.io/acme/jobs/2"),
+        _job("https://apply.workable.com/acme/j/1"),
+        _job("https://apply.workable.com/acme/j/2"),
     ]
     with (
         patch(f"{_DETAIL}._api_get", side_effect=fake_api_get),
@@ -105,7 +105,7 @@ def test_dominant_host_does_not_block_other_hosts() -> None:
 
     8 same-host + 2 other-host jobs, 4 workers, delay 0.3s. If the throttle held
     a per-host lock across the sleep, 4 workers could all queue behind the
-    greenhouse host and the other-host fetches would wait out the backlog
+    dominant host and the other-host fetches would wait out the backlog
     (~0.6s+). With slot-reservation the other hosts fire immediately."""
     delay = 0.3
     finish: dict[str, float] = {}
@@ -162,7 +162,7 @@ def test_cache_hit_returns_without_fetch() -> None:
 def test_capture_descriptions_false_writes_comp_not_description() -> None:
     """The backfill path passes capture_descriptions=False: a detail fetch still
     fills comp/posted_date but never writes description_text."""
-    jobs = [_job("https://boards.greenhouse.io/acme/jobs/1")]  # no comp -> fetched
+    jobs = [_job("https://apply.workable.com/acme/j/1")]  # no comp -> fetched
     resp = MagicMock()
     resp.text = "<html></html>"
     details = {"comp": "$200k", "description_text": "Full role body."}
@@ -178,7 +178,7 @@ def test_capture_descriptions_false_writes_comp_not_description() -> None:
 
 def test_capture_descriptions_true_writes_description() -> None:
     """The run path (default True) writes description_text from the detail page."""
-    jobs = [_job("https://boards.greenhouse.io/acme/jobs/1")]
+    jobs = [_job("https://apply.workable.com/acme/j/1")]
     resp = MagicMock()
     resp.text = "<html></html>"
     details = {"comp": "$200k", "description_text": "Full role body."}
@@ -199,7 +199,7 @@ def test_skip_paths_unchanged() -> None:
         _job("https://news.ycombinator.com/item?id=1"),  # rate-limited host
         _job("https://ca.indeed.com/viewjob?jk=x"),  # bot-walled host
         _job(""),  # no url
-        _job("https://boards.greenhouse.io/acme/jobs/9"),  # the only real fetch
+        _job("https://apply.workable.com/acme/j/9"),  # the only real fetch
     ]
     resp = MagicMock()
     resp.text = "<html></html>"
@@ -255,7 +255,7 @@ def test_skip_reason_breakdown_tallied() -> None:
         _job("https://jobs.apple.com/en-us/details/1/x"),  # apple: SPA, no JSON-LD
         _job(""),  # no url
         _job("https://x.com/j", status="skipped"),  # inactive
-        _job("https://boards.greenhouse.io/acme/jobs/9"),  # real fetch
+        _job("https://apply.workable.com/acme/j/9"),  # real fetch
     ]
     resp = MagicMock()
     resp.text = "<html></html>"

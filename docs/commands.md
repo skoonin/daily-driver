@@ -228,7 +228,7 @@ The `jobs.csv` `Status` column shares the tracker's status machinery. The recomm
 
 ### `jobs run [-n|--dry-run | -j|--json] [--no-enrich] [--sources LIST | --list-sources]`
 
-Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)).
+Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). Comp is filled without network cost where possible: pay-transparency text in the scraped description is parsed first (conservative — a salary-anchored, currency-marked, annual-sized figure, else the cell stays blank), and only rows still missing comp fetch their detail page. Greenhouse hosted pages are never fetched (one shared host bot-walls at run volume; the description already carries the pay text).
 
 The run also **verifies closure** for board-backed sources (Greenhouse, Ashby, Lever, Workable, Workday): their scrapes return each company's complete listing, so a stored job absent from a successfully-fetched listing on two consecutive runs is marked `Status: closed` + `Date Closed` (the diff uses the raw pre-role-filter listing; failed, partial, or config-removed boards close nothing; only untriaged `found`/`pending` rows are touched). Closed rows are archived by `jobs prune` and re-surface loudly as `Reopened` if they ever re-appear. Miss counts persist in `board-diff-misses.json`.
 
