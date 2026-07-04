@@ -10,7 +10,7 @@ failure isolation. This module exercises that plan through
 from __future__ import annotations
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.runner import _jobspy_scrape_plan
+from daily_driver.plugins.job_search.scraper.scrape_all import _jobspy_scrape_plan
 
 
 def _plugin(**sources: object) -> JobSearchPlugin:

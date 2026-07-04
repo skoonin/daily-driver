@@ -124,7 +124,7 @@ def test_ashby_failed_board_raises_degraded_keeping_data(monkeypatch: Any) -> No
     """
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     ok_jobs = [
         {
@@ -157,7 +157,7 @@ def test_ashby_all_boards_failed_raises_degraded_empty(monkeypatch: Any) -> None
     """
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     monkeypatch.setattr(ashby_module, "_api_get", lambda *a, **kw: None)
     monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())

@@ -8,7 +8,7 @@ object per line, source-agnostic (LinkedIn, Indeed, HN, or a future source all
 share the one store).
 
 Callers hold the jobs ``file_lock`` for the whole read-enrich-write lifecycle
-already (see ``runner._JobSink``), so this module does no locking of its own.
+already (see ``sink._JobSink``), so this module does no locking of its own.
 """
 
 from __future__ import annotations

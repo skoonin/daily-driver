@@ -208,7 +208,7 @@ def load_archive_dedup(jobs_csv: Path) -> tuple[set[str], set[str], dict[str, st
     column) would silently let archived/rejected jobs be re-discovered, so
     warn naming the path — the live jobs.csv raises for the same defect.
     """
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key
+    from daily_driver.plugins.job_search.scraper.rows import dedup_key
 
     archive = archive_path_for(jobs_csv)
     header, rows = _read_rows(archive)

@@ -12,7 +12,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -32,13 +32,13 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
     is derived from the board slug.
     """
     from daily_driver.plugins.job_search.config import AshbyToggle
-    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
-    from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
+    from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
     toggle = source_toggle(ctx.plugin, "ashby", AshbyToggle)
     boards = resolve_boards(

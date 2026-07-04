@@ -53,9 +53,9 @@ def _enabled_playwright_sources(workspace: Workspace) -> list[str]:
     """Names of configured-on sources that require the Playwright browser.
 
     A source counts as enabled only when explicitly toggled on, matching the
-    runtime gate in ``runner.run_scrapers`` (an absent toggle is off).
+    runtime gate in ``scrape_all.run_all_scrapers`` (an absent toggle is off).
     """
-    from daily_driver.plugins.job_search.scraper.runner import _PLAYWRIGHT_SOURCES
+    from daily_driver.plugins.job_search.scraper.scrape_all import _PLAYWRIGHT_SOURCES
 
     config = getattr(workspace, "config", None)
     job_cfg = getattr(getattr(config, "plugins", None), "job_search", None)

@@ -12,7 +12,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -40,12 +40,12 @@ def scrape_workday(ctx: ScrapeContext) -> list[dict]:
     or derived from the tenant, and ``description_text`` is emitted empty.
     """
     from daily_driver.plugins.job_search.config import WorkdayToggle
-    from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
     boards = source_toggle(ctx.plugin, "workday", WorkdayToggle).workday_boards
     session = _http_session(ctx)

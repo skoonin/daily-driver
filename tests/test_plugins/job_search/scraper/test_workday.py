@@ -136,7 +136,7 @@ def test_workday_partial_fetch_failure_raises_degraded_keeping_data(
 
     import pytest
 
-    from daily_driver.plugins.job_search.scraper.runner import PartialSourceError
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
 
     page0 = [_posting(f"Engineer {i}", f"/job/x/E-{i}_R{i}") for i in range(20)]
 

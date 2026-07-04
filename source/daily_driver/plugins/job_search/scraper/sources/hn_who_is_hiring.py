@@ -13,7 +13,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -28,8 +28,8 @@ def scrape_hn_who_is_hiring(ctx: ScrapeContext) -> list[dict]:
     Comment headline format (convention): "Company | Role | Location | ..."
     """
     from daily_driver.plugins.job_search.config import HackerNewsToggle
+    from daily_driver.plugins.job_search.scraper.context import source_toggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import source_toggle
 
     max_posts = source_toggle(
         ctx.plugin, "hn_who_is_hiring", HackerNewsToggle

@@ -146,7 +146,7 @@ def dedup_sets_from_rows(rows: list[dict[str, str]]) -> tuple[set[str], set[str]
     Mirrors load_existing_jobs' extraction so jobs.csv and jobs.archive.csv
     contribute dedup state through one code path.
     """
-    from daily_driver.plugins.job_search.scraper.runner import dedup_key
+    from daily_driver.plugins.job_search.scraper.rows import dedup_key
 
     urls: set[str] = set()
     keys: set[str] = set()
@@ -167,7 +167,8 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     known_urls  — set of Link column values, for URL-based dedup.
     known_keys  — set of dedup_key(company, role) strings, for cross-site dedup.
     """
-    from daily_driver.plugins.job_search.scraper.runner import ScraperError, dedup_key
+    from daily_driver.plugins.job_search.scraper.context import ScraperError
+    from daily_driver.plugins.job_search.scraper.rows import dedup_key
 
     if not csv_path.exists():
         return set(), set(), []
@@ -232,7 +233,7 @@ def append_jobs_typed(
     (:func:`atomic_write_rows`) is the atomic one (temp + fsync + os.replace) and
     is used for every enrichment flush, so a later flush rewrites the file clean.
     """
-    from daily_driver.plugins.job_search.scraper.runner import ScraperError
+    from daily_driver.plugins.job_search.scraper.context import ScraperError
 
     if not jobs:
         return 0

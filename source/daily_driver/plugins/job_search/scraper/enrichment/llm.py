@@ -47,7 +47,7 @@ from daily_driver.plugins.job_search.scraper.models import (
 
 if TYPE_CHECKING:
     from daily_driver.core.progress import ProgressCallback
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -115,10 +115,10 @@ def _extract_json_payload(raw: str) -> str:
 
 
 def _location_summary(ctx: ScrapeContext) -> str:
+    from daily_driver.plugins.job_search.scraper.context import home_city
     from daily_driver.plugins.job_search.scraper.countries import (
         canonical_country_name,
     )
-    from daily_driver.plugins.job_search.scraper.runner import home_city
 
     loc_cfg = ctx.plugin.locations
     # Spell out the SEMANTICS, not just the data: a bare "Countries: ..." list
@@ -621,7 +621,7 @@ def _build_fit_plan(
     they are not retried here so a wave-1 failure is not re-charged against the
     shared budget in wave 2. Backfill is the retry path for those rows.
     """
-    from daily_driver.plugins.job_search.scraper.runner import home_city
+    from daily_driver.plugins.job_search.scraper.context import home_city
 
     stats = {"enriched": 0, "skipped_budget": 0, "no_description": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt

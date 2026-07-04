@@ -12,7 +12,7 @@ from daily_driver.plugins.job_search.scraper.sources._http import (
 )
 
 if TYPE_CHECKING:
-    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+    from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
 
@@ -31,12 +31,12 @@ def scrape_workable(ctx: ScrapeContext) -> list[dict]:
     emitted empty for the enrichment pass to fill later.
     """
     from daily_driver.plugins.job_search.config import WorkableToggle
-    from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import (
+    from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
         PartialSourceError,
         source_toggle,
     )
+    from daily_driver.plugins.job_search.scraper.roles import matches_roles
 
     accounts = source_toggle(ctx.plugin, "workable", WorkableToggle).workable_accounts
     session = _http_session(ctx)
