@@ -298,10 +298,9 @@ class EnrichedJob(BaseModel):
     date_enriched: dt.datetime | None = None
 
     # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
-    # derived from this map's key order. "Date Verified" occupies the old
-    # "Date Last Seen" slot so the one-time header migration is a rename in
-    # place (values stay put); "Date Closed" appends at the end for the same
-    # reason. csv_io.migrate_legacy_header upgrades old files on first write.
+    # derived from this map's key order. An old-schema file (pre-0.4
+    # "Date Last Seen") is not auto-migrated: fix the header by hand or start
+    # fresh.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
         "Company": "company",
@@ -438,11 +437,7 @@ class EnrichedJob(BaseModel):
             date_found=_opt_date(row.get("Date Found", ""))
             or dt.date.today(),  # noqa: DTZ011
             date_applied=_opt_date(row.get("Date Applied", "")),
-            # Legacy fallback: archive rows (and any not-yet-migrated file) may
-            # still carry the pre-0.4 "Date Last Seen" column.
-            date_verified=_opt_date(
-                row.get("Date Verified", "") or row.get("Date Last Seen", "")
-            ),
+            date_verified=_opt_date(row.get("Date Verified", "")),
             date_closed=_opt_date(row.get("Date Closed", "")),
             date_enriched=_opt_dt(row.get("Date Enriched", "")),
             url=row.get("Link", ""),
