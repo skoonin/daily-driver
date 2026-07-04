@@ -33,8 +33,8 @@ class TestRemoteColumnSchema:
         loc_idx = header.index("Location")
         assert header[loc_idx + 1] == "Remote"
 
-    def test_header_is_fourteen_columns(self) -> None:
-        assert len(EnrichedJob.CANONICAL_HEADER) == 14
+    def test_header_is_fifteen_columns(self) -> None:
+        assert len(EnrichedJob.CANONICAL_HEADER) == 15
 
     def test_remote_defaults_blank(self) -> None:
         assert _enriched().remote == ""

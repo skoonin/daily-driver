@@ -82,6 +82,68 @@ def _make_backup(csv_path: Path) -> Path:
     return backup
 
 
+def migrate_legacy_header(csv_path: Path) -> bool:
+    """One-time schema upgrade: rename "Date Last Seen" -> "Date Verified" and
+    add an empty "Date Closed" column. Returns True when a rewrite happened.
+
+    Required because neither write path performs a clean rename on its own:
+    the run path reuses the on-disk header (new-column writes would be
+    silently dropped by extrasaction="ignore"), and backfill would classify
+    the old column as an unknown extra (stray 16th column, blank new ones).
+    The rename is positional-in-place so every cell value stays put. A file
+    carrying BOTH columns (hand-edit) is merged: Date Verified wins where
+    set, the legacy value fills gaps, and the stray column is dropped -- so
+    the read-side legacy fallback can never resurrect a stale date later.
+    Caller holds the jobs lock. Never called on a dry-run path.
+    """
+    header, rows = read_rows(csv_path)
+    if not header:
+        return False
+    changed = False
+    if "Date Last Seen" in header:
+        if "Date Verified" not in header:
+            header = [
+                "Date Verified" if column == "Date Last Seen" else column
+                for column in header
+            ]
+        else:
+            header = [column for column in header if column != "Date Last Seen"]
+        for row in rows:
+            legacy = row.pop("Date Last Seen", "") or ""
+            if not (row.get("Date Verified") or "").strip():
+                row["Date Verified"] = legacy
+        changed = True
+    # Repair a jobs-shaped header missing either new column (e.g. a hand-built
+    # file): rescan/verify writes to an absent column would be silently
+    # dropped by extrasaction="ignore" on every flush.
+    for needed in ("Date Verified", "Date Closed"):
+        if needed not in header:
+            header = header + [needed]
+            changed = True
+    if not changed:
+        return False
+    ragged = sum(1 for row in rows if None in row)
+    if ragged:
+        # Mirror the run path's ragged-row notice: the rewrite drops overflow
+        # cells, and this migration runs BEFORE that warning would fire.
+        log.warning(
+            "%d row(s) in %s have more cells than the header; the extra "
+            "trailing cells are dropped by the schema migration rewrite",
+            ragged,
+            csv_path,
+        )
+    # A one-time structural rewrite of the user's primary data file gets a
+    # recoverable snapshot first, matching backfill's pre-mutation backup.
+    _make_backup(csv_path)
+    atomic_write_rows(csv_path, header, rows)
+    log.info(
+        "Migrated %s to the Date Verified / Date Closed schema (%d rows)",
+        csv_path,
+        len(rows),
+    )
+    return True
+
+
 def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     """Return (header_columns, row_dicts) for a jobs-shaped CSV.
 
@@ -261,6 +323,7 @@ def _active(job: EnrichedJob) -> bool:
 
 __all__ = [
     "CANONICAL_HEADER",
+    "migrate_legacy_header",
     "load_existing_jobs",
     "append_jobs_typed",
     "read_rows",

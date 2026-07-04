@@ -206,11 +206,11 @@ def test_no_enrich_leaves_backlog_untouched(
     assert rows[0]["Date Enriched"] == ""
 
 
-def test_reseen_and_folded_row_keeps_fresh_date_last_seen(
+def test_reseen_and_folded_row_keeps_fresh_date_verified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A row that is re-seen by the scrape AND backlog-enriched in the same run
-    gets BOTH updates: rescan's Date Last Seen bump must land after the folded
+    gets BOTH updates: rescan's Date Verified bump must land after the folded
     overwrite (which carries the stale date captured at selection)."""
     import datetime as dt
 
@@ -234,7 +234,7 @@ def test_reseen_and_folded_row_keeps_fresh_date_last_seen(
     (row,) = _read_csv(csv_path)
     assert row["Fit"] == "8"
     assert row["Date Enriched"] != ""
-    assert row["Date Last Seen"] == dt.date.today().isoformat()
+    assert row["Date Verified"] == dt.date.today().isoformat()
 
 
 def test_backlog_row_without_description_left_unscored(

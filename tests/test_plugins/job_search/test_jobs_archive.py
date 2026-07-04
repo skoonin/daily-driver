@@ -17,7 +17,7 @@ HEADER = [
     "Company",
     "Role",
     "Date Found",
-    "Date Last Seen",
+    "Date Verified",
     "Link",
 ]
 
@@ -28,7 +28,7 @@ def _row(*, company: str, link: str, status: str, last_seen: str) -> dict[str, s
         "Company": company,
         "Role": "SRE",
         "Date Found": last_seen,
-        "Date Last Seen": last_seen,
+        "Date Verified": last_seen,
         "Link": link,
     }
 
@@ -268,7 +268,7 @@ def test_is_stale_falls_back_to_date_found_when_last_seen_empty() -> None:
         "Company": "X",
         "Role": "SRE",
         "Date Found": "2026-04-01",
-        "Date Last Seen": "",
+        "Date Verified": "",
         "Link": "x",
     }
     assert jobs_archive._is_stale(
@@ -282,7 +282,7 @@ def test_is_stale_no_usable_date_keeps_row() -> None:
         "Company": "X",
         "Role": "SRE",
         "Date Found": "",
-        "Date Last Seen": "",
+        "Date Verified": "",
         "Link": "x",
     }
     assert not jobs_archive._is_stale(

@@ -6,7 +6,7 @@ unchanged:
 
 - The exact 14-column ``jobs.csv`` header, byte-for-byte (Remote added after
   Location in task #6; GD Rating and Product/Purpose removed with the
-  company-info pass; Date Enriched added after Date Last Seen for the
+  company-info pass; Date Enriched added after Date Verified for the
   force-update cooldown).
 - A full-coverage EnrichedJob round-trip: write -> read -> rewrite is stable,
   including unicode, commas, quotes, and newlines in free-text fields.
@@ -35,7 +35,7 @@ from daily_driver.plugins.job_search.scraper.models import (
     RawScrapedJob,
 )
 
-# The frozen 14-column jobs.csv layout. The single derived CANONICAL_HEADER must
+# The 15-column jobs.csv layout. The single derived CANONICAL_HEADER must
 # equal this list. Remote sits immediately after Location. Reads are
 # header-name-based, so files stored in an older column order (or with the
 # removed GD Rating / Product/Purpose columns) still load and adopt this order on
@@ -51,14 +51,15 @@ _EXPECTED_HEADER = [
     "Notes",
     "Date Found",
     "Date Applied",
-    "Date Last Seen",
+    "Date Verified",
     "Date Enriched",
     "Link",
     "Source",
+    "Date Closed",
 ]
 
 
-def test_canonical_header_is_exactly_the_frozen_14_columns() -> None:
+def test_canonical_header_is_exactly_the_expected_15_columns() -> None:
     assert CANONICAL_HEADER == _EXPECTED_HEADER
 
 
@@ -184,7 +185,7 @@ def test_backfill_round_trip_preserves_rows_and_order(
                 "Location": "Remote",
                 "Notes": "",
                 "Date Found": "2026-01-02",
-                "Date Last Seen": "2026-01-02",
+                "Date Verified": "2026-01-02",
                 "Link": "https://example.com/job/1",
                 "Source": "remoteok",
             }

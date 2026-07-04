@@ -46,7 +46,7 @@ def _row(*, company: str, link: str, status: str = "found") -> dict[str, str]:
         "Fit": "",
         "Comp": "$180,000-$220,000",
         "Date Found": "2026-04-01",
-        "Date Last Seen": "2026-04-01",
+        "Date Verified": "2026-04-01",
         "Date Applied": "",
         "Link": link,
         "Source": "remoteok",
