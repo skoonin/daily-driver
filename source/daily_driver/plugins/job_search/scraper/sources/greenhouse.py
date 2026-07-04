@@ -30,11 +30,19 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     """
     from daily_driver.plugins.job_search.config import GreenhouseToggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
-    from daily_driver.plugins.job_search.scraper.runner import source_toggle
+    from daily_driver.plugins.job_search.scraper.runner import (
+        PartialSourceError,
+        source_toggle,
+    )
 
     boards = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle).greenhouse_boards
     session = _http_session(ctx)
     jobs: list[dict] = []
+    # Boards whose fetch failed -> the source is degraded (its result is
+    # incomplete). A transient board 404 must never look identical to a clean
+    # scrape: board-diff closure would read the missing board's rows as
+    # "absent = closed" while the source reported healthy.
+    failed_boards: list[str] = []
 
     # Live progress unit: one board (reported at loop-top so a skipped board
     # still advances the bar).
@@ -52,6 +60,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
         )
         resp = _api_get(session, api_url, ctx, label=f"greenhouse/{board}")
         if not resp:
+            failed_boards.append(board)
             continue
         data = resp.json()
 
@@ -98,6 +107,14 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
             len(board_jobs),
         )
 
+    if failed_boards:
+        # Incomplete scrape (one or more boards failed) -> degraded, not a
+        # clean run. The gathered jobs ride along and still append.
+        raise PartialSourceError(
+            jobs,
+            f"{len(failed_boards)} of {len(boards)} boards failed: "
+            f"{', '.join(failed_boards)}",
+        )
     return jobs
 
 
