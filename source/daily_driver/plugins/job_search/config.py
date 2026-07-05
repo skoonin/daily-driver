@@ -451,6 +451,27 @@ class EnrichmentConfig(BaseModel):
         return value
 
 
+class VerifyConfig(BaseModel):
+    """Knobs for `jobs verify` url-check liveness verification."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reverify_days: int = Field(
+        default=7,
+        description=(
+            "Re-check a row's URL when its last affirmative liveness evidence\n"
+            "(Date Verified, else Date Found) is at least this many days old."
+        ),
+    )
+
+    @field_validator("reverify_days")
+    @classmethod
+    def _positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("verify day thresholds must be >= 1")
+        return value
+
+
 class JobSearchPlugin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -489,6 +510,13 @@ class JobSearchPlugin(BaseModel):
             "Post-scrape enrichment: an optional LLM pass that adds a fit score\n"
             "and a Notes summary. The pass costs API calls; max_enrich_fit caps\n"
             "how many run."
+        ),
+    )
+    verify: VerifyConfig = Field(
+        default=VerifyConfig(),
+        description=(
+            "`jobs verify` liveness checks for sources without full board\n"
+            "listings (board-backed rows are verified by board-diff each run)."
         ),
     )
     sources: dict[str, SourceToggle] = Field(

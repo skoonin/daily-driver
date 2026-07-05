@@ -13,7 +13,15 @@ _AWAITING_ACTION_STATES = {"applied", "interviewing"}
 
 def load_last_run(output_dir: Path) -> dict[str, Any] | None:
     """Return parsed jobs-last-run.json or None when the file is absent/corrupt."""
-    path = output_dir / "jobs-last-run.json"
+    return _load_json(output_dir / "jobs-last-run.json")
+
+
+def load_last_verify(output_dir: Path) -> dict[str, Any] | None:
+    """Return parsed jobs-last-verify.json or None when absent/corrupt."""
+    return _load_json(output_dir / "jobs-last-verify.json")
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -98,6 +106,7 @@ def build_status(output_dir: Path, state_dir: Path | None = None) -> dict[str, A
 
     Schema version 1. Keys:
       last_run      - dict from jobs-last-run.json, or null
+      last_verify   - dict from jobs-last-verify.json, or null
       job_counts    - {state: count} from jobs.csv
       awaiting_action - count of jobs in applied/interviewing states
       unscored_backlog - count of active rows with no fit scoring yet
@@ -113,6 +122,7 @@ def build_status(output_dir: Path, state_dir: Path | None = None) -> dict[str, A
     awaiting = sum(v for k, v in counts.items() if k in _AWAITING_ACTION_STATES)
     return {
         "last_run": last_run,
+        "last_verify": load_last_verify(output_dir),
         "job_counts": counts,
         "awaiting_action": awaiting,
         "unscored_backlog": count_unscored_backlog(csv_path),
@@ -125,4 +135,5 @@ __all__ = [
     "count_jobs_by_state",
     "count_unscored_backlog",
     "load_last_run",
+    "load_last_verify",
 ]

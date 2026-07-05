@@ -279,6 +279,12 @@ tracker:
 #       criteria:
 #         - label: Sponsorship
 #           assess: "Does the role offer visa sponsorship?"
+#     # `jobs verify` liveness checks for sources without full board
+#     # listings (board-backed rows are verified by board-diff each run).
+#     verify:
+#       # Re-check a row's URL when its last affirmative liveness evidence
+#       # (Date Verified, else Date Found) is at least this many days old.
+#       reverify_days: 7
 #     sources:
 #
 #       # All keys are optional; omitted = on (SourceToggle defaults
