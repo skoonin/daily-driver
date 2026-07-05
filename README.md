@@ -19,7 +19,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 Requires Python 3.11+ and macOS. See [docs/install.md](docs/install.md) for the full prerequisites and Playwright notes.
 
 ```bash
-pip install 'git+https://github.com/skoonin/daily-driver.git@v0.2.0'
+pip install 'git+https://github.com/skoonin/daily-driver.git@v1.0.0'
 daily-driver --version
 ```
 
@@ -83,7 +83,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and commit conventions.
 
 ## Platform
 
-macOS only for v0.2.0. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
+macOS only. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
 
 ## License
 

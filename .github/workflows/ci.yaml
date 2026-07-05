@@ -81,4 +81,4 @@ jobs:
           retention-days: 14
 
 # Note: Linux parity is a known follow-up for a future release.
-# v0.1.0 ships macOS arm64 only.
+# Daily Driver ships macOS arm64 only.
