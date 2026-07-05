@@ -16,13 +16,16 @@ on:
 
 jobs:
   claude:
-    # The @claude gate is also the infinite-loop guard: Claude's own replies
-    # never contain the trigger phrase.
+    # Two gates, both required per event:
+    # 1. The '@claude' trigger phrase -- also the infinite-loop guard, since
+    #    Claude's own replies never contain it.
+    # 2. author_association in OWNER/MEMBER/COLLABORATOR -- on a PUBLIC repo this
+    #    stops any outside user from spending the API key by commenting @claude.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     # Reads CC_API_KEY from the dev environment. Note: an environment with
     # required-reviewer or wait-timer protection rules would gate this job,
