@@ -65,7 +65,7 @@ def add_parser(
         parents=parents,
         help=(
             "Job search: run scrapes, discover boards, backfill enrichment, "
-            "promote matches, inspect status, prune stale rows"
+            "promote matches, inspect status, verify liveness, prune stale rows"
         ),
     )
 
@@ -294,6 +294,54 @@ def add_parser(
     )
     add_global_flags(p_prune)
     p_prune.set_defaults(func=_run_prune)
+
+    p_verify = nested.add_parser(
+        "verify",
+        parents=parents,
+        help="URL-check stale untriaged rows from sources board-diff cannot cover",
+    )
+    p_verify.add_argument(
+        "--reverify-days",
+        type=_int_at_least(1, "--reverify-days"),
+        default=None,
+        metavar="N",
+        help=(
+            "Re-check rows whose liveness evidence is at least N days old "
+            "(default: plugins.job_search.verify.reverify_days, 7)"
+        ),
+    )
+    p_verify.add_argument(
+        "-S",
+        "--sources",
+        default=None,
+        metavar="LIST",
+        help=(
+            "Comma-separated source ids to verify (e.g. linkedin,remoteok); "
+            "same shape as jobs run -S"
+        ),
+    )
+    p_verify.add_argument(
+        "--limit",
+        type=_positive_limit,
+        default=None,
+        metavar="N",
+        help="Check at most N rows this run, stalest evidence first",
+    )
+    p_verify.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Probe URLs and report verdicts without writing to disk",
+    )
+    p_verify.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        default=False,
+        help="Emit the verify report as JSON instead of a Rich summary",
+    )
+    add_global_flags(p_verify)
+    p_verify.set_defaults(func=_run_verify)
 
     parser.set_defaults(func=run)
     return parser
@@ -598,6 +646,131 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     return 0
 
 
+def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
+    from rich.table import Table
+
+    from daily_driver.plugins.job_search.scraper.enrichment._shared import (
+        install_sigterm_handler,
+        interrupted_by_sigterm,
+        restore_sigterm_handler,
+    )
+    from daily_driver.plugins.job_search.scraper.sources import SOURCE_CAPABILITIES
+    from daily_driver.plugins.job_search.scraper.verify import verify_jobs
+
+    sources: frozenset[str] | None = None
+    raw_sources = getattr(args, "sources", None)
+    if raw_sources:
+        requested = [s.strip() for s in raw_sources.split(",") if s.strip()]
+        if not requested:
+            Console.error("--sources parsed to an empty list (only commas/whitespace?)")
+            return 2
+        verifiable = sorted(
+            sid
+            for sid, capability in SOURCE_CAPABILITIES.items()
+            if capability.verify == "url-check"
+        )
+        unknown = [s for s in requested if s not in verifiable]
+        if unknown:
+            Console.error(
+                f"not url-check verifiable: {', '.join(unknown)}. "
+                f"Verifiable sources: {', '.join(verifiable)}"
+            )
+            return 2
+        sources = frozenset(requested)
+
+    resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
+    if isinstance(resolved, int):
+        return resolved
+    plugin, _ai, _context_text = resolved
+
+    csv_path = workspace.output_dir / "jobs.csv"
+    sigterm_prev = install_sigterm_handler()
+    try:
+        report = verify_jobs(
+            csv_path,
+            workspace.ephemeral_dir,
+            plugin,
+            reverify_days=args.reverify_days,
+            sources=sources,
+            limit=args.limit,
+            dry_run=args.dry_run,
+        )
+    except KeyboardInterrupt:
+        # verify_jobs drains an interrupt inside its probe loop; landing here
+        # means the interrupt hit outside it (e.g. waiting on the jobs lock),
+        # so nothing was probed or written.
+        Console.error("verify interrupted before it started; nothing written")
+        return 143 if interrupted_by_sigterm() else 130
+    finally:
+        restore_sigterm_handler(sigterm_prev)
+
+    interrupted_exit = 143 if interrupted_by_sigterm() else 130
+
+    if getattr(args, "json", False):
+        Console.emit_json(report.to_payload())
+        return interrupted_exit if report.interrupted else 0
+
+    console = Console.get_user_console()
+    checked_total = sum(report.checked.values())
+    if checked_total == 0:
+        if report.interrupted:
+            console.print(
+                "[yellow]Interrupted before the first probe finished; "
+                "nothing was checked or written.[/yellow]"
+            )
+            return interrupted_exit
+        console.print(
+            f"[dim]No rows due for verification "
+            f"({report.candidates} candidates before limit).[/dim]"
+        )
+        return 0
+
+    per_source = ", ".join(
+        f"{source} {count}" for source, count in sorted(report.checked.items())
+    )
+    console.print(f"[bold]Checked:[/bold] {checked_total} ({per_source})")
+    console.print(f"  Live (Date Verified refreshed): {report.live}")
+    unknown_total = sum(report.unknown.values())
+    if unknown_total:
+        reasons = ", ".join(
+            f"{reason} {count}" for reason, count in sorted(report.unknown.items())
+        )
+        console.print(f"  Unknown (never closes): {unknown_total} ({reasons})")
+
+    if report.closed:
+        table = Table(
+            title=f"Verified closed ({'dry-run' if args.dry_run else 'written'})",
+            show_header=True,
+        )
+        table.add_column("Company")
+        table.add_column("Role")
+        table.add_column("Source")
+        table.add_column("Evidence")
+        for entry in report.closed:
+            table.add_row(
+                entry["company"], entry["role"], entry["source"], entry["reason"]
+            )
+        console.print(table)
+    console.print(f"  Closed: {len(report.closed)}")
+
+    for source in report.suspect_sources:
+        console.print(
+            f"[red]All checked {source} rows read closed -- detector suspect; "
+            f"no {source} closures applied. Check the site by hand.[/red]"
+        )
+    if report.discarded_closures:
+        for entry in report.discarded_closures:
+            console.print(f"  [dim]discarded ({entry['reason']}): {entry['url']}[/dim]")
+    if report.interrupted:
+        console.print(
+            "[yellow]Interrupted mid-probe; outcomes gathered so far were "
+            "applied.[/yellow]"
+        )
+    if args.dry_run:
+        console.print("[yellow]Dry-run: nothing written.[/yellow]")
+    return interrupted_exit if report.interrupted else 0
+
+
 def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
     from daily_driver.core.progress import RunProgress
     from daily_driver.plugins.job_search.scraper.discovery import (
@@ -723,6 +896,26 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
                 "run jobs backfill to finish enrichment.[/yellow]"
             )
 
+    last_verify = status.get("last_verify")
+    if last_verify is not None:
+        checked = sum((last_verify.get("checked") or {}).values())
+        closed = len(last_verify.get("closed") or [])
+        started = (last_verify.get("started_at") or "?")[:10]
+        console.print(
+            f"[bold]Last verify:[/bold] {started} -- "
+            f"{checked} checked, {last_verify.get('live', 0)} live, {closed} closed"
+        )
+        suspects = last_verify.get("suspect_sources") or []
+        if suspects:
+            # A tripped detector-rot breaker must not hide on the dashboard:
+            # its closures were discarded pending a by-hand check of the site.
+            console.print(
+                f"  [red]Suspect detector(s), closures discarded: "
+                f"{', '.join(suspects)}[/red]"
+            )
+        if last_verify.get("interrupted"):
+            console.print("  [yellow]Last verify was interrupted mid-probe.[/yellow]")
+
     counts = status["job_counts"]
     if counts:
         table = Table(title="Jobs by status", show_header=True)
@@ -767,7 +960,9 @@ def run(args: argparse.Namespace) -> int:
 
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver jobs <action> ...")
-        Console.error("actions: run, discover-boards, backfill, promote, status, prune")
+        Console.error(
+            "actions: run, discover-boards, backfill, promote, status, verify, prune"
+        )
         return 2
 
     try:

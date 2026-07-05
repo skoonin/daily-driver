@@ -20,6 +20,7 @@ log = get_logger(__name__)
 # with `Session` and classify per-source failures with `HTTPError` /
 # `HTTPTimeout` instead of reaching into `requests`.
 Session: TypeAlias = requests.Session
+Response: TypeAlias = requests.Response
 HTTPError = requests.exceptions.RequestException
 HTTPTimeout = requests.exceptions.Timeout
 
@@ -225,6 +226,7 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
 
 __all__ = [
     "Session",
+    "Response",
     "HTTPError",
     "HTTPTimeout",
     "_http_session",
