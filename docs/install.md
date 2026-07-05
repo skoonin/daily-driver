@@ -1,6 +1,6 @@
 # Install
 
-macOS arm64 only in v0.1.0. Intel Mac likely works but is untested. Linux is on the roadmap.
+macOS arm64 only. Intel Mac likely works but is untested. Linux is on the roadmap.
 
 ## Prerequisites
 
@@ -53,7 +53,7 @@ On the next command invocation, Daily Driver detects version-stamp drift and reg
 
 ### Breaking config changes
 
-`.dd-config.yaml` is validated with Pydantic (`extra="forbid"`). Schema-breaking releases surface a validation error naming the offending key. No automatic migrations in v0.1.0 — read `CHANGELOG.md`, edit the config, run `daily-driver doctor`.
+`.dd-config.yaml` is validated with Pydantic (`extra="forbid"`). Schema-breaking releases surface a validation error naming the offending key. No automatic migrations — read `CHANGELOG.md`, edit the config, run `daily-driver doctor`.
 
 ### Force regenerate
 
@@ -70,7 +70,7 @@ Wipes the managed `.claude/daily-driver/` subdirs, recopies from the installed p
 ### Downgrade
 
 ```bash
-pip install 'git+https://github.com/skoonin/daily-driver.git@v0.0.X'
+pip install 'git+https://github.com/skoonin/daily-driver.git@vX.Y.Z'
 daily-driver doctor --reset
 ```
 
