@@ -1,6 +1,6 @@
 # Interactive @claude responder: mention @claude in an issue or PR comment and
 # Claude answers / implements in that thread. Costs API usage only when
-# invoked. Requires the ANTHROPIC_API_KEY repo secret (the Claude GitHub App
+# invoked. Reads CC_API_KEY from the dev environment (the Claude GitHub App
 # grants repo access, not model auth).
 name: Claude Code
 
@@ -24,6 +24,10 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    # Reads CC_API_KEY from the dev environment. Note: an environment with
+    # required-reviewer or wait-timer protection rules would gate this job,
+    # delaying @claude replies until the rule is satisfied.
+    environment: dev
     permissions:
       contents: write
       pull-requests: write
@@ -38,4 +42,4 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a  # v1.0.165
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.CC_API_KEY }}
