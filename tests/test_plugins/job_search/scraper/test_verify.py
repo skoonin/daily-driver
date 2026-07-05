@@ -302,19 +302,137 @@ def test_every_url_check_source_has_a_checker() -> None:
     assert url_check_sources == set(verify._URL_CHECKERS)
 
 
-def test_hn_whos_hiring_permalink_row_reads_unknown_not_crash(
+# ── Age-unverified fallback (verify="none" sources + HN permalink rows) ──────
+
+
+def test_old_unverifiable_rows_close_as_age_unverified(
     tmp_path: Path, monkeypatch
 ) -> None:
-    rows = [_row("https://news.ycombinator.com/item?id=99", "HN Who's Hiring")]
+    rows = [
+        _row("https://indeed.com/viewjob?jk=1", "indeed", Notes="good fit"),
+        _row("https://news.ycombinator.com/item?id=2", "HN Who's Hiring"),
+        _row("https://indeed.com/viewjob?jk=3", "indeed", **{"Date Found": _FRESH}),
+    ]
+    csv_path, report = _run_verify(tmp_path, rows, {}, monkeypatch)
+
+    assert report.checked == {}  # the age channel probes nothing
+    assert len(report.closed) == 2
+    assert {entry["reason"] for entry in report.closed} == {"age-unverified"}
+    assert {entry["source"] for entry in report.closed} == {
+        "indeed",
+        "hn_who_is_hiring",
+    }
+
+    by_url = {row["Link"]: row for row in _read_csv(csv_path)}
+    aged = by_url["https://indeed.com/viewjob?jk=1"]
+    assert aged["Status"] == "closed"
+    assert aged["Date Closed"] == _TODAY_ISO
+    assert aged["Notes"] == f"good fit | [closed: age-unverified {_TODAY_ISO}]"
+    fresh = by_url["https://indeed.com/viewjob?jk=3"]
+    assert fresh["Status"] == "found"
+    assert fresh["Date Closed"] == ""
+
+    manifest = json.loads((tmp_path / "jobs-last-verify.json").read_text())
+    assert manifest["unverified_age_days"] == 30
+    assert len(manifest["closed"]) == 2
+
+
+def test_hn_jobs_permalink_rows_age_close_but_external_urls_stay_url_checked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The permalink fallback rows belong to the age channel; hn_jobs rows
+    with a real external URL keep the stronger url-check evidence."""
+    permalink = "https://news.ycombinator.com/item?id=9"
+    external = "https://acme.example/careers/sre"
+    rows = [
+        _row(permalink, "HN Jobs"),
+        _row(external, "HN Jobs"),
+    ]
+    responses = {external: _FakeResp(200, url=external)}
+    csv_path, report = _run_verify(tmp_path, rows, responses, monkeypatch)
+
+    assert report.checked == {"hn_jobs": 1}  # only the external URL was probed
+    assert [entry["url"] for entry in report.closed] == [permalink]
+    assert report.closed[0]["reason"] == "age-unverified"
+    by_url = {row["Link"]: row for row in _read_csv(csv_path)}
+    assert by_url[permalink]["Status"] == "closed"
+    assert by_url[external]["Date Verified"] == _TODAY_ISO
+
+
+def test_recently_resighted_row_is_never_age_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Scrape re-sightings refresh Date Verified for every source (including
+    verify="none" ones); a job the pipeline saw live days ago must not close
+    off its old discovery date."""
+    rows = [
+        _row(
+            "https://indeed.com/viewjob?jk=1",
+            "indeed",
+            **{"Date Found": "2026-05-01", "Date Verified": _FRESH},
+        )
+    ]
+    csv_path, report = _run_verify(tmp_path, rows, {}, monkeypatch)
+    assert report.closed == []
+    assert _read_csv(csv_path)[0]["Status"] == "found"
+
+
+def test_row_with_no_parseable_dates_is_never_age_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No anchor = no closure. Opposite of the probe path's always-due rule,
+    because here selection IS the closure decision."""
+    rows = [
+        _row(
+            "https://indeed.com/viewjob?jk=1",
+            "indeed",
+            **{"Date Found": "", "Date Verified": ""},
+        )
+    ]
+    csv_path, report = _run_verify(tmp_path, rows, {}, monkeypatch)
+    assert report.closed == []
+    assert _read_csv(csv_path)[0]["Status"] == "found"
+
+
+def test_age_threshold_from_config_with_flag_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plugin = JobSearchPlugin.model_validate(
+        {"scraper": {"enabled": True}, "verify": {"unverified_age_days": 60}}
+    )
     csv_path = tmp_path / "jobs.csv"
-    _write_csv(csv_path, rows)
+    # Found 33 days ago: not due under the configured 60...
+    _write_csv(csv_path, [_row("https://indeed.com/viewjob?jk=1", "indeed")])
     _patch_responses(monkeypatch, {})
     report = verify.verify_jobs(
-        csv_path, tmp_path, _plugin(), today=_TODAY, sleep=lambda _s: None
+        csv_path, tmp_path, plugin, today=_TODAY, sleep=lambda _s: None
     )
-    assert report.checked == {"hn_who_is_hiring": 1}
-    assert report.unknown == {"hn permalink carries no liveness signal": 1}
+    assert report.closed == []
+    # ...but the per-run flag overrides the config.
+    report = verify.verify_jobs(
+        csv_path,
+        tmp_path,
+        plugin,
+        unverified_age_days=10,
+        today=_TODAY,
+        sleep=lambda _s: None,
+    )
+    assert [entry["reason"] for entry in report.closed] == ["age-unverified"]
+
+
+def test_age_closure_respects_dry_run_and_triage(tmp_path: Path, monkeypatch) -> None:
+    rows = [
+        _row("https://indeed.com/viewjob?jk=1", "indeed"),
+        _row("https://indeed.com/viewjob?jk=2", "indeed", status="applied"),
+        _row("https://indeed.com/viewjob?jk=3", "indeed", **{"Date Closed": _STALE}),
+    ]
+    csv_path, report = _run_verify(tmp_path, rows, {}, monkeypatch, dry_run=True)
+    # Only the untriaged, not-yet-closed row is a candidate; dry-run writes nothing.
+    assert [entry["url"] for entry in report.closed] == [
+        "https://indeed.com/viewjob?jk=1"
+    ]
     assert _read_csv(csv_path)[0]["Status"] == "found"
+    assert not (tmp_path / "jobs-last-verify.json").exists()
 
 
 # ── verify_jobs end-to-end ───────────────────────────────────────────────────

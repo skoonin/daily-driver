@@ -285,6 +285,14 @@ tracker:
 #       # Re-check a row's URL when its last affirmative liveness evidence
 #       # (Date Verified, else Date Found) is at least this many days old.
 #       reverify_days: 7
+#       # Rows with no URL to check (indeed's bot wall, HN comment
+#       # permalinks) close as age-unverified once their last affirmative
+#       # liveness evidence (Date Verified, refreshed by scrape
+#       # re-sightings, else Date Found) is this many days old.
+#       # Deliberately generous: the label is honest about the weak
+#       # evidence, and a still-live posting a scrape re-finds reopens
+#       # loudly.
+#       unverified_age_days: 30
 #     sources:
 #
 #       # All keys are optional; omitted = on (SourceToggle defaults

@@ -77,10 +77,12 @@ class SourceCapability:
 # complete board listing per configured company. apple returns NEW-only results
 # behind search filters with slug-unstable URLs, so board-diff is impossible. indeed
 # is bot-walled (no anonymous page fetch survives), so it cannot be verified.
+# hn_who_is_hiring rows carry HN comment permalinks, which never 404 and say
+# nothing about the job -- unverifiable, age-based fallback like indeed.
 SOURCE_CAPABILITIES: dict[str, SourceCapability] = {
     "remoteok": SourceCapability(enumeration="windowed", verify="url-check"),
     "weworkremotely": SourceCapability(enumeration="windowed", verify="url-check"),
-    "hn_who_is_hiring": SourceCapability(enumeration="windowed", verify="url-check"),
+    "hn_who_is_hiring": SourceCapability(enumeration="windowed", verify="none"),
     "hn_jobs": SourceCapability(enumeration="windowed", verify="url-check"),
     "greenhouse": SourceCapability(enumeration="full", verify="board-diff"),
     "ashby": SourceCapability(enumeration="full", verify="board-diff"),

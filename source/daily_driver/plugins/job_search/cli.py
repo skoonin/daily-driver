@@ -311,6 +311,17 @@ def add_parser(
         ),
     )
     p_verify.add_argument(
+        "--unverified-age-days",
+        type=_int_at_least(1, "--unverified-age-days"),
+        default=None,
+        metavar="N",
+        help=(
+            "Close unverifiable rows (indeed, HN permalinks) found at least N "
+            "days ago as age-unverified "
+            "(default: plugins.job_search.verify.unverified_age_days, 30)"
+        ),
+    )
+    p_verify.add_argument(
         "-S",
         "--sources",
         default=None,
@@ -325,7 +336,10 @@ def add_parser(
         type=_positive_limit,
         default=None,
         metavar="N",
-        help="Check at most N rows this run, stalest evidence first",
+        help=(
+            "Probe at most N URLs this run, stalest evidence first "
+            "(age-unverified closures need no probe and are not capped)"
+        ),
     )
     p_verify.add_argument(
         "-n",
@@ -664,16 +678,19 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         if not requested:
             Console.error("--sources parsed to an empty list (only commas/whitespace?)")
             return 2
+        # url-check sources get probed; verify="none" sources are still valid
+        # targets here -- they are what the age-unverified fallback closes.
         verifiable = sorted(
             sid
             for sid, capability in SOURCE_CAPABILITIES.items()
-            if capability.verify == "url-check"
+            if capability.verify != "board-diff"
         )
         unknown = [s for s in requested if s not in verifiable]
         if unknown:
             Console.error(
-                f"not url-check verifiable: {', '.join(unknown)}. "
-                f"Verifiable sources: {', '.join(verifiable)}"
+                f"not verifiable by jobs verify: {', '.join(unknown)}. "
+                f"Verifiable sources: {', '.join(verifiable)} "
+                f"(board-backed sources are verified by jobs run's board-diff)"
             )
             return 2
         sources = frozenset(requested)
@@ -691,6 +708,7 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             workspace.ephemeral_dir,
             plugin,
             reverify_days=args.reverify_days,
+            unverified_age_days=args.unverified_age_days,
             sources=sources,
             limit=args.limit,
             dry_run=args.dry_run,
@@ -712,7 +730,7 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
     console = Console.get_user_console()
     checked_total = sum(report.checked.values())
-    if checked_total == 0:
+    if checked_total == 0 and not report.closed:
         if report.interrupted:
             console.print(
                 "[yellow]Interrupted before the first probe finished; "
@@ -725,21 +743,22 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         )
         return 0
 
-    per_source = ", ".join(
-        f"{source} {count}" for source, count in sorted(report.checked.items())
-    )
-    console.print(f"[bold]Checked:[/bold] {checked_total} ({per_source})")
-    console.print(f"  Live (Date Verified refreshed): {report.live}")
-    unknown_total = sum(report.unknown.values())
-    if unknown_total:
-        reasons = ", ".join(
-            f"{reason} {count}" for reason, count in sorted(report.unknown.items())
+    if checked_total:
+        per_source = ", ".join(
+            f"{source} {count}" for source, count in sorted(report.checked.items())
         )
-        console.print(f"  Unknown (never closes): {unknown_total} ({reasons})")
+        console.print(f"[bold]Checked:[/bold] {checked_total} ({per_source})")
+        console.print(f"  Live (Date Verified refreshed): {report.live}")
+        unknown_total = sum(report.unknown.values())
+        if unknown_total:
+            reasons = ", ".join(
+                f"{reason} {count}" for reason, count in sorted(report.unknown.items())
+            )
+            console.print(f"  Unknown (never closes): {unknown_total} ({reasons})")
 
     if report.closed:
         table = Table(
-            title=f"Verified closed ({'dry-run' if args.dry_run else 'written'})",
+            title=f"Closed ({'dry-run' if args.dry_run else 'written'})",
             show_header=True,
         )
         table.add_column("Company")
@@ -752,6 +771,13 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             )
         console.print(table)
     console.print(f"  Closed: {len(report.closed)}")
+    aged = sum(1 for entry in report.closed if entry["reason"] == "age-unverified")
+    if aged:
+        console.print(
+            f"  [dim]{aged} closed by age: no URL reflects these postings' "
+            f"state, and their last liveness evidence is past the "
+            f"unverified-age threshold.[/dim]"
+        )
 
     for source in report.suspect_sources:
         console.print(
