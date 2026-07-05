@@ -452,7 +452,7 @@ class EnrichmentConfig(BaseModel):
 
 
 class VerifyConfig(BaseModel):
-    """Knobs for `jobs verify` url-check liveness verification."""
+    """Knobs for `jobs verify` liveness checks (url-check + age fallback)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -463,8 +463,20 @@ class VerifyConfig(BaseModel):
             "(Date Verified, else Date Found) is at least this many days old."
         ),
     )
+    unverified_age_days: int = Field(
+        default=30,
+        description=(
+            "Rows with no URL to check (indeed's bot wall, HN comment\n"
+            "permalinks) close as age-unverified once their last affirmative\n"
+            "liveness evidence (Date Verified, refreshed by scrape\n"
+            "re-sightings, else Date Found) is this many days old.\n"
+            "Deliberately generous: the label is honest about the weak\n"
+            "evidence, and a still-live posting a scrape re-finds reopens\n"
+            "loudly."
+        ),
+    )
 
-    @field_validator("reverify_days")
+    @field_validator("reverify_days", "unverified_age_days")
     @classmethod
     def _positive(cls, value: int) -> int:
         if value < 1:

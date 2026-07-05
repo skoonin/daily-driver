@@ -55,7 +55,7 @@ def test_capability_map_matches_plan() -> None:
         "remoteok": ("windowed", "url-check"),
         "weworkremotely": ("windowed", "url-check"),
         "hn_jobs": ("windowed", "url-check"),
-        "hn_who_is_hiring": ("windowed", "url-check"),
+        "hn_who_is_hiring": ("windowed", "none"),
     }
     actual = {
         sid: (cap.enumeration, cap.verify) for sid, cap in SOURCE_CAPABILITIES.items()

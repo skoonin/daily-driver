@@ -21,16 +21,24 @@ Detector behavior was probed live (2026-07-04) rather than assumed:
   slug -- not closure); expired listings still render 200 with a "This job
   post is closed" banner.
 - **hn permalinks**: HN items never 404, so a comment URL carries no liveness
-  signal at all -- those rows read ``unknown`` here; no URL check can ever
-  close them.
+  signal at all -- no URL check can ever close those rows.
+
+Rows with no URL to check -- ``verify="none"`` sources (indeed's bot wall,
+hn_who_is_hiring's comment permalinks) plus hn_jobs rows whose URL fell back
+to an HN permalink -- get the age fallback instead: once their last
+affirmative liveness evidence (``Date Verified``, which a scrape re-sighting
+still refreshes for every source, else ``Date Found``) is
+``unverified_age_days`` old they close as ``age-unverified``. The label is
+honest about the weak evidence and the threshold is deliberately generous; a
+row re-sighted by a recent run is never age-closed.
 
 ``unknown`` (bot-wall, timeout, ambiguous response) NEVER closes -- closure
-requires affirmative evidence, and a verification closure stays reversible
-(the archive reopen-watch resurfaces false positives loudly). As a guard
-against detector rot -- a page redesign that makes every listing look dead --
-a source whose checked rows come back 100% closed at or above
-``_SUSPECT_MIN_CHECKED`` is treated as suspect: its closures are discarded for
-the run and reported loudly.
+requires affirmative evidence, and every verification closure (age ones
+included) stays reversible: the archive reopen-watch resurfaces false
+positives loudly. As a guard against detector rot -- a page redesign that
+makes every listing look dead -- a source whose checked rows come back 100%
+closed at or above ``_SUSPECT_MIN_CHECKED`` is treated as suspect: its
+closures are discarded for the run and reported loudly.
 """
 
 from __future__ import annotations
@@ -39,7 +47,7 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -65,7 +73,10 @@ from daily_driver.plugins.job_search.scraper.models import (
     BOARD_SOURCE_CANONICALS,
     split_source,
 )
-from daily_driver.plugins.job_search.scraper.sources import SOURCE_CAPABILITIES
+from daily_driver.plugins.job_search.scraper.sources import (
+    SOURCE_CAPABILITIES,
+    SourceCapability,
+)
 from daily_driver.plugins.job_search.scraper.sources._http import (
     Response,
     Session,
@@ -219,11 +230,16 @@ def _check_remoteok(url: str, session: Session, ctx: ScrapeContext) -> VerifyOut
     return _live()
 
 
+def _is_hn_permalink(url: str) -> bool:
+    return "news.ycombinator.com" in urlparse(url).netloc
+
+
 def _check_hn(url: str, session: Session, ctx: ScrapeContext) -> VerifyOutcome:
-    # Both HN sources fall back to an HN item permalink when a posting has no
+    # hn_jobs falls back to an HN item permalink when a posting has no
     # external URL -- and permalinks never 404, so they say nothing about the
-    # job. External URLs get the generic 404 check, nothing more.
-    if "news.ycombinator.com" in urlparse(url).netloc:
+    # job. The age fallback owns those rows once aged; younger ones still
+    # land here and read unknown. External URLs get the generic 404 check.
+    if _is_hn_permalink(url):
         return _unknown("hn permalink carries no liveness signal")
     resp = _get(url, session, ctx, "verify hn")
     if resp is None:
@@ -241,7 +257,6 @@ _URL_CHECKERS: dict[str, Callable[[str, Session, ScrapeContext], VerifyOutcome]]
     "weworkremotely": _check_weworkremotely,
     "remoteok": _check_remoteok,
     "hn_jobs": _check_hn,
-    "hn_who_is_hiring": _check_hn,
 }
 
 
@@ -290,15 +305,16 @@ def _parse_iso(value: str) -> date | None:
         return None
 
 
-def _select_targets(
+def _untriaged_rows(
     rows: list[dict[str, str]],
-    *,
-    today: date,
-    reverify_days: int,
     source_filter: frozenset[str] | None,
-) -> list[_Target]:
-    """Pick untriaged url-check rows whose liveness evidence has gone stale."""
-    targets: list[_Target] = []
+) -> Iterator[tuple[int, dict[str, str], str, SourceCapability]]:
+    """The rows `jobs verify` is allowed to touch, in one place.
+
+    Untriaged status, not already closed, source resolvable to a capability,
+    and inside the -S filter. Both selectors (probe targets and age closures)
+    build on this so the definition can never drift between them.
+    """
     for index, row in enumerate(rows):
         if normalize_status(row.get("Status") or "") not in _VERIFIABLE_STATUSES:
             continue
@@ -308,16 +324,36 @@ def _select_targets(
         if source_id is None:
             continue
         capability = SOURCE_CAPABILITIES.get(source_id)
-        if capability is None or capability.verify != "url-check":
+        if capability is None:
             continue
         if source_filter and source_id not in source_filter:
+            continue
+        yield index, row, source_id, capability
+
+
+def _evidence_anchor(row: dict[str, str]) -> date | None:
+    """Last affirmative liveness evidence: Date Verified, else Date Found."""
+    return _parse_iso(row.get("Date Verified", "")) or _parse_iso(
+        row.get("Date Found", "")
+    )
+
+
+def _select_targets(
+    rows: list[dict[str, str]],
+    *,
+    today: date,
+    reverify_days: int,
+    source_filter: frozenset[str] | None,
+) -> list[_Target]:
+    """Pick untriaged url-check rows whose liveness evidence has gone stale."""
+    targets: list[_Target] = []
+    for index, row, source_id, capability in _untriaged_rows(rows, source_filter):
+        if capability.verify != "url-check":
             continue
         url = (row.get("Link") or "").strip()
         if not url:
             continue
-        anchor = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
-            row.get("Date Found", "")
-        )
+        anchor = _evidence_anchor(row)
         # No parseable anchor = never verified; always due.
         if anchor is not None and (today - anchor).days < reverify_days:
             continue
@@ -326,6 +362,41 @@ def _select_targets(
     # record is least trustworthy. None anchors sort first (never verified).
     targets.sort(key=lambda t: (t.anchor is not None, t.anchor or today))
     return targets
+
+
+def _select_age_closures(
+    rows: list[dict[str, str]],
+    *,
+    today: date,
+    unverified_age_days: int,
+    source_filter: frozenset[str] | None,
+) -> list[tuple[int, str]]:
+    """Pick untriaged rows with no URL channel whose liveness evidence aged out.
+
+    Eligible rows: ``verify="none"`` sources, plus url-check sources' rows
+    whose URL is an HN permalink (hn_jobs fallback rows -- their checker can
+    only ever say unknown). Anchored on ``Date Verified`` else ``Date Found``,
+    the same evidence rule as the probe path: a scrape re-sighting refreshes
+    ``Date Verified`` for every source (sink._apply_rescan_updates), and a row
+    the pipeline saw live days ago must never age-close off its discovery
+    date. Rows with no parseable anchor at all are skipped, never closed --
+    the opposite of the probe path's "always due", because here selection IS
+    the closure decision. Returns ``(row index, source_id)`` pairs.
+    """
+    picked: list[tuple[int, str]] = []
+    for index, row, source_id, capability in _untriaged_rows(rows, source_filter):
+        url = (row.get("Link") or "").strip()
+        if capability.verify == "none":
+            pass
+        elif capability.verify == "url-check" and url and _is_hn_permalink(url):
+            pass
+        else:
+            continue
+        anchor = _evidence_anchor(row)
+        if anchor is None or (today - anchor).days < unverified_age_days:
+            continue
+        picked.append((index, source_id))
+    return picked
 
 
 def _order_by_host(targets: list[_Target]) -> list[_Target]:
@@ -370,6 +441,7 @@ def verify_jobs(
     plugin: JobSearchPlugin,
     *,
     reverify_days: int | None = None,
+    unverified_age_days: int | None = None,
     sources: frozenset[str] | None = None,
     limit: int | None = None,
     dry_run: bool = False,
@@ -382,6 +454,8 @@ def verify_jobs(
     Live rows refresh ``Date Verified``; affirmatively-closed rows get
     ``Status=closed`` + ``Date Closed`` + a Notes annotation and later leave
     for the archive via ``jobs prune``. ``unknown`` never writes anything.
+    Rows with no liveness channel at all close as ``age-unverified`` once
+    ``Date Found`` is ``unverified_age_days`` old (no probe involved).
 
     Holds the jobs flock for the whole probe + rewrite: a concurrent scrape
     appending between our read and rewrite would otherwise be silently
@@ -390,6 +464,11 @@ def verify_jobs(
     report = VerifyReport(dry_run=dry_run)
     ctx = ScrapeContext(plugin=plugin)
     days = plugin.verify.reverify_days if reverify_days is None else reverify_days
+    age_days = (
+        plugin.verify.unverified_age_days
+        if unverified_age_days is None
+        else unverified_age_days
+    )
     today = today or date.today()
     today_iso = today.isoformat()
     started_at = datetime.now(timezone.utc).isoformat()
@@ -411,9 +490,19 @@ def verify_jobs(
         if not header:
             return report
 
+        age_closures = _select_age_closures(
+            rows,
+            today=today,
+            unverified_age_days=age_days,
+            source_filter=sources,
+        )
+        aged_indices = {index for index, _sid in age_closures}
         targets = _select_targets(
             rows, today=today, reverify_days=days, source_filter=sources
         )
+        # An hn permalink row due for age closure would only ever probe to
+        # unknown; the age channel owns it outright.
+        targets = [t for t in targets if t.index not in aged_indices]
         report.candidates = len(targets)
         if limit is not None:
             targets = targets[:limit]
@@ -517,6 +606,34 @@ def verify_jobs(
                     report.unknown.get(outcome.reason, 0) + 1
                 )
 
+        # Age closures need no probe, no circuit breaker (there is no detector
+        # to rot), and always apply -- even after an interrupt, since they were
+        # decided from the rows already in hand.
+        for index, source_id in age_closures:
+            row = rows[index]
+            report.closed.append(
+                {
+                    "company": row.get("Company", ""),
+                    "role": row.get("Role", ""),
+                    "url": (row.get("Link") or "").strip(),
+                    "source": source_id,
+                    "reason": "age-unverified",
+                }
+            )
+            if not dry_run:
+                row["Status"] = "closed"
+                row["Date Closed"] = today_iso
+                row["Notes"] = _notes_with_closure(
+                    row.get("Notes", ""), "age-unverified", today_iso
+                )
+                changed = True
+            log.warning(
+                "Closed age-unverified (found %s, no URL to check): %s -- %s",
+                row.get("Date Found", ""),
+                row.get("Company", ""),
+                row.get("Role", ""),
+            )
+
         if changed:
             atomic_write_rows(jobs_csv, header, rows)
     finally:
@@ -529,6 +646,7 @@ def verify_jobs(
         # The knobs that shaped this run, so the manifest is self-describing
         # (candidates vs checked gaps are explainable from the file alone).
         payload["reverify_days"] = days
+        payload["unverified_age_days"] = age_days
         payload["limit"] = limit
         payload["sources"] = sorted(sources) if sources else None
         _write_verify_manifest(jobs_csv.parent, payload)
