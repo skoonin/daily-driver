@@ -1,26 +1,25 @@
-# Automatic Claude review on new PRs. Cost controls, deliberate:
-# - Gated on the CLAUDE_REVIEW_ENABLED repo variable (Settings -> Secrets and
-#   variables -> Actions -> Variables, set to "true"): a kill switch, and it
-#   keeps PRs green before the API key secret exists.
-# - Triggers on opened/ready_for_review only, NOT synchronize -- one review
-#   per PR, not one per push. Re-review an updated PR by commenting @claude.
-# - Same-repo guard: fork PRs never trigger a paid review (their runs could
-#   not read the secret anyway once the repo is public).
-# - Runs the trimmed multi-agent review committed at
-#   .claude/commands/sk-review-ci.md (two reviewers in parallel, then a
-#   reality-check pass) using the vendored agents in .claude/agents/.
+# Claude PR review -- runs ONLY on explicit request, never automatically, to
+# keep API cost predictable:
+# - Triggers on the 'pr-review' label being ADDED to a PR (pull_request:
+#   labeled). It does NOT re-run on later pushes -- the labeled event fires
+#   once per application. To re-review after new commits, remove and re-add the
+#   label, or comment @claude for an ad-hoc review.
+# - Same-repo guard: a fork PR's run could not read the dev-environment secret
+#   anyway, and never triggers a paid review.
+# Runs the trimmed multi-agent review committed at .claude/commands/sk-review-ci.md
+# (two reviewers in parallel, then a reality-check pass) using the vendored
+# agents in .claude/agents/.
 name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [labeled]
 
 jobs:
   review:
     if: |
-      vars.CLAUDE_REVIEW_ENABLED == 'true' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.draft == false
+      github.event.label.name == 'pr-review' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Reads CC_API_KEY from the dev environment. Note: an environment with
     # required-reviewer or wait-timer protection rules would gate this job.
