@@ -1,0 +1,46 @@
+# CodeQL advanced setup. Replaces default setup so the analysis also runs on
+# PRs targeting dev (the integration trunk) -- default setup only covers the
+# default branch and PRs into it, which left the ruleset's CodeQL requirement
+# on dev unsatisfiable. Scans python and the workflow YAML itself (actions).
+name: CodeQL
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    # Weekly baseline scan so alerts surface even without a push.
+    - cron: "31 3 * * 1"
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload analysis results
+      packages: read # fetch the CodeQL packs
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Both are interpreted / no compile step -> build-mode: none.
+          - language: python
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        with:
+          category: "/language:${{ matrix.language }}"
