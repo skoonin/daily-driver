@@ -38,7 +38,9 @@ jobs:
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a  # v1.0.165
         with:
           anthropic_api_key: ${{ secrets.CC_API_KEY }}
-          track_progress: true
+          # No track_progress: the action rejects it for the 'labeled' event
+          # (supported only on opened/synchronize/ready_for_review/reopened).
+          # The review posts its own inline + summary comments instead.
           prompt: |
             Review pull request #${{ github.event.pull_request.number }} in
             ${{ github.repository }} by following the review process defined in
