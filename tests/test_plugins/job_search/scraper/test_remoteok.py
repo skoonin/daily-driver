@@ -10,19 +10,20 @@ from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import remoteok as remoteok_module
 
 
-def _config(roles: list[str] | None = None) -> ScrapeContext:
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "roles": roles if roles is not None else ["Engineer", "SRE"],
-                "scraper": {
-                    "enabled": True,
-                    "timeout": 1,
-                    "max_retries": 0,
-                },
-            }
-        )
-    )
+def _config(
+    roles: list[str] | None = None, tags: list[str] | None = None
+) -> ScrapeContext:
+    data: dict[str, Any] = {
+        "roles": roles if roles is not None else ["Engineer", "SRE"],
+        "scraper": {
+            "enabled": True,
+            "timeout": 1,
+            "max_retries": 0,
+        },
+    }
+    if tags is not None:
+        data["sources"] = {"remoteok": {"remoteok_tags": tags}}
+    return ScrapeContext(plugin=JobSearchPlugin.model_validate(data))
 
 
 def _api_response(payload: list[dict]) -> MagicMock:
@@ -78,9 +79,10 @@ def test_float_string_salary_does_not_fail_source(monkeypatch: Any) -> None:
 
 def test_queries_tag_endpoints_and_dedupes(monkeypatch: Any) -> None:
     """RemoteOK's unfiltered /api returns only the newest ~100 listings
-    site-wide, where infra roles are sparse (live: 0 of 100). The scraper must
-    also query the focused tag endpoints (devops/kubernetes/aws), which surface
-    relevant roles directly, and dedupe by id across all endpoints."""
+    site-wide, where any one role is sparse (infra: live 0 of 100). The scraper
+    must also query the configured tag endpoints (here devops/kubernetes/aws),
+    which surface relevant roles directly, and dedupe by id across all
+    endpoints."""
     by_url: dict[str, list[dict]] = {
         "https://remoteok.com/api": [
             {"id": "1", "position": "Marketing Manager", "company": "Noise"},
@@ -106,7 +108,10 @@ def test_queries_tag_endpoints_and_dedupes(monkeypatch: Any) -> None:
     monkeypatch.setattr(remoteok_module, "_http_session", lambda cfg: MagicMock())
 
     jobs = remoteok_module.scrape_remoteok(
-        _config(roles=["sre", "devops", "cloud engineer"])
+        _config(
+            roles=["site reliability engineer", "devops", "cloud engineer"],
+            tags=["devops", "kubernetes", "aws"],
+        )
     )
 
     companies = {j["company"] for j in jobs}
@@ -114,6 +119,34 @@ def test_queries_tag_endpoints_and_dedupes(monkeypatch: Any) -> None:
     # does not; the cross-endpoint duplicate (id=2) appears once.
     assert companies == {"Acme", "Globex", "Initech"}
     assert sum(1 for j in jobs if j["company"] == "Acme") == 1
+
+
+def test_tags_drive_endpoints_no_hardcoded_defaults(monkeypatch: Any) -> None:
+    """The ?tags= slugs come from config, not a baked-in infra set.
+
+    With no configured tags only the unfiltered feed is queried; configured
+    slugs each add one ?tags= view. A non-infra search never hits the old
+    devops/kubernetes/aws endpoints.
+    """
+    calls: list[str] = []
+
+    def fake_get(_session: Any, url: str, _ctx: Any, **_kw: Any) -> MagicMock:
+        calls.append(url)
+        return _api_response([])
+
+    monkeypatch.setattr(remoteok_module, "_api_get", fake_get)
+    monkeypatch.setattr(remoteok_module, "_http_session", lambda cfg: MagicMock())
+
+    remoteok_module.scrape_remoteok(_config())
+    assert calls == ["https://remoteok.com/api"]
+
+    calls.clear()
+    remoteok_module.scrape_remoteok(_config(tags=["hr", "marketing"]))
+    assert calls == [
+        "https://remoteok.com/api",
+        "https://remoteok.com/api?tags=hr",
+        "https://remoteok.com/api?tags=marketing",
+    ]
 
 
 def test_description_html_is_captured_and_stripped(monkeypatch: Any) -> None:
@@ -159,7 +192,11 @@ def test_stop_event_skips_remaining_tag_fetches(monkeypatch: Any) -> None:
     monkeypatch.setattr(remoteok_module, "_api_get", fake_get)
     monkeypatch.setattr(remoteok_module, "_http_session", lambda cfg: MagicMock())
 
-    jobs = remoteok_module.scrape_remoteok(_config(roles=["sre"]))
+    jobs = remoteok_module.scrape_remoteok(
+        _config(
+            roles=["site reliability engineer"], tags=["devops", "kubernetes", "aws"]
+        )
+    )
 
     assert len(calls) == 1
     assert [j["company"] for j in jobs] == ["Acme"]

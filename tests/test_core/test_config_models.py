@@ -335,6 +335,23 @@ def test_sources_per_source_knobs_on_toggles():
     assert m.sources["hn_jobs"].hn_max_posts == 25
 
 
+def test_remoteok_toggle_tags_default_and_normalized():
+    """`remoteok` carries a config-driven tag list; slugs are normalized."""
+    from daily_driver.plugins.job_search.config import RemoteOkToggle
+
+    default = JobSearchPlugin(sources={"remoteok": {"enabled": True}})
+    assert isinstance(default.sources["remoteok"], RemoteOkToggle)
+    assert default.sources["remoteok"].remoteok_tags == []
+
+    m = JobSearchPlugin(
+        sources={
+            "remoteok": {"remoteok_tags": ["DevOps", " kubernetes ", "", "devops"]}
+        }
+    )
+    # Lowercased, stripped, blanks dropped, order-preserving dedupe.
+    assert m.sources["remoteok"].remoteok_tags == ["devops", "kubernetes"]
+
+
 def test_linkedin_toggle_defaults():
     """`linkedin` is a top-level site source carrying its own query knobs."""
     from daily_driver.plugins.job_search.config import LinkedInToggle

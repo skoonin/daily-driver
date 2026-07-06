@@ -46,6 +46,14 @@ _WORKDAY_BOARDS_DESC = (
     "paginated through Workday's public search API; set the optional `company`\n"
     "to override the display name (defaults to the title-cased tenant)."
 )
+_REMOTEOK_TAGS_DESC = (
+    "RemoteOK tag slugs to query alongside the unfiltered feed, each fetched\n"
+    "as remoteok.com/api?tags=<slug> (e.g. devops, kubernetes, aws for an infra\n"
+    "search; hr, marketing for others). The unfiltered newest-100 feed carries\n"
+    "few of any one role, so tags surface relevant postings directly. Pick slugs\n"
+    "matching your roles: an unknown tag harmlessly returns the unfiltered feed\n"
+    "(deduped away). Empty = query only the unfiltered feed."
+)
 
 
 class Locations(BaseModel):
@@ -93,6 +101,27 @@ class SourceToggle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(default=True, description="")
+
+
+class RemoteOkToggle(SourceToggle):
+    """RemoteOK source toggle plus its per-source tag slug list."""
+
+    remoteok_tags: list[str] = Field(default=[], description=_REMOTEOK_TAGS_DESC)
+
+    @field_validator("remoteok_tags")
+    @classmethod
+    def _normalize_tags(cls, value: list[str]) -> list[str]:
+        # RemoteOK tag slugs are lowercase; a blank entry would build a
+        # zero-value ?tags= query that just returns the unfiltered feed, so
+        # drop blanks and dedupe while preserving order.
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for tag in value:
+            slug = tag.strip().lower()
+            if slug and slug not in seen:
+                seen.add(slug)
+                normalized.append(slug)
+        return normalized
 
 
 class WeWorkRemotelyToggle(SourceToggle):
@@ -202,6 +231,7 @@ class IndeedToggle(SourceToggle):
 # Maps a source key to the SourceToggle subclass that carries its per-source
 # knobs. Keys absent here coerce to the bare SourceToggle (enable/disable only).
 _SOURCE_TOGGLE_TYPES: dict[str, type[SourceToggle]] = {
+    "remoteok": RemoteOkToggle,
     "weworkremotely": WeWorkRemotelyToggle,
     "greenhouse": GreenhouseToggle,
     "ashby": AshbyToggle,
@@ -536,7 +566,10 @@ class JobSearchPlugin(BaseModel):
         description="",
         json_schema_extra={
             "template_example": {
-                "remoteok": False,
+                "remoteok": {
+                    "enabled": False,
+                    "remoteok_tags": ["devops", "kubernetes", "aws"],
+                },
                 "weworkremotely": {"enabled": False, "wwr_categories": []},
                 "hn_who_is_hiring": {"enabled": False, "hn_max_posts": 500},
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
@@ -581,6 +614,7 @@ class JobSearchPlugin(BaseModel):
                 },
             },
             "template_example_field_comments": {
+                "remoteok": {"remoteok_tags": _REMOTEOK_TAGS_DESC},
                 "weworkremotely": {"wwr_categories": _WWR_CATEGORIES_DESC},
                 "greenhouse": {
                     "greenhouse_boards": _GREENHOUSE_BOARDS_DESC,

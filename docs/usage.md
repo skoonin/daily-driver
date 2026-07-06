@@ -159,7 +159,7 @@ plugins:
         greenhouse_boards: [anthropic, stripe, figma]
       hn_jobs: {}
       hn_who_is_hiring: {}
-      remoteok: {}
+      remoteok: {remoteok_tags: [devops, kubernetes, aws]}
       weworkremotely: {}
 ```
 
@@ -169,7 +169,7 @@ Full field reference: [configuration.md](configuration.md#pluginsjob_search).
 
 | Source | Notes |
 |---|---|
-| `remoteok` | RemoteOK feed |
+| `remoteok` | RemoteOK feed; `?tags=` slugs from `remoteok_tags` |
 | `weworkremotely` | WeWorkRemotely (category-aware) |
 | `hn_who_is_hiring` | Hacker News monthly thread |
 | `hn_jobs` | YC-funded jobs |

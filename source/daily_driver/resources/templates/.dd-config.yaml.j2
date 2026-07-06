@@ -299,7 +299,15 @@ tracker:
 #       # enabled=true). List a key with `false` to disable it.
 #       #
 #       # Scrapers shipped in this repo (HTTP/RSS, no extra deps):
-#       remoteok: false            # remoteok.com RSS
+#       remoteok:            # remoteok.com RSS
+#         enabled: false
+#         # RemoteOK tag slugs to query alongside the unfiltered feed, each fetched
+#         # as remoteok.com/api?tags=<slug> (e.g. devops, kubernetes, aws for an infra
+#         # search; hr, marketing for others). The unfiltered newest-100 feed carries
+#         # few of any one role, so tags surface relevant postings directly. Pick slugs
+#         # matching your roles: an unknown tag harmlessly returns the unfiltered feed
+#         # (deduped away). Empty = query only the unfiltered feed.
+#         remoteok_tags: [devops, kubernetes, aws]
 #       weworkremotely:            # weworkremotely.com listings
 #         enabled: false
 #         # WeWorkRemotely category slugs to fetch, e.g. "devops-sysadmin"

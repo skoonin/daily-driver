@@ -73,11 +73,6 @@ def _role_pattern(role: str) -> re.Pattern[str] | None:
     return re.compile(pattern, re.IGNORECASE)
 
 
-# Tier 2b standalone keywords: precise role names that match without a
-# seniority prefix (the senior-only filter is delegated to config exclusions).
-_TIER_2B_KEYWORDS = frozenset({"sre", "platform engineer", "site reliability engineer"})
-
-
 @dataclass(frozen=True)
 class RoleMatcher:
     """Precompiled role-matching state, built once per run and reused per row.
@@ -131,7 +126,6 @@ class RoleMatcher:
         Exclusions short-circuit and dominate over every other tier.
         Tier 1: literal or wildcarded include match.
         Tier 2: domain + seniority keywords both present.
-        Tier 2b: standalone SRE / Platform Engineer keyword match.
         """
         title_lower = title.lower()
 
@@ -147,10 +141,7 @@ class RoleMatcher:
 
         has_domain = any(kw in title_lower for kw in self.domain_keywords)
         has_seniority = any(kw in title_lower for kw in self.seniority_keywords)
-        if has_domain and has_seniority:
-            return True
-
-        return any(kw in title_lower for kw in _TIER_2B_KEYWORDS)
+        return has_domain and has_seniority
 
 
 # Cache the prepared matcher per plugin instance so each run compiles role
