@@ -4,6 +4,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-07-06
+
 ### Added
 
 - **`jobs verify` now also ages out the rows nothing can ever verify.** Indeed rows sit behind a bot wall and HN Who's Hiring rows carry comment permalinks that never die, so no URL check (and no board listing) can ever say whether those jobs are still open — previously they lingered in `jobs.csv` forever. They now close as `age-unverified` once their last affirmative liveness evidence (`Date Verified`, which scrape re-sightings keep refreshing, else `Date Found`) is `verify.unverified_age_days` old (default 30, `--unverified-age-days` per run) — a closure label honest about the weak evidence. A row a recent run re-sighted is never age-closed, and a still-live posting a scrape re-finds reopens loudly, like every verification closure. HN Jobs rows whose URL fell back to an HN permalink get the same treatment; those with real external URLs keep the stronger URL check. (#169)
