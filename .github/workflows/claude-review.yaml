@@ -1,50 +1,54 @@
-# Automatic Claude review on new PRs. Cost controls, deliberate:
-# - Gated on the CLAUDE_REVIEW_ENABLED repo variable (Settings -> Secrets and
-#   variables -> Actions -> Variables, set to "true"): a kill switch, and it
-#   keeps PRs green before the ANTHROPIC_API_KEY secret exists.
-# - Triggers on opened/ready_for_review only, NOT synchronize -- one review
-#   per PR, not one per push. Re-review an updated PR by commenting @claude.
-# - Same-repo guard: fork PRs never trigger a paid review (their runs could
-#   not read the secret anyway once the repo is public).
+# Claude PR review -- runs ONLY on explicit request, never automatically, to
+# keep API cost predictable:
+# - Triggers on the 'pr-review' label being ADDED to a PR (pull_request:
+#   labeled). It does NOT re-run on later pushes -- the labeled event fires
+#   once per application. To re-review after new commits, remove and re-add the
+#   label, or comment @claude for an ad-hoc review.
+# - Same-repo guard: a fork PR's run could not read the dev-environment secret
+#   anyway, and never triggers a paid review.
+# Runs the trimmed multi-agent review committed at .claude/commands/sk-review-ci.md
+# (two reviewers in parallel, then a reality-check pass) using the vendored
+# agents in .claude/agents/.
 name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [labeled]
 
 jobs:
   review:
     if: |
-      vars.CLAUDE_REVIEW_ENABLED == 'true' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.draft == false
+      github.event.label.name == 'pr-review' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # Reads CC_API_KEY from the dev environment. Note: an environment with
+    # required-reviewer or wait-timer protection rules would gate this job.
+    environment: dev
     permissions:
       contents: read
       pull-requests: write
       id-token: write
     steps:
+      # fetch-depth: 0 so the reviewers can diff against the PR base branch.
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Claude PR Review
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a  # v1.0.165
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          track_progress: true
+          anthropic_api_key: ${{ secrets.CC_API_KEY }}
+          # No track_progress: the action rejects it for the 'labeled' event
+          # (supported only on opened/synchronize/ready_for_review/reopened).
+          # The review posts its own inline + summary comments instead.
           prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            Review this PR for correctness bugs, data-loss risks in the
-            jobs.csv write paths, error handling, test coverage, and
-            adherence to CLAUDE.md conventions (CLI is presentation-only,
-            subprocess calls through integrations/, flock-guarded workspace
-            writes, plugin boundary). Use inline comments for specific
-            issues and one top-level comment for general observations.
-            Only flag issues that matter -- skip style nits the linters
-            already enforce.
+            Review pull request #${{ github.event.pull_request.number }} in
+            ${{ github.repository }} by following the review process defined in
+            .claude/commands/sk-review-ci.md. The PR base branch is
+            ${{ github.event.pull_request.base.ref }}; scope the review to this
+            PR's diff against that base. Launch the two reviewer subagents in
+            parallel, run the reality-check pass, then post inline comments for
+            verified findings and one top-level summary comment.
           claude_args: |
-            --max-turns 25
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --max-turns 40
+            --allowedTools "Task,Read,Grep,Glob,WebFetch,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),mcp__github_inline_comment__create_inline_comment"

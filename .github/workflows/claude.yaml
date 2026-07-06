@@ -1,29 +1,39 @@
-# Interactive @claude responder: mention @claude in an issue or PR comment and
-# Claude answers / implements in that thread. Costs API usage only when
-# invoked. Requires the ANTHROPIC_API_KEY repo secret (the Claude GitHub App
-# grants repo access, not model auth).
+# Interactive @claude responder for PULL REQUESTS ONLY: mention @claude in a PR
+# comment or review and Claude answers / implements in that thread. Issues are
+# intentionally excluded. Costs API usage only when invoked. Reads CC_API_KEY
+# from the dev environment (the Claude GitHub App grants repo access, not model
+# auth).
 name: Claude Code
 
 on:
+  # issue_comment fires for PR conversation comments too; the job's `if` guard
+  # keeps only those on a PR (github.event.issue.pull_request). No `issues`
+  # trigger -- issue bodies/titles never invoke Claude.
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
-  issues:
-    types: [opened, assigned]
   pull_request_review:
     types: [submitted]
 
 jobs:
   claude:
-    # The @claude gate is also the infinite-loop guard: Claude's own replies
-    # never contain the trigger phrase.
+    # Three gates, all required:
+    # 1. The event is on a PR (issue_comment only counts when it carries
+    #    github.event.issue.pull_request; the other two events are PR-only).
+    # 2. The '@claude' trigger phrase -- also the infinite-loop guard, since
+    #    Claude's own replies never contain it.
+    # 3. author_association in OWNER/MEMBER/COLLABORATOR -- on a PUBLIC repo this
+    #    stops any outside user from spending the API key by commenting @claude.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
     runs-on: ubuntu-latest
+    # Reads CC_API_KEY from the dev environment. Note: an environment with
+    # required-reviewer or wait-timer protection rules would gate this job,
+    # delaying @claude replies until the rule is satisfied.
+    environment: dev
     permissions:
       contents: write
       pull-requests: write
@@ -38,4 +48,4 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a  # v1.0.165
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          anthropic_api_key: ${{ secrets.CC_API_KEY }}
