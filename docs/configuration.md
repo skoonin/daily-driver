@@ -296,6 +296,7 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 
 | Source key | Toggle | Per-source knob (default) |
 |-----------|--------|---------------------------|
+| `remoteok` | `RemoteOkToggle` | `remoteok_tags` (`[]`) |
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
 | `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`), `exclude_boards` (`[]`) |
 | `ashby` | `AshbyToggle` | `ashby_boards` (`[]`), `exclude_boards` (`[]`) |

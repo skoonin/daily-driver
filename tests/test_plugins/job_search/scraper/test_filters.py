@@ -2,7 +2,7 @@
 
 Covers the filter path that decides which scraped jobs survive to the CSV:
 - `location_matches`: remote + countries allow-list.
-- `matches_roles`: include/exclude wildcards, tier-1/2/2b logic.
+- `matches_roles`: include/exclude wildcards, tier-1/2 logic.
 - `dedup_key`: cross-site duplicate key stability.
 """
 
@@ -155,11 +155,22 @@ class TestMatchesRoles:
     def test_tier2_domain_without_seniority_rejected(self) -> None:
         assert matches_roles("DevOps Engineer", _roles()) is False
 
-    def test_tier2b_sre_matches_alone(self) -> None:
-        """SRE / Platform Engineer pass without a seniority qualifier."""
-        assert matches_roles("Site Reliability Engineer", _roles()) is True
-        assert matches_roles("Platform Engineer", _roles()) is True
-        assert matches_roles("SRE III", _roles()) is True
+    def test_standalone_sre_requires_explicit_role(self) -> None:
+        """SRE / Platform Engineer are matched only when named in `roles`.
+
+        Role matching is fully config-driven: there is no built-in fallback that
+        keeps technical titles a workspace never asked for. Absent an explicit
+        role entry (and with no seniority co-occurrence for tier 2), these fall
+        through to False; listing them as roles matches them via tier 1.
+        """
+        assert matches_roles("Site Reliability Engineer", _roles()) is False
+        assert matches_roles("Platform Engineer", _roles()) is False
+        assert matches_roles("SRE III", _roles()) is False
+
+        sre = _roles("sre", "platform engineer", "site reliability engineer")
+        assert matches_roles("Site Reliability Engineer", sre) is True
+        assert matches_roles("Platform Engineer", sre) is True
+        assert matches_roles("SRE III", sre) is True
 
     def test_no_match_for_unrelated_title(self) -> None:
         assert matches_roles("Marketing Intern", _roles("SRE")) is False
@@ -171,9 +182,9 @@ class TestMatchesRoles:
     def test_custom_domain_and_seniority_keywords_drive_tier2(self) -> None:
         """domain_keywords + seniority_keywords REPLACE the built-in tier-2 sets.
 
-        A title built from words outside the defaults (and outside tier-2b) only
-        matches once both custom keyword lists name them; with the default sets
-        the same title falls through every tier to False.
+        A title built from words outside the defaults only matches once both
+        custom keyword lists name them; with the default sets the same title
+        falls through every tier to False.
         """
         title = "Wizard Robotics Engineer"
         custom = JobSearchPlugin.model_validate(

@@ -19,40 +19,43 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-# Endpoints queried per run. The unfiltered ``/api`` returns only the newest
-# ~100 listings site-wide, where infra roles are sparse (observed live: 0 of
-# 100), so on its own it routinely collects nothing relevant. The ``?tags=``
-# views into the same listing set surface infra roles directly. Only RemoteOK's
-# real tag slugs are used: ``devops``/``kubernetes``/``aws`` return focused
-# filtered sets, whereas ``sre``/``platform``/``infrastructure`` return empty
-# and ``cloud``/``ops``/``backend`` silently fall back to the unfiltered
-# newest-100 firehose (verified live 2026-06-12). ``matches_roles`` is still the
-# authority on what's kept, so a tag returning off-topic rows costs nothing but
-# a request. The unfiltered endpoint stays first so a brand-new, as-yet-untagged
-# infra posting is still caught.
-_REMOTEOK_ENDPOINTS = (
-    "https://remoteok.com/api",
-    "https://remoteok.com/api?tags=devops",
-    "https://remoteok.com/api?tags=kubernetes",
-    "https://remoteok.com/api?tags=aws",
-)
+# The unfiltered ``/api`` feed returns only the newest ~100 listings site-wide,
+# where any one role is sparse (infra: observed live 0 of 100), so on its own it
+# routinely collects nothing relevant. The configured ``sources.remoteok_tags``
+# slugs are each queried as a ``?tags=<slug>`` view into the same listing set to
+# surface matching postings directly. ``matches_roles`` is still the authority on
+# what's kept, so a tag returning off-topic rows (or an unknown slug, which
+# RemoteOK answers with the unfiltered feed) costs nothing but a request and a
+# dedupe. The unfiltered endpoint stays first so a brand-new, as-yet-untagged
+# posting is still caught.
+_REMOTEOK_API = "https://remoteok.com/api"
+
+
+def _remoteok_endpoints(tags: list[str]) -> tuple[str, ...]:
+    """The unfiltered feed first, then one ``?tags=<slug>`` view per tag."""
+    return (_REMOTEOK_API, *(f"{_REMOTEOK_API}?tags={tag}" for tag in tags))
 
 
 def scrape_remoteok(ctx: ScrapeContext) -> list[dict]:
     """Fetch jobs from RemoteOK's public JSON API.
 
-    Queries the unfiltered listing feed plus a few focused ``?tags=`` views
-    (see ``_REMOTEOK_ENDPOINTS``), dedupes by job id across them, and filters
-    client-side with ``matches_roles()``. No auth or browser required.
+    Queries the unfiltered listing feed plus one focused ``?tags=`` view per
+    configured ``sources.remoteok_tags`` slug, dedupes by job id across them, and
+    filters client-side with ``matches_roles()``. No auth or browser required.
     """
+    from daily_driver.plugins.job_search.config import RemoteOkToggle
+    from daily_driver.plugins.job_search.scraper.context import source_toggle
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
+
+    toggle = source_toggle(ctx.plugin, "remoteok", RemoteOkToggle)
+    endpoints = _remoteok_endpoints(toggle.remoteok_tags)
 
     session = _http_session(ctx)
     jobs: list[dict] = []
     seen_ids: set[str] = set()
 
-    total = len(_REMOTEOK_ENDPOINTS)
-    for done, url in enumerate(_REMOTEOK_ENDPOINTS):
+    total = len(endpoints)
+    for done, url in enumerate(endpoints):
         # Graceful-stop checkpoint between fetches: a Ctrl-C/SIGTERM during
         # scraping sets this on the main thread; stop issuing further requests
         # and keep whatever earlier endpoints already collected.

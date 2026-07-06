@@ -4,6 +4,12 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Fixed
+
+- **Role matching is now fully driven by your configured `roles` / `domain_keywords` / `seniority_keywords`.** A built-in fallback silently kept any title containing `sre`, `platform engineer`, or `site reliability engineer` regardless of what a workspace was searching for — a leftover from the tool's SRE-only origins. In a non-technical search (e.g. an administrative/HR persona) this leaked hundreds of engineering postings into `jobs.csv` off the whole-board scrapers. The fallback is gone; a title is kept only if it matches your configured roles (tier 1) or a configured domain-plus-seniority keyword pair (tier 2). SRE/Platform searches are unaffected as long as those titles appear in `roles` — the shipped SRE workspace already lists them. (#PR)
+
+- **RemoteOK tag endpoints follow your config instead of a baked-in infra set.** The scraper hardcoded its `?tags=devops/kubernetes/aws` queries, so a non-infra search got no useful targeted RemoteOK coverage. The slugs now come from `sources.remoteok.remoteok_tags` — pick tags matching your roles (an unknown slug harmlessly returns the unfiltered feed, deduped away); an empty list queries only the unfiltered feed. An SRE workspace restores the prior behaviour by setting `remoteok_tags: [devops, kubernetes, aws]`. (#PR)
+
 ## [1.0.0] — 2026-07-06
 
 ### Added
