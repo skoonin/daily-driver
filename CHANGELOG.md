@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled jobs can now fire on specific days, not just daily.** Every schedule block takes an optional `days`: `daily` (default), `weekdays`, or a list of day names — e.g. check-in at 14:00 on weekdays only, or the jobs scrape at 23:59 on Sunday and Wednesday (`scheduler.jobs: {time: "23:59", days: [sun, wed]}`). `schedule.days` applies to both day-start and day-end. Previously every launchd job fired seven days a week with no way to narrow it. (#181)
+
 ### Fixed
 
 - **Role matching is now fully driven by your configured `roles` / `domain_keywords` / `seniority_keywords`.** A built-in fallback silently kept any title containing `sre`, `platform engineer`, or `site reliability engineer` regardless of what a workspace was searching for — a leftover from the tool's SRE-only origins. In a non-technical search (e.g. an administrative/HR persona) this leaked hundreds of engineering postings into `jobs.csv` off the whole-board scrapers. The fallback is gone; a title is kept only if it matches your configured roles (tier 1) or a configured domain-plus-seniority keyword pair (tier 2). SRE/Platform searches are unaffected as long as those titles appear in `roles` — the shipped SRE workspace already lists them. (#179)
