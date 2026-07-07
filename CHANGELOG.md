@@ -4,7 +4,11 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-07-07
+
 ### Added
+
+- **Scheduled session commands now actually run when launchd fires them.** Previously, `day-start`, `check-in`, and `day-end` silently did nothing when triggered by a launchd agent — launchd provides no terminal (TTY), so the interactive Claude session they launch could never start. The scheduler now builds plists that pass a `--launch` mode with each firing: `day-start` and `day-end` open a fresh iTerm2 tab (or Terminal.app if iTerm2 is absent) via AppleScript; `check-in` posts a clickable desktop notification that opens the session on click (via terminal-notifier if installed), or shows the manual command in an osascript alert. Check-in firings are silently suppressed while focus mode is active. Re-run `ddr scheduler install` to pick up the updated plists. (#182)
 
 - **Scheduled jobs can now fire on specific days, not just daily.** Every schedule block takes an optional `days`: `daily` (default), `weekdays`, or a list of day names — e.g. check-in at 14:00 on weekdays only, or the jobs scrape at 23:59 on Sunday and Wednesday (`scheduler.jobs: {time: "23:59", days: [sun, wed]}`). `schedule.days` applies to both day-start and day-end. Previously every launchd job fired seven days a week with no way to narrow it. (#181)
 
