@@ -518,3 +518,40 @@ def test_unresponsive_tty_falls_back_to_plain_within_timeout(monkeypatch):
     assert elapsed < 5.0  # no hang
     assert "apple: 5 jobs" in buf.getvalue()  # plain output
     assert ANSI not in buf.getvalue()
+
+
+def test_live_mode_shadows_cursor_query_after_startup_probe(monkeypatch):
+    """A responsive terminal is probed exactly once. After that, the terminal's
+    get_location is shadowed to a constant so enlighten's per-write scroll-area
+    maintenance never emits another ESC[6n -- a late reply on a slow terminal
+    would echo as ^[[row;colR garbage mid-run."""
+
+    class _FakeTerm:
+        def __init__(self):
+            self.queries = 0
+
+        def get_location(self, timeout=1.0):
+            self.queries += 1
+            return (5, 0)
+
+    class _FakeManager:
+        enabled = True
+
+        def __init__(self):
+            self.term = _FakeTerm()
+
+        def stop(self):
+            pass
+
+    fake = _FakeManager()
+    real_term = fake.term  # the shadow replaces the bound attribute; keep a handle
+
+    monkeypatch.setattr(enlighten, "get_manager", lambda stream=None: fake)
+    console, _buf = _line_console()
+    with RunProgress(console, tty=True) as rp:
+        assert rp._manager is fake  # probe passed; live mode
+        assert real_term.queries == 1  # startup probe only
+        # enlighten's _set_scroll_area path calls term.get_location on every
+        # bar write; the shadow must answer without a real query.
+        assert fake.term.get_location(timeout=1) == (0, 0)
+        assert real_term.queries == 1  # untouched by the shadow

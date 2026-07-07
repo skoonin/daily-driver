@@ -27,17 +27,19 @@ one channel and leave stdout a clean data channel.
 Concurrency: ``on_source_*`` callbacks fire from Phase-1 worker threads. A
 single :class:`threading.Lock` guards facade state and the (non-thread-safe)
 enlighten calls; every facade method takes it once and never nests it. enlighten
-issues a cursor-position query (``ESC[6n``, ``term.get_location``) on every bar
-write while it maintains the scroll region, each with a 1s timeout -- so the lock
-is, in principle, held across a blocking call. Two things keep that safe in
-practice: the eager probe in ``__enter__`` downgrades a terminal that is
+would issue a cursor-position query (``ESC[6n``, ``term.get_location``) on every
+bar write while it maintains the scroll region, each with a 1s timeout -- so the
+lock would be held across a blocking call, and a terminal that answers slower
+than the timeout (a backgrounded or throttled window mid-run) leaves each late
+reply to echo as ``^[[row;colR`` garbage across the display. Two things remove
+that risk: the eager probe in ``__enter__`` downgrades a terminal that is
 unresponsive *at startup* to plain mode (no manager, no queries), and on the
-surviving live path a responsive terminal answers each query in well under a
-millisecond. The residual risk is a terminal that stalls *mid-run* (an SSH or
-multiplexer hiccup): bar updates then serialize behind a 1s-timeout query under
-the lock -- degraded throughput, not deadlock or display corruption. Facade
-methods are hard no-ops after ``__exit__`` (a ``_closed`` flag checked under the
-lock) so a worker that finishes after a Ctrl-C teardown is safe.
+surviving live path ``_start_live`` shadows ``term.get_location`` so no query is
+ever issued mid-run -- enlighten only uses the reply's column to restore a
+partial output line, and every line interleaved with the bars here (warnings,
+``note()``) is newline-terminated, so the column is always 0. Facade methods are
+hard no-ops after ``__exit__`` (a ``_closed`` flag checked under the lock) so a
+worker that finishes after a Ctrl-C teardown is safe.
 
 Structure: a run owns one or more :class:`Group` blocks. A group renders a
 header progress bar that counts its finished children, plus child rows of two
@@ -162,6 +164,16 @@ class RunProgress:
         if row < 0:
             manager.enabled = False
             return None
+        # enlighten re-queries the cursor position on every bar write
+        # (Manager._set_scroll_area) solely to restore the cursor's column
+        # after repainting. A terminal that answers slower than the query
+        # timeout (backgrounded/throttled window during a long run) leaves
+        # each late reply to echo as ^[[row;colR garbage, and every bar
+        # update stalls behind the timeout while holding the facade lock.
+        # All output interleaved with the bars is newline-terminated, so the
+        # column is always 0: shadow get_location on this terminal instance
+        # and never query again after the probe above.
+        setattr(manager.term, "get_location", lambda timeout=None: (0, 0))
         return manager
 
     def __exit__(
