@@ -19,7 +19,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 Requires Python 3.11+ and macOS. See [docs/install.md](docs/install.md) for the full prerequisites and Playwright notes.
 
 ```bash
-pip install 'git+https://github.com/skoonin/daily-driver.git@v1.0.0'
+pip install 'git+https://github.com/skoonin/daily-driver.git@v1.0.1'
 daily-driver --version
 ```
 
