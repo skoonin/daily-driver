@@ -23,8 +23,10 @@ from daily_driver.cli._common import (
     resolve_workspace,
 )
 from daily_driver.cli.commands._claude_session import (
+    add_launch_mode_arg,
     default_session_name,
     handle_launch_exception,
+    handle_launch_mode,
     require_claude_available,
     resolve_interactive_model,
 )
@@ -52,6 +54,7 @@ def add_parser(
         help="Interactive morning planning session (runs /daily-driver:day-start via claude)",
     )
     add_session_args(parser)
+    add_launch_mode_arg(parser)
     add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
@@ -111,6 +114,11 @@ def _record_day_start(workspace: Workspace, day: date_cls, session_id: str) -> N
 def run(args: argparse.Namespace) -> int:
     try:
         workspace = resolve_workspace(args)
+        # Scheduler firings divert before any plan-stub or state write — the
+        # relaunched interactive run in the fresh tab performs those itself.
+        diverted = handle_launch_mode(args, workspace, "day-start")
+        if diverted is not None:
+            return diverted
         require_claude_available()
 
         today = clock.today()

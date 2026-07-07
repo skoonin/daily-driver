@@ -185,6 +185,8 @@ Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--sessio
 
 `check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the day-start session (controlled by `claude.resume_check_in` in `.dd-config.yaml`).
 
+All three launchers accept `--launch {terminal,notify}`, used by the scheduler's launchd firings (which have no terminal to run in): `terminal` opens the session in a new iTerm2 tab (Terminal.app if iTerm2 is absent) via AppleScript, and `notify` posts a clickable macOS notification that opens the tab on click (requires `terminal-notifier`; without it the notification tells you the command to run). The scheduled plists pass `notify` for check-in and `terminal` for day-start / day-end; a scheduled check-in notification is suppressed while focus mode is on. The first terminal launch triggers macOS's one-time Automation permission prompt.
+
 ### In-session slash commands
 
 These ship to the workspace `.claude/commands/daily-driver/` tree but are not exposed as CLI launchers — invoke them inside an existing Claude session.
@@ -318,6 +320,8 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 ### `scheduler install`
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
+
+Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start and day-end open an iTerm2/Terminal tab running the session; check-in posts a clickable notification (suppressed during focus mode). The jobs scrape runs headless as before.
 
 Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
 

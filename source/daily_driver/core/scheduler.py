@@ -200,7 +200,17 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
     checkin_days = parse_days(checkin_cfg.get("days"))
     if checkin_times:
         stdout, stderr = _log_paths(workspace, "checkin")
-        checkin_args = [dd_bin, "check-in", "--workspace", workspace_root]
+        # launchd has no TTY, so scheduled session firings carry a --launch
+        # mode: check-in posts a clickable notification (focus-suppressible);
+        # day-start / day-end open the session in a terminal tab directly.
+        checkin_args = [
+            dd_bin,
+            "check-in",
+            "--workspace",
+            workspace_root,
+            "--launch",
+            "notify",
+        ]
         jobs.append(
             ScheduledJob(
                 label=_LABEL_CHECKIN,
@@ -223,7 +233,14 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
     schedule_days = parse_days(schedule_cfg.days)
     if schedule_cfg.day_start:
         stdout, stderr = _log_paths(workspace, "day-start")
-        ds_args = [dd_bin, "day-start", "--workspace", workspace_root]
+        ds_args = [
+            dd_bin,
+            "day-start",
+            "--workspace",
+            workspace_root,
+            "--launch",
+            "terminal",
+        ]
         jobs.append(
             ScheduledJob(
                 label=_LABEL_DAY_START,
@@ -245,7 +262,14 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
 
     if schedule_cfg.day_end:
         stdout, stderr = _log_paths(workspace, "day-end")
-        de_args = [dd_bin, "day-end", "--workspace", workspace_root]
+        de_args = [
+            dd_bin,
+            "day-end",
+            "--workspace",
+            workspace_root,
+            "--launch",
+            "terminal",
+        ]
         jobs.append(
             ScheduledJob(
                 label=_LABEL_DAY_END,

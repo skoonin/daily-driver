@@ -242,6 +242,27 @@ class TestBuildJobs:
             for entry in job.context["times"]:
                 assert "weekday" not in entry
 
+    def test_session_jobs_carry_launch_modes(self, tmp_path: Path) -> None:
+        """launchd has no TTY: session jobs must pass their --launch mode
+        (check-in notifies, day bookends open a terminal tab); the headless
+        jobs scrape carries none."""
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            schedule=_FakeSchedule(day_start="09:00", day_end="18:00"),
+        )
+        jobs = scheduler.build_jobs(ws)
+        args_by_label = {j.label: j.context["program_arguments"] for j in jobs}
+        assert args_by_label["com.daily-driver.checkin"][-2:] == ["--launch", "notify"]
+        assert args_by_label["com.daily-driver.day-start"][-2:] == [
+            "--launch",
+            "terminal",
+        ]
+        assert args_by_label["com.daily-driver.day-end"][-2:] == [
+            "--launch",
+            "terminal",
+        ]
+        assert "--launch" not in args_by_label["com.daily-driver.jobs"]
+
 
 class TestParseDays:
     def test_none_and_daily_mean_every_day(self) -> None:

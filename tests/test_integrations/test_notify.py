@@ -36,6 +36,34 @@ def test_terminal_notifier_preferred_and_opens_url() -> None:
     assert argv[argv.index("-open") + 1] == "file:///tmp/jobs.csv"
 
 
+def test_terminal_notifier_execute_runs_command_on_click() -> None:
+    with patch(
+        "daily_driver.integrations.notify.shutil.which",
+        return_value="/usr/local/bin/terminal-notifier",
+    ):
+        with patch("daily_driver.integrations.notify.subprocess.run") as mock_run:
+            clickable = desktop_notify(
+                "Daily Driver", "Time for check-in", execute="daily-driver check-in"
+            )
+
+    assert clickable is True
+    argv = mock_run.call_args[0][0]
+    assert "-execute" in argv
+    assert argv[argv.index("-execute") + 1] == "daily-driver check-in"
+
+
+def test_osascript_fallback_reports_no_click_support() -> None:
+    """osascript renders the text but cannot run a command on click; callers
+    with a click-critical flow need to know to degrade their message."""
+    with patch("daily_driver.integrations.notify.shutil.which", return_value=None):
+        with patch("daily_driver.integrations.notify.subprocess.run"):
+            clickable = desktop_notify(
+                "Daily Driver", "Time for check-in", execute="daily-driver check-in"
+            )
+
+    assert clickable is False
+
+
 def test_failure_is_swallowed() -> None:
     with patch("daily_driver.integrations.notify.shutil.which", return_value=None):
         with patch(

@@ -9,32 +9,120 @@ the opening prompt.
 from __future__ import annotations
 
 import argparse
+import shutil
+import sys
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 
 from daily_driver.cli._common import (
     add_global_flags,
     add_session_args,
     resolve_workspace,
 )
+from daily_driver.core import focus
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
+from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace, WorkspaceError
-from daily_driver.integrations import claude_cli
+from daily_driver.integrations import claude_cli, notify, terminal_launcher
+
+_log = get_logger(__name__)
 
 
 class SessionError(RuntimeError):
     """Wraps expected launcher failures that should print cleanly and exit 1."""
 
 
+def add_launch_mode_arg(parser: argparse.ArgumentParser) -> None:
+    """Add the scheduler-facing --launch flag to a session launcher parser."""
+    parser.add_argument(
+        "--launch",
+        choices=("terminal", "notify"),
+        default=None,
+        help=(
+            "Scheduler firing mode: 'terminal' opens the session in a new"
+            " iTerm2/Terminal tab; 'notify' posts a clickable notification"
+            " that starts it. Omit for a normal interactive run."
+        ),
+    )
+
+
+def _self_argv(cmd_name: str, workspace: Workspace) -> list[str]:
+    """Rebuild the argv that relaunches this command interactively."""
+    dd_bin = sys.argv[0]
+    if not Path(dd_bin).is_absolute():
+        dd_bin = shutil.which("daily-driver") or "daily-driver"
+    return [dd_bin, cmd_name, "--workspace", str(workspace.root)]
+
+
+def handle_launch_mode(
+    args: argparse.Namespace,
+    workspace: Workspace,
+    cmd_name: str,
+    *,
+    respect_focus: bool = False,
+) -> int | None:
+    """Divert a scheduler firing per its --launch mode.
+
+    Returns an exit code when the firing was handled (terminal tab opened,
+    notification posted, or focus-suppressed), or None for a normal
+    interactive run. launchd has no TTY, so the scheduled plists always pass
+    a mode; the relaunched command carries no --launch flag and runs the
+    ordinary interactive path in the fresh tab.
+    """
+    mode = getattr(args, "launch", None)
+    if mode is None:
+        return None
+
+    relaunch = _self_argv(cmd_name, workspace)
+    if mode == "terminal":
+        try:
+            terminal_launcher.open_in_terminal(relaunch)
+        except terminal_launcher.TerminalLaunchError as exc:
+            # Most commonly a denied/never-granted Automation permission.
+            # Fall back to a notification so the firing is never fully silent.
+            _log.warning("terminal launch failed for %s: %s", cmd_name, exc)
+            notify.desktop_notify(
+                "Daily Driver",
+                f"Could not open a terminal for {cmd_name} ({exc});"
+                f" run `daily-driver {cmd_name}` manually",
+            )
+            return 1
+        notify.desktop_notify(
+            "Daily Driver", f"{cmd_name} session opened in a terminal tab"
+        )
+        return 0
+
+    # mode == "notify"
+    if respect_focus and focus.is_active(workspace):
+        _log.info("focus mode active; suppressing scheduled %s", cmd_name)
+        return 0
+    click_cmd = terminal_launcher.shell_command(relaunch + ["--launch", "terminal"])
+    clickable = notify.desktop_notify(
+        "Daily Driver",
+        f"Time for {cmd_name} — click to start",
+        execute=click_cmd,
+    )
+    if not clickable:
+        # osascript fallback cannot run a command on click; tell the user how.
+        notify.desktop_notify(
+            "Daily Driver", f"Time for {cmd_name} — run `daily-driver {cmd_name}`"
+        )
+    return 0
+
+
 def _build_run(
-    slash_command: str, session_prefix: str
+    slash_command: str, session_prefix: str, cmd_name: str
 ) -> Callable[[argparse.Namespace], int]:
     """Return a run() function bound to the given slash command and session prefix."""
 
     def run(args: argparse.Namespace) -> int:
         try:
             workspace = resolve_workspace(args)
+            diverted = handle_launch_mode(args, workspace, cmd_name)
+            if diverted is not None:
+                return diverted
             require_claude_available()
             return launch_interactive(
                 slash_command=slash_command,
@@ -70,8 +158,9 @@ def register_interactive_launcher(
         help=help_text,
     )
     add_session_args(parser)
+    add_launch_mode_arg(parser)
     add_global_flags(parser)
-    parser.set_defaults(func=_build_run(slash_command, session_prefix))
+    parser.set_defaults(func=_build_run(slash_command, session_prefix, cmd_name))
     return parser
 
 
