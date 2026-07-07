@@ -719,3 +719,194 @@ def test_interactive_launcher_propagates_claude_exit_code(
     rc = app(["--workspace", str(ws), "check-in"])
 
     assert rc == 42
+
+
+# ---------------------------------------------------------------------------
+# --launch scheduler firing modes (terminal tab / clickable notification)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("command", ["day-start", "day-end", "check-in"])
+def test_launch_terminal_opens_tab_and_never_spawns_claude(
+    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, notify, terminal_launcher
+
+    ws = _init_workspace(tmp_path)
+    opened: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        terminal_launcher,
+        "open_in_terminal",
+        lambda argv: opened.setdefault("argv", argv),
+    )
+    monkeypatch.setattr(notify, "desktop_notify", lambda *a, **k: True)
+
+    def never_spawn(**kwargs):  # pragma: no cover - failure path only
+        raise AssertionError("claude must not spawn on a --launch firing")
+
+    monkeypatch.setattr(claude_cli, "spawn_interactive", never_spawn)
+
+    rc = app(["--workspace", str(ws), command, "--launch", "terminal"])
+
+    assert rc == 0
+    argv = opened["argv"]
+    assert argv[1] == command
+    assert argv[argv.index("--workspace") + 1] == str(ws)
+    # The relaunched command carries no --launch flag: it runs the ordinary
+    # interactive path inside the fresh tab.
+    assert "--launch" not in argv
+
+
+def test_launch_terminal_day_start_defers_plan_stub_and_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The diverted firing must not write the plan stub or daily state --
+    the relaunched interactive run performs those itself."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import notify, terminal_launcher
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.setattr(terminal_launcher, "open_in_terminal", lambda argv: None)
+    monkeypatch.setattr(notify, "desktop_notify", lambda *a, **k: True)
+
+    rc = app(["--workspace", str(ws), "day-start", "--launch", "terminal"])
+
+    assert rc == 0
+    assert not list(ws.glob("**/*-plan.md"))
+
+
+def test_launch_terminal_failure_falls_back_to_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import notify, terminal_launcher
+
+    ws = _init_workspace(tmp_path)
+
+    def denied(argv):
+        raise terminal_launcher.TerminalLaunchError("Not authorized (-1743)")
+
+    notified: list[str] = []
+    monkeypatch.setattr(terminal_launcher, "open_in_terminal", denied)
+    monkeypatch.setattr(
+        notify, "desktop_notify", lambda title, message, **kw: notified.append(message)
+    )
+
+    rc = app(["--workspace", str(ws), "day-end", "--launch", "terminal"])
+
+    assert rc == 1
+    assert any("day-end" in m for m in notified)
+
+
+def test_launch_notify_posts_clickable_notification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, notify
+
+    ws = _init_workspace(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_notify(title, message, **kwargs):
+        captured["message"] = message
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(notify, "desktop_notify", fake_notify)
+    monkeypatch.setattr(
+        claude_cli,
+        "spawn_interactive",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not spawn")),
+    )
+
+    rc = app(["--workspace", str(ws), "check-in", "--launch", "notify"])
+
+    assert rc == 0
+    # Clicking the notification relaunches check-in in terminal mode.
+    execute = captured["execute"]
+    assert "check-in" in execute
+    assert "--launch terminal" in execute
+    assert str(ws) in execute
+
+
+def test_launch_notify_message_includes_manual_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Notification message must include the manual run command so it's useful
+    even when terminal-notifier is absent and the click action cannot fire."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import notify
+
+    ws = _init_workspace(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def fake_notify(title, message, **kwargs):
+        calls.append({"message": message, **kwargs})
+        return False  # osascript fallback: click action not delivered
+
+    monkeypatch.setattr(notify, "desktop_notify", fake_notify)
+
+    rc = app(["--workspace", str(ws), "check-in", "--launch", "notify"])
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert "daily-driver check-in" in str(calls[0]["message"])
+
+
+def test_launch_notify_suppressed_by_focus_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import time
+
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import notify
+
+    ws_root = _init_workspace(tmp_path)
+    ws = Workspace.discover_or_fail(override=ws_root)
+    lock = ws.ephemeral_dir / "focus.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(
+        json.dumps({"end_epoch": int(time.time()) + 3600}), encoding="utf-8"
+    )
+
+    def must_not_notify(*args, **kwargs):  # pragma: no cover - failure path only
+        raise AssertionError("focus mode must suppress the scheduled check-in")
+
+    monkeypatch.setattr(notify, "desktop_notify", must_not_notify)
+
+    rc = app(["--workspace", str(ws_root), "check-in", "--launch", "notify"])
+
+    assert rc == 0
+
+
+def test_launch_notify_focus_does_not_gate_day_bookends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Focus suppression is a check-in concept; a scheduled day-end firing
+    still opens its tab while focus is on."""
+    import json
+    import time
+
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+    from daily_driver.integrations import notify, terminal_launcher
+
+    ws_root = _init_workspace(tmp_path)
+    ws = Workspace.discover_or_fail(override=ws_root)
+    lock = ws.ephemeral_dir / "focus.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(
+        json.dumps({"end_epoch": int(time.time()) + 3600}), encoding="utf-8"
+    )
+
+    opened: list[list[str]] = []
+    monkeypatch.setattr(terminal_launcher, "open_in_terminal", opened.append)
+    monkeypatch.setattr(notify, "desktop_notify", lambda *a, **k: True)
+
+    rc = app(["--workspace", str(ws_root), "day-end", "--launch", "terminal"])
+
+    assert rc == 0
+    assert opened

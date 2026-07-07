@@ -20,8 +20,10 @@ from daily_driver.cli._common import (
     resolve_workspace,
 )
 from daily_driver.cli.commands._claude_session import (
+    add_launch_mode_arg,
     default_session_name,
     handle_launch_exception,
+    handle_launch_mode,
     require_claude_available,
     resolve_interactive_model,
 )
@@ -53,6 +55,7 @@ def add_parser(
         help="Interactive mid-day check-in session (runs /daily-driver:check-in via claude)",
     )
     add_session_args(parser)
+    add_launch_mode_arg(parser)
     parser.add_argument(
         "--no-resume",
         action="store_true",
@@ -79,6 +82,11 @@ def _record_check_in(workspace: Workspace) -> None:
 def run(args: argparse.Namespace) -> int:
     try:
         workspace = resolve_workspace(args)
+        # Scheduled firings post a clickable notification (or open a tab on
+        # click) instead of spawning claude; focus mode suppresses them.
+        diverted = handle_launch_mode(args, workspace, "check-in", respect_focus=True)
+        if diverted is not None:
+            return diverted
         require_claude_available()
 
         today = clock.today()
