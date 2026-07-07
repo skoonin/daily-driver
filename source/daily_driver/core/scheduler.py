@@ -38,12 +38,70 @@ _CORE_LABELS = (_LABEL_CHECKIN, _LABEL_DAY_START, _LABEL_DAY_END)
 
 _TIME_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 
+# launchd StartCalendarInterval Weekday integers: 0 = Sunday .. 6 = Saturday.
+_WEEKDAY_NUMS = {
+    "sun": 0,
+    "mon": 1,
+    "tue": 2,
+    "wed": 3,
+    "thu": 4,
+    "fri": 5,
+    "sat": 6,
+}
+
 
 def parse_hhmm(raw: str) -> dict[str, int]:
     m = _TIME_RE.match(raw.strip())
     if m is None:
         raise SchedulerError(f"invalid HH:MM time string: {raw!r}")
     return {"hour": int(m.group(1)), "minute": int(m.group(2))}
+
+
+def parse_days(raw: Any) -> list[int] | None:
+    """Resolve a `days` cadence value to launchd Weekday integers.
+
+    None means every day (no Weekday key in the calendar interval). Accepts
+    the shortcuts "daily" / "weekdays" or a list of day names — validated
+    defensively because packaged scheduler defaults arrive as raw YAML, not
+    through the pydantic config models.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        shortcut = raw.strip().lower()
+        if shortcut == "daily":
+            return None
+        if shortcut == "weekdays":
+            return [1, 2, 3, 4, 5]
+        raise SchedulerError(
+            f"invalid days value: {raw!r} (expected 'daily', 'weekdays',"
+            " or a list of day names)"
+        )
+    if isinstance(raw, list):
+        weekdays: list[int] = []
+        for item in raw:
+            name = str(item).strip().lower()[:3]
+            if name not in _WEEKDAY_NUMS:
+                raise SchedulerError(f"invalid day name: {item!r}")
+            if _WEEKDAY_NUMS[name] not in weekdays:
+                weekdays.append(_WEEKDAY_NUMS[name])
+        if not weekdays:
+            return None
+        return weekdays
+    raise SchedulerError(f"invalid days value: {raw!r}")
+
+
+def calendar_entries(
+    times: list[dict[str, int]], weekdays: list[int] | None
+) -> list[dict[str, int]]:
+    """Expand times x weekdays into StartCalendarInterval entries.
+
+    launchd takes one {Weekday, Hour, Minute} dict per day-and-time
+    combination; None weekdays means daily (entries carry no weekday key).
+    """
+    if weekdays is None:
+        return times
+    return [{**t, "weekday": d} for d in weekdays for t in times]
 
 
 @dataclass(frozen=True)
@@ -81,6 +139,10 @@ class SchedulerContext:
     workspace_root: str
     log_paths: Callable[[str], tuple[Path, Path]]
     parse_hhmm: Callable[[str], dict[str, int]] = field(default=parse_hhmm)
+    parse_days: Callable[[Any], list[int] | None] = field(default=parse_days)
+    calendar_entries: Callable[
+        [list[dict[str, int]], list[int] | None], list[dict[str, int]]
+    ] = field(default=calendar_entries)
 
 
 def _default_scheduler_config() -> dict[str, Any]:
@@ -135,6 +197,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
 
     checkin_cfg = cfg.get("checkin", {})
     checkin_times = [parse_hhmm(t) for t in checkin_cfg.get("times", [])]
+    checkin_days = parse_days(checkin_cfg.get("days"))
     if checkin_times:
         stdout, stderr = _log_paths(workspace, "checkin")
         checkin_args = [dd_bin, "check-in", "--workspace", workspace_root]
@@ -146,7 +209,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
                 context={
                     "label": _LABEL_CHECKIN,
                     "program_arguments": checkin_args,
-                    "times": checkin_times,
+                    "times": calendar_entries(checkin_times, checkin_days),
                     "stdout_path": str(stdout),
                     "stderr_path": str(stderr),
                     "env_path": env_path,
@@ -156,6 +219,8 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
         )
 
     schedule_cfg = workspace.config.schedule
+    # One cadence for both day-start and day-end: `schedule.days`.
+    schedule_days = parse_days(schedule_cfg.days)
     if schedule_cfg.day_start:
         stdout, stderr = _log_paths(workspace, "day-start")
         ds_args = [dd_bin, "day-start", "--workspace", workspace_root]
@@ -167,7 +232,9 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
                 context={
                     "label": _LABEL_DAY_START,
                     "program_arguments": ds_args,
-                    "times": [parse_hhmm(schedule_cfg.day_start)],
+                    "times": calendar_entries(
+                        [parse_hhmm(schedule_cfg.day_start)], schedule_days
+                    ),
                     "stdout_path": str(stdout),
                     "stderr_path": str(stderr),
                     "env_path": env_path,
@@ -187,7 +254,9 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
                 context={
                     "label": _LABEL_DAY_END,
                     "program_arguments": de_args,
-                    "times": [parse_hhmm(schedule_cfg.day_end)],
+                    "times": calendar_entries(
+                        [parse_hhmm(schedule_cfg.day_end)], schedule_days
+                    ),
                     "stdout_path": str(stdout),
                     "stderr_path": str(stderr),
                     "env_path": env_path,
@@ -323,7 +392,10 @@ __all__ = [
     "ScheduledJob",
     "SchedulerError",
     "build_jobs",
+    "calendar_entries",
     "install_all",
+    "parse_days",
+    "parse_hhmm",
     "render_plist",
     "uninstall_all",
 ]

@@ -14,6 +14,10 @@
   <array>
     {%- for t in times %}
     <dict>
+      {%- if "weekday" in t %}
+      <key>Weekday</key>
+      <integer>{{ t.weekday }}</integer>
+      {%- endif %}
       <key>Hour</key>
       <integer>{{ t.hour }}</integer>
       <key>Minute</key>

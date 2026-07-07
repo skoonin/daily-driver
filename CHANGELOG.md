@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled jobs can now fire on specific days, not just daily.** Every schedule block takes an optional `days`: `daily` (default), `weekdays`, or a list of day names — e.g. check-in at 14:00 on weekdays only, or the jobs scrape at 23:59 on Sunday and Wednesday (`scheduler.jobs: {time: "23:59", days: [sun, wed]}`). `schedule.days` applies to both day-start and day-end. Previously every launchd job fired seven days a week with no way to narrow it. (#181)
+
 ### Fixed
 
 - **Long runs no longer spray `^[[67;9R`-style escape garbage across the terminal.** The progress display queried the terminal's cursor position on every bar update; on a terminal answering slower than the 1-second timeout (a backgrounded or throttled window during a multi-hour `jobs run`), each late reply echoed to the screen as garbage and cascaded. The display now queries once at startup and never again mid-run, which also removes a per-update 1-second stall risk on slow terminals. (#180)

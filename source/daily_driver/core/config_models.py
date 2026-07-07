@@ -168,6 +168,43 @@ class TrackerConfig(BaseModel):
 
 _HHMM_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
 
+# Canonical three-letter day names, ordered to match launchd's Weekday
+# integers (0 = Sunday). `days` fields normalize to these.
+_DAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+_DAYS_SHORTCUTS = ("daily", "weekdays")
+
+
+def _normalize_days(v: Any) -> Any:
+    """Normalize a `days` cadence value.
+
+    Accepts the shortcut strings "daily" / "weekdays", or a list of day names
+    (full or abbreviated, any case) normalized to canonical three-letter
+    lowercase. An explicit empty list is rejected — omit the key (or use
+    "daily") to fire every day.
+    """
+    if v is None:
+        return v
+    if isinstance(v, str):
+        shortcut = v.strip().lower()
+        if shortcut in _DAYS_SHORTCUTS:
+            return shortcut
+        raise ValueError(
+            f"days must be {_DAYS_SHORTCUTS[0]!r}, {_DAYS_SHORTCUTS[1]!r},"
+            f" or a list of day names, got {v!r}"
+        )
+    if isinstance(v, list):
+        normalized: list[str] = []
+        for item in v:
+            name = str(item).strip().lower()[:3]
+            if name not in _DAY_NAMES:
+                raise ValueError(f"unknown day name: {item!r}")
+            if name not in normalized:
+                normalized.append(name)
+        if not normalized:
+            raise ValueError("days list must not be empty; omit for daily")
+        return normalized
+    raise ValueError(f"expected a days shortcut string or list, got {v!r}")
+
 
 class ScheduleConfig(BaseModel):
     """Single source of truth for daily-driver's scheduled times.
@@ -189,6 +226,11 @@ class ScheduleConfig(BaseModel):
         description="",
         json_schema_extra={"template_example": "17:30", "template_quote": True},
     )
+    days: str | list[str] = Field(
+        default="daily",
+        description="",
+        json_schema_extra={"template_example": "weekdays", "template_quote": True},
+    )
 
     @field_validator("day_start", "day_end", mode="before")
     @classmethod
@@ -203,6 +245,11 @@ class ScheduleConfig(BaseModel):
             raise ValueError(f"expected HH:MM time string, got {v!r}")
         return v
 
+    @field_validator("days", mode="before")
+    @classmethod
+    def _validate_days(cls, v: Any) -> Any:
+        return _normalize_days(v)
+
 
 class CheckinSchedule(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -215,6 +262,16 @@ class CheckinSchedule(BaseModel):
             "template_block_list": True,
         },
     )
+    days: str | list[str] = Field(
+        default="daily",
+        description="",
+        json_schema_extra={"template_example": "weekdays", "template_quote": True},
+    )
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _validate_days(cls, v: Any) -> Any:
+        return _normalize_days(v)
 
 
 class JobSchedule(BaseModel):
@@ -225,14 +282,26 @@ class JobSchedule(BaseModel):
         description="",
         json_schema_extra={"template_example": "07:00", "template_quote": True},
     )
+    days: str | list[str] = Field(
+        default="daily",
+        description="",
+        json_schema_extra={"template_example": ["sun", "wed"]},
+    )
+
+    @field_validator("days", mode="before")
+    @classmethod
+    def _validate_days(cls, v: Any) -> Any:
+        return _normalize_days(v)
 
 
 class SchedulerConfig(BaseModel):
     """Per-job launchd cadence for `check-in` and `jobs` runs.
 
     HH:MM strings, 24-hour clock; validated at `scheduler install` time by
-    `scheduler._parse_hhmm`. `day_start` / `day_end` cadence lives separately
-    in `ScheduleConfig` (the single source of truth for those two jobs).
+    `scheduler._parse_hhmm`. Each job's `days` narrows which days it fires
+    ("daily" default, "weekdays", or a list of day names). `day_start` /
+    `day_end` cadence lives separately in `ScheduleConfig` (the single source
+    of truth for those two jobs).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -542,10 +611,11 @@ class Config(BaseModel):
             "block_comment": (
                 "Optional: scheduler config (consumed by `scheduler install`).\n"
                 "`checkin.times` is a list of HH:MM strings; `jobs.time` is a single\n"
-                "HH:MM string. Unknown keys are rejected. NOTE: `day_start` /\n"
-                "`day_end` cadence does NOT live here — it lives in the separate\n"
-                "top-level `schedule:` block below as HH:MM strings (the single\n"
-                "source of truth for those two jobs)."
+                'HH:MM string. Each job takes an optional `days`: "daily" (default),\n'
+                '"weekdays", or a list of day names (e.g. [sun, wed]). Unknown keys\n'
+                "are rejected. NOTE: `day_start` / `day_end` cadence does NOT live\n"
+                "here — it lives in the separate top-level `schedule:` block below\n"
+                "as HH:MM strings (the single source of truth for those two jobs)."
             ),
             "template_example_model": True,
         },
@@ -559,9 +629,10 @@ class Config(BaseModel):
                 "Optional: day-start / day-end scheduled times (HH:MM, 24h).\n"
                 "When set, `scheduler install` adds launchd jobs that fire"
                 " `day-start` /\n"
-                "`day-end` at these times. Leave unset to skip the scheduled run."
-                " This\n"
-                "is also read by `is_late_day` evaluation — single source of truth."
+                '`day-end` at these times. `days` narrows both jobs to "weekdays"\n'
+                "or a list of day names (default: daily). Leave times unset to skip\n"
+                "the scheduled run. This is also read by `is_late_day` evaluation —\n"
+                "single source of truth."
             ),
         },
     )
