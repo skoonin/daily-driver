@@ -319,6 +319,22 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
 
+Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
+
+```yaml
+schedule:
+  day_start: "09:00"
+  day_end: "18:00"
+  days: weekdays
+scheduler:
+  checkin:
+    times: ["14:00"]
+    days: weekdays
+  jobs:
+    time: "23:59"
+    days: [sun, wed]
+```
+
 ### `scheduler uninstall`
 
 `launchctl unload` + delete plist. State mirror under `.daily-driver/state/launchd/` is always removed.

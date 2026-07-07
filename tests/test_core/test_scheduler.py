@@ -24,6 +24,7 @@ from daily_driver.core.config_models import SchedulerConfig
 class _FakeSchedule:
     day_start: str | None = None
     day_end: str | None = None
+    days: str | list[str] = "daily"
 
 
 @dataclass
@@ -146,7 +147,7 @@ class TestBuildJobs:
         checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
         scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
         assert checkin.context["times"] == [{"hour": 9, "minute": 0}]
-        assert scrape.context["time"] == {"hour": 6, "minute": 30}
+        assert scrape.context["times"] == [{"hour": 6, "minute": 30}]
 
     def test_legacy_scrape_jobs_key_rejected_at_parse(self) -> None:
         """Stale `scheduler.scrape_jobs:` now fails at config load, not at build.
@@ -192,6 +193,95 @@ class TestBuildJobs:
         with pytest.raises(scheduler.SchedulerError):
             scheduler.build_jobs(ws)
 
+    def test_checkin_days_weekdays_expands_times(self, tmp_path: Path) -> None:
+        """checkin.days=weekdays -> one entry per weekday x time, Weekday 1-5."""
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            scheduler_cfg={
+                "checkin": {"times": ["09:00", "14:00"], "days": "weekdays"}
+            },
+        )
+        jobs = scheduler.build_jobs(ws)
+        checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
+        entries = checkin.context["times"]
+        assert len(entries) == 10  # 2 times x 5 weekdays
+        assert {e["weekday"] for e in entries} == {1, 2, 3, 4, 5}
+        assert all("hour" in e and "minute" in e for e in entries)
+
+    def test_schedule_days_applies_to_day_start_and_day_end(
+        self, tmp_path: Path
+    ) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            schedule=_FakeSchedule(day_start="09:00", day_end="18:00", days="weekdays"),
+        )
+        jobs = scheduler.build_jobs(ws)
+        for label in ("com.daily-driver.day-start", "com.daily-driver.day-end"):
+            job = next(j for j in jobs if j.label == label)
+            entries = job.context["times"]
+            assert len(entries) == 5
+            assert {e["weekday"] for e in entries} == {1, 2, 3, 4, 5}
+
+    def test_jobs_days_list_expands_to_named_weekdays(self, tmp_path: Path) -> None:
+        """jobs.days=[sun, wed] -> two entries with launchd Weekday 0 and 3."""
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"jobs": {"time": "23:59", "days": ["sun", "wed"]}}
+        )
+        jobs = scheduler.build_jobs(ws)
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
+        assert scrape.context["times"] == [
+            {"hour": 23, "minute": 59, "weekday": 0},
+            {"hour": 23, "minute": 59, "weekday": 3},
+        ]
+
+    def test_default_days_daily_omits_weekday(self, tmp_path: Path) -> None:
+        """No days config -> entries carry no weekday key (fires every day)."""
+        ws = _FakeWorkspace.make(tmp_path)
+        jobs = scheduler.build_jobs(ws)
+        for job in jobs:
+            for entry in job.context["times"]:
+                assert "weekday" not in entry
+
+
+class TestParseDays:
+    def test_none_and_daily_mean_every_day(self) -> None:
+        assert scheduler.parse_days(None) is None
+        assert scheduler.parse_days("daily") is None
+
+    def test_weekdays_shortcut(self) -> None:
+        assert scheduler.parse_days("weekdays") == [1, 2, 3, 4, 5]
+
+    def test_day_names_map_to_launchd_weekdays(self) -> None:
+        assert scheduler.parse_days(["sun", "wed"]) == [0, 3]
+
+    def test_full_names_and_case_accepted(self) -> None:
+        assert scheduler.parse_days(["Sunday", "WEDNESDAY"]) == [0, 3]
+
+    def test_duplicates_collapse(self) -> None:
+        assert scheduler.parse_days(["mon", "monday", "Mon"]) == [1]
+
+    def test_invalid_string_raises(self) -> None:
+        with pytest.raises(scheduler.SchedulerError, match="invalid days"):
+            scheduler.parse_days("fortnightly")
+
+    def test_invalid_day_name_raises(self) -> None:
+        with pytest.raises(scheduler.SchedulerError, match="invalid day name"):
+            scheduler.parse_days(["funday"])
+
+    def test_calendar_entries_daily_passthrough(self) -> None:
+        times = [{"hour": 9, "minute": 0}]
+        assert scheduler.calendar_entries(times, None) is times
+
+    def test_calendar_entries_expands_cross_product(self) -> None:
+        times = [{"hour": 9, "minute": 0}, {"hour": 14, "minute": 0}]
+        entries = scheduler.calendar_entries(times, [0, 3])
+        assert entries == [
+            {"hour": 9, "minute": 0, "weekday": 0},
+            {"hour": 14, "minute": 0, "weekday": 0},
+            {"hour": 9, "minute": 0, "weekday": 3},
+            {"hour": 14, "minute": 0, "weekday": 3},
+        ]
+
 
 # ---------------------------------------------------------------------------
 # render_plist — produces valid XML with expected keys
@@ -233,6 +323,35 @@ class TestRenderPlist:
         xml_str = scheduler.render_plist(checkin)
         # Three nested dicts under StartCalendarInterval array.
         assert xml_str.count("<key>Hour</key>") == 3
+
+    def test_daily_jobs_render_without_weekday_key(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(tmp_path)
+        for job in scheduler.build_jobs(ws):
+            assert "<key>Weekday</key>" not in scheduler.render_plist(job)
+
+    def test_jobs_plist_renders_weekday_entries(self, tmp_path: Path) -> None:
+        """days=[sun, wed] renders two calendar dicts with launchd Weekday keys."""
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"jobs": {"time": "23:59", "days": ["sun", "wed"]}}
+        )
+        jobs = scheduler.build_jobs(ws)
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
+        xml_str = scheduler.render_plist(scrape)
+        assert xml_str.count("<key>Weekday</key>") == 2
+        assert "<integer>0</integer>" in xml_str  # Sunday
+        assert "<integer>3</integer>" in xml_str  # Wednesday
+        ET.fromstring(xml_str)  # stays valid XML
+
+    def test_checkin_plist_renders_weekdays(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            scheduler_cfg={"checkin": {"times": ["14:00"], "days": "weekdays"}},
+        )
+        jobs = scheduler.build_jobs(ws)
+        checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
+        xml_str = scheduler.render_plist(checkin)
+        assert xml_str.count("<key>Weekday</key>") == 5
+        ET.fromstring(xml_str)
 
 
 def _plist_dict_pairs(dict_elem):

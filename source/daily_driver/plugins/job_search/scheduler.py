@@ -26,6 +26,7 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
     if not scrape_time_raw:
         return []
 
+    scrape_days = ctx.parse_days(scrape_cfg.get("days"))
     stdout, stderr = ctx.log_paths("jobs")
     scrape_args = [ctx.dd_bin, "jobs", "run", "--workspace", ctx.workspace_root]
     return [
@@ -37,7 +38,9 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
             context={
                 "label": LABEL_SCRAPE_JOBS,
                 "program_arguments": scrape_args,
-                "time": ctx.parse_hhmm(scrape_time_raw),
+                "times": ctx.calendar_entries(
+                    [ctx.parse_hhmm(scrape_time_raw)], scrape_days
+                ),
                 "stdout_path": str(stdout),
                 "stderr_path": str(stderr),
                 "env_path": ctx.env_path,

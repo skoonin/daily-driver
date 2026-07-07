@@ -11,12 +11,20 @@
     {%- endfor %}
   </array>
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>{{ time.hour }}</integer>
-    <key>Minute</key>
-    <integer>{{ time.minute }}</integer>
-  </dict>
+  <array>
+    {%- for t in times %}
+    <dict>
+      {%- if "weekday" in t %}
+      <key>Weekday</key>
+      <integer>{{ t.weekday }}</integer>
+      {%- endif %}
+      <key>Hour</key>
+      <integer>{{ t.hour }}</integer>
+      <key>Minute</key>
+      <integer>{{ t.minute }}</integer>
+    </dict>
+    {%- endfor %}
+  </array>
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>

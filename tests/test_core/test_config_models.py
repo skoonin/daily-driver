@@ -587,6 +587,37 @@ def test_job_schedule_rejects_extra_key():
         JobSchedule.model_validate({"time": "07:00", "bogus": 1})
 
 
+def test_days_defaults_to_daily():
+    from daily_driver.core.config_models import (
+        CheckinSchedule,
+        JobSchedule,
+        ScheduleConfig,
+    )
+
+    assert ScheduleConfig().days == "daily"
+    assert CheckinSchedule().days == "daily"
+    assert JobSchedule().days == "daily"
+
+
+def test_days_accepts_weekdays_shortcut_and_day_names():
+    from daily_driver.core.config_models import JobSchedule, ScheduleConfig
+
+    assert ScheduleConfig.model_validate({"days": "weekdays"}).days == "weekdays"
+    m = JobSchedule.model_validate({"time": "23:59", "days": ["Sunday", "WED"]})
+    assert m.days == ["sun", "wed"]  # normalized to canonical three-letter names
+
+
+def test_days_rejects_unknown_values():
+    from daily_driver.core.config_models import CheckinSchedule, ScheduleConfig
+
+    with pytest.raises(ValidationError, match="days must be"):
+        ScheduleConfig.model_validate({"days": "fortnightly"})
+    with pytest.raises(ValidationError, match="unknown day name"):
+        CheckinSchedule.model_validate({"times": ["14:00"], "days": ["funday"]})
+    with pytest.raises(ValidationError, match="must not be empty"):
+        ScheduleConfig.model_validate({"days": []})
+
+
 # ---------------------------------------------------------------------------
 # AIConfig
 # ---------------------------------------------------------------------------
