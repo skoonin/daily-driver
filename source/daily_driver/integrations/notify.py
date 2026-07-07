@@ -4,6 +4,10 @@ import shutil
 import subprocess
 
 
+def _applescript_quote(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def desktop_notify(
     title: str,
     message: str,
@@ -33,11 +37,11 @@ def desktop_notify(
                 args += ["-open", open_url]
             if execute is not None:
                 args += ["-execute", execute]
-            subprocess.run(args, check=False, timeout=5)
-            return True
-        script = f'display notification "{message}" with title "{title}"'
+            proc = subprocess.run(args, check=False, timeout=5)
+            return proc.returncode == 0
+        script = f'display notification "{_applescript_quote(message)}" with title "{_applescript_quote(title)}"'
         if subtitle is not None:
-            script += f' subtitle "{subtitle}"'
+            script += f' subtitle "{_applescript_quote(subtitle)}"'
         subprocess.run(["osascript", "-e", script], check=False, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         pass

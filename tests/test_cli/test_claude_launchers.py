@@ -830,9 +830,11 @@ def test_launch_notify_posts_clickable_notification(
     assert str(ws) in execute
 
 
-def test_launch_notify_degrades_message_without_click_support(
+def test_launch_notify_message_includes_manual_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Notification message must include the manual run command so it's useful
+    even when terminal-notifier is absent and the click action cannot fire."""
     from daily_driver.cli.cli import app
     from daily_driver.integrations import notify
 
@@ -841,15 +843,15 @@ def test_launch_notify_degrades_message_without_click_support(
 
     def fake_notify(title, message, **kwargs):
         calls.append({"message": message, **kwargs})
-        return False  # osascript fallback: click actions not delivered
+        return False  # osascript fallback: click action not delivered
 
     monkeypatch.setattr(notify, "desktop_notify", fake_notify)
 
     rc = app(["--workspace", str(ws), "check-in", "--launch", "notify"])
 
     assert rc == 0
-    assert len(calls) == 2
-    assert "daily-driver check-in" in str(calls[1]["message"])
+    assert len(calls) == 1
+    assert "daily-driver check-in" in str(calls[0]["message"])
 
 
 def test_launch_notify_suppressed_by_focus_mode(

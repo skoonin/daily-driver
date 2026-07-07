@@ -99,16 +99,13 @@ def handle_launch_mode(
         _log.info("focus mode active; suppressing scheduled %s", cmd_name)
         return 0
     click_cmd = terminal_launcher.shell_command(relaunch + ["--launch", "terminal"])
-    clickable = notify.desktop_notify(
+    # Message is useful with or without click support: terminal-notifier makes
+    # it clickable; osascript shows the manual command the user can copy.
+    notify.desktop_notify(
         "Daily Driver",
-        f"Time for {cmd_name} — click to start",
+        f"Time for {cmd_name} — run: daily-driver {cmd_name}",
         execute=click_cmd,
     )
-    if not clickable:
-        # osascript fallback cannot run a command on click; tell the user how.
-        notify.desktop_notify(
-            "Daily Driver", f"Time for {cmd_name} — run `daily-driver {cmd_name}`"
-        )
     return 0
 
 
