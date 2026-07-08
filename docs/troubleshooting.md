@@ -72,13 +72,14 @@ tail -f .daily-driver/state/logs/launchd-day-start.out
 tail -f .daily-driver/state/logs/launchd-day-end.out
 ```
 
-## Scheduled day-start / day-end didn't open a terminal
+## Scheduled day-start / day-end didn't open a session
 
-When launchd fires `day-start` or `day-end`, the scheduler opens the session in a new iTerm2 (or Terminal.app) tab via AppleScript. That requires a one-time Automation permission: the first firing prompts to let `daily-driver` (or the launchd process) control your terminal app. If the prompt is dismissed or the permission was never granted, the terminal launch fails; the scheduler logs a warning and falls back to a desktop notification telling you to run the command by hand.
+When launchd fires `day-start` or `day-end`, it cannot open a terminal itself — the launchd background context has no controlling terminal, and from it AppleScript cannot drive iTerm2 / Terminal.app (the Apple Events handshake hangs, notably while the screen is locked). Instead the firing posts a clickable desktop notification; clicking it opens the session in a new tab from your own session, where the one-time Automation permission is available.
 
-- Grant it under **System Settings > Privacy & Security > Automation** (allow control of iTerm2 / Terminal).
-- Check `launchd-day-start.err` / `launchd-day-end.err` for the fallback warning.
-- Until it is granted, run `daily-driver day-start` manually.
+- If clicking the notification does nothing, run `daily-driver day-start` (or `day-end`) manually.
+- Clickable notifications need `terminal-notifier` (`brew install terminal-notifier`); without it the notification shows the command to run.
+- The first click triggers macOS's one-time Automation prompt — grant it under **System Settings > Privacy & Security > Automation** (allow control of iTerm2 / Terminal).
+- Check `launchd-day-start.err` / `launchd-day-end.err` if no notification appears at all.
 
 ## Tracker locks / "file in use"
 

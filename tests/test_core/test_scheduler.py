@@ -243,9 +243,10 @@ class TestBuildJobs:
                 assert "weekday" not in entry
 
     def test_session_jobs_carry_launch_modes(self, tmp_path: Path) -> None:
-        """launchd has no TTY: session jobs must pass their --launch mode
-        (check-in notifies, day bookends open a terminal tab); the headless
-        jobs scrape carries none."""
+        """launchd has no TTY: every interactive session job passes --launch
+        notify (osascript cannot drive a terminal from the launchd background
+        context, notably on a locked screen); the headless jobs scrape carries
+        none."""
         ws = _FakeWorkspace.make(
             tmp_path,
             schedule=_FakeSchedule(day_start="09:00", day_end="18:00"),
@@ -255,11 +256,11 @@ class TestBuildJobs:
         assert args_by_label["com.daily-driver.checkin"][-2:] == ["--launch", "notify"]
         assert args_by_label["com.daily-driver.day-start"][-2:] == [
             "--launch",
-            "terminal",
+            "notify",
         ]
         assert args_by_label["com.daily-driver.day-end"][-2:] == [
             "--launch",
-            "terminal",
+            "notify",
         ]
         assert "--launch" not in args_by_label["com.daily-driver.jobs"]
 
