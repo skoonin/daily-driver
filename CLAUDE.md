@@ -31,9 +31,9 @@ End-user reference: `docs/commands.md`. Short list:
 
 - `daily-driver init <path>` — scaffold a workspace.
 - `daily-driver doctor [--fix | --reset]` — verify / repair workspace.
-- `daily-driver tracker {add,list,update,stats,follow-ups}` — manage tracked
-  tasks of any kind (jobs, errands, projects, contacts, ...) via a
-  config-driven category system.
+- `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` —
+  manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via
+  a config-driven category system.
 - `daily-driver status` — dashboard table (Rich or JSON).
 - `daily-driver focus {on,off,status}` — flock-backed check-in suppression.
 - `daily-driver day-start | day-end | check-in` — interactive Claude-session
@@ -42,9 +42,10 @@ End-user reference: `docs/commands.md`. Short list:
   prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of
   `voice-profile.md` from writing samples.
-- `daily-driver jobs {run,discover-boards,backfill,status,prune}` — search the configured job
-  boards, re-enrich empty fields on existing rows, show last-run metadata, or
-  archive stale rows from `jobs.csv`.
+- `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
+  search the configured job boards, re-enrich empty fields on existing rows,
+  promote a row into the tracker, show last-run metadata, archive stale rows, or
+  URL-check row liveness in `jobs.csv`.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
 - `daily-driver gather {calendar,git} [--json]` — read

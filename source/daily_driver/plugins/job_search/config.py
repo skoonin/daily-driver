@@ -31,7 +31,7 @@ _LEVER_BOARDS_DESC = (
 _EXCLUDE_BOARDS_DESC = (
     "Board slugs to NEVER scrape, even when pinned or present in the\n"
     "discovery matched cache — the blocklist for noisy or broken boards.\n"
-    "Matched exactly, case included: to silence an Ashby board named\n"
+    "Matched exactly, case included: to silence a board whose slug is\n"
     "Notion, write Notion, not notion."
 )
 _WORKABLE_ACCOUNTS_DESC = (

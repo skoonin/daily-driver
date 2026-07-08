@@ -32,7 +32,8 @@ daily-driver/
 │   └── -f, --force
 ├── doctor
 │   ├── --fix
-│   └── --reset
+│   ├── --reset
+│   └── -j, --json
 ├── tracker
 │   ├── add
 │   │   ├── -c, --category CAT (required)
@@ -86,19 +87,37 @@ daily-driver/
 │       └── -j, --json
 ├── jobs
 │   ├── run
-│   │   ├── -n, --dry-run
+│   │   ├── -n, --dry-run  (mutually exclusive with -j)
+│   │   ├── -j, --json
 │   │   ├── --no-enrich
 │   │   ├── -S, --sources LIST
 │   │   └── --list-sources
 │   ├── backfill
 │   │   ├── -n, --dry-run
-│   │   └── --limit N
+│   │   ├── --limit N
+│   │   ├── --force-update
+│   │   ├── --cooldown-hours N|missing
+│   │   └── -j, --json
+│   ├── promote
+│   │   ├── selector (positional: URL-OR-COMPANY)
+│   │   └── -n, --dry-run
+│   ├── discover-boards
+│   │   ├── --full
+│   │   └── -j, --json
 │   ├── status
 │   │   └── -j, --json
-│   └── prune
-│       ├── --older-than SPEC (required)
-│       ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed)
-│       └── -n, --dry-run
+│   ├── prune
+│   │   ├── --older-than SPEC (required)
+│   │   ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed)
+│   │   ├── -n, --dry-run
+│   │   └── -j, --json
+│   └── verify
+│       ├── --reverify-days N
+│       ├── --unverified-age-days N
+│       ├── -S, --sources LIST
+│       ├── --limit N
+│       ├── -n, --dry-run
+│       └── -j, --json
 ├── paths
 │   ├── [kind: root|output|state|ephemeral|tracker|daily|daily-plan|daily-notes|daily-state]
 │   ├── -d, --date YYYY-MM-DD
@@ -118,16 +137,19 @@ daily-driver/
 ├── day-start
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   └── --model {sonnet,opus,haiku}
+│   ├── --model {sonnet,opus,haiku}
+│   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── day-end
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   └── --model {sonnet,opus,haiku}
+│   ├── --model {sonnet,opus,haiku}
+│   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── check-in
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
 │   ├── --model {sonnet,opus,haiku}
-│   └── --no-resume
+│   ├── --no-resume
+│   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── summary
 │   ├── -r, --range SPEC (required)
 │   ├── --detail {low,med,high}

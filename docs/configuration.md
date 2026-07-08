@@ -13,8 +13,8 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `daily_driver` | object | `{output_dir: "."}` | |
 | `user_profile` | object | empty | |
 | `recurring_tasks` | list | `[]` | |
-| `scheduler` | object or null | null | Freeform; passed to launchd templates |
-| `schedule` | object | empty | day-start / day-end scheduled times |
+| `scheduler` | object or null | null | Typed per-job launchd cadence (`checkin`, `jobs`) |
+| `schedule` | object | empty | day-start / day-end scheduled times + cadence |
 | `tracker` | object | — | **Required** |
 | `gather` | object | empty | |
 | `claude` | object | empty | |
@@ -146,16 +146,32 @@ plugins:
 
 ## `scheduler`
 
-Freeform dict passed to the Jinja launchd plist templates. Times are local wall-clock, 24-hour. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00.
+Per-job launchd cadence for the `check-in` and `jobs` runs (`day-start` / `day-end` cadence lives in [`schedule`](#schedule) instead). Strictly typed — unknown keys are rejected at config load, not passed through. Times are local wall-clock, 24-hour; **quote them in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `checkin.times` | list[string] (HH:MM) | `[]` | Check-in firing times |
+| `checkin.days` | cadence | `daily` | Which days check-in fires (see below) |
+| `jobs.time` | string (HH:MM) or null | null | Single `jobs run` firing time |
+| `jobs.days` | cadence | `daily` | Which days the jobs run fires |
+
+The `days` field on every schedule block is a **cadence**: `daily` (default), `weekdays`, or an explicit list of day names — three-letter or full, any case (e.g. `[sun, wed]`). An empty list is rejected; omit the key (or use `daily`) to fire every day. Re-run `scheduler install` after changing any of these to rewrite the plists.
+
+```yaml
+scheduler:
+  checkin: {times: ["10:30", "15:00"], days: weekdays}
+  jobs:    {time: "23:59", days: [sun, wed]}
+```
 
 ## `schedule`
 
 Scheduled times for `day-start` and `day-end` (HH:MM, 24-hour). When set, `scheduler install` creates launchd jobs for those commands. Also drives `is_late_day` evaluation in day-start prompts. **Quote times in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML.
 
-| Key | Type | Default |
-|-----|------|---------|
-| `day_start` | string (HH:MM) or null | null |
-| `day_end` | string (HH:MM) or null | null |
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `day_start` | string (HH:MM) or null | null | |
+| `day_end` | string (HH:MM) or null | null | |
+| `days` | cadence | `daily` | Which days both day-start and day-end fire — `daily`, `weekdays`, or a list of day names (as in [`scheduler`](#scheduler)) |
 
 ## `claude`
 
@@ -203,11 +219,14 @@ macOS-only opt-in for `daily-driver calendar sync`, which writes the day's plan 
 | `locations` | object or null | null |
 | `scraper` | object | see `ScraperConfig` below |
 | `enrichment` | object | see `EnrichmentConfig` below |
+| `verify` | object | see `VerifyConfig` below |
 | `sources` | dict[string, object] | `{}` (keyed by source id) |
 
 Compensation is display-only: the scraper writes whatever amount it finds to the
 `Comp` column and never filters on it. Location (countries) is the only
 filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
+
+Role matching is two-tier: a title is kept if it matches a configured `role` (tier 1) or carries both a `domain_keywords` and a `seniority_keywords` term (tier 2). Each list defaults to `[]`, but an empty `domain_keywords` or `seniority_keywords` falls back to a built-in infrastructure/SRE keyword set (`sre`, `platform engineer`, `devops`, ...; `senior`, `staff`, `principal`, ...). So a workspace that never sets these still matches senior infra titles via tier 2 — a non-infra search must populate `domain_keywords` and `seniority_keywords` explicitly. An empty `roles` has no such fallback: tier 1 simply matches nothing.
 
 ### `locations`
 
@@ -259,7 +278,7 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `enrich_notes` | bool | true | |
 | `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
-| `force_recook_cooldown_hours` | int | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown. Overridable per run with `--cooldown-hours` |
+| `force_recook_cooldown_hours` | int or `missing` | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown (re-enrich every active row); `missing` re-enriches only rows with no enrichment timestamp yet. Overridable per run with `--cooldown-hours` |
 | `detail_delay_seconds` | float | 0.5 | |
 | `criteria` | list of `{label, assess}` | `[]` | |
 
@@ -289,6 +308,15 @@ enrichment:
     - label: Clearance
       assess: Is a US security clearance required?
 ```
+
+### `verify` (`VerifyConfig`)
+
+Sibling block of `scraper` under `job_search`. Thresholds for the `jobs verify` liveness pass (url-check plus an age fallback; see [commands.md](commands.md)).
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `reverify_days` | int (≥1) | 7 | Re-check a row's URL when its last affirmative liveness evidence (Date Verified, else Date Found) is at least this many days old |
+| `unverified_age_days` | int (≥1) | 30 | Rows with no URL to check (Indeed's bot wall, HN comment permalinks) close as age-unverified once their last affirmative liveness evidence is this many days old |
 
 ### `sources` (`dict[str, SourceToggle]`)
 

@@ -287,15 +287,21 @@ Defaults when `scheduler:` is omitted:
 | `jobs` | 07:00 | `daily-driver jobs run` |
 | `day-cycle` | `schedule.day_start` / `schedule.day_end` | Morning / evening launchers |
 
-Override times in `.dd-config.yaml`:
+When launchd fires them, `day-start` and `day-end` open an iTerm2 (or Terminal.app) tab running the session, and `check-in` posts a clickable desktop notification (both via the launchers' `--launch` modes; see [commands.md](commands.md)). The `jobs` scrape runs headless.
+
+Override times in `.dd-config.yaml`. The `scheduler:` block is strictly typed — unknown keys are rejected at config load. Each job takes an optional `days` cadence — `daily` (default), `weekdays`, or a list of day names (e.g. `[sun, wed]`); `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs, and `schedule.days` applies to both day-start and day-end:
 
 ```yaml
+schedule:
+  day_start: "09:00"
+  day_end: "18:00"
+  days: weekdays
 scheduler:
-  checkin: {times: ["10:30", "15:00"]}
-  jobs:    {time: "06:30"}
+  checkin: {times: ["10:30", "15:00"], days: weekdays}
+  jobs:    {time: "23:59", days: [sun, wed]}
 ```
 
-The block is freeform — keys pass through to the Jinja launchd templates. Re-run `scheduler install` after changes; it unloads, rewrites, and reloads in one step. Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
+Re-run `scheduler install` after changes; it unloads, rewrites, and reloads in one step. Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
 
 ## Output and verbosity
 
