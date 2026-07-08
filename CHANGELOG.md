@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scheduled `day-start` / `day-end` now reliably reach you instead of hanging.** They fired with `--launch terminal`, which tried to open an iTerm2 tab via AppleScript from the launchd background context — where the Apple Events handshake hangs (notably on a locked screen) until a 30-second timeout, so no session ever opened. Both now use `--launch notify` (the mode check-in already used): the firing posts a clickable notification and the session opens from your own session on click, where Automation permission is available. Re-run `ddr scheduler install` to pick up the updated plists.
+
 ## [1.0.2] — 2026-07-07
 
 ### Documentation

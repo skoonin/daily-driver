@@ -185,7 +185,7 @@ Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--sessio
 
 `check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the day-start session (controlled by `claude.resume_check_in` in `.dd-config.yaml`).
 
-All three launchers accept `--launch {terminal,notify}`, used by the scheduler's launchd firings (which have no terminal to run in): `terminal` opens the session in a new iTerm2 tab (Terminal.app if iTerm2 is absent) via AppleScript, and `notify` posts a clickable macOS notification that opens the tab on click (requires `terminal-notifier`; without it the notification tells you the command to run). The scheduled plists pass `notify` for check-in and `terminal` for day-start / day-end; a scheduled check-in notification is suppressed while focus mode is on. The first terminal launch triggers macOS's one-time Automation permission prompt.
+All three launchers accept `--launch {terminal,notify}`, used by the scheduler's launchd firings (which have no terminal to run in): `terminal` opens the session in a new iTerm2 tab (Terminal.app if iTerm2 is absent) via AppleScript, and `notify` posts a clickable macOS notification that opens the tab on click (requires `terminal-notifier`; without it the notification tells you the command to run). The scheduled plists pass `notify` for all three — from the launchd background context AppleScript cannot drive the terminal (the Apple Events handshake hangs, notably on a locked screen), so a firing nudges you and the `terminal` mode runs on click, from your own session where the one-time Automation permission is available. A scheduled check-in notification is suppressed while focus mode is on.
 
 ### In-session slash commands
 
@@ -321,7 +321,7 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
 
-Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start and day-end open an iTerm2/Terminal tab running the session; check-in posts a clickable notification (suppressed during focus mode). The jobs scrape runs headless as before.
+Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape runs headless as before.
 
 Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
 

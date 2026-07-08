@@ -201,8 +201,10 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
     if checkin_times:
         stdout, stderr = _log_paths(workspace, "checkin")
         # launchd has no TTY, so scheduled session firings carry a --launch
-        # mode: check-in posts a clickable notification (focus-suppressible);
-        # day-start / day-end open the session in a terminal tab directly.
+        # mode. All three interactive sessions use `notify`: from the launchd
+        # background context osascript cannot drive iTerm (the Apple Events
+        # handshake hangs, notably on a locked screen), so a firing posts a clickable
+        # notification and the user starts the session from their own session.
         checkin_args = [
             dd_bin,
             "check-in",
@@ -239,7 +241,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             "--workspace",
             workspace_root,
             "--launch",
-            "terminal",
+            "notify",
         ]
         jobs.append(
             ScheduledJob(
@@ -268,7 +270,7 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
             "--workspace",
             workspace_root,
             "--launch",
-            "terminal",
+            "notify",
         ]
         jobs.append(
             ScheduledJob(
