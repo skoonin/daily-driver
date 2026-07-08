@@ -319,7 +319,7 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 ### `scheduler install`
 
-Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads `scheduler:` from `.dd-config.yaml` (freeform dict passed to the Jinja template). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
+Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
 
 Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start and day-end open an iTerm2/Terminal tab running the session; check-in posts a clickable notification (suppressed during focus mode). The jobs scrape runs headless as before.
 

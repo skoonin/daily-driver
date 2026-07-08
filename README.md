@@ -10,7 +10,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 - **Tracker** — YAML-backed list of anything you follow up on (applications, tasks, chores, contacts). Categories are config-driven and extensible via `--extra key=value`.
 - **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
 - **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
-- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, JobSpy for LinkedIn/Indeed, Apple), dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
+- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, Ashby, Lever, Workable, Workday, LinkedIn/Indeed via JobSpy, Apple), with board auto-discovery for the ATS sources, dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
 - **Gather modules** — typed readers for git history and macOS Calendar (icalBuddy).
 - **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
 
@@ -34,6 +34,47 @@ daily-driver status
 ```
 
 Full first-day walkthrough in [docs/usage.md](docs/usage.md). Bare-minimum scaffold steps in [docs/quick-start.md](docs/quick-start.md).
+
+## Job search quick start
+
+The job-search plugin scrapes a configurable set of boards into `jobs.csv`, dedupes against what's already there, and enriches each row (fit, notes, comp) via `claude` or a local Ollama model.
+
+1. Add a `plugins.job_search` block to `.dd-config.yaml` and turn the scraper on with `scraper.enabled: true`. Listing a source key enables it (disable with `enabled: false`):
+
+```yaml
+plugins:
+  job_search:
+    persona: "Senior SRE, IC-track only"
+    seniority_keywords: [senior, staff, principal]
+    locations:
+      remote: true
+      # ISO code -> city allow-list; [] = whole country, cities = only those
+      countries: {US: [], CA: [Vancouver, Victoria]}
+    scraper:
+      enabled: true
+    sources:
+      greenhouse: {enabled: true, greenhouse_boards: [anthropic, stripe]}
+      ashby:      {enabled: true}   # boards come from discover-boards below
+      lever:      {enabled: true}   # ditto
+      remoteok:   {remoteok_tags: [devops, kubernetes, aws]}
+      hn_who_is_hiring: {}
+```
+
+2. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental (only slugs never probed):
+
+```bash
+daily-driver jobs discover-boards
+```
+
+3. Run the search, then top up any cells a run left empty:
+
+```bash
+daily-driver jobs run           # scrape + enrich -> jobs.csv
+daily-driver jobs backfill      # re-enrich empty cells from an earlier run
+daily-driver jobs status        # last-run metadata + row counts
+```
+
+Full field reference in [configuration.md](docs/configuration.md#pluginsjob_search); the complete command set, source list, and AI-provider choice in [usage.md](docs/usage.md#jobs).
 
 ## Workspace layout
 

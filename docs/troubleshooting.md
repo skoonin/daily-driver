@@ -61,14 +61,24 @@ daily-driver jobs run --sources remoteok,weworkremotely,hn_jobs,hn_who_is_hiring
 3. **Path to `daily-driver` not absolute.** The scheduler resolves `daily-driver` via `shutil.which` at install time. If you moved your venv after installing, re-run `daily-driver scheduler install`.
 4. **macOS blocked the job.** Check System Settings > Login Items and Extensions.
 
-View scheduler logs:
+View scheduler logs (one pair per job — `checkin`, `jobs`, `day-start`, `day-end`):
 
 ```bash
 tail -f .daily-driver/state/logs/launchd-checkin.out
 tail -f .daily-driver/state/logs/launchd-checkin.err
 tail -f .daily-driver/state/logs/launchd-jobs.out
 tail -f .daily-driver/state/logs/launchd-jobs.err
+tail -f .daily-driver/state/logs/launchd-day-start.out
+tail -f .daily-driver/state/logs/launchd-day-end.out
 ```
+
+## Scheduled day-start / day-end didn't open a terminal
+
+When launchd fires `day-start` or `day-end`, the scheduler opens the session in a new iTerm2 (or Terminal.app) tab via AppleScript. That requires a one-time Automation permission: the first firing prompts to let `daily-driver` (or the launchd process) control your terminal app. If the prompt is dismissed or the permission was never granted, the terminal launch fails; the scheduler logs a warning and falls back to a desktop notification telling you to run the command by hand.
+
+- Grant it under **System Settings > Privacy & Security > Automation** (allow control of iTerm2 / Terminal).
+- Check `launchd-day-start.err` / `launchd-day-end.err` for the fallback warning.
+- Until it is granted, run `daily-driver day-start` manually.
 
 ## Tracker locks / "file in use"
 
