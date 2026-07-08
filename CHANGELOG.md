@@ -6,7 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Documentation
 
-- **README now has a job-search quick start** — a minimal `plugins.job_search` config plus the `jobs discover-boards` → `jobs run` → `jobs backfill` flow — and the scraper summary lists the full current source set. Reference docs were brought back in sync with the code: the `scheduler:` block is documented as the typed schema it now is (not "freeform"), and the `days` cadence, `sources.remoteok.remoteok_tags`, the `plugins.job_search.verify` block, and the current `jobs` subcommands / `--launch` flags are all covered in `configuration.md`, `usage.md`, `commands.md`, and `cli-tree.md`. (#PR)
+- **README now has a job-search quick start** — a minimal `plugins.job_search` config plus the `jobs discover-boards` → `jobs run` → `jobs backfill` flow — and the scraper summary lists the full current source set. Reference docs were brought back in sync with the code: the `scheduler:` block is documented as the typed schema it now is (not "freeform"), and the `days` cadence, `sources.remoteok.remoteok_tags`, the `plugins.job_search.verify` block, and the current `jobs` subcommands / `--launch` flags are all covered in `configuration.md`, `usage.md`, `commands.md`, and `cli-tree.md`. (#185)
 
 ## [1.0.1] — 2026-07-07
 
