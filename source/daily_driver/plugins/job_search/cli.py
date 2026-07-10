@@ -260,8 +260,8 @@ def add_parser(
     )
     p_prune.add_argument(
         "--older-than",
-        required=True,
         metavar="SPEC",
+        default="1d",
         help=(
             "Prune rows last verified before SPEC "
             "(today, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
