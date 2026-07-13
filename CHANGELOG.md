@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Changed
+
+- **`/daily-driver:daily-learning` is now general-purpose, not interview-only.** The first run asks what you want to practice, whether you have a preferred teaching method, and how long sessions should run, then builds a workspace-local syllabus at `<output>/daily-learning/syllabus.md`. Later runs work from that syllabus (least-recently-covered topic first), default to a lens-first teaching style — open with one unifying principle, collapse concrete instances into it, then drill — unless you asked for something else, and honor the session length you set instead of a fixed cap. Replaces the fixed day-of-week focus rotation, and moves practice logs from `<output>/interview-practice/` to `<output>/daily-learning/`.
+
 ### Fixed
 
 - **Scheduled `day-start` / `day-end` now reliably reach you instead of hanging.** They fired with `--launch terminal`, which tried to open an iTerm2 tab via AppleScript from the launchd background context — where the Apple Events handshake hangs (notably on a locked screen) until a 30-second timeout, so no session ever opened. Both now use `--launch notify` (the mode check-in already used): the firing posts a clickable notification and the session opens from your own session on click, where Automation permission is available. Re-run `ddr scheduler install` to pick up the updated plists.

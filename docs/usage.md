@@ -131,7 +131,7 @@ These ship to `.claude/commands/daily-driver/` but are not CLI subcommands — i
 
 | Slash command | What it does |
 |---|---|
-| `/daily-driver:daily-learning` | 15-30 minute learning drill (behavioral STAR, technical fundamentals, system design, etc.). Rotates topics by day of week, avoids recent repeats, appends to `<output>/interview-practice/<date>.md`. Offered as an opt-in step inside `/daily-driver:day-start`, or run standalone. |
+| `/daily-driver:daily-learning` | 15-30 minute self-directed practice session. First run asks what to learn and how, and builds a syllabus from the answer (`<output>/daily-learning/syllabus.md`); later runs work from it and default to a lens-first teaching style unless the user asked for something else. Appends to `<output>/daily-learning/<date>.md`. Offered as an opt-in step inside `/daily-driver:day-start`, or run standalone. |
 
 ## Jobs
 

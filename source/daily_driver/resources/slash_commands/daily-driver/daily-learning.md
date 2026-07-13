@@ -1,157 +1,157 @@
 ---
 name: daily-learning
-description: Daily 15-30 minute interview practice - behavioral STAR drills, technical fundamentals, coding drills, system design
+description: Daily self-directed practice session. First run asks what to learn, how, and how long; every run after that works from the syllabus that answer created. Defaults to a lens-first teaching style if the user has no preference.
 ---
 
-Short interview-practice session. Aim for 15-30 minutes total — don't derail morning planning. One question at a time, wait for the answer, give specific feedback, follow up once or twice, then close out and write a brief log.
+Short practice session — don't derail morning planning. Run it for the session length the user set (see the syllabus `session_length`); if they haven't set one, keep it focused and stop at a natural break rather than imposing a fixed number. One prompt at a time, wait for the answer, give specific feedback, follow up once or twice, then close out and write a brief log.
 
-This is a learning tool, not a tracking system. The goal is reps + honest feedback on weak spots, not a complete answer database.
+This is a practice tool, not a tracking system. The goal is reps + honest feedback on weak spots, not a complete answer database. Nothing about what a specific user wants to learn belongs in this file — that lives entirely in their workspace, created fresh on first run.
 
-## 0. Capture Current Time and Focus Rotation
-
-```bash
-echo "current_time=$(date +%H:%M) current_date=$(date +%Y-%m-%d) day_of_week=$(date +%A) dow_num=$(date +%u)"
-```
-
-Pick today's default focus from `dow_num` (1=Mon ... 7=Sun):
-
-| Day | Default focus |
-|-----|---------------|
-| Mon (1) | behavioral (STAR drills) |
-| Tue (2) | technical-fundamentals (alternate concept Qs with coding drills) |
-| Wed (3) | system-design |
-| Thu (4) | behavioral (STAR drills) |
-| Fri (5) | leadership / influence |
-| Sat (6) | user choice — ask which area feels weakest |
-| Sun (7) | user choice — ask which area feels weakest |
-
-This rotation is the default; override it in step 2 if recent practice already covered the focus, or if the user names a different area when prompted.
-
-## 1. Load Voice Profile and Tracker Targets
-
-Resolve the workspace output dir and Read the voice profile:
+## 0. Capture Current Time
 
 ```bash
-daily-driver paths voice-profile
+echo "current_time=$(date +%H:%M) current_date=$(date +%Y-%m-%d) day_of_week=$(date +%A)"
 ```
 
-Read the file at the printed path. STAR stories the user gives you should sound like that voice — concrete, direct, specific scope, no hedging. When you mirror an answer back or rewrite it, preserve their voice.
+## 1. Load or Establish the Syllabus
 
-Pull active job-search targets to scope technical and system-design questions to the role types they're chasing:
-
-```bash
-daily-driver tracker list --category job --json
-```
-
-If there are no active job entries, ask: "Any specific role type to target today (SRE, platform, infra, swe-generalist, ...)?" Default to SRE / platform / infra when unset — that's the user's primary track.
-
-## 2. Read Recent Practice Log
-
-Resolve the output dir and look for the practice subdir:
+Resolve the workspace output dir:
 
 ```bash
 daily-driver paths output
 ```
 
-List the last 7 days of practice files in `<output>/interview-practice/`:
+Look for `<output>/daily-learning/syllabus.md`.
 
-```bash
-ls -t <output>/interview-practice/*.md 2>/dev/null | head -7
+### First run (file does not exist)
+
+Ask the user three things:
+
+1. **"What do you want to focus on in these practice sessions?"** Open-ended — one subject or several. If they want ideas, offer a few shapes (not a fixed menu): behavioral/STAR interview stories, technical fundamentals for a role they're targeting, coding drills, system design, or any other self-directed subject.
+2. **"Do you have a specific method or style you'd like me to use, or should I default to a lens-first approach?"** If they ask what that means: "each session opens with one unifying principle broad enough to reorganize several things you already know, teaches that principle, then shows the concrete instances that collapse into it — the specifics get drilled after the reframe, not before." If they have no preference, default to lens-first.
+3. **"How long do you want sessions to run?"** Accept whatever they give — a duration ("20 minutes"), a question count ("3-4 questions"), or "no fixed limit, stop at a natural break." Store it verbatim; don't impose a number of your own.
+
+Create `<output>/daily-learning/` and write their answers as the new syllabus:
+
+```yaml
+---
+created: YYYY-MM-DD
+style: lens-first
+session_length: <what the user said, verbatim>
+topics:
+  - name: <topic as the user described it>
+    added: YYYY-MM-DD
+    last_covered: null
+notes: ""
+lenses_taught: []
+---
+
+# Daily Learning Syllabus
+
+<one or two lines restating what they asked for, in their words where possible>
 ```
 
-Read up to the 3 most recent files. From each, extract the `focus:` frontmatter value and the `## Questions` section topics. Use this to:
+`style` is `lens-first` unless the user named something else (write exactly what they said — "STAR drills," "flashcards," "hands-on labs only," whatever). `session_length` holds their answer verbatim; if they had no preference, write `no fixed limit — stop at a natural break`. `lenses_taught` stays empty until the first lens-first session adds to it (step 5).
 
-- **Avoid repeating questions** asked in the last 3 sessions verbatim. Variations on the same theme are fine if a `## Revisit` section flagged it.
-- **Override the rotation** if today's default focus was the focus on the most recent session — pick the next-least-recent area instead.
-- **Surface revisits** — if any recent file has a `## Revisit` section, mention one item at the top of the session ("Last Tuesday you wanted to revisit blameless postmortem framing — want to start there?").
+### Subsequent runs
 
-If the directory does not exist or is empty, no recent history — proceed with the rotation default.
+Read the syllabus. If the user wants to add a topic, retire one, or change style, update the file in place before continuing — this is a living document, not a one-time snapshot.
 
-## 3. Announce the Session
+## 2. Load Supporting Context (if relevant)
 
-Tell the user (briefly):
+If any topic in the syllabus is interview- or job-search-related (behavioral, technical-fundamentals-for-a-role, system-design, leadership), pull supporting context — otherwise skip this step entirely.
 
-- Today's focus area.
-- Whether you're picking up a revisit item from a recent log, or starting fresh.
-- The shape: "I'll ask 2-4 questions, give feedback after each, and we'll wrap in about 10 minutes."
+Resolve and read the voice profile:
 
-Then ask if they want to proceed or swap focus. If they swap, use their pick for the rest of the session.
+```bash
+daily-driver paths voice-profile
+```
 
-## 4. Quiz Interactively
+Answers the user gives you should sound like that voice — concrete, direct, specific scope, no hedging. Preserve their voice when you mirror an answer back or rewrite it.
 
-Run questions one at a time. Pace: 2-4 questions total depending on depth.
+Pull active job-search targets to scope questions to real role types:
 
-### Behavioral / Leadership (STAR)
+```bash
+daily-driver tracker list --category job --json
+```
 
-Pick a prompt that targets a real workplace scenario the user would hit at the role types from step 1. Examples to vary across:
+If there are no active job entries, ask what role type to target, or default to whatever the syllabus topic implies.
 
-- A time you disagreed with an engineering decision your manager made — how did you handle it?
-- Tell me about an outage you owned end-to-end. What was the root cause, and what changed because of it?
-- A peer was blocking your project. How did you unblock it without escalating?
-- A time you had to deliver bad news (slip, layoff impact, scope cut) to stakeholders.
-- An on-call shift that went badly — what would you do differently?
+## 3. Read Recent Practice Log
 
-For each answer, score against STAR explicitly:
+List the last 7 days of practice files:
 
-- **Situation** — concrete enough? Named system / scope / team size?
-- **Task** — was the user's specific responsibility clear, or did it blur into "we"?
-- **Action** — first-person verbs? Decisions, tradeoffs, what was rejected?
-- **Result** — measurable outcome? What changed for the team / system / business?
+```bash
+ls -t <output>/daily-learning/*.md 2>/dev/null | grep -v syllabus.md | head -7
+```
 
-Common weak spots to flag specifically: "we" instead of "I", missing metric in Result, hedge words ("kind of", "sort of"), no tradeoff named in Action. Don't say "great job" — name the specific gap and ask a sharpening follow-up. Once. Then move on.
+Read up to the 3 most recent. From each, extract the `topic:` frontmatter value and the `## Questions` section. Use this to:
 
-### Technical Fundamentals & Coding
+- **Avoid repeating recent prompts** verbatim. Variations on the same theme are fine, especially if a `## Revisit` section flagged it.
+- **Pick today's topic** — the syllabus topic least recently covered (`last_covered`, or `added` if never covered), unless the user flags one as urgent.
+- **Surface a revisit** — if a recent file has a `## Revisit` section, mention it at the top ("Last time you wanted to revisit X — want to start there?").
 
-On a technical-fundamentals day, alternate between **concept questions** and **coding drills** — don't do only one mode for weeks. Check the recent practice log (step 2): if the last technical-fundamentals session was concept-heavy, lead with a coding drill this time, and vice versa. Note the sub-mode in the log's `## Questions` so the rotation stays balanced.
+If the directory has no logs yet, this is the first real session — proceed with whichever syllabus topic makes sense to start on.
 
-**Concept questions.** Scope to the role types in step 1. SRE / platform / infra examples:
+## 4. Announce the Session
 
-- Walk me through what happens when a TCP connection is established between two hosts.
-- A pod is in CrashLoopBackOff. Walk me through your debug path, fastest signal first.
-- Difference between a load balancer at L4 vs L7 — and when does the choice matter operationally?
-- Describe the read path of a typical metrics pipeline (scrape -> store -> query). Where does it usually break under load?
-- What is the failure mode of a leader-follower replicated database during a network partition? How do you reason about the user-visible impact?
+Tell the user, briefly:
 
-Score the answer for: precision of vocabulary, willingness to say "I don't know" where appropriate, ability to navigate from symptom to system layer, and depth of follow-up handling.
+- Today's topic, and whether it's a revisit or fresh ground.
+- The shape: "I'll ask a few questions, give feedback after each, and we'll wrap up when we hit your session length" — state the `session_length` from the syllabus so they know the scope.
 
-**Coding drills.** Scope to SRE / platform / infra reality — not algorithm puzzles. Two styles, vary across sessions:
+Ask if they want to proceed or swap topics. If they swap, use their pick for the rest of the session.
 
-- *Practical scripting / debugging* — give a small, real task or a broken snippet (bash/Python/Go). Examples: parse a log file and emit the top-N error sources; write a healthcheck that retries with backoff and exits non-zero on failure; this script silently drops errors — fix it; reason out loud about what a given snippet does and where it breaks. Keep it small enough to talk through in a few minutes; the user can type an answer or describe it.
-- *Code reading / review* — paste a short snippet and ask for the bug, the race, or a design critique. Tests judgment over blank-page recall: "what's wrong here," "what happens under concurrent calls," "what would you change before this ships."
+## 5. Run the Session
 
-Score coding answers for: correctness and edge-case awareness (empty input, failure paths, off-by-one), idiomatic use of the language, whether they reason about failure modes before happy path, and whether they catch silent-failure / error-swallowing patterns. Don't say "looks good" — name the specific bug or the missing edge case, ask one sharpening follow-up, then move on.
+How you run it depends on `style` from the syllabus.
 
-### System Design
+### Lens-first (default)
 
-Scope to a tractable 8-minute design. Examples:
+1. **Open with the lens.** Identify one unifying principle for today's topic — broad enough that several concrete facts the user already knows (or is about to learn) turn out to be instances of it. State the principle plainly before any specifics.
+2. **Collapse instances into it.** Walk 2-4 concrete things through the lens, showing each is the same underlying idea wearing a different costume.
+3. **Bridge to real use** — name where the principle shows up in the user's actual work or goal, and how it would answer a probing question on the subject.
+4. **Atomize downward.** Break the lens into 2-4 say-it-back checks — specific, answerable-cold questions the user should be able to hit without notes. Quiz these live; correct immediately, don't just move on.
+5. **Record the lens.** Append an entry to the syllabus's `lenses_taught` list: `{topic, principle: <one line>, date}`. This is what lets a later session build on today's instead of re-deriving it.
 
-- Design a rate limiter for a multi-tenant API gateway. Per-tenant + per-IP. Justify the data store.
-- Design a deployment system that can deploy 200 services with per-env approval gates and rollback.
-- Design a metrics ingestion pipeline that handles 1M datapoints/sec with <30s query freshness.
-- Design a feature flag service used across 50 services with a 50ms p99 read SLA.
+### A named shape the user specified
 
-Score for: clarifying questions before sketching, explicit tradeoffs (consistency vs availability, push vs pull, sync vs async), capacity numbers attached to choices, and naming what would break first at 10x scale.
+If the syllabus topic maps to a well-known practice shape, use its established rubric rather than inventing one:
 
-## 5. Close the Session
+**Behavioral / STAR** — pick a scenario prompt that targets real situations for the user's goal. Score explicitly against Situation (concrete, named scope), Task (their specific responsibility, not blurred into "we"), Action (first-person verbs, decisions, tradeoffs), Result (measurable outcome). Flag "we" instead of "I," missing metrics, hedge words, no named tradeoff. Name the specific gap, ask one sharpening follow-up, then move on — don't just say "great job."
 
-When you've done 2-4 questions or hit ~10 minutes, stop. Don't drag.
+**Technical fundamentals** — concept questions scoped to the user's stated focus. Score for precision of vocabulary, willingness to say "I don't know" where warranted, and the ability to navigate from a symptom to the layer it lives at.
+
+**Coding drills** — small, real tasks (not algorithm-contest puzzles) unless the user's goal is specifically that. Score for correctness, edge-case awareness, and reasoning about failure modes before the happy path. Name the specific bug or missing edge case rather than "looks good."
+
+**System design** — a design scoped tight enough to walk through in one sitting. Score for clarifying questions asked before sketching, explicit tradeoffs named, capacity numbers attached to choices, and what breaks first at 10x.
+
+If the user's stated method doesn't match any of these, follow what they described.
+
+### Neither (a subject with no obvious shape and no stated method)
+
+Default to teach → say-it-back → correct: introduce the idea plainly, have the user restate it in their own words, correct immediately. Treat it as a lens-first session if a unifying principle is available; otherwise keep it concrete.
+
+## 6. Close the Session
+
+When you reach the `session_length` the user set — a duration, a question count, or a natural stopping point if they set no limit — stop. Don't drag.
 
 Summarize in 3-5 lines:
 
 - What was strong this session.
-- The most useful single weak spot to work on (be specific — not "be more confident", but "name the metric in Result" or "always state the consistency model before drawing the diagram").
+- The most useful single weak spot to work on — specific, not generic ("name the metric in Result," not "be more confident").
 - One thing to revisit next time, if anything.
 
-## 6. Write the Practice Log
+## 7. Write the Practice Log
 
-Append to `<output>/interview-practice/<YYYY-MM-DD>.md`. Create the directory if it does not exist. If the file already exists from an earlier session today, append a `---` separator and a new block rather than overwriting.
+Update `<output>/daily-learning/syllabus.md`: set `last_covered` on today's topic, and append to `lenses_taught` if step 5 ran the lens-first path.
 
-Use this shape:
+Append to `<output>/daily-learning/<YYYY-MM-DD>.md`. Create the directory if needed (it should already exist from step 1). If the file already exists from an earlier session today, append a `---` separator and a new block rather than overwriting.
 
 ```markdown
 ---
 date: YYYY-MM-DD
-focus: behavioral | technical-fundamentals | system-design | leadership
+topic: <topic name from the syllabus>
 duration_minutes: <integer estimate>
 ---
 
@@ -174,8 +174,8 @@ duration_minutes: <integer estimate>
 - <topic to come back to, or omit the section if nothing>
 ```
 
-Keep it tight. The log is for the next session to read in step 2 — it should help future-Claude pick the next focus and avoid repeats. It is not a journal.
+Keep it tight. The log is for the next session to read in step 3 — it should help future-Claude pick the next topic and avoid repeats. It is not a journal.
 
-## 7. Hand Back
+## 8. Hand Back
 
 Return control to the user. If this was invoked from `/daily-driver:day-start`, they will continue with the plan-save step.
