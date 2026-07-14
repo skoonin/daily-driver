@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.countries import (
-    canonical_country_name,
     country_names,
     detect_country,
 )
@@ -37,15 +36,21 @@ def _city_in_location(city: str, loc_lower: str) -> bool:
     return re.search(pattern, loc_lower) is not None
 
 
+def _country_named(loc_lower: str, code: str) -> bool:
+    """Whether a lowercased location names the country `code` (by any alias)."""
+    return any(name.lower() in loc_lower for name in country_names(code))
+
+
 def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
     """Check whether a job's location matches the configured allow-map.
 
     Accepts if any of:
       - remote: true and job location contains "remote" (or is empty/missing).
-        By default remote is scoped to `countries`: a remote role that names an
-        unlisted country is dropped, while a remote role that names a configured
-        country or no country at all passes. Set `remote_unlisted_countries` to
-        accept remote roles from any country (country-blind).
+        By default remote is scoped to `countries`: a remote role passes if its
+        location names any configured country or no country at all, and is
+        dropped only when it names some other country. An empty `countries` map
+        imposes no restriction. Set `remote_unlisted_countries` to accept remote
+        roles from any country (country-blind).
       - job location contains a country name from locations.countries whose
         city list is empty (whole-country acceptance)
       - job location names a listed city of a mapped country. The city match
@@ -66,28 +71,22 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
         return loc_cfg.remote
 
     if loc_cfg.remote and "remote" in loc:
-        if loc_cfg.remote_unlisted_countries:
+        if loc_cfg.remote_unlisted_countries or not loc_cfg.countries:
             return True
-        # Scope remote to configured countries: drop a remote role only when it
-        # explicitly names an unlisted country. A location naming no country
-        # (bare "Remote") is ambiguous and accepted. City narrowing is for
-        # onsite roles, so match on the country CODE set, not the city lists.
-        detected = detect_country(loc)
-        if detected is None:
+        # Remote keys off the configured country set (city narrowing is
+        # onsite-only): accept if the location names any configured country;
+        # drop only when it names some other country. A location naming no
+        # country at all (bare "Remote") is ambiguous and accepted.
+        if any(_country_named(loc, code) for code in loc_cfg.countries):
             return True
-        configured = {
-            name for code in loc_cfg.countries if (name := canonical_country_name(code))
-        }
-        return detected[1] in configured
+        return detect_country(loc) is None
 
     for code, cities in loc_cfg.countries.items():
         if cities:
             if any(_city_in_location(city, loc) for city in cities):
                 return True
-        else:
-            for name in country_names(code):
-                if name.lower() in loc:
-                    return True
+        elif _country_named(loc, code):
+            return True
 
     return False
 

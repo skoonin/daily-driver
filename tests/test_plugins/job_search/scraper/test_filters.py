@@ -150,6 +150,27 @@ class TestLocationMatches:
         )
         assert location_matches({"location": "Canada (Remote)"}, plugin) is True
 
+    def test_remote_multi_country_accepts_when_any_configured(self) -> None:
+        # A remote role naming both a configured and an unlisted country is
+        # accepted on the configured one — matching the onsite branch's
+        # "any configured country present" rule (not a single-alias tiebreak).
+        plugin = _plugin(locations={"remote": True, "countries": {"NL": []}})
+        assert (
+            location_matches(
+                {"location": "Remote - United States or Netherlands"}, plugin
+            )
+            is True
+        )
+        # Naming only unlisted countries still drops.
+        assert location_matches({"location": "Remote - United States"}, plugin) is False
+
+    def test_remote_empty_countries_accepts_anywhere(self) -> None:
+        # An empty countries map imposes no restriction: remote is unscoped, so
+        # a country-named remote role passes (mirrors the enrichment prompt).
+        plugin = _plugin(locations={"remote": True, "countries": {}})
+        assert location_matches({"location": "Remote - Germany"}, plugin) is True
+        assert location_matches({"location": "Remote"}, plugin) is True
+
 
 # ---------------------------------------------------------------------------
 # matches_roles

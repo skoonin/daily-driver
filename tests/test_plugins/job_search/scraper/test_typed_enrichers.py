@@ -421,7 +421,40 @@ def test_location_summary_states_listed_countries_are_acceptable() -> None:
     summary = _location_summary(ctx)
     assert "Spain" in summary
     assert "NOT a location mismatch" in summary
-    assert "remote roles are acceptable" in summary
+    # Countries configured + flag off -> remote is scoped to those countries,
+    # and the prompt must say so (not the country-blind "from anywhere").
+    assert (
+        "remote roles are acceptable, but only within the listed countries" in summary
+    )
+
+
+def test_location_summary_remote_from_anywhere_when_unscoped() -> None:
+    """When remote is NOT scoped -- either remote_unlisted_countries is set or
+    no countries are configured -- the prompt must mirror the filter and say
+    remote roles are acceptable from anywhere."""
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+        _location_summary,
+    )
+
+    flag_on = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                "locations": {
+                    "remote": True,
+                    "remote_unlisted_countries": True,
+                    "countries": {"US": []},
+                },
+            }
+        )
+    )
+    assert "remote roles are acceptable from anywhere" in _location_summary(flag_on)
+
+    no_countries = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate({"locations": {"remote": True}})
+    )
+    assert "remote roles are acceptable from anywhere" in _location_summary(
+        no_countries
+    )
 
 
 def test_location_summary_states_city_narrowing() -> None:
