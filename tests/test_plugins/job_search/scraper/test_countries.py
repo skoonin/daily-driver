@@ -6,7 +6,10 @@ from typing import Any
 
 from daily_driver.plugins.job_search.scraper.countries import (
     apple_postlocation_code,
+    canonical_country_name,
+    country_named_in,
     country_names,
+    detect_country,
     jobspy_country,
 )
 
@@ -36,6 +39,41 @@ class TestCountryDerivation:
     def test_unsupported_code_falls_back(self) -> None:
         assert country_names("XX") == []
         assert jobspy_country("XX", "usa") == "usa"
+
+
+class TestSubnationShadowing:
+    """Sub-national names containing another country's alias resolve to their
+    owner instead of false-hitting the contained alias ("New South Wales" is
+    Australia, not the "wales" of a GB config)."""
+
+    def test_detect_country_resolves_shadowing_subnation_to_owner(self) -> None:
+        assert detect_country("Sydney, New South Wales") == (
+            "new south wales",
+            "Australia",
+        )
+        assert detect_country("Boston, New England") == (
+            "new england",
+            "United States",
+        )
+
+    def test_detect_country_still_finds_real_uk_nations(self) -> None:
+        assert detect_country("Cardiff, Wales") == ("wales", "United Kingdom")
+        assert detect_country("Manchester, England") == (
+            "england",
+            "United Kingdom",
+        )
+
+    def test_country_named_in_ignores_foreign_subnation(self) -> None:
+        loc = "sydney, new south wales (remote)"
+        assert country_named_in(loc, "GB") is False
+        assert country_named_in(loc, "AU") is True
+
+    def test_canonical_names_not_polluted_by_shadow_phrases(self) -> None:
+        # Shadow phrases stay out of country_names, so the longest-alias
+        # canonical derivation keeps the spelled-out country name.
+        assert canonical_country_name("AU") == "Australia"
+        assert canonical_country_name("US") == "United States"
+        assert "new south wales" not in country_names("AU")
 
 
 class TestApplePostLocationCode:

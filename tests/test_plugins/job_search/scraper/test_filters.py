@@ -184,6 +184,18 @@ class TestLocationMatches:
         # A real UK remote role still passes (whole-word alias hit).
         assert location_matches({"location": "Remote - Manchester, UK"}, plugin) is True
 
+    def test_shadowing_subnation_resolves_to_owner_country(self) -> None:
+        # "New South Wales" is Australia: it must not satisfy a GB config via
+        # the contained "wales" (drops as naming unlisted AU), and it must
+        # satisfy an AU config directly.
+        gb = _plugin(locations={"remote": True, "countries": {"GB": []}})
+        au = _plugin(locations={"remote": True, "countries": {"AU": []}})
+        loc = {"location": "Sydney, New South Wales (Remote)"}
+        assert location_matches(loc, gb) is False
+        assert location_matches(loc, au) is True
+        # A genuine Welsh location still passes the GB config.
+        assert location_matches({"location": "Cardiff, Wales (Remote)"}, gb) is True
+
 
 # ---------------------------------------------------------------------------
 # matches_roles
