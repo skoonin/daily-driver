@@ -105,21 +105,17 @@ class TrackerConfig(BaseModel):
     warn_unknown_status: bool = Field(
         default=True,
         description=(
-            "Print a stderr nudge when `tracker add/update --status` is given a\n"
-            "value outside the recommended set (open, in-progress, blocked, done,\n"
-            "ruled-out). Entries still save with the custom status; the warning\n"
-            "is a one-time hint. Set to false to silence."
+            "Warn (stderr, one-time) when --status is outside the recommended set\n"
+            "(open, in-progress, blocked, done, ruled-out). The entry still saves."
         ),
         json_schema_extra={"template_commented": True},
     )
     extra_statuses: list[str] = Field(
         default=[],
         description=(
-            "Extra status values to add to the tracker's recommended set, on top\n"
-            "of the built-ins (open, in-progress, blocked, done, ruled-out). Values\n"
-            "here never trigger the `warn_unknown_status` nudge. Spelling is\n"
-            "normalized (case-folded, underscores -> hyphens), so `ruled_out` and\n"
-            "`ruled-out` are the same status."
+            "Extra recommended statuses, added to the built-ins above. These never\n"
+            "trigger warn_unknown_status. Spelling is normalized (case-folded,\n"
+            "underscores -> hyphens), so `ruled_out` == `ruled-out`."
         ),
         json_schema_extra={
             "template_commented": True,
@@ -129,12 +125,9 @@ class TrackerConfig(BaseModel):
     terminal_statuses: list[str] = Field(
         default=[],
         description=(
-            "Extra terminal status values, merged with the built-ins (done,\n"
-            "ruled-out, dropped, rejected, closed). Entries in a terminal status\n"
-            "are excluded from `status` stalled detection and `tracker\n"
-            "follow-ups`, so a custom closing state like `cancelled` won't linger\n"
-            "as a false-positive. Spelling is normalized (case-folded, underscores\n"
-            "-> hyphens). Built-in terminal statuses cannot be removed."
+            "Extra terminal statuses, merged with the built-ins (done, ruled-out,\n"
+            "dropped, rejected, closed). Terminal entries are excluded from stalled\n"
+            "detection and follow-ups. Built-ins cannot be removed."
         ),
         json_schema_extra={
             "template_commented": True,
@@ -146,8 +139,8 @@ class TrackerConfig(BaseModel):
         description="",
         json_schema_extra={
             "trailing_comment": (
-                "Add more categories as you need them. `required` lists fields that\n"
-                "must be set on `tracker add`.\n"
+                "Add more categories as needed. `required` lists fields that must\n"
+                "be set on `tracker add`.\n"
                 "errand:\n"
                 "  required: [title]\n"
                 "ticket:\n"
@@ -326,9 +319,8 @@ class ClaudeConfig(BaseModel):
     resume_check_in: bool = Field(
         default=False,
         description=(
-            "When true, `check-in` resumes the prior `claude` session instead of\n"
-            "opening a fresh one. Useful if you keep one long-running session per\n"
-            "day and want check-in to land in it."
+            "When true, `check-in` resumes the prior claude session instead of\n"
+            "opening a fresh one."
         ),
     )
 
@@ -341,20 +333,17 @@ class AITaskConfig(BaseModel):
     provider: Literal["claude", "ollama"] | None = Field(
         default=None,
         description=(
-            "provider: claude | ollama. Unset (the default) means inherit from\n"
-            "the resolution chain (domain default -> global `ai.provider` ->\n"
-            "claude); set it to pin this task to a specific provider."
+            "claude | ollama. Unset inherits the resolution chain (domain\n"
+            "default -> ai.provider -> claude); set to pin this task."
         ),
         json_schema_extra={"template_example": "claude"},
     )
     model: str | None = Field(
         default=None,
         description=(
-            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
-            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model\n'
-            "applies regardless of which provider this task resolves to (provider\n"
-            "and model are chosen independently), so do not leave a claude model\n"
-            "set on a task you route to ollama, or vice versa."
+            'Provider-specific model id (claude: "sonnet"; ollama: a pulled tag\n'
+            'like "qwen2.5:14b"). Chosen independently of provider, so it must\n'
+            "match whichever provider this task resolves to."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
@@ -388,9 +377,8 @@ class InteractiveAIConfig(BaseModel):
     model: str | None = Field(
         default=None,
         description=(
-            'Provider-specific claude model identifier ("sonnet", "haiku",\n'
-            '"opus"). Unset (the default) lets the claude CLI pick its own\n'
-            "default. A `--model` flag on the command overrides this."
+            'Claude model ("sonnet", "haiku", "opus"). Unset lets the claude CLI\n'
+            "pick its default. A `--model` flag overrides this."
         ),
         # Rendered active (not commented) as the block's sole field, so the
         # generated example parses as a mapping rather than an empty key.
@@ -436,22 +424,17 @@ class AIConfig(BaseModel):
     provider: Literal["claude", "ollama"] = Field(
         default="claude",
         description=(
-            "Global default provider for every routable AI task (summary,\n"
-            "voice_update, and the job_search enrichment passes). This is the\n"
-            "terminal fallback of the resolution chain — set it to `ollama` to\n"
-            "route the whole app to ollama in one line. Per-task / per-phase\n"
-            "blocks still override it."
+            "Global fallback provider for every routable task (summary,\n"
+            "voice_update, job_search enrichment). Set to `ollama` to route the\n"
+            "whole app in one line; per-task blocks still override."
         ),
     )
     model: str | None = Field(
         default=None,
         description=(
-            "Global default model for routable AI tasks when neither the task\n"
-            "block nor a domain default names one. Provider-specific (claude:\n"
-            '"sonnet"; ollama: a pulled tag like "qwen2.5:14b"). A model applies\n'
-            "regardless of which provider a task resolves to (provider and model\n"
-            "are chosen independently), so a global model paired with a per-task\n"
-            "provider override must be compatible with that provider."
+            "Global fallback model, used when neither the task block nor a domain\n"
+            "default names one. Chosen independently of provider, so it must match\n"
+            "whichever provider a task resolves to."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
@@ -463,11 +446,9 @@ class AIConfig(BaseModel):
     interactive: InteractiveAIConfig = Field(
         default=InteractiveAIConfig(),
         description=(
-            "Default claude model for the interactive launchers (day-start,\n"
-            "day-end, check-in). These always run on the claude CLI (they need\n"
-            "session / agent / workspace context ollama lacks), so this block is\n"
-            "model-only — there is no `provider` knob. A `--model` flag on the\n"
-            "command overrides it."
+            "Interactive launchers (day-start, day-end, check-in) always run on\n"
+            "claude, so this block is model-only (no provider knob). A `--model`\n"
+            "flag overrides it."
         ),
     )
     claude: ClaudeProviderConfig = Field(
@@ -486,8 +467,8 @@ class FocusConfig(BaseModel):
     default_duration: str = Field(
         default="25m",
         description=(
-            "Fallback duration when `focus on` runs without `--for`.\n"
-            'Accepts the same suffixes as `--for` (e.g. "25m", "1h", "90m").'
+            "Fallback duration when `focus on` runs without `--for`\n"
+            '(same suffixes as --for: "25m", "1h", "90m").'
         ),
         json_schema_extra={"template_quote": True},
     )
@@ -499,9 +480,8 @@ class GatherGitConfig(BaseModel):
     search_paths: list[Path] = Field(
         default=[],
         description=(
-            "Repos to scan for `gather git` activity. Each entry is a directory\n"
-            "containing one or more git checkouts. Paths can be absolute or\n"
-            "tilde-prefixed."
+            "Directories to scan for git activity (absolute or tilde-prefixed).\n"
+            "Each holds one or more git checkouts."
         ),
         json_schema_extra={
             "template_example": ["~/git"],
@@ -521,18 +501,11 @@ class CalendarConfig(BaseModel):
 
     sync_enabled: bool = Field(
         default=False,
-        description=(
-            "Opt-in switch for `calendar sync`. When false, sync is a clean\n"
-            "no-op. macOS-only — writes the day's plan time blocks to a local\n"
-            "Calendar; ignored on other platforms."
-        ),
+        description="Opt-in switch for `calendar sync`; false makes sync a clean no-op.",
     )
     plan_calendar_name: str = Field(
         default="Daily Plan",
-        description=(
-            "Name of the local macOS Calendar to write plan time blocks into.\n"
-            "The calendar must already exist in Calendar.app."
-        ),
+        description="Local macOS Calendar to write into; must already exist in Calendar.app.",
         json_schema_extra={"template_quote": True},
     )
 
@@ -609,13 +582,12 @@ class Config(BaseModel):
         json_schema_extra={
             "template_commented": True,
             "block_comment": (
-                "Optional: scheduler config (consumed by `scheduler install`).\n"
-                "`checkin.times` is a list of HH:MM strings; `jobs.time` is a single\n"
-                'HH:MM string. Each job takes an optional `days`: "daily" (default),\n'
-                '"weekdays", or a list of day names (e.g. [sun, wed]). Unknown keys\n'
-                "are rejected. NOTE: `day_start` / `day_end` cadence does NOT live\n"
-                "here — it lives in the separate top-level `schedule:` block below\n"
-                "as HH:MM strings (the single source of truth for those two jobs)."
+                "Optional: check-in / jobs scheduler (consumed by `scheduler"
+                " install`).\n"
+                "`checkin.times` is a list of HH:MM; `jobs.time` is one HH:MM. Each\n"
+                'job takes an optional `days`: "daily" (default), "weekdays", or a\n'
+                "day list. day-start / day-end cadence lives in the separate\n"
+                "`schedule:` block below."
             ),
             "template_example_model": True,
         },
@@ -626,13 +598,12 @@ class Config(BaseModel):
         json_schema_extra={
             "template_commented": True,
             "block_comment": (
-                "Optional: day-start / day-end scheduled times (HH:MM, 24h).\n"
-                "When set, `scheduler install` adds launchd jobs that fire"
-                " `day-start` /\n"
-                '`day-end` at these times. `days` narrows both jobs to "weekdays"\n'
-                "or a list of day names (default: daily). Leave times unset to skip\n"
-                "the scheduled run. This is also read by `is_late_day` evaluation —\n"
-                "single source of truth."
+                "Optional: day-start / day-end scheduled times (HH:MM, 24h). When"
+                " set,\n"
+                "`scheduler install` fires those jobs; `days` narrows both"
+                ' ("weekdays"\n'
+                "or a day list, default daily). Also the single source of truth for\n"
+                "`is_late_day`. Leave unset to skip the scheduled run."
             ),
         },
     )
@@ -650,14 +621,16 @@ class Config(BaseModel):
         json_schema_extra={
             "template_commented": True,
             "block_comment": (
-                "Optional: AI provider routing for the headless `summary` task,\n"
-                "plus the shared claude/ollama provider-connection blocks (also\n"
-                "consulted by `plugins.job_search.enrichment` routing).\n"
-                "Interactive launchers (day-start, check-in, day-end) always use"
-                " claude —\n"
-                "they need session resume / agents / workspace context that Ollama"
-                " lacks.\n"
-                "Omitting the entire block keeps claude defaults for summary."
+                "Optional: AI provider routing for headless tasks (summary,\n"
+                "voice-update, job_search enrichment) plus the shared claude/ollama\n"
+                "connection blocks. Interactive launchers (day-start, check-in,\n"
+                "day-end) always use claude. Omit the block to keep claude"
+                " defaults.\n"
+                "\n"
+                "Resolution chain for any task: per-task/phase -> domain default ->\n"
+                "global `ai.provider` -> claude. Provider and model are chosen\n"
+                "independently, so a model must be valid for whatever provider it\n"
+                'lands on (claude: "sonnet"; ollama: a tag like "qwen2.5:14b").'
             ),
         },
     )
@@ -687,8 +660,7 @@ class Config(BaseModel):
             "template_commented": True,
             "block_comment": (
                 "Optional: write daily-plan time blocks to a local macOS Calendar\n"
-                "(consumed by `calendar sync`, macOS-only). Set `sync_enabled: true`\n"
-                "to opt in and name the target calendar."
+                "(consumed by `calendar sync`, macOS-only)."
             ),
         },
     )

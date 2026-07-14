@@ -120,6 +120,70 @@ class TestLocationMatches:
         assert location_matches({"location": "Copenhagen, Denmark"}, plugin) is True
         assert location_matches({"location": "Ottawa"}, plugin) is False
 
+    def test_remote_unlisted_country_dropped_by_default(self) -> None:
+        # Default (remote_unlisted_countries=False): a remote role naming a
+        # country not in `countries` is dropped even with remote enabled.
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "Canada (Remote)"}, plugin) is False
+        assert location_matches({"location": "London, United Kingdom"}, plugin) is False
+
+    def test_remote_configured_country_kept(self) -> None:
+        # A remote role naming a configured country passes, even though US is
+        # city-narrowed for onsite roles (remote keys off the country code set).
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "United States (Remote)"}, plugin) is True
+
+    def test_remote_naming_no_country_accepted(self) -> None:
+        # Ambiguous remote locations (no country named) are accepted by design.
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "Remote"}, plugin) is True
+        assert location_matches({"location": "Charlotte (Remote)"}, plugin) is True
+
+    def test_remote_unlisted_countries_flag_restores_anywhere(self) -> None:
+        # Opt-in flag brings back country-blind remote acceptance.
+        plugin = _plugin(
+            locations={
+                "remote": True,
+                "remote_unlisted_countries": True,
+                "countries": {"US": ["charlotte"]},
+            }
+        )
+        assert location_matches({"location": "Canada (Remote)"}, plugin) is True
+
+    def test_remote_multi_country_accepts_when_any_configured(self) -> None:
+        # A remote role naming both a configured and an unlisted country is
+        # accepted on the configured one — matching the onsite branch's
+        # "any configured country present" rule (not a single-alias tiebreak).
+        plugin = _plugin(locations={"remote": True, "countries": {"NL": []}})
+        assert (
+            location_matches(
+                {"location": "Remote - United States or Netherlands"}, plugin
+            )
+            is True
+        )
+        # Naming only unlisted countries still drops.
+        assert location_matches({"location": "Remote - United States"}, plugin) is False
+
+    def test_remote_empty_countries_accepts_anywhere(self) -> None:
+        # An empty countries map imposes no restriction: remote is unscoped, so
+        # a country-named remote role passes (mirrors the enrichment prompt).
+        plugin = _plugin(locations={"remote": True, "countries": {}})
+        assert location_matches({"location": "Remote - Germany"}, plugin) is True
+        assert location_matches({"location": "Remote"}, plugin) is True
+
+    def test_country_alias_matches_whole_word(self) -> None:
+        # Country aliases match whole-word, not substring: the 2-char GB alias
+        # "uk" must not hit a US city like "Milwaukee". With GB configured, a
+        # remote role naming the (unlisted) US is dropped, not leaked via the
+        # "uk" inside "Milwaukee".
+        plugin = _plugin(locations={"remote": True, "countries": {"GB": []}})
+        assert (
+            location_matches({"location": "Remote - Milwaukee, United States"}, plugin)
+            is False
+        )
+        # A real UK remote role still passes (whole-word alias hit).
+        assert location_matches({"location": "Remote - Manchester, UK"}, plugin) is True
+
 
 # ---------------------------------------------------------------------------
 # matches_roles

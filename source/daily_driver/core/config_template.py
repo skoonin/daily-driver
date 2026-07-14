@@ -18,18 +18,13 @@ from daily_driver.core.config_models import Config
 _PREAMBLE = """\
 # daily-driver workspace configuration
 #
-# Structured settings live here; narrative prose stays in Markdown files
-# (context.md, voice-profile.md). The schema is strict everywhere:
-# the root model is `extra="forbid"`, as is every nested block (including
-# plugins). Unknown keys raise a validation error so typos like `tracer:`
-# for `tracker:` fail loudly. Per-entry user data belongs under
-# `tracker.extras`; per-category fields under `tracker.categories.<name>`;
-# narrative context in `voice-profile.md` or a sibling `.notes.md`.
+# Structured settings live here; narrative prose stays in Markdown
+# (context.md, voice-profile.md). The schema is strict (extra="forbid")
+# at every level, so a typo like `tracer:` fails loudly.
 #
-# To enable a commented block: uncomment the header (at column 0) AND
-# every nested line together. Don't uncomment a single inner field on
-# its own — YAML will silently nest it inside whichever open block is
-# above, and Pydantic will reject it as `extra_forbidden`.
+# To enable a commented block, uncomment the header (column 0) AND every
+# nested line together. Uncommenting a lone inner field silently nests it
+# under whichever block is open above, and Pydantic rejects it.
 """
 
 
@@ -433,6 +428,11 @@ def _render_model_body(
         extra = _extra(info)
         if extra.get("template_skip"):
             continue
+        # Separate nested sub-blocks (a field whose value is its own model,
+        # e.g. each ai.* provider block) with a blank line for readability.
+        # Scalars stay grouped; no leading blank before the first field.
+        if out and _unwrap_model(info.annotation) is not None:
+            out.append("")
         if overrides is not None and name in overrides:
             override_val = overrides[name]
             sub_cls = _unwrap_model(info.annotation)

@@ -176,6 +176,7 @@ def test_tracker_config_warn_unknown_status_can_be_disabled():
 def test_locations_defaults():
     m = Locations()
     assert m.remote is False
+    assert m.remote_unlisted_countries is False
     assert m.countries == {}
 
 

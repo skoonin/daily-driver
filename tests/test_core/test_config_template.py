@@ -77,8 +77,8 @@ def test_render_validates_against_config_model():
 def test_render_includes_field_descriptions():
     text = render_config_template()
     assert "Where command output" in text
-    assert "Print a stderr nudge" in text
-    assert "is also read by `is_late_day` evaluation" in text
+    assert "Warn (stderr, one-time) when --status" in text
+    assert "the single source of truth for" in text
 
 
 def test_render_marks_optional_blocks_commented():

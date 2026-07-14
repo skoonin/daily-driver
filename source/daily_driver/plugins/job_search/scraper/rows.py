@@ -13,7 +13,10 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.countries import country_names
+from daily_driver.plugins.job_search.scraper.countries import (
+    country_names,
+    detect_country,
+)
 from daily_driver.plugins.job_search.scraper.models import (
     BOARD_SOURCE_CANONICALS,
     split_source,
@@ -23,21 +26,32 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 
-def _city_in_location(city: str, loc_lower: str) -> bool:
-    """Whole-word city match against a lowercased location string.
+def _word_in_location(phrase: str, loc_lower: str) -> bool:
+    """Whole-word match of a lowercased phrase against a location string.
 
-    Word boundaries keep "Vancouver" from hitting "Vancouverish"; a bare
-    substring test is too loose once city lists drive acceptance.
+    Word boundaries keep "Vancouver" from hitting "Vancouverish" and the 2-char
+    country alias "uk" from hitting "Tukwila"; a bare substring test is too loose
+    once city and country names drive acceptance.
     """
-    pattern = rf"(?<![a-z0-9]){re.escape(city.strip().lower())}(?![a-z0-9])"
+    pattern = rf"(?<![a-z0-9]){re.escape(phrase.strip().lower())}(?![a-z0-9])"
     return re.search(pattern, loc_lower) is not None
+
+
+def _country_named(loc_lower: str, code: str) -> bool:
+    """Whether a lowercased location names the country `code` (whole-word, any alias)."""
+    return any(_word_in_location(name, loc_lower) for name in country_names(code))
 
 
 def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
     """Check whether a job's location matches the configured allow-map.
 
     Accepts if any of:
-      - remote: true and job location contains "remote" (or is empty/missing)
+      - remote: true and job location contains "remote" (or is empty/missing).
+        By default remote is scoped to `countries`: a remote role passes if its
+        location names any configured country or no country at all, and is
+        dropped only when it names some other country. An empty `countries` map
+        imposes no restriction. Set `remote_unlisted_countries` to accept remote
+        roles from any country (country-blind).
       - job location contains a country name from locations.countries whose
         city list is empty (whole-country acceptance)
       - job location names a listed city of a mapped country. The city match
@@ -58,16 +72,22 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
         return loc_cfg.remote
 
     if loc_cfg.remote and "remote" in loc:
-        return True
+        if loc_cfg.remote_unlisted_countries or not loc_cfg.countries:
+            return True
+        # Remote keys off the configured country set (city narrowing is
+        # onsite-only): accept if the location names any configured country;
+        # drop only when it names some other country. A location naming no
+        # country at all (bare "Remote") is ambiguous and accepted.
+        if any(_country_named(loc, code) for code in loc_cfg.countries):
+            return True
+        return detect_country(loc) is None
 
     for code, cities in loc_cfg.countries.items():
         if cities:
-            if any(_city_in_location(city, loc) for city in cities):
+            if any(_word_in_location(city, loc) for city in cities):
                 return True
-        else:
-            for name in country_names(code):
-                if name.lower() in loc:
-                    return True
+        elif _country_named(loc, code):
+            return True
 
     return False
 
