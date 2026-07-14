@@ -26,19 +26,20 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
 
-def _city_in_location(city: str, loc_lower: str) -> bool:
-    """Whole-word city match against a lowercased location string.
+def _word_in_location(phrase: str, loc_lower: str) -> bool:
+    """Whole-word match of a lowercased phrase against a location string.
 
-    Word boundaries keep "Vancouver" from hitting "Vancouverish"; a bare
-    substring test is too loose once city lists drive acceptance.
+    Word boundaries keep "Vancouver" from hitting "Vancouverish" and the 2-char
+    country alias "uk" from hitting "Tukwila"; a bare substring test is too loose
+    once city and country names drive acceptance.
     """
-    pattern = rf"(?<![a-z0-9]){re.escape(city.strip().lower())}(?![a-z0-9])"
+    pattern = rf"(?<![a-z0-9]){re.escape(phrase.strip().lower())}(?![a-z0-9])"
     return re.search(pattern, loc_lower) is not None
 
 
 def _country_named(loc_lower: str, code: str) -> bool:
-    """Whether a lowercased location names the country `code` (by any alias)."""
-    return any(name.lower() in loc_lower for name in country_names(code))
+    """Whether a lowercased location names the country `code` (whole-word, any alias)."""
+    return any(_word_in_location(name, loc_lower) for name in country_names(code))
 
 
 def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
@@ -83,7 +84,7 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
 
     for code, cities in loc_cfg.countries.items():
         if cities:
-            if any(_city_in_location(city, loc) for city in cities):
+            if any(_word_in_location(city, loc) for city in cities):
                 return True
         elif _country_named(loc, code):
             return True

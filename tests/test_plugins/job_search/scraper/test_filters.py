@@ -171,6 +171,19 @@ class TestLocationMatches:
         assert location_matches({"location": "Remote - Germany"}, plugin) is True
         assert location_matches({"location": "Remote"}, plugin) is True
 
+    def test_country_alias_matches_whole_word(self) -> None:
+        # Country aliases match whole-word, not substring: the 2-char GB alias
+        # "uk" must not hit a US city like "Milwaukee". With GB configured, a
+        # remote role naming the (unlisted) US is dropped, not leaked via the
+        # "uk" inside "Milwaukee".
+        plugin = _plugin(locations={"remote": True, "countries": {"GB": []}})
+        assert (
+            location_matches({"location": "Remote - Milwaukee, United States"}, plugin)
+            is False
+        )
+        # A real UK remote role still passes (whole-word alias hit).
+        assert location_matches({"location": "Remote - Manchester, UK"}, plugin) is True
+
 
 # ---------------------------------------------------------------------------
 # matches_roles
