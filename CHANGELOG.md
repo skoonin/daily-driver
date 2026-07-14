@@ -4,6 +4,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-14
+
 ### Changed
 
 - **Remote job scraping is now scoped to your configured countries by default.** Previously `remote: true` accepted remote roles from every country, so a `plugins.job_search.locations` set up for remote-US roles still surfaced remote postings from Canada, the UK, India, and elsewhere. Remote roles that name a country outside your `countries` map are now dropped; ones that name a configured country — or name no country at all (a bare "Remote" or a city-only location) — still pass, and remote scoping is independent of the per-country city narrowing that governs onsite roles. Set `plugins.job_search.locations.remote_unlisted_countries: true` to restore the previous country-blind behavior. (#192)
