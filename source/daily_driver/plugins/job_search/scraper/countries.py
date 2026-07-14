@@ -20,6 +20,24 @@ _COUNTRY_NAME_ALIASES: dict[str, list[str]] = {
     "GB": ["uk", "england", "scotland", "wales"],
 }
 
+# Sub-national place names that contain ANOTHER country's alias as a whole word
+# ("New South Wales" contains "wales"; "New England" contains "england"), mapped
+# to the ISO code they actually belong to. Matching treats each phrase as
+# naming its owner: the alias index resolves it to the owner (longest-first, so
+# it wins over the contained alias), and per-country matching strips foreign
+# phrases so the contained alias cannot false-hit. Entries exist only to
+# resolve such collisions -- this is not a general state/province gazetteer.
+_SHADOWING_SUBNATIONS: dict[str, str] = {
+    "new south wales": "AU",
+    "new england": "US",
+}
+
+
+def _word_bounded(phrase: str, text_lower: str) -> bool:
+    """Whole-word match of a lowercased phrase: bounded by non-alphanumerics."""
+    pattern = rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])"
+    return re.search(pattern, text_lower) is not None
+
 
 @functools.lru_cache(maxsize=1)
 def _country_table() -> dict[str, tuple[list[str], str]]:
@@ -80,6 +98,14 @@ def _alias_index() -> list[tuple[str, str]]:
         canonical = max(aliases, key=len).title()
         for alias in aliases:
             pairs.append((alias.lower(), canonical))
+    # Shadowing sub-nations resolve to their owner. Kept out of the country
+    # table so canonical_country_name still derives from the spelled-out
+    # country name; longest-first ordering below makes "new south wales" win
+    # over the "wales" it contains.
+    for phrase, owner in _SHADOWING_SUBNATIONS.items():
+        owner_canonical = canonical_country_name(owner)
+        if owner_canonical:
+            pairs.append((phrase, owner_canonical))
     pairs.sort(key=lambda p: len(p[0]), reverse=True)
     return pairs
 
@@ -96,10 +122,28 @@ def detect_country(text: str) -> tuple[str, str] | None:
     for alias, canonical in _alias_index():
         # Whole-word match: alias bounded by non-alphanumerics or string edges,
         # so "canada" matches "Toronto, Canada" but not a substring of a word.
-        pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
-        if re.search(pattern, lowered):
+        if _word_bounded(alias, lowered):
             return alias, canonical
     return None
+
+
+def country_named_in(text_lower: str, code: str) -> bool:
+    """Whether a lowercased location text names the country ``code``.
+
+    Whole-word match against the code's aliases plus its own shadowing
+    sub-nations; sub-national phrases owned by OTHER countries are blanked
+    first so a contained alias cannot false-hit (a GB check must not match the
+    "wales" inside an Australian "New South Wales").
+    """
+    code = code.upper()
+    for phrase, owner in _SHADOWING_SUBNATIONS.items():
+        if owner == code:
+            if _word_bounded(phrase, text_lower):
+                return True
+        elif _word_bounded(phrase, text_lower):
+            pattern = rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])"
+            text_lower = re.sub(pattern, " ", text_lower)
+    return any(_word_bounded(name.lower(), text_lower) for name in country_names(code))
 
 
 def jobspy_country(code: str, default: str) -> str:

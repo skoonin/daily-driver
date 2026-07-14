@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.countries import (
-    country_names,
+    country_named_in,
     detect_country,
 )
 from daily_driver.plugins.job_search.scraper.models import (
@@ -38,8 +38,12 @@ def _word_in_location(phrase: str, loc_lower: str) -> bool:
 
 
 def _country_named(loc_lower: str, code: str) -> bool:
-    """Whether a lowercased location names the country `code` (whole-word, any alias)."""
-    return any(_word_in_location(name, loc_lower) for name in country_names(code))
+    """Whether a lowercased location names the country `code` (whole-word, any alias).
+
+    Delegates to :func:`country_named_in`, which also handles sub-national
+    shadow phrases ("New South Wales" must not hit a GB "wales" check).
+    """
+    return country_named_in(loc_lower, code)
 
 
 def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
