@@ -13,7 +13,11 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
-from daily_driver.plugins.job_search.scraper.countries import country_names
+from daily_driver.plugins.job_search.scraper.countries import (
+    canonical_country_name,
+    country_names,
+    detect_country,
+)
 from daily_driver.plugins.job_search.scraper.models import (
     BOARD_SOURCE_CANONICALS,
     split_source,
@@ -37,7 +41,11 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
     """Check whether a job's location matches the configured allow-map.
 
     Accepts if any of:
-      - remote: true and job location contains "remote" (or is empty/missing)
+      - remote: true and job location contains "remote" (or is empty/missing).
+        By default remote is scoped to `countries`: a remote role that names an
+        unlisted country is dropped, while a remote role that names a configured
+        country or no country at all passes. Set `remote_unlisted_countries` to
+        accept remote roles from any country (country-blind).
       - job location contains a country name from locations.countries whose
         city list is empty (whole-country acceptance)
       - job location names a listed city of a mapped country. The city match
@@ -58,7 +66,19 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
         return loc_cfg.remote
 
     if loc_cfg.remote and "remote" in loc:
-        return True
+        if loc_cfg.remote_unlisted_countries:
+            return True
+        # Scope remote to configured countries: drop a remote role only when it
+        # explicitly names an unlisted country. A location naming no country
+        # (bare "Remote") is ambiguous and accepted. City narrowing is for
+        # onsite roles, so match on the country CODE set, not the city lists.
+        detected = detect_country(loc)
+        if detected is None:
+            return True
+        configured = {
+            name for code in loc_cfg.countries if (name := canonical_country_name(code))
+        }
+        return detected[1] in configured
 
     for code, cities in loc_cfg.countries.items():
         if cities:

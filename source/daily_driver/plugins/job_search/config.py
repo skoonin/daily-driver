@@ -8,51 +8,41 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Shared so the toggle field and the sources-block template comment stay in sync.
 _WWR_CATEGORIES_DESC = (
-    'WeWorkRemotely category slugs to fetch, e.g. "devops-sysadmin"\n'
-    "(becomes /categories/remote-devops-sysadmin-jobs.rss). An empty list\n"
-    "scrapes nothing; this source needs at least one category."
+    'Category slugs, e.g. "devops-sysadmin" ->\n'
+    "/categories/remote-devops-sysadmin-jobs.rss. Empty scrapes nothing;\n"
+    "this source needs at least one."
 )
 _GREENHOUSE_BOARDS_DESC = (
-    'Greenhouse board slugs to always scrape (the "<slug>" in\n'
-    "boards.greenhouse.io/<slug>). Pins: scraped every run regardless of the\n"
-    "jobs discover-boards matched cache, which is unioned in automatically."
+    'Slugs always scraped (the "<slug>" in boards.greenhouse.io/<slug>),\n'
+    "unioned with the discover-boards matched cache."
 )
 _ASHBY_BOARDS_DESC = (
-    'AshbyHQ board slugs to always scrape (the "<slug>" in\n'
-    "jobs.ashbyhq.com/<slug>). Pins: scraped every run regardless of the\n"
-    "jobs discover-boards matched cache, which is unioned in automatically.\n"
-    "Slugs are case-sensitive (e.g. Notion)."
+    'Slugs always scraped (the "<slug>" in jobs.ashbyhq.com/<slug>),\n'
+    "unioned with the discover-boards matched cache. Case-sensitive."
 )
 _LEVER_BOARDS_DESC = (
-    'Lever board slugs to always scrape (the "<slug>" in\n'
-    "jobs.lever.co/<slug>). Pins: scraped every run regardless of the\n"
-    "jobs discover-boards matched cache, which is unioned in automatically."
+    'Slugs always scraped (the "<slug>" in jobs.lever.co/<slug>),\n'
+    "unioned with the discover-boards matched cache."
 )
 _EXCLUDE_BOARDS_DESC = (
-    "Board slugs to NEVER scrape, even when pinned or present in the\n"
-    "discovery matched cache — the blocklist for noisy or broken boards.\n"
-    "Matched exactly, case included: to silence a board whose slug is\n"
-    "Notion, write Notion, not notion."
+    "Slugs NEVER scraped, even if pinned or discovered. Matched exactly\n"
+    "incl. case: to silence Notion, write Notion not notion."
 )
 _WORKABLE_ACCOUNTS_DESC = (
-    'Workable account slugs to scrape (the "<slug>" in\n'
-    "apply.workable.com/<slug>). Each account's full posting list is fetched\n"
-    "in one request; add the companies you are targeting (e.g. huggingface)."
+    'Account slugs (the "<slug>" in apply.workable.com/<slug>). Each\n'
+    "account's full list is fetched in one request."
 )
 _WORKDAY_BOARDS_DESC = (
-    "Workday careers sites to scrape, each named by the three parts of its\n"
-    "URL. For crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is\n"
-    "{tenant: crowdstrike, host: wd5, site: crowdstrikecareers}. Each board is\n"
-    "paginated through Workday's public search API; set the optional `company`\n"
-    "to override the display name (defaults to the title-cased tenant)."
+    "Each site named by the three URL parts. For\n"
+    "crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is\n"
+    "tenant=crowdstrike, host=wd5, site=crowdstrikecareers. Optional `company`\n"
+    "overrides the display name (default: title-cased tenant)."
 )
 _REMOTEOK_TAGS_DESC = (
-    "RemoteOK tag slugs to query alongside the unfiltered feed, each fetched\n"
-    "as remoteok.com/api?tags=<slug> (e.g. devops, kubernetes, aws for an infra\n"
-    "search; hr, marketing for others). The unfiltered newest-100 feed carries\n"
-    "few of any one role, so tags surface relevant postings directly. Pick slugs\n"
-    "matching your roles: an unknown tag harmlessly returns the unfiltered feed\n"
-    "(deduped away). Empty = query only the unfiltered feed."
+    "Tag slugs queried alongside the unfiltered feed, each as\n"
+    "remoteok.com/api?tags=<slug>. The newest-100 feed is thin per role, so\n"
+    "tags surface relevant postings. Unknown tags harmlessly return the\n"
+    "unfiltered feed (deduped). Empty = feed only."
 )
 
 
@@ -69,14 +59,23 @@ class Locations(BaseModel):
         description="",
         json_schema_extra={"template_example": True},
     )
+    remote_unlisted_countries: bool = Field(
+        default=False,
+        description=(
+            "When true, remote roles from ANY country pass (country-blind). When\n"
+            "false (default), a remote role passes only if its location names a\n"
+            "country in `countries` (or names no country at all); a remote role\n"
+            "that names an unlisted country is dropped."
+        ),
+        json_schema_extra={"template_example": False},
+    )
     countries: dict[str, list[str]] = Field(
         default={},
         description=(
-            "Allowed countries as a map of ISO code -> city allow-list. An\n"
-            "empty list accepts jobs anywhere in that country; a non-empty\n"
-            "list narrows that country to ONLY the listed cities (the bare\n"
-            "country name stops passing). Remote roles pass regardless when\n"
-            "`remote` is true."
+            "ISO code -> city allow-list. Empty list = anywhere in that country;\n"
+            "a non-empty list narrows to ONLY those cities. Remote roles pass when\n"
+            "`remote` is true, scoped to these countries unless\n"
+            "`remote_unlisted_countries` is set."
         ),
         json_schema_extra={
             "template_example": {"CA": ["Vancouver", "Victoria"], "US": []}
@@ -254,17 +253,15 @@ class ScraperConfig(BaseModel):
     max_retries: int = Field(
         default=3,
         description=(
-            "Retries for HTTP 429/503 responses (rate limits). Honors the\n"
-            "Retry-After header when present; otherwise applies exponential\n"
-            "backoff (1.5s, 3s, 6s, ... capped at 30s). Set to 0 to disable."
+            "Retries for HTTP 429/503. Honors Retry-After, else exponential\n"
+            "backoff (1.5s, 3s, 6s, ... capped at 30s). 0 disables."
         ),
     )
     max_age_days: int = Field(
         default=30,
         description=(
-            "Maximum age (in days) for scraped postings. Currently applied to\n"
-            "`hn_jobs` (which has 17k+ historical entries via Algolia). Set to\n"
-            "0 to disable the filter. Other sources are implicitly recent."
+            "Max posting age in days. Applied to hn_jobs (17k+ Algolia history);\n"
+            "other sources are implicitly recent. 0 disables."
         ),
     )
     user_agent: str = Field(
@@ -281,8 +278,8 @@ class ScraperConfig(BaseModel):
     search_terms: list[str] | None = Field(
         default=None,
         description=(
-            "Override the search terms sent to query-based sources (JobSpy,\n"
-            "Apple). When unset, terms are derived from roles and keywords."
+            "Override search terms for query-based sources (JobSpy, Apple).\n"
+            "Unset derives them from roles and keywords."
         ),
     )
     # Overridden per scrape phase by the orchestrator (_ctx_with_headless), so a
@@ -301,9 +298,8 @@ class ScraperConfig(BaseModel):
     browser: Literal["firefox", "chromium", "webkit"] = Field(
         default="firefox",
         description=(
-            "Playwright engine for browser-driven sources (Apple). One of\n"
-            "firefox, chromium, webkit. The chosen engine must be installed\n"
-            "(`playwright install <engine>`)."
+            "Playwright engine for browser sources (Apple): firefox, chromium,\n"
+            "or webkit. Must be installed (`playwright install <engine>`)."
         ),
     )
 
@@ -349,19 +345,17 @@ class PhaseRoute(BaseModel):
     provider: Literal["claude", "ollama"] | None = Field(
         default=None,
         description=(
-            "provider: claude | ollama. Unset inherits the enrichment domain\n"
-            "default, then the global `ai.provider`, then claude."
+            "claude | ollama. Unset inherits the enrichment domain default,\n"
+            "then `ai.provider`, then claude."
         ),
         json_schema_extra={"template_example": "claude"},
     )
     model: str | None = Field(
         default=None,
         description=(
-            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
-            'etc. For ollama: a pulled tag like "qwen2.5:7b" or "phi4". A model\n'
-            "applies regardless of which provider this phase resolves to (provider\n"
-            "and model are chosen independently), so do not leave a claude model\n"
-            "set on a phase you route to ollama, or vice versa."
+            'Provider-specific model id (claude: "sonnet"; ollama: a tag like\n'
+            '"qwen2.5:7b"). Chosen independently of provider, so it must match\n'
+            "whichever provider this phase resolves to."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
@@ -383,28 +377,23 @@ class EnrichmentConfig(BaseModel):
     provider: Literal["claude", "ollama"] | None = Field(
         default=None,
         description=(
-            "Domain default provider for the enrichment pass. Unset inherits\n"
-            "the global `ai.provider`, then claude. The per-phase block overrides it."
+            "Domain default provider for enrichment. Unset inherits `ai.provider`,\n"
+            "then claude. The per-phase block overrides it."
         ),
         json_schema_extra={"template_example": "claude"},
     )
     model: str | None = Field(
         default=None,
         description=(
-            'Provider-specific model identifier. For claude: "sonnet", "haiku",\n'
-            'etc. For ollama: a pulled tag like "qwen2.5:14b" or "phi4". A model\n'
-            "applies regardless of which provider a phase resolves to (provider\n"
-            "and model are chosen independently), so a domain model paired with a\n"
-            "per-phase provider override must be compatible with that provider."
+            'Provider-specific model id (claude: "sonnet"; ollama: a tag like\n'
+            '"qwen2.5:14b"). Chosen independently of provider, so it must match\n'
+            "whichever provider a phase resolves to."
         ),
         json_schema_extra={"template_commented": True, "template_example": "sonnet"},
     )
     fit_notes: PhaseRoute = Field(
         default=PhaseRoute(),
-        description=(
-            "Route override for the fit/notes pass (fit score, notes, remote,\n"
-            "criteria, one call per job)."
-        ),
+        description="Route override for the fit/notes pass (one call per job).",
     )
     enrich_timeout: int = Field(
         default=30,
@@ -412,20 +401,15 @@ class EnrichmentConfig(BaseModel):
     )
     enrich_fit: bool = Field(
         default=True,
-        description="Score each job 1-10 for fit against your persona and locations.",
+        description="Score each job 1-10 for fit.",
     )
     enrich_notes: bool = Field(
         default=True,
-        description=(
-            "Generate a one-line Notes summary (tech stack, remote policy, red flags)."
-        ),
+        description="One-line Notes summary (stack, remote, red flags).",
     )
     enrich_is_remote: bool = Field(
         default=True,
-        description=(
-            "Judge each job remote/hybrid/onsite during the fit/notes pass "
-            "(no extra LLM call)."
-        ),
+        description="Judge remote/hybrid/onsite (no extra LLM call).",
     )
     max_enrich_fit: int = Field(
         default=50,
@@ -434,10 +418,9 @@ class EnrichmentConfig(BaseModel):
     force_recook_cooldown_hours: int | Literal["missing"] = Field(
         default=24,
         description=(
-            "Under `jobs backfill --force-update`, skip rows enriched within the\n"
-            "last N hours so an interrupted force-update resumes instead of\n"
-            "restarting. 0 disables the cooldown (re-enrich every active row);\n"
-            "`missing` re-enriches only rows with no enrichment timestamp yet."
+            "Under `backfill --force-update`, skip rows enriched within N hours\n"
+            "so an interrupted run resumes. 0 = re-enrich every active row;\n"
+            "`missing` = only rows with no enrichment timestamp yet."
         ),
     )
 
@@ -450,15 +433,14 @@ class EnrichmentConfig(BaseModel):
 
     detail_delay_seconds: float = Field(
         default=0.5,
-        description="Pause between detail-page fetches, in seconds, to avoid rate limits.",
+        description="Pause between detail-page fetches, in seconds.",
     )
     criteria: list[Criterion] = Field(
         default=[],
         description=(
-            "Extra things to assess in each job description. Each becomes a\n"
-            '"Label: value" segment appended to Notes. `assess` is a\n'
-            "natural-language instruction the LLM reasons about, not a\n"
-            "keyword match."
+            "Extra assessments per job description. Each appends a\n"
+            '"Label: value" to Notes. `assess` is a natural-language instruction\n'
+            "the LLM reasons about, not a keyword match."
         ),
         json_schema_extra={
             "template_example": [
@@ -489,20 +471,17 @@ class VerifyConfig(BaseModel):
     reverify_days: int = Field(
         default=7,
         description=(
-            "Re-check a row's URL when its last affirmative liveness evidence\n"
-            "(Date Verified, else Date Found) is at least this many days old."
+            "Re-check a row's URL when its last liveness evidence (Date\n"
+            "Verified, else Date Found) is at least this many days old."
         ),
     )
     unverified_age_days: int = Field(
         default=30,
         description=(
-            "Rows with no URL to check (indeed's bot wall, HN comment\n"
-            "permalinks) close as age-unverified once their last affirmative\n"
-            "liveness evidence (Date Verified, refreshed by scrape\n"
-            "re-sightings, else Date Found) is this many days old.\n"
-            "Deliberately generous: the label is honest about the weak\n"
-            "evidence, and a still-live posting a scrape re-finds reopens\n"
-            "loudly."
+            "Rows with no checkable URL (indeed bot wall, HN permalinks) close as\n"
+            "age-unverified once last evidence (Date Verified, refreshed by\n"
+            "re-sightings, else Date Found) is this old. Generous by design; a\n"
+            "re-found posting reopens loudly."
         ),
     )
 
@@ -549,16 +528,15 @@ class JobSearchPlugin(BaseModel):
     enrichment: EnrichmentConfig = Field(
         default=EnrichmentConfig(),
         description=(
-            "Post-scrape enrichment: an optional LLM pass that adds a fit score\n"
-            "and a Notes summary. The pass costs API calls; max_enrich_fit caps\n"
-            "how many run."
+            "Post-scrape LLM pass adding a fit score and Notes summary. Costs\n"
+            "API calls; max_enrich_fit caps how many run."
         ),
     )
     verify: VerifyConfig = Field(
         default=VerifyConfig(),
         description=(
             "`jobs verify` liveness checks for sources without full board\n"
-            "listings (board-backed rows are verified by board-diff each run)."
+            "listings (board-backed rows verify by board-diff each run)."
         ),
     )
     sources: dict[str, SourceToggle] = Field(
@@ -646,21 +624,17 @@ class JobSearchPlugin(BaseModel):
             },
             "template_example_block_comments": {
                 "remoteok": (
-                    "All keys are optional; omitted = on (SourceToggle defaults\n"
-                    "enabled=true). List a key with `false` to disable it.\n"
+                    "All keys optional; omitted = enabled (SourceToggle default).\n"
+                    "Set a key to `false` to disable it.\n"
                     "\n"
-                    "Scrapers shipped in this repo (HTTP/RSS, no extra deps):"
+                    "Shipped scrapers (HTTP/RSS, no extra deps):"
                 ),
-                "apple": (
-                    "Scrapers shipped in this repo (Playwright, needs"
-                    " `playwright install`):"
-                ),
+                "apple": ("Shipped scrapers (Playwright, needs `playwright install`):"),
                 "linkedin": (
-                    "LinkedIn + Indeed (each its own source). Each enabled site\n"
-                    "is fetched separately, under its own progress row. country\n"
-                    "(Indeed only) sets the regional host and is the fallback for\n"
-                    "countries the scraper does not recognize. Requires\n"
-                    "`python-jobspy>=1.1.82`."
+                    "LinkedIn + Indeed (JobSpy, needs python-jobspy>=1.1.82). Each\n"
+                    "site is fetched separately under its own progress row.\n"
+                    "`country` (Indeed only) sets the regional host and is the\n"
+                    "fallback for unrecognized countries."
                 ),
             },
         },

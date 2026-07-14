@@ -151,7 +151,14 @@ def _location_summary(ctx: ScrapeContext) -> str:
                 "in scope: " + "; ".join(city_bits)
             )
     if loc_cfg.remote:
-        parts.append("remote roles are acceptable from anywhere")
+        # Mirror the filter: remote is scoped to the listed countries unless
+        # remote_unlisted_countries is set (or no countries are configured).
+        if loc_cfg.remote_unlisted_countries or not loc_cfg.countries:
+            parts.append("remote roles are acceptable from anywhere")
+        else:
+            parts.append(
+                "remote roles are acceptable, but only within the listed countries"
+            )
     return "; ".join(parts)
 
 

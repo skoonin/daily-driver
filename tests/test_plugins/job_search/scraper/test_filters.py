@@ -120,6 +120,36 @@ class TestLocationMatches:
         assert location_matches({"location": "Copenhagen, Denmark"}, plugin) is True
         assert location_matches({"location": "Ottawa"}, plugin) is False
 
+    def test_remote_unlisted_country_dropped_by_default(self) -> None:
+        # Default (remote_unlisted_countries=False): a remote role naming a
+        # country not in `countries` is dropped even with remote enabled.
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "Canada (Remote)"}, plugin) is False
+        assert location_matches({"location": "London, United Kingdom"}, plugin) is False
+
+    def test_remote_configured_country_kept(self) -> None:
+        # A remote role naming a configured country passes, even though US is
+        # city-narrowed for onsite roles (remote keys off the country code set).
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "United States (Remote)"}, plugin) is True
+
+    def test_remote_naming_no_country_accepted(self) -> None:
+        # Ambiguous remote locations (no country named) are accepted by design.
+        plugin = _plugin(locations={"remote": True, "countries": {"US": ["charlotte"]}})
+        assert location_matches({"location": "Remote"}, plugin) is True
+        assert location_matches({"location": "Charlotte (Remote)"}, plugin) is True
+
+    def test_remote_unlisted_countries_flag_restores_anywhere(self) -> None:
+        # Opt-in flag brings back country-blind remote acceptance.
+        plugin = _plugin(
+            locations={
+                "remote": True,
+                "remote_unlisted_countries": True,
+                "countries": {"US": ["charlotte"]},
+            }
+        )
+        assert location_matches({"location": "Canada (Remote)"}, plugin) is True
+
 
 # ---------------------------------------------------------------------------
 # matches_roles

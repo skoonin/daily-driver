@@ -6,6 +6,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
+- **Remote job scraping is now scoped to your configured countries by default.** Previously `remote: true` accepted remote roles from every country, so a `plugins.job_search.locations` set up for remote-US roles still surfaced remote postings from Canada, the UK, India, and elsewhere. Remote roles that name a country outside your `countries` map are now dropped; ones that name a configured country — or name no country at all (a bare "Remote" or a city-only location) — still pass, and remote scoping is independent of the per-country city narrowing that governs onsite roles. Set `plugins.job_search.locations.remote_unlisted_countries: true` to restore the previous country-blind behavior. (#192)
+
 - **`/daily-driver:daily-learning` is now general-purpose, not interview-only.** The first run asks what you want to practice, whether you have a preferred teaching method, and how long sessions should run, then builds a workspace-local syllabus at `<output>/daily-learning/syllabus.md`. Later runs work from that syllabus (least-recently-covered topic first), default to a lens-first teaching style — open with one unifying principle, collapse concrete instances into it, then drill — unless you asked for something else, and honor the session length you set instead of a fixed cap. Replaces the fixed day-of-week focus rotation, and moves practice logs from `<output>/interview-practice/` to `<output>/daily-learning/`.
 
 ### Fixed
