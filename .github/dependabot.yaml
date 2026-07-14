@@ -2,6 +2,9 @@ version: 2
 updates:
   - package-ecosystem: pip
     directory: "/"
+    # PRs must land on the dev trunk; targeting the default branch (main)
+    # creates duplicate commits and diverges main from dev (bit us at v1.1.0).
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
@@ -18,6 +21,7 @@ updates:
 
   - package-ecosystem: github-actions
     directory: "/"
+    target-branch: dev
     schedule:
       interval: weekly
       day: monday
