@@ -321,6 +321,8 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
 
+Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
+
 Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape runs headless as before.
 
 Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
@@ -341,7 +343,7 @@ scheduler:
 
 ### `scheduler uninstall`
 
-`launchctl unload` + delete plist. State mirror under `.daily-driver/state/launchd/` is always removed.
+`launchctl unload` + delete plist. Pass one or more job names (same short-name or full-label forms as `install`) to remove only those, e.g. `scheduler uninstall jobs`; with no names, every known agent is removed. The state mirror under `.daily-driver/state/launchd/` is cleaned up alongside — the whole directory on a full uninstall, or just the named plists on a selective one.
 
 ### `scheduler status [--json]`
 

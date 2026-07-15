@@ -57,6 +57,64 @@ def test_install_scheduler_exits_0_and_reports_labels(
     assert "com.daily-driver.jobs" in combined
 
 
+def test_install_scheduler_selective_installs_only_named_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    calls = _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install", "checkin"])
+    out = capsys.readouterr()
+    combined = out.out + out.err
+
+    assert rc == 0
+    assert calls["load"] == ["com.daily-driver.checkin"]
+    assert "com.daily-driver.jobs" not in combined
+
+
+def test_install_scheduler_unknown_job_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install", "bogus"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "unknown scheduler job" in captured.err
+
+
+def test_uninstall_scheduler_selective_removes_only_named_job(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    app(["--workspace", str(ws), "scheduler", "install"])
+    rc = app(["--workspace", str(ws), "scheduler", "uninstall", "checkin"])
+    out = capsys.readouterr()
+    combined = out.out + out.err
+
+    assert rc == 0
+    assert "com.daily-driver.checkin" in combined
+    state_dir = ws / ".daily-driver" / "state" / "launchd"
+    # Only the named job's mirror is removed; the untouched one and dir survive.
+    assert not (state_dir / "com.daily-driver.checkin.plist").exists()
+    assert (state_dir / "com.daily-driver.jobs.plist").exists()
+
+
 def test_uninstall_scheduler_reports_no_op_when_nothing_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

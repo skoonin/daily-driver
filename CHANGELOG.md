@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Added
+
+- **`scheduler install` and `scheduler uninstall` now take specific job names.** Pass one or more jobs — by short name (`checkin`, `day-start`, `day-end`, `jobs`) or full launchd label — to install or remove only those, e.g. `scheduler install checkin day-start` or `scheduler uninstall jobs`; with no names, both commands still act on every job as before. A selective uninstall removes only the named plists (and their state mirrors), leaving the rest in place. Naming an unknown job, or installing a job with no time configured, is a clear error instead of a silent no-op. (#194)
+
 ## [1.1.0] — 2026-07-14
 
 ### Changed
