@@ -12,7 +12,7 @@ import importlib.resources
 import os
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,7 @@ class SchedulerError(Exception):
     pass
 
 
+_LABEL_PREFIX = "com.daily-driver."
 _LABEL_CHECKIN = "com.daily-driver.checkin"
 _LABEL_DAY_START = "com.daily-driver.day-start"
 _LABEL_DAY_END = "com.daily-driver.day-end"
@@ -329,6 +330,39 @@ def _plugin_managed_labels() -> tuple[str, ...]:
     return tuple(label for plugin in PLUGINS for label in plugin.launchd_labels)
 
 
+def known_labels() -> tuple[str, ...]:
+    """Every launchd label daily-driver can manage (core + plugin-contributed)."""
+    return (*_CORE_LABELS, *_plugin_managed_labels())
+
+
+def _short_label(label: str) -> str:
+    """Strip the shared `com.daily-driver.` prefix for display / matching."""
+    return label[len(_LABEL_PREFIX) :] if label.startswith(_LABEL_PREFIX) else label
+
+
+def resolve_labels(selectors: Sequence[str]) -> list[str]:
+    """Map user job selectors to canonical launchd labels.
+
+    Each selector is either a full label (``com.daily-driver.checkin``) or its
+    short suffix (``checkin``). Input order is preserved and duplicates are
+    collapsed. Raises SchedulerError naming the unknown selector and the valid
+    choices — validation lives here because selectors arrive from CLI argv.
+    """
+    known = known_labels()
+    resolved: list[str] = []
+    for selector in selectors:
+        raw = selector.strip()
+        candidate = raw if raw.startswith(_LABEL_PREFIX) else f"{_LABEL_PREFIX}{raw}"
+        if candidate not in known:
+            choices = ", ".join(_short_label(label) for label in known)
+            raise SchedulerError(
+                f"unknown scheduler job: {selector!r} (choose from: {choices})"
+            )
+        if candidate not in resolved:
+            resolved.append(candidate)
+    return resolved
+
+
 def render_plist(job: ScheduledJob) -> str:
     with importlib.resources.as_file(
         importlib.resources.files(job.template_package)
@@ -347,11 +381,13 @@ def _state_launchd_dir(workspace: Workspace) -> Path:
     return workspace.ephemeral_dir / "launchd"
 
 
-def install_all(workspace: Workspace) -> list[str]:
-    """Render, write, and load plists for all configured jobs.
+def install_all(workspace: Workspace, only: Sequence[str] | None = None) -> list[str]:
+    """Render, write, and load plists for configured jobs.
 
-    Idempotent: unloads any existing plist first, then reinstalls — picks up
-    environment / command-path changes on re-run.
+    `only` narrows the install to the named jobs (short names or full labels);
+    None installs every configured job. Idempotent: unloads any existing plist
+    first, then reinstalls — picks up environment / command-path changes on
+    re-run.
 
     Returns the list of labels installed.
     """
@@ -361,6 +397,16 @@ def install_all(workspace: Workspace) -> list[str]:
         raise SchedulerError(str(exc)) from exc
 
     jobs = build_jobs(workspace)
+    if only is not None:
+        wanted = resolve_labels(only)
+        built = {job.label for job in jobs}
+        not_configured = [label for label in wanted if label not in built]
+        if not_configured:
+            names = ", ".join(_short_label(label) for label in not_configured)
+            raise SchedulerError(f"job(s) not configured, nothing to install: {names}")
+        wanted_set = set(wanted)
+        jobs = [job for job in jobs if job.label in wanted_set]
+
     installed: list[str] = []
 
     for job in jobs:
@@ -385,10 +431,13 @@ def install_all(workspace: Workspace) -> list[str]:
     return installed
 
 
-def uninstall_all(workspace: Workspace) -> list[str]:
-    """Unload + remove plists for all known job labels.
+def uninstall_all(workspace: Workspace, only: Sequence[str] | None = None) -> list[str]:
+    """Unload + remove plists for known job labels.
 
-    Always also removes the mirrored copy under `.daily-driver/state/launchd/`.
+    `only` narrows removal to the named jobs (short names or full labels); None
+    sweeps every known label. The mirrored copies under
+    `.daily-driver/state/launchd/` are removed alongside — the whole directory
+    on a full uninstall, or just the named plists on a selective one.
     Returns the list of labels that had plists present and were removed.
     """
     try:
@@ -396,20 +445,23 @@ def uninstall_all(workspace: Workspace) -> list[str]:
     except launchd_int.LaunchdUnavailableError as exc:
         raise SchedulerError(str(exc)) from exc
 
+    labels = known_labels() if only is None else resolve_labels(only)
+
     removed: list[str] = []
-    for label in (
-        *_CORE_LABELS,
-        *_plugin_managed_labels(),
-    ):
+    for label in labels:
         launchd_int.unload(label)
         if launchd_int.remove(label):
             removed.append(label)
 
     state_dir = _state_launchd_dir(workspace)
-    if state_dir.exists():
-        # rmtree handles non-empty trees and is idempotent under ignore_errors —
-        # safer than iterdir + unlink which crashes if a non-plist subdir lands here.
-        shutil.rmtree(state_dir, ignore_errors=True)
+    if only is None:
+        if state_dir.exists():
+            # rmtree handles non-empty trees and is idempotent under ignore_errors —
+            # safer than iterdir + unlink which crashes if a non-plist subdir lands here.
+            shutil.rmtree(state_dir, ignore_errors=True)
+    else:
+        for label in labels:
+            (state_dir / f"{label}.plist").unlink(missing_ok=True)
 
     return removed
 

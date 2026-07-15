@@ -522,3 +522,116 @@ class TestInstallUninstall:
 
         state_dir = ws.ephemeral_dir / "launchd"
         assert not state_dir.exists()
+
+    def test_install_only_narrows_to_named_job(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        calls = self._patch_launchd(monkeypatch, tmp_path)
+
+        installed = scheduler.install_all(ws, only=["checkin"])
+
+        assert installed == ["com.daily-driver.checkin"]
+        assert calls["load"] == ["com.daily-driver.checkin"]
+        state_dir = ws.ephemeral_dir / "launchd"
+        assert (state_dir / "com.daily-driver.checkin.plist").exists()
+        assert not (state_dir / "com.daily-driver.jobs.plist").exists()
+
+    def test_install_only_accepts_full_label(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        installed = scheduler.install_all(ws, only=["com.daily-driver.jobs"])
+
+        assert installed == ["com.daily-driver.jobs"]
+
+    def test_install_only_unknown_job_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        with pytest.raises(scheduler.SchedulerError, match="unknown scheduler job"):
+            scheduler.install_all(ws, only=["bogus"])
+
+    def test_install_only_unconfigured_job_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A known-but-unconfigured job (no time set) is a clear error, not a no-op."""
+        monkeypatch.setattr(sys, "platform", "darwin")
+        # Default schedule leaves day_start/day_end unset -> day-start has no job.
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        with pytest.raises(scheduler.SchedulerError, match="not configured"):
+            scheduler.install_all(ws, only=["day-start"])
+
+    def test_uninstall_only_removes_named_job_and_mirror(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        scheduler.install_all(ws)
+        removed = scheduler.uninstall_all(ws, only=["checkin"])
+
+        assert removed == ["com.daily-driver.checkin"]
+        state_dir = ws.ephemeral_dir / "launchd"
+        # Named mirror gone, the untouched job's mirror and the dir itself remain.
+        assert not (state_dir / "com.daily-driver.checkin.plist").exists()
+        assert (state_dir / "com.daily-driver.jobs.plist").exists()
+        assert state_dir.exists()
+
+    def test_uninstall_only_unknown_job_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "darwin")
+        ws = _FakeWorkspace.make(tmp_path)
+        self._patch_launchd(monkeypatch, tmp_path)
+
+        with pytest.raises(scheduler.SchedulerError, match="unknown scheduler job"):
+            scheduler.uninstall_all(ws, only=["bogus"])
+
+
+class TestResolveLabels:
+    def test_known_labels_include_core_and_plugin(self) -> None:
+        labels = scheduler.known_labels()
+        assert "com.daily-driver.checkin" in labels
+        assert "com.daily-driver.day-start" in labels
+        assert "com.daily-driver.day-end" in labels
+        assert "com.daily-driver.jobs" in labels
+
+    def test_short_and_full_selectors_resolve(self) -> None:
+        assert scheduler.resolve_labels(["checkin"]) == ["com.daily-driver.checkin"]
+        assert scheduler.resolve_labels(["com.daily-driver.jobs"]) == [
+            "com.daily-driver.jobs"
+        ]
+
+    def test_order_preserved_duplicates_collapsed(self) -> None:
+        resolved = scheduler.resolve_labels(
+            ["jobs", "checkin", "com.daily-driver.jobs"]
+        )
+        assert resolved == ["com.daily-driver.jobs", "com.daily-driver.checkin"]
+
+    def test_unknown_selector_lists_choices(self) -> None:
+        with pytest.raises(scheduler.SchedulerError, match="choose from") as exc_info:
+            scheduler.resolve_labels(["nope"])
+        assert "checkin" in str(exc_info.value)

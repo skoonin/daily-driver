@@ -24,13 +24,27 @@ def add_parser(
         parents=parents,
         help="Install launchd agents for configured jobs",
     )
+    p_install.add_argument(
+        "jobs",
+        nargs="*",
+        metavar="<job>",
+        help="Job(s) to install by short name (checkin, day-start, day-end, jobs)"
+        " or full label; default: all configured jobs",
+    )
     add_global_flags(p_install)
     p_install.set_defaults(func=_run_install)
 
     p_uninstall = nested.add_parser(
         "uninstall",
         parents=parents,
-        help="Remove all daily-driver launchd agents",
+        help="Remove daily-driver launchd agents",
+    )
+    p_uninstall.add_argument(
+        "jobs",
+        nargs="*",
+        metavar="<job>",
+        help="Job(s) to remove by short name (checkin, day-start, day-end, jobs)"
+        " or full label; default: all installed jobs",
     )
     add_global_flags(p_uninstall)
     p_uninstall.set_defaults(func=_run_uninstall)
@@ -66,7 +80,7 @@ def _run_install(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        installed = install_all(workspace)
+        installed = install_all(workspace, only=args.jobs or None)
     except SchedulerError as exc:
         Console.error(str(exc))
         return 1
@@ -96,7 +110,7 @@ def _run_uninstall(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        removed = uninstall_all(workspace)
+        removed = uninstall_all(workspace, only=args.jobs or None)
     except SchedulerError as exc:
         Console.error(str(exc))
         return 1
