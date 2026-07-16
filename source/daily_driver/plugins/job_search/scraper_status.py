@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from daily_driver.plugins.job_search.scraper.csv_io import JOBS_CSV_READ_ENCODING
+
 # States where the user is passively waiting on an external response.
 _AWAITING_ACTION_STATES = {"applied", "interviewing"}
 
@@ -44,7 +46,7 @@ def count_jobs_by_state(csv_path: Path) -> dict[str, int]:
         return {}
     counts: dict[str, int] = {}
     try:
-        with open(csv_path, newline="", encoding="utf-8") as fh:
+        with open(csv_path, newline="", encoding=JOBS_CSV_READ_ENCODING) as fh:
             reader = csv.DictReader(fh)
             for row in reader:
                 # The canonical jobs.csv column is "Status" (capitalized, per
@@ -79,7 +81,7 @@ def count_unscored_backlog(csv_path: Path) -> int:
         return 0
     backlog = 0
     try:
-        with open(csv_path, newline="", encoding="utf-8") as fh:
+        with open(csv_path, newline="", encoding=JOBS_CSV_READ_ENCODING) as fh:
             for row in csv.DictReader(fh):
                 if (row.get("Date Enriched") or "").strip():
                     continue

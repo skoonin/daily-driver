@@ -139,6 +139,24 @@ def test_make_backup_uses_utc_iso_stamp(tmp_path: Path) -> None:
     ), backup.name
 
 
+def test_read_rows_strips_utf8_bom(tmp_path: Path) -> None:
+    """read_rows must strip a leading UTF-8 BOM so the first column stays "Status".
+
+    Excel/Numbers prepend a BOM on "Save As CSV UTF-8", which otherwise names
+    the first column "﻿Status" and makes every row.get("Status") return None.
+    """
+    from daily_driver.plugins.job_search.scraper.csv_io import read_rows
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_minimal_csv(csv_path)
+    csv_path.write_bytes(b"\xef\xbb\xbf" + csv_path.read_bytes())
+
+    header, rows = read_rows(csv_path)
+
+    assert header[0] == "Status"
+    assert rows[0]["Status"] == "found"
+
+
 def test_canonicalize_status_cells_returns_changed_pairs() -> None:
     """canonicalize_status_cells mutates rows in place and reports real changes."""
     from daily_driver.plugins.job_search.scraper.csv_io import (

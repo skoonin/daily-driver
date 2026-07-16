@@ -18,6 +18,14 @@ from daily_driver.plugins.job_search.scraper.models import (
 
 log = get_logger(__name__)
 
+# Read jobs.csv (and jobs.archive.csv) BOM-tolerant: Excel/Numbers prepend a
+# UTF-8 BOM when they re-save a CSV, which turns the first column name into
+# "﻿Status" and makes every `row.get("Status")` return None (silently
+# breaking prune, status counts, verify). `utf-8-sig` strips a leading BOM on
+# read and is a no-op without one. Writes stay plain "utf-8" so we never emit a
+# BOM — the next atomic rewrite then drops any BOM an editor introduced.
+JOBS_CSV_READ_ENCODING = "utf-8-sig"
+
 
 def canonicalize_status_cells(rows: list[dict[str, str]]) -> list[tuple[str, str]]:
     """Canonicalize the Status spelling of each row in place; report the changes.
@@ -90,7 +98,7 @@ def read_rows(csv_path: Path) -> tuple[list[str], list[dict[str, str]]]:
     """
     if not csv_path.exists():
         return [], []
-    with open(csv_path, newline="", encoding="utf-8") as f:
+    with open(csv_path, newline="", encoding=JOBS_CSV_READ_ENCODING) as f:
         reader = csv.DictReader(f)
         header = list(reader.fieldnames or [])
         rows = [dict(r) for r in reader]
@@ -173,7 +181,7 @@ def load_existing_jobs(csv_path: Path) -> tuple[set[str], set[str], list[str]]:
     if not csv_path.exists():
         return set(), set(), []
     try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
+        with open(csv_path, newline="", encoding=JOBS_CSV_READ_ENCODING) as f:
             reader = csv.reader(f)
             try:
                 header = next(reader)
