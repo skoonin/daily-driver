@@ -37,6 +37,20 @@ def test_count_jobs_by_state_buckets_unknown(tmp_path: Path) -> None:
     assert counts == {"applied": 2, "unknown": 1, "interviewing": 1}
 
 
+def test_count_jobs_by_state_tolerates_utf8_bom(tmp_path: Path) -> None:
+    """A jobs.csv re-saved with a UTF-8 BOM must still bucket by real status.
+
+    Without BOM-tolerant reads the first column name became "﻿Status", so
+    every row.get("Status") returned None and the whole dashboard collapsed to
+    "unknown".
+    """
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(csv_path, ["applied", "interviewing"])
+    csv_path.write_bytes(b"\xef\xbb\xbf" + csv_path.read_bytes())
+    counts = scraper_status.count_jobs_by_state(csv_path)
+    assert counts == {"applied": 1, "interviewing": 1}
+
+
 def test_count_jobs_by_state_normalizes_status_spelling(tmp_path: Path) -> None:
     """A hand-edited `Ruled_Out` and a canonical `ruled-out` are the same status;
     they must group under one count key (normalize_status), not split into two

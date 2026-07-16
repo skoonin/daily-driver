@@ -326,6 +326,33 @@ def test_prune_partitions_stale_and_kept_rows(tmp_path: Path) -> None:
     }
 
 
+def test_prune_archives_rows_from_bom_prefixed_csv(tmp_path: Path) -> None:
+    """A jobs.csv re-saved with a UTF-8 BOM (Excel/Numbers) must still prune.
+
+    The BOM turns the first column name into "﻿Status", so every
+    row.get("Status") read None and no row ever matched the prune status set —
+    prune silently archived nothing regardless of dates. The reader now opens
+    BOM-tolerant, so the stale dropped row is classified and archived.
+    """
+    csv_path = tmp_path / "jobs.csv"
+    _write_csv(
+        csv_path,
+        [
+            _row(company="Old", link="old", status="dropped", last_seen="2026-04-01"),
+            _row(company="Active", link="act", status="found", last_seen="2026-04-01"),
+        ],
+    )
+    # Prepend a UTF-8 BOM, mimicking a spreadsheet "Save As CSV UTF-8".
+    original = csv_path.read_bytes()
+    csv_path.write_bytes(b"\xef\xbb\xbf" + original)
+
+    candidates, archived = jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+    assert archived == 1
+    assert {r["Link"] for r in candidates} == {"old"}
+    assert {r["Link"] for r in _read_csv(csv_path)} == {"act"}
+
+
 def test_prune_reconciles_drifted_archive_header(tmp_path: Path) -> None:
     """An existing archive with an OLD/narrower header must not corrupt when prune
     appends rows under jobs.csv's NEW header (the Remote-column upgrade path).
