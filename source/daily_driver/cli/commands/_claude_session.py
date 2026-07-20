@@ -11,19 +11,20 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-from collections.abc import Callable
+import uuid
 from datetime import date
 from pathlib import Path
 
-from daily_driver.cli._common import (
-    add_global_flags,
-    add_session_args,
-    resolve_workspace,
-)
-from daily_driver.core import focus
+from daily_driver.core import clock, focus
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.logging import get_logger
+from daily_driver.core.session_pointer import (
+    SessionPointer,
+    SessionPointerError,
+    read_pointer,
+    write_pointer,
+)
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.integrations import claude_cli, notify, terminal_launcher
 
@@ -109,58 +110,6 @@ def handle_launch_mode(
     return 0
 
 
-def _build_run(
-    slash_command: str, session_prefix: str, cmd_name: str
-) -> Callable[[argparse.Namespace], int]:
-    """Return a run() function bound to the given slash command and session prefix."""
-
-    def run(args: argparse.Namespace) -> int:
-        try:
-            workspace = resolve_workspace(args)
-            diverted = handle_launch_mode(args, workspace, cmd_name)
-            if diverted is not None:
-                return diverted
-            require_claude_available()
-            return launch_interactive(
-                slash_command=slash_command,
-                workspace=workspace,
-                session_name=default_session_name(session_prefix, args.session_name),
-                agent=args.agent,
-                model=resolve_interactive_model(workspace, args.model),
-            )
-        except Exception as exc:  # noqa: BLE001
-            return handle_launch_exception(exc)
-
-    return run
-
-
-def register_interactive_launcher(
-    subparsers: argparse._SubParsersAction,  # type: ignore[type-arg]
-    *,
-    cmd_name: str,
-    slash_command: str,
-    help_text: str,
-    session_prefix: str,
-    parents: list[argparse.ArgumentParser] | None = None,
-) -> argparse.ArgumentParser:
-    """Register a standard interactive Claude launcher subcommand.
-
-    All three daily workflow launchers (day-start, day-end, check-in) share
-    identical argparse structure; only the command name, slash command string,
-    help text, and session prefix differ.
-    """
-    parser = subparsers.add_parser(
-        cmd_name,
-        parents=parents or [],
-        help=help_text,
-    )
-    add_session_args(parser)
-    add_launch_mode_arg(parser)
-    add_global_flags(parser)
-    parser.set_defaults(func=_build_run(slash_command, session_prefix, cmd_name))
-    return parser
-
-
 def require_claude_available() -> None:
     if not claude_cli.available():
         raise SessionError(
@@ -188,28 +137,6 @@ def resolve_interactive_model(
     return cli_model or workspace.config.ai.interactive.model
 
 
-def launch_interactive(
-    *,
-    slash_command: str,
-    workspace: Workspace,
-    session_name: str,
-    agent: str = "work-planner",
-    model: str | None = None,
-) -> int:
-    """Launch an interactive claude session driving `slash_command`.
-
-    The slash command is passed as the opening prompt -- claude resolves
-    it against `<workspace>/.claude/commands/` (generated on `init`).
-    """
-    return claude_cli.spawn_interactive(
-        prompt=slash_command,
-        agent=agent,
-        session_name=session_name,
-        add_dirs=[workspace.root],
-        model=model,
-    )
-
-
 def launch_headless(
     *,
     slash_command: str,
@@ -231,6 +158,75 @@ def launch_headless(
     )
 
 
+def launch_fresh_and_record(
+    *,
+    workspace: Workspace,
+    prompt: str | None,
+    session_name: str,
+    agent: str,
+    model: str | None,
+    session_id: str | None = None,
+) -> int:
+    """Mint a session UUID, record it as the workspace's most-recent session, spawn.
+
+    The pointer is written BEFORE the spawn so a still-running session is
+    reattachable mid-life (a crashed tab can be resumed while claude is up).
+    `session_id` lets a caller (day-start) pre-mint the UUID so it can record
+    the same id in its own per-day state; when omitted a fresh one is minted.
+    """
+    resolved_id = session_id or str(uuid.uuid4())
+    write_pointer(
+        workspace,
+        SessionPointer(last_session_id=resolved_id, last_session_at=clock.now()),
+    )
+    return claude_cli.spawn_interactive(
+        prompt=prompt,
+        agent=agent,
+        session_name=session_name,
+        add_dirs=[workspace.root],
+        model=model,
+        session_id=resolved_id,
+    )
+
+
+def reattach_or_fresh(
+    *,
+    workspace: Workspace,
+    prompt: str | None,
+    session_name: str,
+    agent: str,
+    model: str | None,
+) -> int:
+    """Reattach to the most-recent workspace session, or start fresh if none exists.
+
+    Reads the workspace session pointer and, when present, reattaches via
+    `claude --resume <uuid>` (replaying `prompt` into the resumed conversation),
+    returning claude's exit code. When the recorded session can no longer be
+    resumed, claude reports it (e.g. "No conversation found with session ID")
+    and exits non-zero — that code propagates to the caller rather than silently
+    launching an untethered fresh session. When no session has been recorded
+    yet, a fresh one is started and recorded.
+    """
+    pointer = read_pointer(workspace)
+    resume_id = pointer.last_session_id if pointer else None
+    if resume_id is None:
+        return launch_fresh_and_record(
+            workspace=workspace,
+            prompt=prompt,
+            session_name=session_name,
+            agent=agent,
+            model=model,
+        )
+    return claude_cli.spawn_interactive(
+        prompt=prompt,
+        agent=agent,
+        session_name=session_name,
+        add_dirs=[workspace.root],
+        model=model,
+        resume_session_id=resume_id,
+    )
+
+
 def handle_launch_exception(exc: BaseException) -> int:
     """Translate subprocess / launcher failures into CLI exit codes with a user-visible message."""
     if isinstance(exc, (SessionError, WorkspaceError)):
@@ -239,9 +235,9 @@ def handle_launch_exception(exc: BaseException) -> int:
     if isinstance(exc, claude_cli.ClaudeNotFoundError):
         Console.error(str(exc))
         return 1
-    if isinstance(exc, DailyStateError):
-        # F1 raises this with the on-disk path baked in; surface it cleanly so
-        # the user can hand-edit / delete the offending YAML.
+    if isinstance(exc, (DailyStateError, SessionPointerError)):
+        # Both raise with the on-disk path baked in; surface it cleanly so the
+        # user can hand-edit / delete the offending YAML.
         Console.error(str(exc))
         return 1
     if isinstance(exc, claude_cli.ClaudeTimeoutError):

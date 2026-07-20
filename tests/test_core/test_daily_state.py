@@ -117,7 +117,7 @@ def test_write_state_creates_parent_directory(tmp_path: Path) -> None:
 def test_write_state_atomic_no_tmp_left_on_replace_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from daily_driver.core import daily_state as ds_mod
+    from daily_driver.core import yaml_store as ys_mod
     from daily_driver.core.daily_state import DailyState, state_path, write_state
 
     ws = _ws(tmp_path)
@@ -131,7 +131,8 @@ def test_write_state_atomic_no_tmp_left_on_replace_failure(
     def boom(*args: object, **kwargs: object) -> None:
         raise OSError("simulated crash mid-replace")
 
-    monkeypatch.setattr(ds_mod.os, "replace", boom)
+    # The atomic write now lives in yaml_store; patch os.replace there.
+    monkeypatch.setattr(ys_mod.os, "replace", boom)
 
     with pytest.raises(OSError, match="simulated crash"):
         write_state(ws, DailyState(date=date(2026, 5, 8)))

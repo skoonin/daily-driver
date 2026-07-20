@@ -150,6 +150,10 @@ daily-driver/
 │   ├── --model {sonnet,opus,haiku}
 │   ├── --no-resume
 │   └── --launch {terminal,notify}  (scheduler firing mode)
+├── resume
+│   ├── --session-name NAME
+│   ├── --agent NAME (default: work-planner)
+│   └── --model {sonnet,opus,haiku}
 ├── summary
 │   ├── -r, --range SPEC (required)
 │   ├── --detail {low,med,high}

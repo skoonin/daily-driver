@@ -38,6 +38,8 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver focus {on,off,status}` — flock-backed check-in suppression.
 - `daily-driver day-start | day-end | check-in` — interactive Claude-session
   launchers (read-only scaffold + `claude --add-dir workspace`).
+- `daily-driver resume` — reattach to the workspace's most recent Claude session
+  (`claude --resume <uuid>`) when a launcher tab is closed or lost.
 - `daily-driver summary --range SPEC` — headless period summary via `claude`;
   prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of

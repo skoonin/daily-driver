@@ -183,9 +183,15 @@ Spawn a nested `claude` session with the `work-planner` agent, the workspace as 
 
 Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--session-name NAME`.
 
-`check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the day-start session (controlled by `claude.resume_check_in` in `.dd-config.yaml`).
+`check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the workspace's most recent session (resume is controlled by `claude.resume_check_in` in `.dd-config.yaml`, default off).
 
 All three launchers accept `--launch {terminal,notify}`, used by the scheduler's launchd firings (which have no terminal to run in): `terminal` opens the session in a new iTerm2 tab (Terminal.app if iTerm2 is absent) via AppleScript, and `notify` posts a clickable macOS notification that opens the tab on click (requires `terminal-notifier`; without it the notification tells you the command to run). The scheduled plists pass `notify` for all three — from the launchd background context AppleScript cannot drive the terminal (the Apple Events handshake hangs, notably on a locked screen), so a firing nudges you and the `terminal` mode runs on click, from your own session where the one-time Automation permission is available. A scheduled check-in notification is suppressed while focus mode is on.
+
+Each of these launchers records the id of the session it starts as the workspace's "most recent session", which `resume` (below) and a resuming `check-in` reattach to.
+
+### `resume`
+
+`resume` reattaches to the workspace's most recent Claude session via `claude --resume <uuid>` — the same session pointer a resuming `check-in` uses. Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost: it drops you back into that conversation through the normal launcher path, so the workspace's configured model, agent, and `--add-dir` still apply (unlike a bare `claude -c`). It accepts the shared session flags (`--agent`, `--model`, `--session-name`) but not `--launch` — it is a manual recovery command, not a scheduled one. With no prior session recorded it prints a clear notice instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that ("No conversation found with session ID") and `resume` exits with claude's code — run `day-start` to begin fresh.
 
 ### In-session slash commands
 
