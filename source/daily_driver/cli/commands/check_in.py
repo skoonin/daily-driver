@@ -1,10 +1,12 @@
 """check-in subcommand: interactive mid-day review session via `claude`.
 
-When `claude.resume_check_in` is enabled in `.dd-config.yaml` AND today's daily
-state has a `last_day_start_session_id`, /daily-driver:check-in attempts
-`claude --resume <uuid>` so the morning's planning context is already loaded.
-On any resume failure (ClaudeInvocationError from the integrations seam), we
-fall back to a fresh session and log a warning — never silently fail.
+When `claude.resume_check_in` is enabled in `.dd-config.yaml`, /daily-driver:check-in
+reattaches to the workspace's most-recent session (the same pointer `resume`
+uses) via `claude --resume <uuid>`, replaying the check-in prompt into that
+conversation. When no session has been recorded yet, it starts a fresh one; if
+the recorded session can no longer be resumed, claude reports it and check-in
+exits with claude's code. The `--no-resume` flag forces a fresh session
+regardless of config.
 
 After the session exits 0, `last_check_in_at` is recorded so the next /daily-driver:check-in
 can bound `gather sessions` / `gather git` since the prior check-in (#35).
@@ -24,6 +26,8 @@ from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
     handle_launch_mode,
+    launch_fresh_and_record,
+    reattach_or_fresh,
     require_claude_available,
     resolve_interactive_model,
 )
@@ -37,7 +41,6 @@ from daily_driver.core.daily_state import (
 )
 from daily_driver.core.logging import get_logger
 from daily_driver.core.workspace import Workspace
-from daily_driver.integrations import claude_cli
 
 _SLASH_COMMAND = "/daily-driver:check-in"
 _SESSION_PREFIX = "check-in"
@@ -60,7 +63,7 @@ def add_parser(
         "--no-resume",
         action="store_true",
         default=False,
-        help="Start a fresh Claude session instead of resuming the day-start session",
+        help="Start a fresh Claude session instead of resuming the most recent session",
     )
     add_global_flags(parser)
     parser.set_defaults(func=run)
@@ -89,46 +92,25 @@ def run(args: argparse.Namespace) -> int:
             return diverted
         require_claude_available()
 
-        today = clock.today()
-        state = read_state(workspace, today)
-        resume_id: str | None = None
-        if (
-            not args.no_resume
-            and workspace.config.claude.resume_check_in
-            and state is not None
-            and state.last_day_start_session_id is not None
-        ):
-            resume_id = state.last_day_start_session_id
-
         session_name = args.session_name or default_session_name(_SESSION_PREFIX, None)
+        model = resolve_interactive_model(workspace, args.model)
+        should_resume = not args.no_resume and workspace.config.claude.resume_check_in
 
-        try:
-            rc = claude_cli.spawn_interactive(
+        if should_resume:
+            rc = reattach_or_fresh(
+                workspace=workspace,
                 prompt=_SLASH_COMMAND,
-                agent=args.agent,
                 session_name=session_name,
-                add_dirs=[workspace.root],
-                model=resolve_interactive_model(workspace, args.model),
-                resume_session_id=resume_id,
+                agent=args.agent,
+                model=model,
             )
-        except claude_cli.ClaudeInvocationError as exc:
-            if resume_id is None:
-                raise
-            _log.warning(
-                "claude --resume %s failed (exit %s); starting fresh session",
-                resume_id,
-                exc.returncode,
-            )
-            Console.warning(
-                f"could not resume session {resume_id} "
-                f"(claude exit {exc.returncode}); starting fresh"
-            )
-            rc = claude_cli.spawn_interactive(
+        else:
+            rc = launch_fresh_and_record(
+                workspace=workspace,
                 prompt=_SLASH_COMMAND,
-                agent=args.agent,
                 session_name=session_name,
-                add_dirs=[workspace.root],
-                model=resolve_interactive_model(workspace, args.model),
+                agent=args.agent,
+                model=model,
             )
 
         if rc == 0:

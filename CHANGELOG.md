@@ -6,7 +6,13 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
+- **New `daily-driver resume` command reattaches to the workspace's most recent Claude session.** When a `day-start`, `day-end`, or `check-in` tab is closed or lost, `resume` reopens that conversation via `claude --resume <uuid>` through the normal launcher path — so your configured interactive model, agent, and workspace `--add-dir` still apply, unlike a bare `claude -c`. With no session recorded yet it says so instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that and `resume` exits with claude's code (run `day-start` to begin fresh). Every launcher now records the session it starts, so "most recent" tracks `day-start`, `day-end`, and `check-in` alike. (#199)
+
 - **`scheduler install` and `scheduler uninstall` now take specific job names.** Pass one or more jobs — by short name (`checkin`, `day-start`, `day-end`, `jobs`) or full launchd label — to install or remove only those, e.g. `scheduler install checkin day-start` or `scheduler uninstall jobs`; with no names, both commands still act on every job as before. A selective uninstall removes only the named plists (and their state mirrors), leaving the rest in place. Naming an unknown job, or installing a job with no time configured, is a clear error instead of a silent no-op. (#194)
+
+### Changed
+
+- **`check-in` resume now reattaches to the workspace's most recent session, not only the morning `day-start` session.** With `claude.resume_check_in` enabled (still off by default), `check-in` reattaches to whichever session ran last — `day-start`, an earlier `check-in`, or `day-end` — sharing the same session pointer as the new `resume` command. Behavior is unchanged when the flag is off. (#199)
 
 ### Fixed
 

@@ -319,8 +319,8 @@ class ClaudeConfig(BaseModel):
     resume_check_in: bool = Field(
         default=False,
         description=(
-            "When true, `check-in` resumes the prior claude session instead of\n"
-            "opening a fresh one."
+            "When true, `check-in` resumes the workspace's most recent claude\n"
+            "session instead of opening a fresh one."
         ),
     )
 

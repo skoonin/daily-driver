@@ -37,26 +37,59 @@ CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`.
 
 Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace).
 
-Create `source/daily_driver/cli/commands/review.py`:
+Create `source/daily_driver/cli/commands/review.py`. Wire the parser by hand and call `launch_fresh_and_record` from `_claude_session` — it mints a `--session-id` and records it as the workspace's most-recent session so `resume` can reattach later (see `day_end.py` for the canonical shape):
 
 ```python
-from daily_driver.cli.commands._claude_session import register_interactive_launcher
+from __future__ import annotations
+import argparse
+
+from daily_driver.cli._common import (
+    add_global_flags,
+    add_session_args,
+    resolve_workspace,
+)
+from daily_driver.cli.commands._claude_session import (
+    add_launch_mode_arg,
+    default_session_name,
+    handle_launch_exception,
+    handle_launch_mode,
+    launch_fresh_and_record,
+    require_claude_available,
+    resolve_interactive_model,
+)
+
+_SLASH_COMMAND = "/daily-driver:review"
+_SESSION_PREFIX = "review"
 
 def add_parser(subparsers, parents):
-    return register_interactive_launcher(
-        subparsers,
-        cmd_name="review",
-        slash_command="/review",
-        help_text="Interactive review session",
-        session_prefix="review",
-        parents=parents,
+    parser = subparsers.add_parser(
+        "review", parents=parents, help="Interactive review session"
     )
+    add_session_args(parser)
+    add_launch_mode_arg(parser)  # omit for a manual-only command (e.g. resume)
+    add_global_flags(parser)
+    parser.set_defaults(func=run)
+    return parser
 
-def run(args):
-    return args.func(args)
+def run(args: argparse.Namespace) -> int:
+    try:
+        workspace = resolve_workspace(args)
+        diverted = handle_launch_mode(args, workspace, "review")
+        if diverted is not None:
+            return diverted
+        require_claude_available()
+        return launch_fresh_and_record(
+            workspace=workspace,
+            prompt=_SLASH_COMMAND,
+            session_name=default_session_name(_SESSION_PREFIX, args.session_name),
+            agent=args.agent,
+            model=resolve_interactive_model(workspace, args.model),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return handle_launch_exception(exc)
 ```
 
-For headless flows, call `launch_headless()` from `_claude_session` with captured stdout.
+To reattach to an existing session instead of starting fresh, call `reattach_or_fresh` (see `check_in.py` and `resume.py`). For headless flows, call `launch_headless()` from `_claude_session` with captured stdout.
 
 ### Checklist
 

@@ -27,6 +27,7 @@ from daily_driver.cli.commands._claude_session import (
     default_session_name,
     handle_launch_exception,
     handle_launch_mode,
+    launch_fresh_and_record,
     require_claude_available,
     resolve_interactive_model,
 )
@@ -38,7 +39,6 @@ from daily_driver.core.daily_state import (
     write_state,
 )
 from daily_driver.core.workspace import Workspace
-from daily_driver.integrations import claude_cli
 
 _SLASH_COMMAND = "/daily-driver:day-start"
 _SESSION_PREFIX = "day-cycle"
@@ -88,22 +88,25 @@ def _write_plan_stub_if_absent(path: Path, day: date_cls) -> None:
     path.write_text(stub, encoding="utf-8")
 
 
-def _record_day_start(workspace: Workspace, day: date_cls, session_id: str) -> None:
-    """Merge a new day-start into today's state, preserving prior fields."""
+def _record_day_start(workspace: Workspace, day: date_cls) -> None:
+    """Merge a new day-start into today's state, preserving prior fields.
+
+    The session id is recorded workspace-wide by `launch_fresh_and_record` (the
+    resume source); per-day state only tracks when day-start ran and whether it
+    was late.
+    """
     started_at = clock.now()
     late = is_late_day(workspace, started_at)
     existing = read_state(workspace, day)
     if existing is None:
         state = DailyState(
             date=day,
-            last_day_start_session_id=session_id,
             last_day_start_at=started_at,
             late_day=late,
         )
     else:
         state = existing.model_copy(
             update={
-                "last_day_start_session_id": session_id,
                 "last_day_start_at": started_at,
                 "late_day": late,
             }
@@ -125,14 +128,14 @@ def run(args: argparse.Namespace) -> int:
         session_id = str(uuid.uuid4())
 
         _write_plan_stub_if_absent(_plan_path(workspace, today), today)
-        _record_day_start(workspace, today, session_id)
+        _record_day_start(workspace, today)
 
         session_name = args.session_name or default_session_name(_SESSION_PREFIX, None)
-        return claude_cli.spawn_interactive(
+        return launch_fresh_and_record(
+            workspace=workspace,
             prompt=_SLASH_COMMAND,
-            agent=args.agent,
             session_name=session_name,
-            add_dirs=[workspace.root],
+            agent=args.agent,
             model=resolve_interactive_model(workspace, args.model),
             session_id=session_id,
         )

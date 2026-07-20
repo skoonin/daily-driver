@@ -4,23 +4,19 @@ Each day's state lives at `<workspace.ephemeral_dir>/daily/YYYY-MM-DD.yaml`
 (i.e. `<root>/.daily-driver/state/daily/YYYY-MM-DD.yaml`). Per-day filename
 keeps midnight-rollover unambiguous and gives every day its own flock.
 
-Atomic writes mirror the pattern in `core/voice.py:apply_update`: tempfile
-in the same directory, fsync, then `os.replace`. Concurrent writers are
-serialized via `core/locking.py:file_lock` on a sibling `.lock` file.
+Durable read/write (shared-lock read, exclusive-lock atomic write via tempfile +
+fsync + `os.replace`) is delegated to `core/yaml_store.py`, shared with
+`core/session_pointer.py`.
 """
 
 from __future__ import annotations
 
-import os
-import tempfile
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
-from daily_driver.core import clock
-from daily_driver.core.locking import file_lock
+from daily_driver.core import clock, yaml_store
 from daily_driver.core.workspace import Workspace
 
 # 2 hours past schedule.day_start counts as "late". Hardcoded — YAGNI on a
@@ -52,63 +48,22 @@ def state_path(workspace: Workspace, day: date) -> Path:
     return workspace.ephemeral_dir / "daily" / f"{day.isoformat()}.yaml"
 
 
-def _lock_path(target: Path) -> Path:
-    return target.with_suffix(target.suffix + ".lock")
-
-
 def read_state(workspace: Workspace, day: date) -> DailyState | None:
-    """Read the day's state YAML.
+    """Read the day's state YAML (None when absent).
 
-    Returns None when the file is absent. Raises DailyStateError (with the
-    on-disk path) when the file exists but is unparseable or fails schema
-    validation — surfaces actionable context to the user instead of a bare
-    YAMLError / ValidationError. Hand-editing this file is unsupported but
-    happens; the path makes the error recoverable.
+    Raises DailyStateError (with the on-disk path) when the file exists but is
+    unparseable or fails schema validation — surfaces actionable context to the
+    user instead of a bare YAMLError / ValidationError. Hand-editing this file is
+    unsupported but happens; the path makes the error recoverable.
     """
-    target = state_path(workspace, day)
-    with file_lock(_lock_path(target), shared=True):
-        try:
-            raw = target.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return None
-    try:
-        data = yaml.safe_load(raw)
-    except yaml.YAMLError as exc:
-        raise DailyStateError(f"{target}: invalid YAML: {exc}") from exc
-    if data is None:
-        return None
-    if not isinstance(data, dict):
-        raise DailyStateError(
-            f"{target}: expected a YAML mapping at the top level, got {type(data).__name__}"
-        )
-    try:
-        return DailyState.model_validate(data)
-    except ValidationError as exc:
-        raise DailyStateError(f"{target}: schema validation failed: {exc}") from exc
+    return yaml_store.read_model(
+        state_path(workspace, day), DailyState, DailyStateError
+    )
 
 
 def write_state(workspace: Workspace, state: DailyState) -> None:
     """Atomic + flock-guarded write of the day's state YAML."""
-    target = state_path(workspace, state.date)
-    target.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = state.model_dump(mode="json")
-    serialized = yaml.safe_dump(payload, sort_keys=False)
-
-    with file_lock(_lock_path(target)):
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=target.name + ".", suffix=".tmp", dir=str(target.parent)
-        )
-        tmp_path = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(serialized)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, target)
-        except BaseException:
-            tmp_path.unlink(missing_ok=True)
-            raise
+    yaml_store.write_model(state_path(workspace, state.date), state)
 
 
 def is_late_day(workspace: Workspace, now: datetime | None = None) -> bool:

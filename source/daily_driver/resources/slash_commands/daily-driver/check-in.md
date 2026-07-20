@@ -9,7 +9,7 @@ description: Mid-day check-in - review progress against plan and update status
 > daily-driver paths daily-state
 > ```
 >
-> Read the YAML at that path. If `last_day_start_session_id` is set AND your CLI was launched with `--resume`, planning context is loaded — skip redundant plan re-reads in steps 1-2. If the file is missing or has no `last_day_start_at`, surface this notice once at the top of the check-in:
+> Read the YAML at that path. If your CLI was launched with `--resume`, you are continuing an earlier session for today — its context (the day-start plan) is already loaded, so skip redundant plan re-reads in steps 1-2. If the file is missing or has no `last_day_start_at`, surface this notice once at the top of the check-in:
 >
 > > Note: no day-start plan recorded for today. Continuing without a plan baseline.
 >
