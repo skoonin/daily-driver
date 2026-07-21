@@ -47,6 +47,10 @@ def events_between(since: datetime, until: datetime) -> str | None:
         "-iep",
         "title,datetime,location",
         "-nc",
+        # No relative dates: today/tomorrow/yesterday events must print an ISO
+        # date line the parser can read, not "today at 09:30" (which matches no
+        # regex and gets silently dropped).
+        "-nrd",
         "-b",
         "",
         "-df",
