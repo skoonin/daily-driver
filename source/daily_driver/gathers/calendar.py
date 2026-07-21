@@ -10,8 +10,10 @@ from daily_driver.integrations import icalbuddy
 
 log = get_logger(__name__)
 
-# Matches ISO-like datetime strings e.g. "2026-04-20 09:00" or "2026-04-20T09:00"
-_DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})")
+# Matches ISO-like datetime strings e.g. "2026-04-20 09:00" or "2026-04-20T09:00".
+# icalBuddy joins the date and time of a timed event with a literal " at "
+# ("2026-04-20 at 09:00") that no flag removes, so tolerate the optional "at ".
+_DATETIME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})[T ](?:at )?(\d{2}:\d{2})")
 # Matches an HH:MM time anywhere in a line (used to recover a range end time
 # that follows the start on the same line).
 _TIME_IN_LINE_RE = re.compile(r"(\d{2}:\d{2})")
@@ -21,8 +23,10 @@ _TIME_RE = re.compile(r"^\s*(\d{2}:\d{2})\s*(?:-\s*(\d{2}:\d{2}))?\s*$")
 _BARE_DATE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*$")
 # Matches a line that is only an ISO date, optionally with a time. Used to track
 # the current day from genuine date lines, so digits embedded in a URL or title
-# can't masquerade as a date for later events.
-_DATE_LINE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})(?:\s*$|[T ]\d{2}:\d{2})")
+# can't masquerade as a date for later events. Must recognize the same datetime
+# shapes as _DATETIME_RE — including icalBuddy's " at " joiner — or a timed line
+# stops advancing the current day.
+_DATE_LINE_RE = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})(?:\s*$|[T ](?:at )?\d{2}:\d{2})")
 
 # Markers that strongly suggest icalBuddy printed its usage banner instead of
 # parseable event data. "USAGE:" is anchored to the very start of output

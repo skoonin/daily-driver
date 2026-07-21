@@ -57,6 +57,30 @@ Planning
     2026-04-21 13:00 - 2026-04-21 14:30
 """
 
+# Real icalBuddy datetime format for a timed event with the app's flags plus
+# `-nrd`: the date and time are joined by a literal " at " ("2026-04-21 at 09:30")
+# with an optional " - HH:MM" end. This is the exact shape today's/tomorrow's
+# events arrive in live; without both `-nrd` and the " at "-tolerant regex it
+# matches nothing and the event is silently dropped (#197).
+_DATE_AT_TIME_OUTPUT = """\
+Interview with Anthropic
+    2026-04-21 at 09:30 - 10:30
+    location: https://meet.example.com/abc
+Open Ended Errand
+    2026-04-21 at 14:00 -
+"""
+
+# A "DATE at TIME" line must advance the current-day context for a later
+# time-only event, exactly as a bare-date or "DATE TIME" line does — otherwise
+# the time-only event inherits the stale window-start date (#197 follow-up:
+# _DATE_LINE_RE must stay in lockstep with _DATETIME_RE).
+_DATE_AT_TIME_THEN_TIME_ONLY = """\
+Meeting
+    2026-04-21 at 09:00 - 10:00
+Quick Sync
+    14:00
+"""
+
 # All-day event: a bare ISO date line with no time. Should anchor start at midnight.
 _ALL_DAY_OUTPUT = """\
 Company Holiday
@@ -176,6 +200,51 @@ def test_gather_events_skips_malformed_block(monkeypatch):
     assert events[0].title == "Team Sync"
 
 
+def test_gather_events_parses_date_at_time_format(monkeypatch):
+    """Regression (#197): icalBuddy joins date and time with " at "
+    ("2026-04-21 at 09:30"). Both the range end and an open-ended start must
+    parse — not be dropped as unmatched."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_DATE_AT_TIME_OUTPUT),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    assert len(events) == 2
+    by_title = {e.title: e for e in events}
+    ranged = by_title["Interview with Anthropic"]
+    assert ranged.start == datetime(2026, 4, 21, 9, 30)
+    assert ranged.end == datetime(2026, 4, 21, 10, 30)
+    open_ended = by_title["Open Ended Errand"]
+    assert open_ended.start == datetime(2026, 4, 21, 14, 0)
+    assert open_ended.end is None
+
+
+def test_gather_events_date_at_time_advances_current_day(monkeypatch):
+    """A "DATE at TIME" line advances the current-day context, so a following
+    time-only event inherits that date — not the stale window-start date."""
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.subprocess.run",
+        _make_run_stub(stdout=_DATE_AT_TIME_THEN_TIME_ONLY),
+    )
+
+    events = gather_events(_SINCE, _UNTIL)
+
+    quick = next(e for e in events if e.title == "Quick Sync")
+    # Meeting's "2026-04-21 at 09:00" line sets the day; Quick Sync inherits it,
+    # not _SINCE's 2026-04-20.
+    assert quick.start == datetime(2026, 4, 21, 14, 0)
+
+
 def test_gather_events_parses_all_day_event(monkeypatch):
     """A bare-date line (no time) is an all-day event; start anchors at midnight."""
     monkeypatch.setattr(
@@ -288,6 +357,31 @@ def test_gather_events_invocation_uses_joined_to_arg(monkeypatch):
     assert len(joined) == 1, f"expected exactly one `to:DATE` arg, got args={args!r}"
     assert joined[0] == "to:2026-04-22", f"unexpected to-arg shape: {joined[0]!r}"
     assert any(a.startswith("eventsFrom:") for a in args)
+
+
+def test_gather_events_invocation_disables_relative_dates(monkeypatch):
+    """Regression: `-nrd` must be passed so today/tomorrow events print an ISO
+    date line. Without it icalBuddy emits "today at 09:30", which matches no
+    parser regex and is silently dropped (#197)."""
+    captured: dict[str, list[str]] = {}
+
+    def _capture(args, **kw):
+        captured["args"] = args
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "daily_driver.integrations.icalbuddy.shutil.which",
+        lambda _: "/usr/local/bin/icalBuddy",
+    )
+    monkeypatch.setattr("daily_driver.integrations.icalbuddy.subprocess.run", _capture)
+
+    gather_events(_SINCE, _UNTIL)
+
+    assert (
+        "-nrd" in captured["args"]
+    ), f"expected -nrd in icalBuddy args, got {captured['args']!r}"
 
 
 def test_gather_events_detects_usage_text_and_fails_loud(monkeypatch, caplog):

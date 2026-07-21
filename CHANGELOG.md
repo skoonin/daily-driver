@@ -16,6 +16,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Fixed
 
+- **`gather calendar` no longer drops today's and tomorrow's timed events.** icalBuddy printed near-term events with relative-date phrasing ("today at 09:30") rather than a date the parser recognized, so those events were silently discarded and never reached `day-start`, hiding fixed commitments from the plan. The calendar read now passes `-nrd` (no relative dates) so every event carries an ISO date, and the parser tolerates the literal " at " icalBuddy inserts between the date and time ("2026-07-21 at 09:30"). (#201)
+
 - **A `jobs.csv` re-saved by Excel or Numbers no longer breaks `jobs prune`, `jobs status`, and status filtering.** Those apps prepend an invisible byte-order mark (BOM) when they save a CSV as "UTF-8", which renamed the first column from `Status` to a BOM-prefixed variant. Every status read then came back empty, so `jobs prune` archived nothing regardless of the `--older-than` date, and `jobs status` counted every row as `unknown`. Reads of `jobs.csv` (and `jobs.archive.csv`) now tolerate a leading BOM, and the next full rewrite strips it. (#195)
 
 ## [1.1.0] — 2026-07-14
