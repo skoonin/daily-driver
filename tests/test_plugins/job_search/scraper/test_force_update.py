@@ -328,13 +328,8 @@ def _plugin(max_enrich_fit: int = 50) -> JobSearchPlugin:
 def _stub_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(
-        jobs: list[Any],
-        ctx: Any,
-        *,
-        progress: Any = None,
-        capture_descriptions: bool = True,
-    ) -> Any:
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -396,6 +391,43 @@ def test_run_backfill_default_force_false(
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     assert captured["force"] is False
+
+
+def test_run_backfill_threads_force_into_detail_enrichment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """force=True reaches enrich_job_details so comp recomputes from the
+    cached description (mirrors the fit/notes threading test above)."""
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="C", link="https://example.com/c", fit="8", notes="done")],
+    )
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    captured: dict[str, Any] = {}
+
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        captured["force"] = kwargs.get("force")
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 0,
+            "enriched": 0,
+            "failed": 0,
+            "skipped": len(jobs),
+            "skip_reasons": {},
+        }
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        return jobs, {"enriched": 0, "skipped_budget": 0, "failed": 0}
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+    runner.run_backfill(_plugin(), csv_path, tmp_path, force=True)
+
+    assert captured["force"] is True
 
 
 def test_run_backfill_force_does_not_short_circuit_when_all_filled(

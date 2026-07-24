@@ -8,8 +8,10 @@ documented invariants (selector classes, salary prefix patterns, JSON-LD shape).
 from __future__ import annotations
 
 from daily_driver.plugins.job_search.scraper.parsing import (
+    _parse_detail_page,
     comp_from_text,
     parse_jsonld_jobposting,
+    parse_linkedin_salary_card,
 )
 
 # ---------------------------------------------------------------------------
@@ -203,6 +205,101 @@ class TestCompFromText:
             == "$150,000\u2013$200,000/yr"
         )
 
+    def test_markdown_escaped_range_with_decimals(self) -> None:
+        """JobSpy/markdownify backslash-escapes LinkedIn descriptions; the
+        escaped separator and decimals broke the range down to its low figure
+        (observed live: Activision posting, 2026-07-24)."""
+        text = (
+            "The standard base pay range for this role is "
+            "$100,220\\.00 \\- $197,758\\.00 CAD. These values reflect the "
+            "expected annualized base pay range of new hires."
+        )
+        assert comp_from_text(text) == "$100,220\u2013$197,758/yr CAD"
+
+    def test_markdown_escaped_range_without_decimals(self) -> None:
+        # Observed live in cached LinkedIn descriptions: "$138,400\-$173,000".
+        assert (
+            comp_from_text("Base salary range: $138,400\\-$173,000")
+            == "$138,400\u2013$173,000/yr"
+        )
+
+    def test_plain_decimal_range(self) -> None:
+        assert (
+            comp_from_text("Annual salary: $100,220.00 - $197,758.00 CAD")
+            == "$100,220\u2013$197,758/yr CAD"
+        )
+
+    def test_decimal_k_shorthand(self) -> None:
+        # "$150.5K" used to silently truncate to $150 (below floor, dropped).
+        assert comp_from_text("Base salary: $150.5K") == "$150,500/yr"
+
+    def test_prose_backslash_does_not_corrupt_a_clean_match(self) -> None:
+        """Unescaping targets markdown punctuation only; an unrelated backslash
+        elsewhere in the text must leave a clean range untouched."""
+        assert (
+            comp_from_text(
+                "Path C:\\Users noted. The salary range is $120,000 - $150,000 USD."
+            )
+            == "$120,000\u2013$150,000/yr USD"
+        )
+
     def test_empty_and_plain_text(self) -> None:
         assert comp_from_text("") == ""
         assert comp_from_text("A great role on a great team.") == ""
+
+
+# ---------------------------------------------------------------------------
+# parse_linkedin_salary_card
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedInSalaryCard:
+    # Structure observed live on a guest job page (Mojio posting, 2026-07-24):
+    # an outer range div holding a heading and the inner salary value node.
+    _CARD = (
+        '<div class="compensation__salary-range"><h3>Base pay range</h3>'
+        '<div class="salary compensation__salary">'
+        "$100,000.00/yr - $110,000.00/yr</div></div>"
+    )
+
+    def test_extracts_range_from_card(self) -> None:
+        html = f"<html><body>{self._CARD}</body></html>"
+        assert parse_linkedin_salary_card(html) == {"comp": "$100,000–$110,000/yr"}
+
+    def test_bare_inner_value_node_still_parses(self) -> None:
+        # No wrapper heading: the parser supplies the anchor itself.
+        html = (
+            '<div class="salary compensation__salary">'
+            "CA$133,000.00/yr - CA$151,000.00/yr</div>"
+        )
+        assert parse_linkedin_salary_card(html) == {"comp": "CA$133,000–CA$151,000/yr"}
+
+    def test_similar_jobs_rail_cards_ignored(self) -> None:
+        """Rail cards use different class names and must not leak into the
+        viewed job's comp."""
+        html = (
+            '<div class="main-job-card__salary-info">$120,000 - $130,000</div>'
+            '<div class="aside-job-card__salary-info">$150,000 - $195,000</div>'
+        )
+        assert parse_linkedin_salary_card(html) == {}
+
+    def test_hourly_card_stays_blank(self) -> None:
+        # Non-annual card values keep their unit, fail the annual floor, blank.
+        html = (
+            '<div class="compensation__salary-range"><h3>Base pay range</h3>'
+            '<div class="salary compensation__salary">$45.00/hr - $55.00/hr'
+            "</div></div>"
+        )
+        assert parse_linkedin_salary_card(html) == {}
+
+    def test_no_card_and_empty_html(self) -> None:
+        assert parse_linkedin_salary_card("<html><body>hi</body></html>") == {}
+        assert parse_linkedin_salary_card("") == {}
+
+    def test_detail_page_dispatch_routes_linkedin(self) -> None:
+        html = f"<html><body>{self._CARD}</body></html>"
+        assert _parse_detail_page(
+            html, "https://www.linkedin.com/jobs/view/4439447388"
+        ) == {"comp": "$100,000–$110,000/yr"}
+        # Non-LinkedIn URLs keep the generic JSON-LD path (no card, no data).
+        assert _parse_detail_page(html, "https://apply.workable.com/x/j/1") == {}

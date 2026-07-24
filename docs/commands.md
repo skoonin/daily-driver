@@ -268,14 +268,14 @@ After the new rows are enriched, the run also picks up the **backlog**: pre-exis
 
 ### `jobs backfill [-n|--dry-run] [--limit N] [--force-update] [--cooldown-hours N] [-j|--json]`
 
-Re-enriches empty fields (Fit, Notes) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight.
+Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight. Comp fills from the cached description at no LLM or network cost wherever the description states a pay range.
 
 - Only rows in the active funnel (`found` or `pending`) are ever (re-)enriched; a triaged status (`applied`, `interviewing`, `rejected`, `dropped`, `closed`, `skipped`) or a blank status is always left untouched. Fit and Notes are one combined need, since a single call fills both.
 - `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
 - `--limit N` — cap LLM spend by bounding the fit/notes budget at `N` (minimum 1; default: the configured per-phase cap).
-- `--force-update` — re-enrich every eligible row and OVERWRITE its existing Fit, Notes, and Remote, instead of the default fill-missing-only behavior. Still bounded by `--limit` and the cooldown below.
-- `--cooldown-hours N` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time).
-- `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `elapsed_seconds`; `dry_run` adds `fit_cap`) in the `{schema, data}` envelope, with the live progress block suppressed.
+- `--force-update` — re-enrich every eligible row and OVERWRITE its existing Fit, Notes, and Remote, instead of the default fill-missing-only behavior, and re-derive Comp from the cached description wherever it parses to a different value (an existing Comp is never blanked, only replaced). Still bounded by `--limit` and the cooldown below.
+- `--cooldown-hours N` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time). The cooldown governs the LLM fit/notes pass only; the no-cost Comp fill/repair runs regardless.
+- `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `comp_filled`, `comp_repaired`, `elapsed_seconds`; `dry_run` adds `fit_cap` and `comp_needs`) in the `{schema, data}` envelope, with the live progress block suppressed.
 - A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
 - Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).
 

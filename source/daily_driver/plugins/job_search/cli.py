@@ -154,9 +154,10 @@ def add_parser(
         action="store_true",
         default=False,
         help=(
-            "Re-enrich every active row and OVERWRITE its Fit, Notes, and Remote "
-            "(default: fill missing cells only). Still bounded by --limit and the "
-            "--cooldown-hours cooldown"
+            "Re-enrich every active row and OVERWRITE its Fit, Notes, and Remote, "
+            "and re-derive Comp from the cached description when it parses to a "
+            "different value (default: fill missing cells only). Still bounded by "
+            "--limit and the --cooldown-hours cooldown"
         ),
     )
     p_backfill.add_argument(

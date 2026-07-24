@@ -6,6 +6,7 @@ import html as html_module
 import json
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -55,14 +56,26 @@ def _find_jobposting(node: Any) -> dict | None:
 
 # A money amount as job descriptions write it: symbol-prefixed (an optional
 # single space after the symbol -- "$ 150,000" appears in real postings),
-# comma-grouped, optional K/M shorthand, optionally a range ("$150,000–$205,000",
-# "$170,000 to $245,000", "$150K-$205K"), optionally a trailing ISO currency code.
+# comma-grouped, optional decimal ("$100,220.00" and "$150.5K" both appear in
+# real postings), optional K/M shorthand, optionally a range
+# ("$150,000–$205,000", "$170,000 to $245,000", "$150K-$205K"), optionally a
+# trailing ISO currency code.
 _MONEY_RE = re.compile(
     r"(?P<p>\$|US\$|CA\$|£|€) ?"
-    r"(?P<lo>\d[\d,]*[KkMm]?)"
-    r"(?:\s*(?:[-–—]|to\s)\s*(?:(?P<p2>\$|US\$|CA\$|£|€) ?)?(?P<hi>\d[\d,]*[KkMm]?))?"
+    r"(?P<lo>\d[\d,]*(?:\.\d+)?[KkMm]?)"
+    r"(?:\s*(?:[-–—]|to\s)\s*(?:(?P<p2>\$|US\$|CA\$|£|€) ?)?"
+    r"(?P<hi>\d[\d,]*(?:\.\d+)?[KkMm]?))?"
     r"(?:\s*(?P<cur>USD|CAD|GBP|EUR))?"
 )
+
+# Punctuation markdownify backslash-escapes when JobSpy converts LinkedIn
+# description HTML to markdown ("$100,220\.00 \- $197,758\.00 CAD", observed
+# live). The escapes break _MONEY_RE's separator and currency matching, so
+# comp_from_text strips them before matching. The class is markdownify
+# 0.13.x's escape set (escape_misc chars, digit-adjacent ./), and the
+# escape_asterisks/escape_underscores defaults) so a genuine prose backslash
+# survives.
+_MD_ESCAPE_RE = re.compile(r"\\([-.*_\[\]()#+!`>~|\\&<=])")
 
 # Words that mark a money figure as the role's pay, searched in a short window
 # BEFORE the amount. Anchoring is what keeps benefit/perk figures ("401(k)
@@ -144,6 +157,12 @@ def comp_from_text(text: str) -> str:
         # that window may contain the salary itself.
         text = re.sub(r"</?[a-zA-Z][^>]*>", " ", text)
         text = re.sub(r"\s+", " ", text)
+    # Markdown-escaped punctuation (JobSpy/markdownify output) is normalized
+    # here, not at the description store: the money regex is the only consumer
+    # the escapes break, and rewriting descriptions.jsonl on ingest would
+    # silently churn every cached row for no added benefit.
+    if "\\" in text:
+        text = _MD_ESCAPE_RE.sub(r"\1", text)
     for m in _MONEY_RE.finditer(text):
         window = text[max(0, m.start() - _COMP_ANCHOR_WINDOW) : m.start()]
         anchor = None
@@ -180,15 +199,50 @@ def comp_from_text(text: str) -> str:
 def _parse_detail_page(html: str, url: str) -> dict:
     """Parse a fetched detail page (JSON-LD JobPosting only).
 
-    ``url`` is kept for signature stability with callers that log per-URL.
     Greenhouse hosted pages are never fetched (bot-walled at run volume; comp
     comes from the scraped description via ``comp_from_text``), so the old
-    Greenhouse text-pattern parser is gone. LinkedIn descriptions/comp come
-    entirely from JobSpy's scrape-time ``linkedin_fetch_description=True``;
-    no LinkedIn HTML parser runs here.
+    Greenhouse text-pattern parser is gone. LinkedIn descriptions come from
+    JobSpy's scrape-time ``linkedin_fetch_description=True``; the detail fetch
+    exists only to read the guest page's salary card, which JobSpy discards
+    (verified live 2026-07-24: no JSON-LD anonymously, but
+    ``compensation__salary`` is server-rendered when the poster provided
+    structured pay).
     """
-    del url  # host dispatch no longer needed; single generic parser
+    if "linkedin.com" in urlsplit(url).netloc:
+        return parse_linkedin_salary_card(html)
     return parse_jsonld_jobposting(html)
+
+
+def parse_linkedin_salary_card(html: str) -> dict:
+    """Extract comp from a LinkedIn guest job page's salary card.
+
+    The card ("Base pay range $100,000.00/yr - $110,000.00/yr") is rendered
+    only for the viewed job — similar-job rails use different class names —
+    and only when the poster provided structured pay, so absence means "no
+    data", not an error. Returns ``{"comp": ...}`` or ``{}``.
+    """
+    if not html or "compensation__salary" not in html:
+        return {}
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as exc:  # pragma: no cover - defensive only
+        log.debug("[enrich] BeautifulSoup failed: %s", exc)
+        return {}
+    el = soup.find(class_="compensation__salary-range") or soup.find(
+        class_="compensation__salary"
+    )
+    if el is None:
+        return {}
+    text = el.get_text(" ", strip=True)
+    # Reuse the conservative description extractor: strip the card's per-value
+    # "/yr" so the range separator sits next to its amounts, and supply the
+    # anchor when only the bare inner value node is present. Non-annual cards
+    # ("$45.00/hr") keep their unit, fail the annual floor, and stay blank.
+    text = text.replace("/yr", "")
+    if not _COMP_ANCHOR_RE.search(text):
+        text = f"Base pay range {text}"
+    comp = comp_from_text(text)
+    return {"comp": comp} if comp else {}
 
 
 def parse_jsonld_jobposting(html: str) -> dict:
@@ -261,4 +315,5 @@ __all__ = [
     "_find_jobposting",
     "_parse_detail_page",
     "parse_jsonld_jobposting",
+    "parse_linkedin_salary_card",
 ]

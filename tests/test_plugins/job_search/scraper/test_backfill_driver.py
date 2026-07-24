@@ -45,6 +45,7 @@ def _row(
     status: str = "found",
     fit: str = "",
     notes: str = "",
+    comp: str = "",
 ) -> dict[str, str]:
     return {
         "Status": status,
@@ -53,7 +54,7 @@ def _row(
         "Location": "Remote",
         "Role": "SRE",
         "Fit": fit,
-        "Comp": "",
+        "Comp": comp,
         "Date Found": "2026-04-01",
         "Date Verified": "2026-04-01",
         "Date Applied": "",
@@ -78,13 +79,8 @@ def _stub_detail(monkeypatch: pytest.MonkeyPatch) -> None:
     """No-op detail enrichment: leaves rows unchanged, reports zero fetched."""
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
-    def fake_detail(
-        jobs: list[Any],
-        ctx: Any,
-        *,
-        progress: Any = None,
-        capture_descriptions: bool = True,
-    ) -> Any:
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -264,14 +260,9 @@ def test_backfill_is_description_cache_only_and_warns(
 
     captured: dict[str, Any] = {}
 
-    def fake_detail(
-        jobs: list[Any],
-        ctx: Any,
-        *,
-        progress: Any = None,
-        capture_descriptions: bool = True,
-    ) -> Any:
-        captured["capture_descriptions"] = capture_descriptions
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
+        captured["capture_descriptions"] = kwargs.get("capture_descriptions", True)
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -1129,3 +1120,126 @@ def test_backfill_no_canonicalization_notice_when_already_canonical(
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     assert not [m for m in info_calls if "Canonicalized" in m]
+
+
+def _stub_fit_notes_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    def fake_fit_notes(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        progress = kwargs.get("progress")
+        if progress is not None:
+            progress(len(jobs))
+        return jobs, {"enriched": 0, "skipped_budget": 0, "failed": 0}
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
+
+
+def test_backfill_comp_only_fill_escapes_the_short_circuit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row whose only need is a comp fill from its cached description must
+    run, not short-circuit on the zero fit/notes count. Real detail pre-pass:
+    the fill costs no HTTP."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="C", link="https://example.com/c", fit="8", notes="done")],
+    )
+    atomic_write_descriptions(
+        csv_path,
+        {"https://example.com/c": "Base salary range: $150,000 - $180,000 USD."},
+    )
+    _stub_fit_notes_noop(monkeypatch)
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    assert summary["comp_filled"] == 1
+    assert summary["comp_repaired"] == 0
+    rows = _read_jobs_csv(csv_path)
+    assert rows[0]["Comp"] == "$150,000–$180,000/yr USD"
+
+
+def test_backfill_force_repairs_wrong_comp_from_cached_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--force-update overwrites a mis-extracted comp when the cached
+    description parses to a different value (the markdown-escape repair)."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [
+            _row(
+                company="C",
+                link="https://example.com/c",
+                fit="8",
+                notes="done",
+                comp="$100,220/yr",
+            )
+        ],
+    )
+    atomic_write_descriptions(
+        csv_path,
+        {
+            "https://example.com/c": (
+                "The standard base pay range for this role is "
+                "$100,220\\.00 \\- $197,758\\.00 CAD."
+            )
+        },
+    )
+    _stub_fit_notes_noop(monkeypatch)
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path, force=True)
+
+    assert summary["comp_repaired"] == 1
+    assert summary["comp_filled"] == 0
+    rows = _read_jobs_csv(csv_path)
+    assert rows[0]["Comp"] == "$100,220–$197,758/yr CAD"
+
+
+def test_backfill_without_force_keeps_existing_comp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default backfill never rewrites a filled comp, even when the cached
+    description parses differently."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
+    csv_path = tmp_path / "jobs.csv"
+    _write_jobs_csv(
+        csv_path,
+        [
+            _row(
+                company="C",
+                link="https://example.com/c",
+                fit="8",
+                notes="done",
+                comp="$100,220/yr",
+            )
+        ],
+    )
+    atomic_write_descriptions(
+        csv_path,
+        {
+            "https://example.com/c": (
+                "The standard base pay range for this role is "
+                "$100,220\\.00 \\- $197,758\\.00 CAD."
+            )
+        },
+    )
+    _stub_fit_notes_noop(monkeypatch)
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    assert summary.get("comp_filled", 0) == 0
+    assert summary.get("comp_repaired", 0) == 0
+    rows = _read_jobs_csv(csv_path)
+    assert rows[0]["Comp"] == "$100,220/yr"

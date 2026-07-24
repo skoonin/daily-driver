@@ -199,10 +199,18 @@ def _backfill_needs(
       unless both are on, so a disabled axis reports zero need rather than
       over-reporting work the pass would never do. Under ``force`` every active
       row counts (the enricher re-enriches and overwrites all of them).
+    - ``comp`` counts rows whose cached description parses to a comp value the
+      row doesn't already hold (all no-comp rows; comp-holding rows only under
+      ``force``). Mirrors the detail phase's comp-from-text pre-pass, so a run
+      whose only work is a no-network comp fill/repair isn't short-circuited
+      by a zero fit/notes count (e.g. force reruns inside the cooldown).
 
     Used by the dry-run report and the start-of-run short-circuit.
     """
     from daily_driver.plugins.job_search.scraper.csv_io import _active
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        comp_recompute_value,
+    )
     from daily_driver.plugins.job_search.scraper.enrichment.llm import (
         _fit_notes_eligible,
     )
@@ -218,9 +226,11 @@ def _backfill_needs(
         if (cfg.enrich_fit and cfg.enrich_notes)
         else 0
     )
+    comp = sum(1 for j in active if comp_recompute_value(j, force=force))
     return {
         "rows": len(active),
         "fit_notes": fit_notes,
+        "comp": comp,
     }
 
 
@@ -350,6 +360,11 @@ def run_backfill(
                 f"Backfill dry-run: {needs['fit_notes']} {verb} Fit/Notes "
                 f"({needs['rows']} active rows, {skipped} skipped). Nothing written."
             )
+            if needs["comp"]:
+                Console.info(
+                    f"Backfill dry-run: {needs['comp']} comp value(s) would fill "
+                    "or repair from cached descriptions. Nothing written."
+                )
             # The needs counts are the FULL backlog; one pass spends at most the
             # config caps (or --limit). Say so when a cap would trim this pass,
             # or the report reads as if the caps were ignored.
@@ -366,6 +381,7 @@ def run_backfill(
             "needs_before": needs["fit_notes"],
             "needs_after": needs["fit_notes"],
             "enriched": 0,
+            "comp_needs": needs["comp"],
             "fit_cap": fit_cap,
             "elapsed_seconds": None,
         }
@@ -445,13 +461,15 @@ def run_backfill(
         )
         skipped = len(jobs) - needs["rows"]
         log.info(
-            "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes",
+            "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes, "
+            "%d comp from cached descriptions",
             len(jobs),
             skipped,
             needs["fit_notes"],
+            needs["comp"],
         )
 
-        if not needs["fit_notes"]:
+        if not needs["fit_notes"] and not needs["comp"]:
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
             if not emit_json:
@@ -464,6 +482,8 @@ def run_backfill(
                 "needs_before": 0,
                 "needs_after": 0,
                 "enriched": 0,
+                "comp_filled": 0,
+                "comp_repaired": 0,
                 "elapsed_seconds": elapsed,
             }
 
@@ -496,6 +516,7 @@ def run_backfill(
 
         # Captured from the enrichment wave below; reported after completion.
         fit_stats: dict[str, int] = _empty_fit_stats()
+        detail_stats: dict[str, Any] = {}
 
         try:
             with (
@@ -516,7 +537,7 @@ def run_backfill(
                     phase_rows += 1
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
-                _, fit_stats = _enrich_wave(
+                detail_stats, fit_stats = _enrich_wave(
                     plugin,
                     ai_cfg,
                     jobs,
@@ -583,9 +604,17 @@ def run_backfill(
     after = _backfill_needs(jobs, plugin)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
     enriched = needs["fit_notes"] - after["fit_notes"]
+    comp_filled = detail_stats.get("from_description", 0)
+    comp_repaired = detail_stats.get("comp_recomputed", 0)
     if not emit_json:
+        comp_total = comp_filled + comp_repaired
+        comp_note = (
+            f", {comp_total} comp filled or repaired from cached descriptions"
+            if comp_total
+            else ""
+        )
         Console.success(
-            f"Backfill complete: +{enriched} Fit/Notes. "
+            f"Backfill complete: +{enriched} Fit/Notes{comp_note}. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
         # Backfill relies solely on the cached descriptions (descriptions.jsonl):
@@ -615,6 +644,8 @@ def run_backfill(
         "needs_before": needs["fit_notes"],
         "needs_after": after["fit_notes"],
         "enriched": enriched,
+        "comp_filled": comp_filled,
+        "comp_repaired": comp_repaired,
         "elapsed_seconds": elapsed,
     }
 
@@ -752,8 +783,10 @@ def _enrich_wave(
     remaining slice of the shared running total (None = the config cap; an
     explicit 0 spends nothing). ``set_phase`` records the coarse run phase for
     the manifest. ``force`` re-enriches and overwrites every active row's
-    Fit/Notes/Remote (backfill --force-update). ``capture_descriptions`` False
-    (the backfill path) keeps descriptions cache-only: the detail phase fills
+    Fit/Notes/Remote and recomputes comp from the cached description when it
+    parses to a different value (backfill --force-update).
+    ``capture_descriptions`` False (the backfill path) keeps descriptions
+    cache-only: the detail phase fills
     comp but not description_text, and a row with no cached description is left
     un-enriched by fit/notes rather than fetched. Flushes per phase and on the
     periodic hook; the caller's try/except flushes once more on interrupt.
@@ -782,6 +815,7 @@ def _enrich_wave(
         ctx,
         progress=detail_phase.advance,
         capture_descriptions=capture_descriptions,
+        force=force,
     )
     detail_phase.done(render_detail_summary(detail_stats))
     # Persist detail comp/posted_date before the LLM phase; a disk error here
