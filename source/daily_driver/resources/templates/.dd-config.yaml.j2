@@ -243,6 +243,10 @@ tracker:
 #       enrich_is_remote: true
 #       # Cap on fit/notes LLM calls per run (bounds API cost).
 #       max_enrich_fit: 50
+#       # Word cap on the description sent to the fit/notes LLM call.
+#       # Comp/visa/EEO text usually sits at the end of long postings, so
+#       # a low cap hides it from the criteria assessment.
+#       max_description_words: 2000
 #       # Under `backfill --force-update`, skip rows enriched within N hours
 #       # so an interrupted run resumes. 0 = re-enrich every active row;
 #       # `missing` = only rows with no enrichment timestamp yet.

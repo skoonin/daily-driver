@@ -415,6 +415,15 @@ class EnrichmentConfig(BaseModel):
         default=50,
         description="Cap on fit/notes LLM calls per run (bounds API cost).",
     )
+    max_description_words: int = Field(
+        default=2000,
+        ge=100,
+        description=(
+            "Word cap on the description sent to the fit/notes LLM call.\n"
+            "Comp/visa/EEO text usually sits at the end of long postings, so\n"
+            "a low cap hides it from the criteria assessment."
+        ),
+    )
     force_recook_cooldown_hours: int | Literal["missing"] = Field(
         default=24,
         description=(

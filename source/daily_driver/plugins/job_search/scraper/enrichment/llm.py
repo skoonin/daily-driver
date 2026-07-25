@@ -232,9 +232,12 @@ def _build_fit_notes_system(
             "candidate's background, the systems they've built, and their skills "
             "match the role's real requirements (weigh this most; reward direct "
             "overlap, penalize roles centered on their stated gap areas or far "
-            "from their level and track); (2) location fit vs. the preferences "
-            "above; (3) seniority and track match. If the description is too thin "
-            "to judge experience match, return 5.\n"
+            "from their level and track); (2) compensation -- when the posting "
+            "or job line states pay, weigh how well it serves the candidate; "
+            "never penalize a job for not stating pay; (3) location fit vs. the "
+            f"preferences above -- except for roles located in {hc}, where "
+            "location fit outweighs compensation; (4) seniority and track match. "
+            "If the description is too thin to judge experience match, return 5.\n"
         )
     else:
         fit_instr = (
@@ -293,26 +296,30 @@ def _build_fit_notes_system(
     return prompt
 
 
-def _build_fit_notes_user(job: EnrichedJob) -> str:
-    """Build the PER-JOB fit/notes message (role/company/location + description).
+def _build_fit_notes_user(job: EnrichedJob, max_desc_words: int) -> str:
+    """Build the PER-JOB fit/notes message (role/company/location/comp +
+    description).
 
     This is the only job-varying part of the prompt; the instructions and the
     candidate context live in the cached system block
-    (:func:`_build_fit_notes_system`).
+    (:func:`_build_fit_notes_system`). Comp is stated explicitly because the
+    parsed value can come from a source the description lacks (e.g. the
+    LinkedIn salary card).
     """
     role = job.role or "unknown"
     company = job.company or "unknown"
     location = job.location or "unknown"
     desc = job.description_text
 
+    comp_section = f"\nStated compensation: {job.comp}" if job.comp else ""
     desc_section = ""
     if desc:
         words = desc.split()
-        if len(words) > 500:
-            desc = " ".join(words[:500]) + " ..."
+        if len(words) > max_desc_words:
+            desc = " ".join(words[:max_desc_words]) + " ..."
         desc_section = f"\nDescription: {desc}"
 
-    return f"Job: {role} at {company}, {location}{desc_section}"
+    return f"Job: {role} at {company}, {location}{comp_section}{desc_section}"
 
 
 def _guarded_consume(
@@ -420,7 +427,8 @@ def _fetch_fit_notes_for_job(
     """
     company = job.company or "unknown"
     role = job.role or "unknown"
-    prompt = _build_fit_notes_user(job)
+    enrichment_cfg = ctx.plugin.enrichment
+    prompt = _build_fit_notes_user(job, enrichment_cfg.max_description_words)
     log.debug(
         "%s company=%s role=%s prompt=%r",
         _enrich_tag("enrich-fit-notes"),
@@ -429,7 +437,6 @@ def _fetch_fit_notes_for_job(
         prompt,
     )
 
-    enrichment_cfg = ctx.plugin.enrichment
     provider, model = ai_provider.resolve_route(
         ctx.ai, task="fit_notes", domain_cfg=enrichment_cfg
     )
