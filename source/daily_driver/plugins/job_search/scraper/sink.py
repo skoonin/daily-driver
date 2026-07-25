@@ -21,6 +21,7 @@ from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import workspace_busy_notice
 from daily_driver.plugins.job_search.scraper.models import (
     ENRICH_ELIGIBLE_STATUSES,
+    comp_is_fillable,
     split_source,
 )
 from daily_driver.plugins.job_search.scraper.rows import (
@@ -462,7 +463,7 @@ class _JobSink:
         row["Link"] = new_url
         # Fill-only comp: the board record may carry scrape-time pay
         # (greenhouse/lever) the aggregator row never had.
-        if not (row.get("Comp") or "").strip() and (job.get("comp") or "").strip():
+        if comp_is_fillable(row.get("Comp") or "") and (job.get("comp") or "").strip():
             row["Comp"] = job["comp"]
         self.upgraded += 1
 
@@ -494,7 +495,7 @@ class _JobSink:
                 "source_canonical": canonical,
                 "source_board": board,
             }
-            if not enriched.comp.strip() and (job.get("comp") or "").strip():
+            if comp_is_fillable(enriched.comp) and (job.get("comp") or "").strip():
                 updates["comp"] = job["comp"]
             if not enriched.description_text.strip():
                 desc = (job.get("description_text") or "").strip()

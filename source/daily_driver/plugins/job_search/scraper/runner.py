@@ -205,6 +205,10 @@ def _backfill_needs(
       ``force``). Mirrors the detail phase's comp-from-text pre-pass, so a run
       whose only work is a no-network comp fill/repair isn't short-circuited
       by a zero fit/notes count (e.g. force reruns inside the cooldown).
+    - ``comp_check`` counts blank-Comp rows the pass would resolve either way:
+      fetched for comp (fill or a ``Not listed`` mark) or marked straight from
+      the already-checked description. Excludes rows the ``comp`` count
+      already covers (they fill without a check).
     - ``description`` counts rows with no description whose host can serve one
       (zero when ``fetch_descriptions`` is off) — the rows the detail phase
       would fetch to heal.
@@ -213,6 +217,7 @@ def _backfill_needs(
     """
     from daily_driver.plugins.job_search.scraper.csv_io import _active
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        comp_check_pending,
         comp_recompute_value,
         needs_description_fetch,
     )
@@ -232,6 +237,7 @@ def _backfill_needs(
         else 0
     )
     comp = sum(1 for j in active if comp_recompute_value(j, force=force))
+    comp_check = sum(1 for j in active if comp_check_pending(j))
     description = sum(
         1 for j in active if needs_description_fetch(j, fetch_descriptions)
     )
@@ -239,6 +245,7 @@ def _backfill_needs(
         "rows": len(active),
         "fit_notes": fit_notes,
         "comp": comp,
+        "comp_check": comp_check,
         "description": description,
     }
 
@@ -385,6 +392,12 @@ def run_backfill(
                     f"Backfill dry-run: {needs['comp']} comp value(s) would fill "
                     "or repair from cached descriptions. Nothing written."
                 )
+            if needs["comp_check"]:
+                Console.info(
+                    f"Backfill dry-run: {needs['comp_check']} blank comp(s) "
+                    "would be checked — filled if the job board states pay, "
+                    "else marked 'Not listed'. Nothing written."
+                )
             if needs["description"]:
                 Console.info(
                     f"Backfill dry-run: {needs['description']} missing "
@@ -408,6 +421,7 @@ def run_backfill(
             "needs_after": needs["fit_notes"],
             "enriched": 0,
             "comp_needs": needs["comp"],
+            "comp_check_needs": needs["comp_check"],
             "description_needs": needs["description"],
             "fit_cap": fit_cap,
             "elapsed_seconds": None,
@@ -493,15 +507,22 @@ def run_backfill(
         skipped = len(jobs) - needs["rows"]
         log.info(
             "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes, "
-            "%d comp from cached descriptions, %d descriptions to fetch",
+            "%d comp from cached descriptions, %d comp to check, "
+            "%d descriptions to fetch",
             len(jobs),
             skipped,
             needs["fit_notes"],
             needs["comp"],
+            needs["comp_check"],
             needs["description"],
         )
 
-        if not needs["fit_notes"] and not needs["comp"] and not needs["description"]:
+        if (
+            not needs["fit_notes"]
+            and not needs["comp"]
+            and not needs["comp_check"]
+            and not needs["description"]
+        ):
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
             if not emit_json:
@@ -516,6 +537,7 @@ def run_backfill(
                 "enriched": 0,
                 "comp_filled": 0,
                 "comp_repaired": 0,
+                "comp_not_listed": 0,
                 "descriptions_filled": 0,
                 "elapsed_seconds": elapsed,
             }
@@ -639,6 +661,7 @@ def run_backfill(
     enriched = needs["fit_notes"] - after["fit_notes"]
     comp_filled = detail_stats.get("from_description", 0)
     comp_repaired = detail_stats.get("comp_recomputed", 0)
+    comp_not_listed = detail_stats.get("comp_not_listed", 0)
     descriptions_filled = detail_stats.get("descriptions_filled", 0)
     if not emit_json:
         comp_total = comp_filled + comp_repaired
@@ -647,13 +670,17 @@ def run_backfill(
             if comp_total
             else ""
         )
+        not_listed_note = (
+            f", {comp_not_listed} comp marked 'Not listed'" if comp_not_listed else ""
+        )
         desc_note = (
             f", {descriptions_filled} descriptions fetched"
             if descriptions_filled
             else ""
         )
         Console.success(
-            f"Backfill complete: +{enriched} Fit/Notes{comp_note}{desc_note}. "
+            f"Backfill complete: +{enriched} Fit/Notes{comp_note}"
+            f"{not_listed_note}{desc_note}. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
         # A row can still lack a description after the detail phase: its host
@@ -684,6 +711,7 @@ def run_backfill(
         "enriched": enriched,
         "comp_filled": comp_filled,
         "comp_repaired": comp_repaired,
+        "comp_not_listed": comp_not_listed,
         "descriptions_filled": descriptions_filled,
         "elapsed_seconds": elapsed,
     }

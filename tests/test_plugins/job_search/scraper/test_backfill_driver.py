@@ -718,12 +718,14 @@ def test_backfill_all_filled_reports_nothing_to_do(
                 link="https://example.com/c",
                 fit="8",
                 notes="x",
+                comp="$100k",
             )
         ],
     )
-    # A cached description completes the row: without one, the (serving) host
-    # would legitimately owe a description fetch and the short-circuit must
-    # not fire.
+    # A cached description and a comp value complete the row: without either,
+    # the (serving) host would legitimately owe a fetch — a missing
+    # description heals, and a blank comp gets checked (fill or 'Not listed')
+    # — and the short-circuit must not fire.
     atomic_write_descriptions(csv_path, {"https://example.com/c": "role body"})
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg

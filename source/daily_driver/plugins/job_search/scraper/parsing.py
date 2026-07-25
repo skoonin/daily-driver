@@ -214,16 +214,29 @@ def _parse_detail_page(html: str, url: str) -> dict:
     return parse_jsonld_jobposting(html)
 
 
+#: Class names present on every real LinkedIn guest JOB page (top card /
+#: description container — the latter is the selector JobSpy scrapes from).
+#: An auth-wall or bot-challenge page served with HTTP 200 carries neither, so
+#: their absence means the response proves nothing about the posting.
+_LINKEDIN_JOB_PAGE_MARKERS = ("top-card-layout", "show-more-less-html")
+
+
 def parse_linkedin_salary_card(html: str) -> dict:
     """Extract comp from a LinkedIn guest job page's salary card.
 
     The card ("Base pay range $100,000.00/yr - $110,000.00/yr") is rendered
     only for the viewed job — similar-job rails use different class names —
-    and only when the poster provided structured pay, so absence means "no
-    data", not an error. Returns ``{"comp": ...}`` or ``{}``.
+    and only when the poster provided structured pay, so on a REAL job page
+    its absence means "poster listed no pay". Returns ``{"comp": ...}`` or
+    ``{}``. Raises ``ValueError`` when the HTML doesn't look like a job page
+    at all (auth wall / challenge served with HTTP 200): concluding "no pay"
+    from a wall would freeze a false ``Not listed`` mark into the row, while
+    a raise degrades to fetch-failure and retries next run.
     """
     if not html or "compensation__salary" not in html:
-        return {}
+        if html and any(marker in html for marker in _LINKEDIN_JOB_PAGE_MARKERS):
+            return {}
+        raise ValueError("not a LinkedIn job page (auth wall or challenge)")
     try:
         soup = BeautifulSoup(html, "html.parser")
     except Exception as exc:  # pragma: no cover - defensive only
@@ -249,18 +262,22 @@ def parse_linkedin_salary_card(html: str) -> dict:
 def parse_jsonld_jobposting(html: str) -> dict:
     """Extract job details from JSON-LD JobPosting blocks in an HTML page.
 
-    Returns a dict with any of: comp, description_text. Returns an
-    empty dict if no JobPosting block is present or all blocks fail to parse —
-    callers must treat missing keys as "data not available", not as errors.
+    Returns a dict with any of: comp, description_text — missing keys mean the
+    POSTING doesn't state that data (e.g. no ``baseSalary``), which callers
+    may treat as conclusive. Raises ``ValueError`` when no JobPosting block is
+    found at all (empty body, bot challenge served with HTTP 200, site
+    redesign, or a removed posting): such a page proves nothing about the
+    job, and the detail enricher must treat it as a failed fetch — never as
+    evidence pay is absent.
     """
     if not html:
-        return {}
+        raise ValueError("empty page body")
 
     try:
         soup = BeautifulSoup(html, "html.parser")
     except Exception as exc:  # pragma: no cover - defensive only
         log.debug("[enrich] BeautifulSoup failed: %s", exc)
-        return {}
+        raise ValueError("unparseable page") from exc
 
     posting: dict | None = None
     for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
@@ -281,7 +298,7 @@ def parse_jsonld_jobposting(html: str) -> dict:
             break
 
     if posting is None:
-        return {}
+        raise ValueError("no JSON-LD JobPosting block")
 
     out: dict = {}
     base_salary = posting.get("baseSalary")

@@ -7,6 +7,8 @@ documented invariants (selector classes, salary prefix patterns, JSON-LD shape).
 
 from __future__ import annotations
 
+import pytest
+
 from daily_driver.plugins.job_search.scraper.parsing import (
     _parse_detail_page,
     comp_from_text,
@@ -49,15 +51,32 @@ class TestJsonLdParser:
         # datePosted is deliberately ignored: nothing downstream reads it.
         assert "posted_date" not in result
 
-    def test_returns_empty_when_no_jsonld_block(self) -> None:
+    def test_no_jsonld_block_is_inconclusive(self) -> None:
+        """A page with no JobPosting block proves nothing about the job (bot
+        challenge, redesign, removed posting): raising makes the enricher
+        treat it as a failed fetch instead of concluding pay is absent."""
         html = "<html><body><p>No structured data.</p></body></html>"
-        assert parse_jsonld_jobposting(html) == {}
+        with pytest.raises(ValueError):
+            parse_jsonld_jobposting(html)
 
-    def test_tolerates_malformed_jsonld(self) -> None:
-        """Truncated / invalid JSON is logged but doesn't raise."""
+    def test_malformed_jsonld_is_inconclusive(self) -> None:
+        """Truncated / invalid JSON yields no posting, so it raises too."""
         html = """
         <html><head>
         <script type="application/ld+json">{"@type": "JobPost</script>
+        </head></html>
+        """
+        with pytest.raises(ValueError):
+            parse_jsonld_jobposting(html)
+
+    def test_posting_without_salary_is_conclusive(self) -> None:
+        """A real JobPosting block without baseSalary means the poster listed
+        no pay: {} (no raise), which permits the Not-listed mark."""
+        html = """
+        <html><head>
+        <script type="application/ld+json">
+        {"@type": "JobPosting", "title": "SRE"}
+        </script>
         </head></html>
         """
         assert parse_jsonld_jobposting(html) == {}
@@ -80,8 +99,9 @@ class TestJsonLdParser:
         result = parse_jsonld_jobposting(html)
         assert result.get("description_text") == "On-call SRE role"
 
-    def test_empty_string_returns_empty_dict(self) -> None:
-        assert parse_jsonld_jobposting("") == {}
+    def test_empty_string_is_inconclusive(self) -> None:
+        with pytest.raises(ValueError):
+            parse_jsonld_jobposting("")
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +299,7 @@ class TestLinkedInSalaryCard:
         """Rail cards use different class names and must not leak into the
         viewed job's comp."""
         html = (
+            '<div class="top-card-layout__title">SRE</div>'
             '<div class="main-job-card__salary-info">$120,000 - $130,000</div>'
             '<div class="aside-job-card__salary-info">$150,000 - $195,000</div>'
         )
@@ -293,14 +314,27 @@ class TestLinkedInSalaryCard:
         )
         assert parse_linkedin_salary_card(html) == {}
 
-    def test_no_card_and_empty_html(self) -> None:
-        assert parse_linkedin_salary_card("<html><body>hi</body></html>") == {}
-        assert parse_linkedin_salary_card("") == {}
+    def test_job_page_without_card_means_no_pay(self) -> None:
+        """A page carrying real job-page markers but no salary card is
+        conclusive: the poster listed no structured pay."""
+        html = '<div class="show-more-less-html__markup">About the job ...</div>'
+        assert parse_linkedin_salary_card(html) == {}
+
+    def test_authwall_and_empty_html_are_inconclusive(self) -> None:
+        """No job-page markers at all (auth wall / challenge served with HTTP
+        200, or an empty body) proves nothing — raising degrades to a failed
+        fetch so the row is never falsely marked 'Not listed'."""
+        with pytest.raises(ValueError):
+            parse_linkedin_salary_card("<html><body>Sign in to view</body></html>")
+        with pytest.raises(ValueError):
+            parse_linkedin_salary_card("")
 
     def test_detail_page_dispatch_routes_linkedin(self) -> None:
         html = f"<html><body>{self._CARD}</body></html>"
         assert _parse_detail_page(
             html, "https://www.linkedin.com/jobs/view/4439447388"
         ) == {"comp": "$100,000–$110,000/yr"}
-        # Non-LinkedIn URLs keep the generic JSON-LD path (no card, no data).
-        assert _parse_detail_page(html, "https://apply.workable.com/x/j/1") == {}
+        # Non-LinkedIn URLs keep the generic JSON-LD path; a page with no
+        # JobPosting block is inconclusive there.
+        with pytest.raises(ValueError):
+            _parse_detail_page(html, "https://apply.workable.com/x/j/1")
