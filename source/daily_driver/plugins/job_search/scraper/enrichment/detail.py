@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from daily_driver.core.logging import get_logger
 from daily_driver.core.progress import ProgressCallback
 from daily_driver.plugins.job_search.scraper.models import (
+    COMP_NOT_LISTED,
     ENRICH_ELIGIBLE_STATUSES,
     EnrichedJob,
 )
@@ -105,7 +106,9 @@ def comp_recompute_value(job: EnrichedJob, *, force: bool) -> str:
     """
     if not job.description_text or job.status not in ENRICH_ELIGIBLE_STATUSES:
         return ""
-    if job.comp and not force:
+    # COMP_NOT_LISTED counts as absent here: a re-scraped description that now
+    # states pay upgrades a marked row without needing --force-update.
+    if job.has_stated_comp and not force:
         return ""
     text_comp = comp_from_text(job.description_text)
     if text_comp and text_comp != job.comp:
@@ -128,6 +131,27 @@ def needs_description_fetch(job: EnrichedJob, fetch_descriptions: bool) -> bool:
         and bool(url)
         and "description" in _capability_for(url).fields
     )
+
+
+def comp_check_pending(job: EnrichedJob) -> bool:
+    """Whether the detail pass would resolve this row's blank Comp — by
+    fetching for it (fill or mark) or by marking it ``COMP_NOT_LISTED`` from
+    the already-checked description.
+
+    Shared by ``_backfill_needs`` (dry-run count and short-circuit) so a run
+    whose only remaining work is comp checks isn't skipped as "nothing to do".
+    Excludes rows the comp-from-text pre-pass would fill (those are counted as
+    comp fills) and rows with no comp source left (no description AND no
+    comp-serving host): their Comp stays blank rather than being guessed at.
+    """
+    if job.comp or job.status not in ENRICH_ELIGIBLE_STATUSES:
+        return False
+    if comp_recompute_value(job, force=False):
+        return False
+    url = (job.url or "").strip()
+    if url and "comp" in _capability_for(url).fields:
+        return True
+    return bool(job.description_text.strip())
 
 
 def _row_needs(job: EnrichedJob, fill_fields: frozenset[str]) -> frozenset[str]:
@@ -186,6 +210,9 @@ def render_detail_summary(stats: dict[str, Any]) -> str:
     descriptions = stats.get("descriptions_filled") or 0
     if descriptions:
         extras.append(f"{descriptions} descriptions filled")
+    not_listed = stats.get("comp_not_listed") or 0
+    if not_listed:
+        extras.append(f"{not_listed} comp marked not listed")
     if extras:
         base += f" ({', '.join(extras)})"
     base += f", {stats['skipped']} skipped"
@@ -269,8 +296,15 @@ def enrich_job_details(
     and the caller asked for it (``fill_fields``). Writes are fill-only and
     gated the same way — a fetch never overwrites existing data, and a field
     outside ``fill_fields`` is never written even when the page returns it.
-    Callers that must not write descriptions (the backfill and backlog paths,
-    which rely solely on the sidecar cache) pass ``frozenset({"comp"})``.
+    Callers that must not write descriptions (``--skip-descriptions``) pass
+    ``frozenset({"comp"})``.
+
+    A blank Comp that every available source fails to fill is marked
+    ``COMP_NOT_LISTED`` — after a SUCCESSFUL fetch finds no pay (a failed
+    fetch proves nothing and leaves the row blank to retry), or straight from
+    the checked description when no host can add a comp source. The mark ends
+    the row's comp need, so it stops re-fetching every run; a later real
+    value (re-scraped pay text, board upgrade, force repair) overwrites it.
 
     ``force`` re-runs the comp-from-description pre-pass on rows that already
     have ``comp`` and overwrites when the cached description yields a different
@@ -307,6 +341,7 @@ def enrich_job_details(
     fetch_targets: list[tuple[int, str]] = []  # (slot index, url)
     text_filled = 0
     comp_recomputed = 0
+    marked_not_listed = 0
     for i, job in enumerate(out):
         # Comp is often already in the scraped description (pay-transparency
         # text); fill it from there first so the row needs no page fetch at
@@ -322,7 +357,7 @@ def enrich_job_details(
             comp_recompute_value(job, force=force) if "comp" in fill_fields else ""
         )
         if text_comp:
-            had_comp = bool(job.comp)
+            had_comp = job.has_stated_comp
             out[i] = job.with_updates(comp=text_comp)
             if had_comp:
                 comp_recomputed += 1
@@ -330,6 +365,20 @@ def enrich_job_details(
                 text_filled += 1
             continue
         url = (job.url or "").strip()
+        # The description was checked (parsed above, no pay) and no fetch can
+        # add a comp source: this row's Comp is conclusively absent. Marking it
+        # ends the blank-vs-unchecked ambiguity and, for fetch-capable hosts,
+        # the marking happens post-fetch in _apply instead.
+        if (
+            "comp" in fill_fields
+            and not job.comp
+            and job.status in ENRICH_ELIGIBLE_STATUSES
+            and job.description_text.strip()
+            and (not url or "comp" not in _capability_for(url).fields)
+        ):
+            out[i] = job.with_updates(comp=COMP_NOT_LISTED)
+            job = out[i]
+            marked_not_listed += 1
         reason = _skip_reason(job, fill_fields)
         if reason is not None:
             skipped_count += 1
@@ -349,8 +398,13 @@ def enrich_job_details(
             continue
         fetch_targets.append((i, url))
 
-    # url -> parsed detail dict; shared across workers, guarded by cache_lock.
-    cache: dict[str, dict[str, Any]] = {}
+    # url -> parsed detail dict, or None when the fetch/parse FAILED (network
+    # error, bot wall, malformed page). The distinction matters downstream:
+    # a successful-but-empty page ({}) proves the poster listed no pay and
+    # allows the COMP_NOT_LISTED mark; a failure (None) proves nothing and the
+    # row must stay blank so the next run retries. Shared across workers,
+    # guarded by cache_lock.
+    cache: dict[str, dict[str, Any] | None] = {}
     cache_lock = threading.Lock()
     fetched_count = [0]
     fetch_lock = threading.Lock()
@@ -368,7 +422,7 @@ def enrich_job_details(
                 session = _http_session(ctx)
             return session
 
-    def _fetch(url: str) -> dict[str, Any]:
+    def _fetch(url: str) -> dict[str, Any] | None:
         with cache_lock:
             if url in cache:
                 return cache[url]
@@ -378,8 +432,9 @@ def enrich_job_details(
         with fetch_lock:
             fetched_count[0] += 1
         resp = _api_get(_get_session(), url, ctx, label="detail")
+        details: dict[str, Any] | None
         if resp is None:
-            details: dict[str, Any] = {}
+            details = None
         else:
             try:
                 details = _parse_detail_page(resp.text, url)
@@ -390,7 +445,7 @@ def enrich_job_details(
                 # NOT caught — those signal real regressions in
                 # `_parse_detail_page` and must remain visible.
                 log.warning("[detail] %s: parse failed: %s", url, exc)
-                details = {}
+                details = None
         with cache_lock:
             cache.setdefault(url, details)
             return cache[url]
@@ -398,20 +453,41 @@ def enrich_job_details(
     enriched_count = 0
     desc_filled = 0
 
-    def _apply(idx: int, url: str, details: dict[str, Any]) -> None:
-        nonlocal enriched_count, desc_filled
+    def _apply(idx: int, url: str, details: dict[str, Any] | None) -> None:
+        nonlocal enriched_count, desc_filled, marked_not_listed
         job = out[idx]
+        if details is None:
+            # Fetch failed: nothing was proven about this row — no writes, no
+            # COMP_NOT_LISTED mark, and the row stays a need for the next run.
+            if progress is not None:
+                progress(1, urlsplit(url).netloc or None)
+            return
         updates: dict[str, Any] = {}
         comp = details.get("comp", "") or ""
-        if "comp" in fill_fields and comp and not job.comp:
-            updates["comp"] = comp
         desc = details.get("description_text", "") or ""
+        if "comp" in fill_fields and not job.has_stated_comp:
+            if not comp:
+                # A freshly fetched description may state pay in prose without
+                # structured salary data: parse it now so the fill (or the
+                # not-listed conclusion) lands in this pass, not the next run.
+                final_desc = job.description_text or desc
+                comp = comp_from_text(final_desc) if final_desc else ""
+            if comp:
+                updates["comp"] = comp
+            elif not job.comp:
+                # Successful fetch, no pay anywhere: conclusively not listed.
+                updates["comp"] = COMP_NOT_LISTED
+                marked_not_listed += 1
         if "description" in fill_fields and desc and not job.description_text:
             updates["description_text"] = desc
             desc_filled += 1
         if updates:
             out[idx] = job.with_updates(**updates)
-            enriched_count += 1
+            # The not-listed mark alone is bookkeeping, not enrichment.
+            if any(
+                not (k == "comp" and v == COMP_NOT_LISTED) for k, v in updates.items()
+            ):
+                enriched_count += 1
         if progress is not None:
             progress(1, urlsplit(url).netloc or None)
 
@@ -459,18 +535,21 @@ def enrich_job_details(
 
     log.info(
         "[detail] fetched %d pages, enriched %d of %d jobs "
-        "(%d comp from cached descriptions, %d comp repaired)",
+        "(%d comp from cached descriptions, %d comp repaired, "
+        "%d comp marked not listed)",
         fetched_count[0],
         enriched_count + text_filled + comp_recomputed,
         len(out),
         text_filled,
         comp_recomputed,
+        marked_not_listed,
     )
     return out, {
         "fetched": fetched_count[0],
         "enriched": enriched_count + text_filled + comp_recomputed,
         "from_description": text_filled,
         "comp_recomputed": comp_recomputed,
+        "comp_not_listed": marked_not_listed,
         "descriptions_filled": desc_filled,
         "skipped": skipped_count,
         "skip_reasons": skip_reasons,

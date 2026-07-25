@@ -262,6 +262,21 @@ class NormalizedJob(BaseModel):
         )
 
 
+#: Comp sentinel: every comp source for the row has been checked (description
+#: parsed; detail page fetched where the host serves comp) and none states
+#: pay. Distinguishes "checked, absent" from a blank "not checked yet" — a
+#: marked row is no longer a comp need, so it stops re-fetching every
+#: backfill. A later real value may overwrite the sentinel; the sentinel
+#: never overwrites a value.
+COMP_NOT_LISTED = "Not listed"
+
+
+def comp_is_fillable(comp: str) -> bool:
+    """A Comp cell a fill path may overwrite: blank or the checked-but-absent
+    mark, never a real value."""
+    return comp.strip() in ("", COMP_NOT_LISTED)
+
+
 class EnrichedJob(BaseModel):
     """``frozen=True`` — enrichers must return ``model_copy(update=...)``."""
 
@@ -284,6 +299,12 @@ class EnrichedJob(BaseModel):
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
     description_text: str = ""
+
+    @property
+    def has_stated_comp(self) -> bool:
+        """True when Comp holds a real pay value (not blank, not the
+        checked-but-absent sentinel)."""
+        return bool(self.comp) and self.comp != COMP_NOT_LISTED
 
     # Free-text on purpose (shares the tracker's "convention, not enforcement"
     # stance): any string is accepted and preserved, but the spelling is

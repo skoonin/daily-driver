@@ -311,7 +311,9 @@ def _build_fit_notes_user(job: EnrichedJob, max_desc_words: int) -> str:
     location = job.location or "unknown"
     desc = job.description_text
 
-    comp_section = f"\nStated compensation: {job.comp}" if job.comp else ""
+    # The not-listed mark is bookkeeping, not pay data: the scorer must treat
+    # a marked row exactly like a blank one (never penalized).
+    comp_section = f"\nStated compensation: {job.comp}" if job.has_stated_comp else ""
     desc_section = ""
     if desc:
         words = desc.split()
