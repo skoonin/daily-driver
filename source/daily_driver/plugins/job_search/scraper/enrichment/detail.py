@@ -51,10 +51,12 @@ class DescriptionCapability:
 
 
 # Hosts the generic JSON-LD detail fetch must not attempt, each for its own
-# reason: LinkedIn emits no JSON-LD anonymously (JobSpy already fills the
-# description at scrape); Indeed 403s bare requests; Hacker News 429s /item?id=*.
+# reason: Indeed 403s bare requests; Hacker News 429s /item?id=*. LinkedIn is
+# fetchable: no JSON-LD anonymously, but the guest page server-renders a
+# salary card (``compensation__salary``) that JobSpy discards, so
+# ``_parse_detail_page`` routes it to a LinkedIn-specific parser (verified
+# live 2026-07-24).
 _HOST_CAPABILITY: dict[str, DescriptionCapability] = {
-    "linkedin.com": DescriptionCapability(False, "linkedin: from scrape"),
     "indeed.com": DescriptionCapability(False, "indeed: bot-walled"),
     "news.ycombinator.com": DescriptionCapability(False, "hn: rate-limited"),
     # Apple details pages are a client-rendered SPA: the server HTML carries no
@@ -85,6 +87,25 @@ def _capability_for(url: str) -> DescriptionCapability:
     return _DEFAULT_CAPABILITY
 
 
+def comp_recompute_value(job: EnrichedJob, *, force: bool) -> str:
+    """Return the comp the cached description would set on ``job``, or "".
+
+    The single definition of the comp fill/repair rule, shared by the detail
+    pre-pass and ``_backfill_needs`` (dry-run count and short-circuit) so the
+    preview can never drift from what the pass actually does. Overwrites
+    happen only under ``force``; a description that yields nothing never
+    blanks an existing value.
+    """
+    if not job.description_text or job.status not in ENRICH_ELIGIBLE_STATUSES:
+        return ""
+    if job.comp and not force:
+        return ""
+    text_comp = comp_from_text(job.description_text)
+    if text_comp and text_comp != job.comp:
+        return text_comp
+    return ""
+
+
 def _skip_reason(job: EnrichedJob) -> str | None:
     """Classify why a job needs no detail fetch, or None when it should fetch.
 
@@ -110,13 +131,17 @@ def render_detail_summary(stats: dict[str, Any]) -> str:
     e.g. "0 enriched, 7 skipped (5 already complete, 2 indeed: bot-walled)". The
     per-reason counts in ``stats['skip_reasons']`` sum to ``stats['skipped']``.
     """
-    base = f"{stats['enriched']} enriched, {stats['skipped']} skipped"
+    base = f"{stats['enriched']} enriched"
+    extras = []
     from_desc = stats.get("from_description") or 0
     if from_desc:
-        base = (
-            f"{stats['enriched']} enriched ({from_desc} from cached "
-            f"descriptions), {stats['skipped']} skipped"
-        )
+        extras.append(f"{from_desc} from cached descriptions")
+    recomputed = stats.get("comp_recomputed") or 0
+    if recomputed:
+        extras.append(f"{recomputed} comp repaired")
+    if extras:
+        base += f" ({', '.join(extras)})"
+    base += f", {stats['skipped']} skipped"
     reasons = stats.get("skip_reasons") or {}
     if not reasons:
         return base
@@ -188,6 +213,7 @@ def enrich_job_details(
     *,
     progress: ProgressCallback | None = None,
     capture_descriptions: bool = True,
+    force: bool = False,
 ) -> tuple[list[EnrichedJob], dict[str, Any]]:
     """Fetch each job's detail page and fill comp/posted_date/description.
 
@@ -196,6 +222,13 @@ def enrich_job_details(
     never writes a description, so backfill relies solely on the sidecar cache
     for descriptions. The fetch itself is unchanged — it is gated by comp
     presence, not description — so comp still backfills.
+
+    ``force`` re-runs the comp-from-description pre-pass on rows that already
+    have ``comp`` and overwrites when the cached description yields a different
+    value (a parser fix can correct previously mis-extracted rows). It never
+    blanks an existing comp when the description yields nothing, never touches
+    rows with no cached description, and triggers no extra HTTP — an
+    unimproved row still skips as "already complete".
 
     Fetches run on a small thread pool (``min(4, n_hosts)`` workers) with
     per-host politeness: requests to the same host stay ``detail_delay_seconds``
@@ -224,6 +257,7 @@ def enrich_job_details(
     skip_reasons: dict[str, int] = {}
     fetch_targets: list[tuple[int, str]] = []  # (slot index, url)
     text_filled = 0
+    comp_recomputed = 0
     for i, job in enumerate(out):
         # Comp is often already in the scraped description (pay-transparency
         # text); fill it from there first so the row needs no page fetch at
@@ -232,16 +266,18 @@ def enrich_job_details(
         # as enriched (not skipped): it gained data, it just cost no request.
         # (JobSpy rows get a scrape-time shot via its own extract_salary; the
         # `not job.comp` gate means this pass only sees what that one missed.)
-        if (
-            not job.comp
-            and job.description_text
-            and job.status in ENRICH_ELIGIBLE_STATUSES
-        ):
-            text_comp = comp_from_text(job.description_text)
-            if text_comp:
-                out[i] = job.with_updates(comp=text_comp)
+        # Under ``force`` rows with existing comp re-parse too, but only a
+        # non-empty, different result overwrites — a description that no
+        # longer parses must not blank a previously extracted value.
+        text_comp = comp_recompute_value(job, force=force)
+        if text_comp:
+            had_comp = bool(job.comp)
+            out[i] = job.with_updates(comp=text_comp)
+            if had_comp:
+                comp_recomputed += 1
+            else:
                 text_filled += 1
-                continue
+            continue
         url = (job.url or "").strip()
         reason = _skip_reason(job)
         if reason is not None:
@@ -378,16 +414,18 @@ def enrich_job_details(
 
     log.info(
         "[detail] fetched %d pages, enriched %d of %d jobs "
-        "(%d comp from cached descriptions)",
+        "(%d comp from cached descriptions, %d comp repaired)",
         fetched_count[0],
-        enriched_count + text_filled,
+        enriched_count + text_filled + comp_recomputed,
         len(out),
         text_filled,
+        comp_recomputed,
     )
     return out, {
         "fetched": fetched_count[0],
-        "enriched": enriched_count + text_filled,
+        "enriched": enriched_count + text_filled + comp_recomputed,
         "from_description": text_filled,
+        "comp_recomputed": comp_recomputed,
         "skipped": skipped_count,
         "skip_reasons": skip_reasons,
         "total": len(out),

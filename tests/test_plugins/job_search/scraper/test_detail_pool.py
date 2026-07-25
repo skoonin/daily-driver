@@ -192,14 +192,15 @@ def test_capture_descriptions_true_writes_description() -> None:
 
 
 def test_skip_paths_unchanged() -> None:
-    """comp-present, inactive, url-less, and bot-walled hosts skip the fetch."""
+    """comp-present, inactive, url-less, and bot-walled hosts skip the fetch;
+    LinkedIn fetches (guest salary card)."""
     jobs = [
         _job("https://acme.com/job", comp="$200k"),  # already has comp
-        _job("https://www.linkedin.com/jobs/view/1"),  # bot-walled host
+        _job("https://www.linkedin.com/jobs/view/1"),  # fetched: salary card
         _job("https://news.ycombinator.com/item?id=1"),  # rate-limited host
         _job("https://ca.indeed.com/viewjob?jk=x"),  # bot-walled host
         _job(""),  # no url
-        _job("https://apply.workable.com/acme/j/9"),  # the only real fetch
+        _job("https://apply.workable.com/acme/j/9"),  # real fetch
     ]
     resp = MagicMock()
     resp.text = "<html></html>"
@@ -209,9 +210,9 @@ def test_skip_paths_unchanged() -> None:
     ):
         _out, stats = enrich_job_details(jobs, _ctx(0))
 
-    assert api_get.call_count == 1
-    assert stats["fetched"] == 1
-    assert stats["skipped"] == 5
+    assert api_get.call_count == 2
+    assert stats["fetched"] == 2
+    assert stats["skipped"] == 4
     assert stats["total"] == 6
 
 
@@ -249,7 +250,6 @@ def test_skip_reason_breakdown_tallied() -> None:
     jobs = [
         _job("https://acme.com/job", comp="$200k"),  # already complete
         _job("https://acme.com/job2", comp="$150k"),  # already complete
-        _job("https://www.linkedin.com/jobs/view/1"),  # linkedin: from scrape
         _job("https://news.ycombinator.com/item?id=1"),  # hn: rate-limited
         _job("https://ca.indeed.com/viewjob?jk=x"),  # indeed: bot-walled
         _job("https://jobs.apple.com/en-us/details/1/x"),  # apple: SPA, no JSON-LD
@@ -266,9 +266,8 @@ def test_skip_reason_breakdown_tallied() -> None:
         _out, stats = enrich_job_details(jobs, _ctx(0))
 
     reasons = stats["skip_reasons"]
-    assert sum(reasons.values()) == stats["skipped"] == 8
+    assert sum(reasons.values()) == stats["skipped"] == 7
     assert reasons["already complete"] == 2
-    assert reasons["linkedin: from scrape"] == 1
     assert reasons["hn: rate-limited"] == 1
     assert reasons["indeed: bot-walled"] == 1
     assert reasons["apple: SPA, no server JSON-LD"] == 1
@@ -306,3 +305,99 @@ def test_render_skip_breakdown_no_skips() -> None:
         "skip_reasons": {},
     }
     assert render_detail_summary(stats) == "3 enriched, 0 skipped"
+
+
+# ---------------------------------------------------------------------------
+# force=True: recompute comp from the cached description (backfill repair).
+# ---------------------------------------------------------------------------
+
+_DESC_WITH_RANGE = (
+    "The standard base pay range for this role is "
+    "$100,220\\.00 \\- $197,758\\.00 CAD."
+)
+
+
+def test_force_recomputes_comp_from_cached_description() -> None:
+    """A row holding a mis-extracted comp is overwritten when the cached
+    description parses to a different value; no HTTP is issued."""
+    jobs = [
+        _job(
+            "https://www.linkedin.com/jobs/view/1",
+            comp="$100,220/yr",
+            description_text=_DESC_WITH_RANGE,
+        )
+    ]
+    with patch(f"{_DETAIL}._api_get") as api_get:
+        out, stats = enrich_job_details(jobs, _ctx(0), force=True)
+
+    api_get.assert_not_called()
+    assert out[0].comp == "$100,220–$197,758/yr CAD"
+    assert stats["comp_recomputed"] == 1
+    assert stats["enriched"] == 1
+
+
+def test_force_never_blanks_comp_when_description_yields_nothing() -> None:
+    """force must not erase an existing comp because the description no longer
+    parses; the row skips as 'already complete' with no fetch."""
+    jobs = [
+        _job(
+            "https://www.linkedin.com/jobs/view/1",
+            comp="$150,000/yr",
+            description_text="A great role on a great team.",
+        )
+    ]
+    with patch(f"{_DETAIL}._api_get") as api_get:
+        out, stats = enrich_job_details(jobs, _ctx(0), force=True)
+
+    api_get.assert_not_called()
+    assert out[0].comp == "$150,000/yr"
+    assert stats["comp_recomputed"] == 0
+    assert stats["skip_reasons"] == {"already complete": 1}
+
+
+def test_force_leaves_rows_without_cached_description_untouched() -> None:
+    """force reads the description cache only: a comp-holding row with no
+    cached description keeps its value and triggers no fetch."""
+    jobs = [_job("https://www.linkedin.com/jobs/view/1", comp="$150,000/yr")]
+    with patch(f"{_DETAIL}._api_get") as api_get:
+        out, stats = enrich_job_details(jobs, _ctx(0), force=True)
+
+    api_get.assert_not_called()
+    assert out[0].comp == "$150,000/yr"
+    assert stats["comp_recomputed"] == 0
+
+
+def test_force_default_false_keeps_existing_comp() -> None:
+    """Without force, a row with comp is never re-parsed (run-path behavior)."""
+    jobs = [
+        _job(
+            "https://www.linkedin.com/jobs/view/1",
+            comp="$100,220/yr",
+            description_text=_DESC_WITH_RANGE,
+        )
+    ]
+    with patch(f"{_DETAIL}._api_get") as api_get:
+        out, stats = enrich_job_details(jobs, _ctx(0))
+
+    api_get.assert_not_called()
+    assert out[0].comp == "$100,220/yr"
+    assert stats["comp_recomputed"] == 0
+
+
+def test_render_summary_includes_comp_recomputed() -> None:
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        render_detail_summary,
+    )
+
+    stats = {
+        "enriched": 4,
+        "from_description": 1,
+        "comp_recomputed": 3,
+        "skipped": 0,
+        "total": 4,
+        "fetched": 0,
+        "skip_reasons": {},
+    }
+    assert render_detail_summary(stats) == (
+        "4 enriched (1 from cached descriptions, 3 comp repaired), 0 skipped"
+    )
