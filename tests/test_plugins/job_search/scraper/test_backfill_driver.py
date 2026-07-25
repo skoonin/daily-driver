@@ -247,7 +247,7 @@ def test_backfill_is_description_cache_only_and_warns(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Backfill never fetches or writes descriptions: it drives the detail phase
-    with ``capture_descriptions=False``, writes nothing to the sidecar, and warns
+    with ``fill_fields={"comp"}``, writes nothing to the sidecar, and warns
     that an uncached row is left un-enriched. (The dedicated LinkedIn fetcher was
     removed; descriptions are captured only during ``jobs run``.)"""
     from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
@@ -262,7 +262,7 @@ def test_backfill_is_description_cache_only_and_warns(
 
     def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         progress = kwargs.get("progress")
-        captured["capture_descriptions"] = kwargs.get("capture_descriptions", True)
+        captured["fill_fields"] = kwargs.get("fill_fields")
         if progress is not None:
             progress(len(jobs))
         return jobs, {
@@ -292,8 +292,8 @@ def test_backfill_is_description_cache_only_and_warns(
 
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
-    # Backfill told the detail phase not to capture descriptions.
-    assert captured["capture_descriptions"] is False
+    # Backfill told the detail phase to fill comp only, never descriptions.
+    assert captured["fill_fields"] == frozenset({"comp"})
     # No description was written to the sidecar.
     assert load_descriptions(csv_path) == {}
     # The user is told the row has no cached description.

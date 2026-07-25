@@ -159,8 +159,8 @@ def test_cache_hit_returns_without_fetch() -> None:
     assert stats["enriched"] == 2
 
 
-def test_capture_descriptions_false_writes_comp_not_description() -> None:
-    """The backfill path passes capture_descriptions=False: a detail fetch still
+def test_fill_fields_comp_only_writes_comp_not_description() -> None:
+    """The backfill path passes fill_fields={"comp"}: a detail fetch still
     fills comp but never writes description_text."""
     jobs = [_job("https://apply.workable.com/acme/j/1")]  # no comp -> fetched
     resp = MagicMock()
@@ -170,14 +170,15 @@ def test_capture_descriptions_false_writes_comp_not_description() -> None:
         patch(f"{_DETAIL}._api_get", return_value=resp),
         patch(f"{_DETAIL}._parse_detail_page", return_value=details),
     ):
-        out, stats = enrich_job_details(jobs, _ctx(0), capture_descriptions=False)
+        out, stats = enrich_job_details(jobs, _ctx(0), fill_fields=frozenset({"comp"}))
     assert out[0].comp == "$200k"
     assert out[0].description_text == ""
     assert stats["enriched"] == 1  # comp still counted
 
 
-def test_capture_descriptions_true_writes_description() -> None:
-    """The run path (default True) writes description_text from the detail page."""
+def test_default_fill_fields_writes_description() -> None:
+    """The run path (default fill_fields) writes description_text from the
+    detail page."""
     jobs = [_job("https://apply.workable.com/acme/j/1")]
     resp = MagicMock()
     resp.text = "<html></html>"
@@ -186,16 +187,69 @@ def test_capture_descriptions_true_writes_description() -> None:
         patch(f"{_DETAIL}._api_get", return_value=resp),
         patch(f"{_DETAIL}._parse_detail_page", return_value=details),
     ):
-        out, _ = enrich_job_details(jobs, _ctx(0), capture_descriptions=True)
+        out, stats = enrich_job_details(jobs, _ctx(0))
     assert out[0].comp == "$200k"
     assert out[0].description_text == "Full role body."
+    assert stats["descriptions_filled"] == 1
+
+
+def test_description_need_alone_triggers_fetch() -> None:
+    """A row with comp but no description on a JSON-LD host fetches for the
+    description alone — the healing path Workable/Workday rows rely on."""
+    jobs = [_job("https://apply.workable.com/acme/j/1", comp="$200k")]
+    resp = MagicMock()
+    resp.text = "<html></html>"
+    details = {"comp": "$180k", "description_text": "Full role body."}
+    with (
+        patch(f"{_DETAIL}._api_get", return_value=resp) as api_get,
+        patch(f"{_DETAIL}._parse_detail_page", return_value=details),
+    ):
+        out, stats = enrich_job_details(jobs, _ctx(0))
+    assert api_get.call_count == 1
+    # Fill-only: the fetched comp never overwrites the existing value.
+    assert out[0].comp == "$200k"
+    assert out[0].description_text == "Full role body."
+    assert stats["descriptions_filled"] == 1
+
+
+def test_linkedin_missing_description_only_does_not_fetch() -> None:
+    """LinkedIn serves comp only (salary card): a row missing just its
+    description has no fillable need there, so no request is spent."""
+    jobs = [_job("https://www.linkedin.com/jobs/view/1", comp="$200k")]
+    with (
+        patch(f"{_DETAIL}._api_get") as api_get,
+        patch(f"{_DETAIL}._parse_detail_page", return_value={}),
+    ):
+        _out, stats = enrich_job_details(jobs, _ctx(0))
+    assert api_get.call_count == 0
+    assert stats["skip_reasons"] == {"already complete": 1}
+
+
+def test_capability_matches_host_suffix_not_substring() -> None:
+    """Host capability is exact/suffix keyed: lookalike hosts must fall through
+    to the default full-JSON-LD capability, and subdomains must inherit."""
+    from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        DETAIL_FIELDS,
+        _capability_for,
+    )
+
+    assert _capability_for("https://www.linkedin.com/jobs/view/1").fields == (
+        frozenset({"comp"})
+    )
+    assert _capability_for("https://evillinkedin.com/x").fields == DETAIL_FIELDS
+    assert _capability_for("https://linkedin.com.evil.example/x").fields == (
+        DETAIL_FIELDS
+    )
+    assert _capability_for("https://job-boards.greenhouse.io/acme").fields == (
+        frozenset()
+    )
 
 
 def test_skip_paths_unchanged() -> None:
-    """comp-present, inactive, url-less, and bot-walled hosts skip the fetch;
+    """complete, inactive, url-less, and bot-walled hosts skip the fetch;
     LinkedIn fetches (guest salary card)."""
     jobs = [
-        _job("https://acme.com/job", comp="$200k"),  # already has comp
+        _job("https://acme.com/job", comp="$200k", description_text="d"),  # complete
         _job("https://www.linkedin.com/jobs/view/1"),  # fetched: salary card
         _job("https://news.ycombinator.com/item?id=1"),  # rate-limited host
         _job("https://ca.indeed.com/viewjob?jk=x"),  # bot-walled host
@@ -248,8 +302,8 @@ def test_slot_replacement_on_calling_thread() -> None:
 def test_skip_reason_breakdown_tallied() -> None:
     """stats['skip_reasons'] tallies per-reason; the counts sum to skipped."""
     jobs = [
-        _job("https://acme.com/job", comp="$200k"),  # already complete
-        _job("https://acme.com/job2", comp="$150k"),  # already complete
+        _job("https://acme.com/job", comp="$200k", description_text="d"),
+        _job("https://acme.com/job2", comp="$150k", description_text="d"),
         _job("https://news.ycombinator.com/item?id=1"),  # hn: rate-limited
         _job("https://ca.indeed.com/viewjob?jk=x"),  # indeed: bot-walled
         _job("https://jobs.apple.com/en-us/details/1/x"),  # apple: SPA, no JSON-LD

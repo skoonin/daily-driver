@@ -155,16 +155,16 @@ def test_default_path_still_enriches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Without the flag, the detail enricher is still invoked (guards the skip),
-    and the run path captures descriptions (capture_descriptions defaults True) --
-    the mirror of backfill passing False."""
+    and the run path asks for every detail field -- the mirror of backfill
+    scoping fill_fields down to comp only."""
     _stub_scrapers(monkeypatch, [_scraped_job()])
 
     detail_calls: list[int] = []
-    detail_capture: list[bool] = []
+    detail_fields: list[Any] = []
 
     def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
         detail_calls.append(len(jobs))
-        detail_capture.append(kwargs.get("capture_descriptions", True))
+        detail_fields.append(kwargs.get("fill_fields"))
         return jobs, {
             "enriched": 0,
             "skipped": len(jobs),
@@ -207,9 +207,9 @@ def test_default_path_still_enriches(
 
     assert rc == 0
     assert detail_calls == [1]
-    # The run path must NOT suppress description capture (backfill is what passes
-    # False); a regression adding capture_descriptions=False to run would fail here.
-    assert detail_capture == [True]
+    # The run path must ask for descriptions too (backfill is what scopes down
+    # to comp); a regression passing a comp-only set to run would fail here.
+    assert detail_fields == [frozenset({"comp", "description"})]
 
 
 def test_run_threads_discovery_matched_cache_onto_ctx(

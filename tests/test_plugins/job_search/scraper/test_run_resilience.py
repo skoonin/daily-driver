@@ -710,8 +710,14 @@ def test_overlap_two_waves_share_fit_budget(
         monkeypatch,
         tmp_path,
         budget=10,
-        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
-        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(5)],
+        phase1=[
+            _scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x", description_text="infra")
+            for i in range(7)
+        ],
+        apple=[
+            _scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x", description_text="infra")
+            for i in range(5)
+        ],
         wave1_fit_attempted=phase1_urls,
     )
     assert len(waves) == 2
@@ -935,7 +941,7 @@ def test_overlap_interrupt_logs_relayed_wave1_exception(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set(), {}),
     )
-    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k")]
+    phase1 = [_scraped("https://p1/1", "P1Co", comp="$200k", description_text="infra")]
     wave1_failed = threading.Event()
 
     def fake_scrape(
@@ -994,7 +1000,7 @@ def test_disabled_passes_render_no_bars(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set(), {}),
     )
-    jobs = [_scraped("https://x/1", "Acme", comp="$200k")]
+    jobs = [_scraped("https://x/1", "Acme", comp="$200k", description_text="infra")]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
@@ -1041,8 +1047,14 @@ def test_overlap_wave2_budget_exhausted_gets_zero_not_one(
         monkeypatch,
         tmp_path,
         budget=7,
-        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(7)],
-        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
+        phase1=[
+            _scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x", description_text="infra")
+            for i in range(7)
+        ],
+        apple=[
+            _scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x", description_text="infra")
+            for i in range(3)
+        ],
         wave1_fit_attempted=phase1_urls,
     )
     assert len(waves) == 2
@@ -1060,8 +1072,14 @@ def test_overlap_failed_wave1_row_not_reattempted_in_wave2(
         monkeypatch,
         tmp_path,
         budget=10,
-        phase1=[_scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x") for i in range(4)],
-        apple=[_scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x") for i in range(3)],
+        phase1=[
+            _scraped(f"https://p1/{i}", f"P1Co{i}", comp="$x", description_text="infra")
+            for i in range(4)
+        ],
+        apple=[
+            _scraped(f"https://ap/{i}", f"ApCo{i}", comp="$x", description_text="infra")
+            for i in range(3)
+        ],
         # All 4 phase-1 rows were attempted (say 1 failed) -> all excluded.
         wave1_fit_attempted=phase1_urls,
     )
@@ -1085,7 +1103,7 @@ def test_manifest_records_phase_reached_complete(
         "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
         lambda _csv_path: (set(), set(), {}),
     )
-    jobs = [_scraped("https://x/1", "Acme", comp="$x")]
+    jobs = [_scraped("https://x/1", "Acme", comp="$x", description_text="infra")]
 
     def fake_scrape(
         ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any

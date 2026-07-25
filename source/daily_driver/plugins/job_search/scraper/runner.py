@@ -549,7 +549,7 @@ def run_backfill(
                     fit_budget=fit_budget,
                     force=force,
                     cooldown_cutoff=cooldown_cutoff,
-                    capture_descriptions=False,
+                    fill_fields=frozenset({"comp"}),
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -773,7 +773,7 @@ def _enrich_wave(
     attempted: dict[str, set[str]] | None = None,
     force: bool = False,
     cooldown_cutoff: datetime | None = None,
-    capture_descriptions: bool = True,
+    fill_fields: frozenset[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, int]]:
     """Run one enrichment wave (detail + LLM) over ``jobs`` in place.
 
@@ -785,17 +785,21 @@ def _enrich_wave(
     the manifest. ``force`` re-enriches and overwrites every active row's
     Fit/Notes/Remote and recomputes comp from the cached description when it
     parses to a different value (backfill --force-update).
-    ``capture_descriptions`` False (the backfill path) keeps descriptions
-    cache-only: the detail phase fills
-    comp but not description_text, and a row with no cached description is left
+    ``fill_fields`` is the detail phase's field allow-list (None = all detail
+    fields): the backfill and backlog paths pass ``frozenset({"comp"})`` to
+    keep descriptions cache-only — a row with no cached description is left
     un-enriched by fit/notes rather than fetched. Flushes per phase and on the
     periodic hook; the caller's try/except flushes once more on interrupt.
     Returns ``(detail_stats, fn_stats)``.
     """
     from daily_driver.plugins.job_search.scraper.enrichment import enrich_job_details
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+        DETAIL_FIELDS,
         render_detail_summary,
     )
+
+    if fill_fields is None:
+        fill_fields = DETAIL_FIELDS
 
     total = len(jobs)
     detail_phase = enrich_group.phase(f"Detail pages{wave_label}", total=total)
@@ -814,7 +818,7 @@ def _enrich_wave(
         jobs,
         ctx,
         progress=detail_phase.advance,
-        capture_descriptions=capture_descriptions,
+        fill_fields=fill_fields,
         force=force,
     )
     detail_phase.done(render_detail_summary(detail_stats))
@@ -1762,7 +1766,7 @@ def _run_impl(
                     fit_budget=folded_leftover_budget,
                     set_phase=_set_phase,
                     exclude_fit_urls=frozenset(fit_attempted_all),
-                    capture_descriptions=False,
+                    fill_fields=frozenset({"comp"}),
                 )
                 folded_group.done()
                 state.backlog_enriched = folded_stats["enriched"]

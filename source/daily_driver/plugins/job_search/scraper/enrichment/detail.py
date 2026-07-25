@@ -36,34 +36,39 @@ log = get_logger(__name__)
 _MAX_DETAIL_WORKERS = 4
 
 
-@dataclass(frozen=True)
-class DescriptionCapability:
-    """Whether a host's detail page is worth fetching, and why when it isn't.
+#: The fields a detail fetch can fill on a row.
+DETAIL_FIELDS = frozenset({"comp", "description"})
 
-    ``reason`` is the honest, host-specific phrase surfaced verbatim in the phase
-    summary -- replacing the old catch-all "blocked host", which hid three
-    unrelated causes (no JSON-LD, bot-wall, rate-limit) behind one label.
+
+@dataclass(frozen=True)
+class HostCapability:
+    """Which fields a host's detail page can serve, and why when it's none.
+
+    ``reason`` is the honest, host-specific phrase surfaced verbatim in the
+    phase summary when ``fields`` is empty -- replacing the old catch-all
+    "blocked host", which hid three unrelated causes (no JSON-LD, bot-wall,
+    rate-limit) behind one label.
     """
 
-    fetch_detail: bool
-    reason: str
+    fields: frozenset[str]
+    reason: str = ""
 
 
-# Hosts the generic JSON-LD detail fetch must not attempt, each for its own
-# reason: Indeed 403s bare requests; Hacker News 429s /item?id=*. LinkedIn is
-# fetchable: no JSON-LD anonymously, but the guest page server-renders a
-# salary card (``compensation__salary``) that JobSpy discards, so
+# Per-host deviations from the JSON-LD default, each for its own reason:
+# Indeed 403s bare requests; Hacker News 429s /item?id=*. LinkedIn guest
+# pages have no JSON-LD anonymously but server-render a salary card
+# (``compensation__salary``) that JobSpy discards, so it serves comp only —
 # ``_parse_detail_page`` routes it to a LinkedIn-specific parser (verified
-# live 2026-07-24).
-_HOST_CAPABILITY: dict[str, DescriptionCapability] = {
-    "indeed.com": DescriptionCapability(False, "indeed: bot-walled"),
-    "news.ycombinator.com": DescriptionCapability(False, "hn: rate-limited"),
+# live 2026-07-24); LinkedIn descriptions come from JobSpy at scrape time.
+_HOST_CAPABILITY: dict[str, HostCapability] = {
+    "indeed.com": HostCapability(frozenset(), "indeed: bot-walled"),
+    "news.ycombinator.com": HostCapability(frozenset(), "hn: rate-limited"),
     # Apple details pages are a client-rendered SPA: the server HTML carries no
     # JSON-LD JobPosting and no description prose (the body loads via an
     # authenticated api/v1 call). The generic fetch can never recover it, so
     # skip it rather than spend a request and mislabel the miss (verified live
     # 2026-07-02).
-    "jobs.apple.com": DescriptionCapability(False, "apple: SPA, no server JSON-LD"),
+    "jobs.apple.com": HostCapability(frozenset(), "apple: SPA, no server JSON-LD"),
     # Greenhouse hosted pages sit behind volume-based bot protection on ONE
     # shared host (job-boards.greenhouse.io serves every board), so a
     # discovery-scale run gets 403s after the first requests (verified live
@@ -72,16 +77,19 @@ _HOST_CAPABILITY: dict[str, DescriptionCapability] = {
     # comp-from-text pre-pass, and the description itself comes from the API
     # at scrape time. Matches boards.greenhouse.io too (same protection, same
     # data already in hand).
-    "greenhouse.io": DescriptionCapability(False, "greenhouse: comp from scrape"),
+    "greenhouse.io": HostCapability(frozenset(), "greenhouse: comp from scrape"),
+    "linkedin.com": HostCapability(frozenset({"comp"})),
 }
-_DEFAULT_CAPABILITY = DescriptionCapability(True, "")
+_DEFAULT_CAPABILITY = HostCapability(DETAIL_FIELDS)
 
 
-def _capability_for(url: str) -> DescriptionCapability:
-    """Description capability for a URL's host; default is to fetch it."""
+def _capability_for(url: str) -> HostCapability:
+    """Host capability for a URL; unknown hosts default to full JSON-LD."""
     host = urlsplit(url).netloc
     for pattern, capability in _HOST_CAPABILITY.items():
-        if pattern in host:
+        # Exact/suffix match, never substring: "evillinkedin.com" and
+        # "linkedin.com.evil.example" must not inherit a host's capability.
+        if host == pattern or host.endswith("." + pattern):
             return capability
     return _DEFAULT_CAPABILITY
 
@@ -105,23 +113,43 @@ def comp_recompute_value(job: EnrichedJob, *, force: bool) -> str:
     return ""
 
 
-def _skip_reason(job: EnrichedJob) -> str | None:
+def _row_needs(job: EnrichedJob, fill_fields: frozenset[str]) -> frozenset[str]:
+    """Fields a detail fetch would fill on ``job``: missing ∩ host-capable ∩
+    caller-enabled.
+
+    The one rule that decides every fetch — a row fetches exactly when this is
+    non-empty. Fill-only: a field the row already has is never a need, so a
+    fetch can never overwrite existing data.
+    """
+    missing = set()
+    if not job.comp:
+        missing.add("comp")
+    if not job.description_text:
+        missing.add("description")
+    url = (job.url or "").strip()
+    if not url:
+        return frozenset()
+    return frozenset(missing) & _capability_for(url).fields & fill_fields
+
+
+def _skip_reason(job: EnrichedJob, fill_fields: frozenset[str]) -> str | None:
     """Classify why a job needs no detail fetch, or None when it should fetch.
 
     Reasons are short, user-facing phrases reused verbatim in the phase summary
-    so the breakdown reads plainly. Order mirrors the original skip checks.
+    so the breakdown reads plainly. "already complete" means the row lacks no
+    field this pass could fill (its host's per-field capability included).
     """
-    if job.comp:
-        return "already complete"
     if job.status not in ENRICH_ELIGIBLE_STATUSES:
         return "inactive"
     url = (job.url or "").strip()
     if not url:
         return "no url"
+    if _row_needs(job, fill_fields):
+        return None
     capability = _capability_for(url)
-    if not capability.fetch_detail:
+    if not capability.fields:
         return capability.reason
-    return None
+    return "already complete"
 
 
 def render_detail_summary(stats: dict[str, Any]) -> str:
@@ -138,6 +166,9 @@ def render_detail_summary(stats: dict[str, Any]) -> str:
     recomputed = stats.get("comp_recomputed") or 0
     if recomputed:
         extras.append(f"{recomputed} comp repaired")
+    descriptions = stats.get("descriptions_filled") or 0
+    if descriptions:
+        extras.append(f"{descriptions} descriptions filled")
     if extras:
         base += f" ({', '.join(extras)})"
     base += f", {stats['skipped']} skipped"
@@ -211,16 +242,18 @@ def enrich_job_details(
     ctx: ScrapeContext,
     *,
     progress: ProgressCallback | None = None,
-    capture_descriptions: bool = True,
+    fill_fields: frozenset[str] = DETAIL_FIELDS,
     force: bool = False,
 ) -> tuple[list[EnrichedJob], dict[str, Any]]:
-    """Fetch each job's detail page and fill comp/description.
+    """Fetch detail pages to fill each row's missing fields, needs-driven.
 
-    ``capture_descriptions`` gates only the ``description_text`` write: with it
-    False (the backfill path), a detail fetch still fills comp but
-    never writes a description, so backfill relies solely on the sidecar cache
-    for descriptions. The fetch itself is unchanged — it is gated by comp
-    presence, not description — so comp still backfills.
+    A row fetches exactly when ``_row_needs`` is non-empty: a field is a need
+    when the row lacks it, the URL's host can serve it (``_HOST_CAPABILITY``),
+    and the caller asked for it (``fill_fields``). Writes are fill-only and
+    gated the same way — a fetch never overwrites existing data, and a field
+    outside ``fill_fields`` is never written even when the page returns it.
+    Callers that must not write descriptions (the backfill and backlog paths,
+    which rely solely on the sidecar cache) pass ``frozenset({"comp"})``.
 
     ``force`` re-runs the comp-from-description pre-pass on rows that already
     have ``comp`` and overwrites when the cached description yields a different
@@ -233,8 +266,8 @@ def enrich_job_details(
     per-host politeness: requests to the same host stay ``detail_delay_seconds``
     apart while different hosts proceed concurrently. Caches by URL within the
     run so jobs that share a detail URL only generate one HTTP request. Skips
-    jobs that already have ``comp`` (listing-card sources that provide salary),
-    inactive jobs, url-less jobs, and known bot-walled / rate-limited hosts.
+    rows with no needs ("already complete"), inactive rows, url-less rows, and
+    known bot-walled / rate-limited hosts.
     Network/parse errors are swallowed — missing data is the expected outcome
     for boards that don't expose JSON-LD, not an error worth aborting for.
 
@@ -268,7 +301,9 @@ def enrich_job_details(
         # Under ``force`` rows with existing comp re-parse too, but only a
         # non-empty, different result overwrites — a description that no
         # longer parses must not blank a previously extracted value.
-        text_comp = comp_recompute_value(job, force=force)
+        text_comp = (
+            comp_recompute_value(job, force=force) if "comp" in fill_fields else ""
+        )
         if text_comp:
             had_comp = bool(job.comp)
             out[i] = job.with_updates(comp=text_comp)
@@ -278,7 +313,7 @@ def enrich_job_details(
                 text_filled += 1
             continue
         url = (job.url or "").strip()
-        reason = _skip_reason(job)
+        reason = _skip_reason(job, fill_fields)
         if reason is not None:
             skipped_count += 1
             skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
@@ -344,20 +379,22 @@ def enrich_job_details(
             return cache[url]
 
     enriched_count = 0
+    desc_filled = 0
 
     def _apply(idx: int, url: str, details: dict[str, Any]) -> None:
-        nonlocal enriched_count
+        nonlocal enriched_count, desc_filled
         job = out[idx]
         updates: dict[str, Any] = {}
         comp = details.get("comp", "") or ""
-        if comp and not job.comp:
+        if "comp" in fill_fields and comp and not job.comp:
             updates["comp"] = comp
-            enriched_count += 1
         desc = details.get("description_text", "") or ""
-        if capture_descriptions and desc and not job.description_text:
+        if "description" in fill_fields and desc and not job.description_text:
             updates["description_text"] = desc
+            desc_filled += 1
         if updates:
             out[idx] = job.with_updates(**updates)
+            enriched_count += 1
         if progress is not None:
             progress(1, urlsplit(url).netloc or None)
 
@@ -417,6 +454,7 @@ def enrich_job_details(
         "enriched": enriched_count + text_filled + comp_recomputed,
         "from_description": text_filled,
         "comp_recomputed": comp_recomputed,
+        "descriptions_filled": desc_filled,
         "skipped": skipped_count,
         "skip_reasons": skip_reasons,
         "total": len(out),

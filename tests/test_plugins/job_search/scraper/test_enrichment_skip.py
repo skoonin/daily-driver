@@ -127,7 +127,9 @@ def test_progress_callback_fires_once_per_real_fetch(
         _job("https://apply.workable.com/acme/j/1"),
         _job("https://apply.workable.com/acme/j/2"),
         _job("https://news.ycombinator.com/item?id=1"),  # skipped (no fetch)
-        _job("https://acme.com/job", comp="$200k"),  # skipped (has comp)
+        # Skipped (complete): comp AND description present — a comp-only row
+        # would now fetch for its missing description.
+        _job("https://acme.com/job", comp="$200k", description_text="d"),
     ]
     fake_resp = MagicMock()
     fake_resp.text = "<html></html>"
