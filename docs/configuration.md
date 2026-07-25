@@ -281,6 +281,7 @@ The fit/notes pass also reads `context.md` from the workspace root, if present, 
 | `enrich_notes` | bool | true | |
 | `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
 | `max_enrich_fit` | int | 50 | |
+| `max_description_words` | int | 2000 | Word cap on the description sent to the fit/notes LLM call (min 100). Comp/visa/EEO text usually sits at the end of long postings, so a low cap hides it from the criteria assessment |
 | `force_recook_cooldown_hours` | int or `missing` | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown (re-enrich every active row); `missing` re-enriches only rows with no enrichment timestamp yet. Overridable per run with `--cooldown-hours` |
 | `detail_delay_seconds` | float | 0.5 | |
 | `criteria` | list of `{label, assess}` | `[]` | |
