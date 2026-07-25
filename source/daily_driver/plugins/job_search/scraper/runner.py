@@ -818,7 +818,7 @@ def _enrich_wave(
         force=force,
     )
     detail_phase.done(render_detail_summary(detail_stats))
-    # Persist detail comp/posted_date before the LLM phase; a disk error here
+    # Persist detail comp before the LLM phase; a disk error here
     # degrades rather than aborting (the final flush retries and propagates).
     sink.flush_periodic()
 

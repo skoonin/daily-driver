@@ -46,7 +46,8 @@ class TestJsonLdParser:
         """
         result = parse_jsonld_jobposting(html)
         assert "comp" in result
-        assert result.get("posted_date") == "2026-04-10"
+        # datePosted is deliberately ignored: nothing downstream reads it.
+        assert "posted_date" not in result
 
     def test_returns_empty_when_no_jsonld_block(self) -> None:
         html = "<html><body><p>No structured data.</p></body></html>"
@@ -70,14 +71,14 @@ class TestJsonLdParser:
           "@context": "https://schema.org/",
           "@graph": [
             {"@type": "Organization", "name": "Acme"},
-            {"@type": "JobPosting", "title": "SRE", "datePosted": "2026-04-10"}
+            {"@type": "JobPosting", "title": "SRE", "description": "On-call SRE role"}
           ]
         }
         </script>
         </head></html>
         """
         result = parse_jsonld_jobposting(html)
-        assert result.get("posted_date") == "2026-04-10"
+        assert result.get("description_text") == "On-call SRE role"
 
     def test_empty_string_returns_empty_dict(self) -> None:
         assert parse_jsonld_jobposting("") == {}

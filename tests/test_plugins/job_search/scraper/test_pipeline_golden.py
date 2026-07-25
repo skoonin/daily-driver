@@ -80,7 +80,6 @@ def _coverage_jobs() -> list[EnrichedJob]:
             "notes": "Strong match\nmultiline, with comma",  # newline + comma
             "date_found": dt.date(2026, 1, 2),
             "date_applied": dt.date(2026, 5, 1),
-            "posted_date": dt.date(2026, 1, 1),
             "description_text": "long desc",
         }
     )

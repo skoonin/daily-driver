@@ -1,8 +1,7 @@
-"""HTTP detail-page enricher: comp/posted_date from per-job detail pages (no LLM)."""
+"""HTTP detail-page enricher: comp/description from per-job detail pages (no LLM)."""
 
 from __future__ import annotations
 
-import datetime as dt
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -215,10 +214,10 @@ def enrich_job_details(
     capture_descriptions: bool = True,
     force: bool = False,
 ) -> tuple[list[EnrichedJob], dict[str, Any]]:
-    """Fetch each job's detail page and fill comp/posted_date/description.
+    """Fetch each job's detail page and fill comp/description.
 
     ``capture_descriptions`` gates only the ``description_text`` write: with it
-    False (the backfill path), a detail fetch still fills comp/posted_date but
+    False (the backfill path), a detail fetch still fills comp but
     never writes a description, so backfill relies solely on the sidecar cache
     for descriptions. The fetch itself is unchanged — it is gated by comp
     presence, not description — so comp still backfills.
@@ -354,14 +353,6 @@ def enrich_job_details(
         if comp and not job.comp:
             updates["comp"] = comp
             enriched_count += 1
-        posted = details.get("posted_date")
-        if isinstance(posted, str):
-            try:
-                posted = dt.date.fromisoformat(posted)
-            except ValueError:
-                posted = None
-        if isinstance(posted, dt.date) and job.posted_date is None:
-            updates["posted_date"] = posted
         desc = details.get("description_text", "") or ""
         if capture_descriptions and desc and not job.description_text:
             updates["description_text"] = desc
