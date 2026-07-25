@@ -161,7 +161,7 @@ def test_cache_hit_returns_without_fetch() -> None:
 
 def test_capture_descriptions_false_writes_comp_not_description() -> None:
     """The backfill path passes capture_descriptions=False: a detail fetch still
-    fills comp/posted_date but never writes description_text."""
+    fills comp but never writes description_text."""
     jobs = [_job("https://apply.workable.com/acme/j/1")]  # no comp -> fetched
     resp = MagicMock()
     resp.text = "<html></html>"

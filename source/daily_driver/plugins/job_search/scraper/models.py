@@ -283,7 +283,6 @@ class EnrichedJob(BaseModel):
 
     fit: int | None = Field(default=None, ge=1, le=10)
     notes: str = ""
-    posted_date: dt.date | None = None
     description_text: str = ""
 
     # Free-text on purpose (shares the tracker's "convention, not enforcement"

@@ -249,7 +249,7 @@ def parse_linkedin_salary_card(html: str) -> dict:
 def parse_jsonld_jobposting(html: str) -> dict:
     """Extract job details from JSON-LD JobPosting blocks in an HTML page.
 
-    Returns a dict with any of: comp, posted_date. Returns an
+    Returns a dict with any of: comp, description_text. Returns an
     empty dict if no JobPosting block is present or all blocks fail to parse —
     callers must treat missing keys as "data not available", not as errors.
     """
@@ -295,12 +295,6 @@ def parse_jsonld_jobposting(html: str) -> dict:
             # Log so a future site format change is diagnosable — callers
             # treat a missing "comp" key as "no data".
             log.debug("[enrich] baseSalary present but unparseable: %r", base_salary)
-
-    posted = posting.get("datePosted")
-    if isinstance(posted, str) and posted:
-        # Take the date portion of an ISO-8601 timestamp; tolerate "YYYY-MM-DD"
-        # already-stripped values.
-        out["posted_date"] = posted[:10]
 
     desc_html = posting.get("description", "")
     if desc_html:
