@@ -680,28 +680,16 @@ class _JobSink:
                 if i < len(extras_snapshot):
                     csv_row.update(extras_snapshot[i])
                 out_rows.append(csv_row)
-            if self.skip_flush_if_unchanged:
-                # No-churn: skip the write (and the lazy backup) when the file
-                # already holds exactly these rows. read_rows returns only the
-                # cells; compare against the same projection of out_rows.
-                cur_header, cur_rows = read_rows(self.csv_path)
-                projected = [
-                    {c: row.get(c, "") for c in out_header} for row in out_rows
-                ]
-                if cur_header == out_header and cur_rows == projected:
-                    return
-            # Fire the one-shot pre-write hook (backfill's lazy backup) BEFORE the
-            # write, inside the lock, so the backup snapshots the on-disk state
-            # that this write is about to replace.
-            if self.pre_write_hook is not None and not self._pre_write_done:
-                self._pre_write_done = True
-                self.pre_write_hook()
-            atomic_write_rows(self.csv_path, out_header, out_rows)
             # Detail enrichment sets description_text via with_updates directly
-            # on sink.rows, never through append_source -- fold the snapshot's
-            # current descriptions in here so flush is the one place that
-            # reliably observes every description, however it was filled.
-            for enriched_job in snapshot:
+            # on sink.rows / sink.folded_rows, never through append_source --
+            # fold both lists' current descriptions in here so flush is the one
+            # place that reliably observes every description, however it was
+            # filled (folded_rows carries the backlog wave's heals; its CSV
+            # cells land via _apply_folded_updates but description_text is not
+            # a CSV cell). Folded BEFORE the no-churn check: a description-only
+            # heal (a fetch while every jobs.csv cell stays identical) must
+            # still persist the sidecar below, or the fetch repeats every run.
+            for enriched_job in [*snapshot, *self.folded_rows]:
                 if (
                     enriched_job.url
                     and enriched_job.description_text
@@ -710,6 +698,24 @@ class _JobSink:
                 ):
                     self._descriptions[enriched_job.url] = enriched_job.description_text
                     self._descriptions_dirty = True
+            csv_unchanged = False
+            if self.skip_flush_if_unchanged:
+                # No-churn: skip the write (and the lazy backup) when the file
+                # already holds exactly these rows. read_rows returns only the
+                # cells; compare against the same projection of out_rows.
+                cur_header, cur_rows = read_rows(self.csv_path)
+                projected = [
+                    {c: row.get(c, "") for c in out_header} for row in out_rows
+                ]
+                csv_unchanged = cur_header == out_header and cur_rows == projected
+            if not csv_unchanged:
+                # Fire the one-shot pre-write hook (backfill's lazy backup)
+                # BEFORE the write, inside the lock, so the backup snapshots the
+                # on-disk state that this write is about to replace.
+                if self.pre_write_hook is not None and not self._pre_write_done:
+                    self._pre_write_done = True
+                    self.pre_write_hook()
+                atomic_write_rows(self.csv_path, out_header, out_rows)
             if self._descriptions_dirty:
                 atomic_write_descriptions(self.csv_path, self._descriptions)
                 self._descriptions_dirty = False

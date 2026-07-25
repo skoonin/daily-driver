@@ -356,6 +356,67 @@ def test_jobs_run_no_enrich_defaults_false(tmp_path: Path) -> None:
     assert kwargs.get("no_enrich") is False
 
 
+def test_jobs_run_skip_descriptions_passes_flag(tmp_path: Path) -> None:
+    """`-sd` propagates as fetch_descriptions=False to scraper.run."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "-sd", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("fetch_descriptions") is False
+
+
+def test_jobs_run_fetch_descriptions_defaults_true(tmp_path: Path) -> None:
+    """Without --skip-descriptions, fetch_descriptions is True."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run", return_value=0
+    ) as mock_run:
+        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
+
+    assert rc == 0
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("fetch_descriptions") is True
+
+
+def test_jobs_backfill_skip_descriptions_passes_flag(tmp_path: Path) -> None:
+    """`--skip-descriptions` propagates as fetch_descriptions=False to
+    run_backfill; without it the default is True."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    (ws / "jobs.csv").write_text("Status,Company\n", encoding="utf-8")
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run_backfill",
+        return_value={"dry_run": True},
+    ) as mock_backfill:
+        rc = app(
+            ["--workspace", str(ws), "jobs", "backfill", "--skip-descriptions", "-n"]
+        )
+    assert rc == 0
+    _, kwargs = mock_backfill.call_args
+    assert kwargs.get("fetch_descriptions") is False
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.run_backfill",
+        return_value={"dry_run": True},
+    ) as mock_backfill:
+        rc = app(["--workspace", str(ws), "jobs", "backfill", "-n"])
+    assert rc == 0
+    _, kwargs = mock_backfill.call_args
+    assert kwargs.get("fetch_descriptions") is True
+
+
 def test_jobs_run_no_enrich_with_dry_run_composes(tmp_path: Path) -> None:
     """`--no-enrich --dry-run` is accepted (redundant, not an error)."""
     from daily_driver.cli.cli import app

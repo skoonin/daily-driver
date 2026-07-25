@@ -174,7 +174,7 @@ def test_backfill_warns_when_rows_have_no_description(
     runner.run_backfill(_plugin(), csv_path, tmp_path)
 
     err = capsys.readouterr().err
-    assert "2 job(s) had no cached description" in err
+    assert "2 job(s) have no description" in err
 
 
 def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
@@ -241,15 +241,14 @@ def test_backfill_hydrates_blank_description_without_overwriting_non_blank(
     assert seen_descriptions["Prefilled"] == "Already-fetched description."
 
 
-def test_backfill_is_description_cache_only_and_warns(
+def test_backfill_skip_descriptions_is_cache_only_and_warns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Backfill never fetches or writes descriptions: it drives the detail phase
-    with ``fill_fields={"comp"}``, writes nothing to the sidecar, and warns
-    that an uncached row is left un-enriched. (The dedicated LinkedIn fetcher was
-    removed; descriptions are captured only during ``jobs run``.)"""
+    """With --skip-descriptions, backfill never fetches or writes descriptions:
+    it drives the detail phase with ``fill_fields={"comp"}``, writes nothing to
+    the sidecar, and warns that an uncached row is left un-enriched."""
     from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
 
     csv_path = tmp_path / "jobs.csv"
@@ -290,14 +289,61 @@ def test_backfill_is_description_cache_only_and_warns(
 
     monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", fake_fit_notes)
 
-    runner.run_backfill(_plugin(), csv_path, tmp_path)
+    runner.run_backfill(_plugin(), csv_path, tmp_path, fetch_descriptions=False)
 
     # Backfill told the detail phase to fill comp only, never descriptions.
     assert captured["fill_fields"] == frozenset({"comp"})
     # No description was written to the sidecar.
     assert load_descriptions(csv_path) == {}
-    # The user is told the row has no cached description.
-    assert "no cached description" in capsys.readouterr().err
+    # The user is told the row has no description.
+    assert "have no description" in capsys.readouterr().err
+
+
+def test_backfill_default_fetches_descriptions_and_persists_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """By default backfill lets the detail phase fetch missing descriptions
+    (fill_fields unrestricted) and persists a healed one to the sidecar even
+    when no jobs.csv cell changes (the no-churn skip must not swallow it)."""
+    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
+
+    csv_path = tmp_path / "jobs.csv"
+    url = "https://apply.workable.com/acme/j/1"
+    # comp/fit/notes filled: the only work left is the description heal, so
+    # the CSV cells come out byte-identical -- the sidecar write must still
+    # happen. (Fit/notes stamps nothing because nothing is eligible.)
+    _write_jobs_csv(
+        csv_path,
+        [_row(company="Healable", link=url, comp="$100k", fit="7", notes="ok")],
+    )
+
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    captured: dict[str, Any] = {}
+
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        captured["fill_fields"] = kwargs.get("fill_fields")
+        for i, job in enumerate(jobs):
+            if not job.description_text:
+                jobs[i] = job.with_updates(description_text="fetched body")
+        return jobs, {
+            "total": len(jobs),
+            "fetched": 1,
+            "enriched": 1,
+            "descriptions_filled": 1,
+            "skipped": 0,
+            "skip_reasons": {},
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+    _stub_concurrent_noop(monkeypatch)
+
+    summary = runner.run_backfill(_plugin(), csv_path, tmp_path)
+
+    # Default: the full field set reaches the detail phase.
+    assert captured["fill_fields"] == frozenset({"comp", "description"})
+    assert summary["descriptions_filled"] == 1
+    assert load_descriptions(csv_path)[url] == "fetched body"
 
 
 def test_backfill_gcs_orphaned_descriptions(
@@ -659,6 +705,10 @@ def test_backfill_all_filled_reports_nothing_to_do(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Fully-enriched file: no enrichment calls, an info line, no backup."""
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
     csv_path = tmp_path / "jobs.csv"
     _write_jobs_csv(
         csv_path,
@@ -671,6 +721,10 @@ def test_backfill_all_filled_reports_nothing_to_do(
             )
         ],
     )
+    # A cached description completes the row: without one, the (serving) host
+    # would legitimately owe a description fetch and the short-circuit must
+    # not fire.
+    atomic_write_descriptions(csv_path, {"https://example.com/c": "role body"})
 
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
 
