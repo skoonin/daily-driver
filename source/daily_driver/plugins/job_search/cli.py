@@ -122,6 +122,17 @@ def add_parser(
         action="store_true",
         help="List the available job-board names and exit",
     )
+    p_run.add_argument(
+        "-sd",
+        "--skip-descriptions",
+        action="store_true",
+        default=False,
+        help=(
+            "Don't fetch missing descriptions from job boards this run: the "
+            "detail phase fills Comp only, and description-less backlog rows "
+            "stay unscored"
+        ),
+    )
     add_global_flags(p_run)
     p_run.set_defaults(func=_run_scrape)
 
@@ -171,6 +182,16 @@ def add_parser(
             "instead of restarting; 'missing' re-enriches only rows with no "
             "enrichment timestamp yet (default: config force_recook_cooldown_hours, "
             "normally 24; 0 disables)"
+        ),
+    )
+    p_backfill.add_argument(
+        "-sd",
+        "--skip-descriptions",
+        action="store_true",
+        default=False,
+        help=(
+            "Don't fetch missing descriptions from job boards: descriptions "
+            "stay cache-only and the detail phase fills Comp alone"
         ),
     )
     p_backfill.add_argument(
@@ -466,6 +487,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             no_enrich=args.no_enrich,
             sources_override=sources_override,
             suppress_live=emit_json,
+            fetch_descriptions=not args.skip_descriptions,
         )
         if emit_json:
             _emit_run_manifest(output_dir)
@@ -529,6 +551,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             force=args.force_update,
             cooldown_hours=args.cooldown_hours,
             emit_json=emit_json,
+            fetch_descriptions=not args.skip_descriptions,
         )
         if emit_json:
             Console.emit_json(summary)

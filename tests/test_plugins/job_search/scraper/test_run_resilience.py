@@ -2006,6 +2006,7 @@ def test_cli_run_scrape_returns_130_on_interrupt(
         sources=None,
         list_sources=False,
         json=False,
+        skip_descriptions=False,
     )
     rc = jobs_cli._run_scrape(args, _Workspace())
     assert rc == 130
@@ -2554,10 +2555,20 @@ def test_run_reports_reseen_summary_line(
                     "Location": "Remote",
                     "Link": link,
                     "Source": "remoteok",
+                    "Comp": "$100k",
                     "Date Found": "2026-06-01",
                     "Date Verified": "2026-06-01",
                 }
             )
+    # Complete rows (comp + cached description): the backlog wave has nothing
+    # to fetch, keeping this re-sighting test off the network.
+    from daily_driver.plugins.job_search.scraper.descriptions import (
+        atomic_write_descriptions,
+    )
+
+    atomic_write_descriptions(
+        csv_path, {"https://x/1": "infra", "https://x/2": "infra"}
+    )
 
     # Re-scrape only x/1; x/2 is absent this run. comp set -> detail enricher
     # skips the network fetch.

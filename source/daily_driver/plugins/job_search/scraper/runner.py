@@ -185,6 +185,7 @@ def _backfill_needs(
     plugin: JobSearchPlugin,
     force: bool = False,
     cooldown_cutoff: datetime | None = None,
+    fetch_descriptions: bool = True,
 ) -> dict[str, int]:
     """Per-phase counts of rows the enricher WOULD actually touch.
 
@@ -204,12 +205,16 @@ def _backfill_needs(
       ``force``). Mirrors the detail phase's comp-from-text pre-pass, so a run
       whose only work is a no-network comp fill/repair isn't short-circuited
       by a zero fit/notes count (e.g. force reruns inside the cooldown).
+    - ``description`` counts rows with no description whose host can serve one
+      (zero when ``fetch_descriptions`` is off) — the rows the detail phase
+      would fetch to heal.
 
     Used by the dry-run report and the start-of-run short-circuit.
     """
     from daily_driver.plugins.job_search.scraper.csv_io import _active
     from daily_driver.plugins.job_search.scraper.enrichment.detail import (
         comp_recompute_value,
+        needs_description_fetch,
     )
     from daily_driver.plugins.job_search.scraper.enrichment.llm import (
         _fit_notes_eligible,
@@ -227,10 +232,14 @@ def _backfill_needs(
         else 0
     )
     comp = sum(1 for j in active if comp_recompute_value(j, force=force))
+    description = sum(
+        1 for j in active if needs_description_fetch(j, fetch_descriptions)
+    )
     return {
         "rows": len(active),
         "fit_notes": fit_notes,
         "comp": comp,
+        "description": description,
     }
 
 
@@ -246,6 +255,7 @@ def run_backfill(
     force: bool = False,
     cooldown_hours: int | str | None = None,
     emit_json: bool = False,
+    fetch_descriptions: bool = True,
 ) -> dict[str, Any]:
     """Re-enrich empty fields in an existing jobs.csv via the modern driver.
 
@@ -265,6 +275,12 @@ def run_backfill(
     ``limit`` (``None`` = the config cap; the CLI rejects ``limit < 1``).
     ``dry_run`` reports the would-enrich count and makes zero LLM/detail calls
     and zero writes (no backup either).
+
+    ``fetch_descriptions`` (default True) lets the detail phase fetch missing
+    descriptions from hosts that serve them, so a description-less Workable or
+    Workday row heals here instead of waiting for a re-scrape.
+    ``--skip-descriptions`` sets it False: descriptions stay cache-only and
+    the detail phase fills comp alone (the pre-1.2 behavior).
 
     Locking: the sentinel ``file_lock`` is held for the WHOLE lifecycle -- the
     read of jobs.csv, the enrichment, and every rewrite all happen inside it.
@@ -341,7 +357,11 @@ def run_backfill(
             for job in jobs
         ]
         needs = _backfill_needs(
-            jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
+            jobs,
+            plugin,
+            force=force,
+            cooldown_cutoff=cooldown_cutoff,
+            fetch_descriptions=fetch_descriptions,
         )
         skipped = len(jobs) - needs["rows"]
         enrich_cfg = plugin.enrichment
@@ -365,6 +385,12 @@ def run_backfill(
                     f"Backfill dry-run: {needs['comp']} comp value(s) would fill "
                     "or repair from cached descriptions. Nothing written."
                 )
+            if needs["description"]:
+                Console.info(
+                    f"Backfill dry-run: {needs['description']} missing "
+                    "description(s) would fetch from their job board. "
+                    "Nothing written."
+                )
             # The needs counts are the FULL backlog; one pass spends at most the
             # config caps (or --limit). Say so when a cap would trim this pass,
             # or the report reads as if the caps were ignored.
@@ -382,6 +408,7 @@ def run_backfill(
             "needs_after": needs["fit_notes"],
             "enriched": 0,
             "comp_needs": needs["comp"],
+            "description_needs": needs["description"],
             "fit_cap": fit_cap,
             "elapsed_seconds": None,
         }
@@ -457,19 +484,24 @@ def run_backfill(
             )
 
         needs = _backfill_needs(
-            jobs, plugin, force=force, cooldown_cutoff=cooldown_cutoff
+            jobs,
+            plugin,
+            force=force,
+            cooldown_cutoff=cooldown_cutoff,
+            fetch_descriptions=fetch_descriptions,
         )
         skipped = len(jobs) - needs["rows"]
         log.info(
             "[backfill] %d rows (%d skipped excluded): %d need Fit/Notes, "
-            "%d comp from cached descriptions",
+            "%d comp from cached descriptions, %d descriptions to fetch",
             len(jobs),
             skipped,
             needs["fit_notes"],
             needs["comp"],
+            needs["description"],
         )
 
-        if not needs["fit_notes"] and not needs["comp"]:
+        if not needs["fit_notes"] and not needs["comp"] and not needs["description"]:
             # No backup, no rewrite: release the lock cleanly. (The lock context
             # exits normally when we return.)
             if not emit_json:
@@ -484,6 +516,7 @@ def run_backfill(
                 "enriched": 0,
                 "comp_filled": 0,
                 "comp_repaired": 0,
+                "descriptions_filled": 0,
                 "elapsed_seconds": elapsed,
             }
 
@@ -549,7 +582,7 @@ def run_backfill(
                     fit_budget=fit_budget,
                     force=force,
                     cooldown_cutoff=cooldown_cutoff,
-                    fill_fields=frozenset({"comp"}),
+                    fill_fields=(None if fetch_descriptions else frozenset({"comp"})),
                 )
                 enrich_group.done()
         except KeyboardInterrupt as interrupt:
@@ -601,11 +634,12 @@ def run_backfill(
     finally:
         lock_stack.close()
 
-    after = _backfill_needs(jobs, plugin)
+    after = _backfill_needs(jobs, plugin, fetch_descriptions=fetch_descriptions)
     elapsed = (datetime.now(timezone.utc) - backfill_started_at).total_seconds()
     enriched = needs["fit_notes"] - after["fit_notes"]
     comp_filled = detail_stats.get("from_description", 0)
     comp_repaired = detail_stats.get("comp_recomputed", 0)
+    descriptions_filled = detail_stats.get("descriptions_filled", 0)
     if not emit_json:
         comp_total = comp_filled + comp_repaired
         comp_note = (
@@ -613,23 +647,27 @@ def run_backfill(
             if comp_total
             else ""
         )
+        desc_note = (
+            f", {descriptions_filled} descriptions fetched"
+            if descriptions_filled
+            else ""
+        )
         Console.success(
-            f"Backfill complete: +{enriched} Fit/Notes{comp_note}. "
+            f"Backfill complete: +{enriched} Fit/Notes{comp_note}{desc_note}. "
             f"Total run time: {_fmt_duration(elapsed)}."
         )
-        # Backfill relies solely on the cached descriptions (descriptions.jsonl):
-        # it never fetches over the network. A row with no cached description is
-        # left un-scored (and gets no enrichment timestamp) rather than guessed
-        # at; call it out so the phase-line count isn't mistaken for ordinary
-        # skips. Descriptions are captured at scrape time; a row already in
-        # jobs.csv is deduped by a re-run, so recovering it means deleting it so
-        # the next scrape re-adds (and describes) it.
+        # A row can still lack a description after the detail phase: its host
+        # doesn't serve one (LinkedIn legacy, Apple), the fetch failed, or
+        # --skip-descriptions kept the phase comp-only. Such a row is left
+        # un-scored (and gets no enrichment timestamp) rather than guessed at;
+        # call it out so the phase-line count isn't mistaken for ordinary skips.
         no_description_count = fit_stats.get("no_description", 0)
         if no_description_count:
             Console.warning(
-                f"{no_description_count} job(s) had no cached description; "
-                "Fit/Notes left blank. Descriptions are captured during "
-                "`jobs run`; delete a row so a re-scrape re-adds and describes it."
+                f"{no_description_count} job(s) have no description "
+                "(host doesn't serve one, fetch failed, or --skip-descriptions); "
+                "Fit/Notes left blank. A later scrape re-sighting the job "
+                "heals it."
             )
         # The rewrite ran (this point is reached only past the no-enrichment early
         # return), so any status spellings it canonicalized are now on disk. Make
@@ -646,6 +684,7 @@ def run_backfill(
         "enriched": enriched,
         "comp_filled": comp_filled,
         "comp_repaired": comp_repaired,
+        "descriptions_filled": descriptions_filled,
         "elapsed_seconds": elapsed,
     }
 
@@ -1000,6 +1039,7 @@ def run(
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
     suppress_live: bool = False,
+    fetch_descriptions: bool = True,
 ) -> int:
     """Run all enabled scrapers and append new rows to ``output_dir/jobs.csv``.
 
@@ -1010,6 +1050,10 @@ def run(
     ``suppress_live`` forces plain mode (no pinned live block) regardless of TTY;
     the ``jobs run --json`` path sets it so stdout stays a clean JSON channel
     while diagnostics still go to stderr.
+
+    ``fetch_descriptions`` False (``--skip-descriptions``) scopes every detail
+    phase this run down to comp only: no description is fetched or written, and
+    backlog rows without a cached description stay out of the backlog wave.
 
     Thin wrapper around :func:`_run_impl` that owns the manifest-on-every-exit
     guarantee: a ``_RunState`` carries the manifest-relevant state, and ANY exit
@@ -1032,6 +1076,7 @@ def run(
             no_enrich=no_enrich,
             sources_override=sources_override,
             suppress_live=suppress_live,
+            fetch_descriptions=fetch_descriptions,
             started_at=started_at,
             state=state,
         )
@@ -1121,6 +1166,7 @@ def _run_impl(
     no_enrich: bool = False,
     sources_override: list[str] | None = None,
     suppress_live: bool = False,
+    fetch_descriptions: bool = True,
     started_at: datetime,
     state: _RunState,
 ) -> int:
@@ -1419,6 +1465,9 @@ def _run_impl(
         # wave-1 result lands, but it is no longer silently abandoned.
         enrich_cfg = plugin.enrichment
         do_enrich = not (dry_run or no_enrich)
+        # --skip-descriptions scopes every detail phase this run to comp only
+        # (None = _enrich_wave's all-fields default).
+        wave_fill = None if fetch_descriptions else frozenset({"comp"})
 
         enrich_group: Group | None = None
         wave1_thread: threading.Thread | None = None
@@ -1447,6 +1496,7 @@ def _run_impl(
                     fit_budget=None,  # wave 1 gets the full config budget
                     set_phase=_set_phase,
                     attempted=attempted,
+                    fill_fields=wave_fill,
                 )
                 wave1_result.update(
                     {
@@ -1679,6 +1729,7 @@ def _run_impl(
                         set_phase=_set_phase,
                         exclude_fit_urls=fit_attempted,
                         attempted=wave2_attempted,
+                        fill_fields=wave_fill,
                     )
                     _add_stats(fn_stats, f2)
                     fit_attempted_all |= wave2_attempted.get("fit_urls", set())
@@ -1699,6 +1750,7 @@ def _run_impl(
                     fit_budget=None,
                     set_phase=_set_phase,
                     attempted=single_attempted,
+                    fill_fields=wave_fill,
                 )
                 _add_stats(fn_stats, f1)
                 fit_attempted_all |= single_attempted.get("fit_urls", set())
@@ -1706,11 +1758,13 @@ def _run_impl(
                 enrich_group.done()
 
             # Backlog wave: never-enriched pre-existing rows, lifted from the
-            # run-start snapshot and hydrated read-only from the sidecar.
-            # Enriched with ONLY the fit budget the new-row waves left,
-            # cache-only descriptions (backfill parity). Kept off sink.rows so
+            # run-start snapshot and hydrated from the sidecar. Enriched with
+            # ONLY the fit budget the new-row waves left. Kept off sink.rows so
             # jobs.csv order and new_jobs stay new-rows-only; landed in place
             # at flush via _apply_folded_updates.
+            from daily_driver.plugins.job_search.scraper.enrichment.detail import (
+                needs_description_fetch,
+            )
             from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 
             backlog_scoreable: list[EnrichedJob] = []
@@ -1731,10 +1785,14 @@ def _run_impl(
                     cached = sink._descriptions.get(job.url, "")
                     if cached.strip():
                         job = job.with_updates(description_text=cached)
-                if not job.description_text.strip():
-                    # Unscorable until a re-scrape heals the description;
-                    # entering the wave would re-fetch its detail page every
-                    # run for nothing.
+                if not job.description_text.strip() and not needs_description_fetch(
+                    job, fetch_descriptions
+                ):
+                    # Unscorable: this host's detail page can't serve a
+                    # description (or --skip-descriptions is set), so entering
+                    # the wave would spend a fetch every run for nothing. Rows
+                    # whose host CAN serve one enter the wave — its detail
+                    # phase heals the description, then fit/notes scores it.
                     backlog_no_desc += 1
                     continue
                 backlog_scoreable.append(job)
@@ -1766,7 +1824,7 @@ def _run_impl(
                     fit_budget=folded_leftover_budget,
                     set_phase=_set_phase,
                     exclude_fit_urls=frozenset(fit_attempted_all),
-                    fill_fields=frozenset({"comp"}),
+                    fill_fields=wave_fill,
                 )
                 folded_group.done()
                 state.backlog_enriched = folded_stats["enriched"]

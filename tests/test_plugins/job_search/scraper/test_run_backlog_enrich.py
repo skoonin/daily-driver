@@ -240,15 +240,16 @@ def test_reseen_and_folded_row_keeps_fresh_date_verified(
 def test_backlog_row_without_description_left_unscored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A backlog row with no sidecar description never enters the wave (no
-    wasted fetch): Fit stays empty and Date Enriched is NOT stamped, and it is
-    excluded from backlog_remaining (a re-scrape must heal it first)."""
+    """A backlog row with no sidecar description whose host can't serve one
+    (LinkedIn: salary card only) never enters the wave (no wasted fetch): Fit
+    stays empty and Date Enriched is NOT stamped, and it is excluded from
+    backlog_remaining (a re-scrape must heal it first)."""
     _no_archive(monkeypatch)
     csv_path = tmp_path / "jobs.csv"
     _seed_jobs_csv(
         csv_path,
         [
-            _preexisting_row("https://old/1", "NoDesc"),
+            _preexisting_row("https://www.linkedin.com/jobs/view/1", "NoDesc"),
             _preexisting_row("https://old/2", "HasDesc"),
         ],
     )
@@ -268,6 +269,97 @@ def test_backlog_row_without_description_left_unscored(
     manifest = _manifest(tmp_path)
     assert manifest["backlog_enriched"] == 1
     assert manifest["backlog_remaining"] == 0  # unscorable != remaining
+
+
+def test_backlog_row_without_description_healed_by_detail_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A description-less backlog row whose host serves descriptions enters
+    the wave: the detail phase heals the description, fit/notes scores it,
+    and the healed text persists to the sidecar."""
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+    from daily_driver.plugins.job_search.scraper.descriptions import load_descriptions
+
+    _no_archive(monkeypatch)
+    csv_path = tmp_path / "jobs.csv"
+    url = "https://apply.workable.com/acme/j/1"
+    _seed_jobs_csv(csv_path, [_preexisting_row(url, "Healable")])
+    monkeypatch.setattr(runner, "run_all_scrapers", _fake_scrape_returning([]))
+    _stub_fit(monkeypatch, fit=7)
+
+    def fake_detail(jobs: list[Any], ctx: Any, **kwargs: Any) -> Any:
+        for i, job in enumerate(jobs):
+            if not job.description_text:
+                jobs[i] = job.with_updates(description_text="fetched body")
+        return jobs, {
+            "enriched": 1,
+            "fetched": 1,
+            "descriptions_filled": 1,
+            "skipped": 0,
+            "skip_reasons": {},
+            "total": len(jobs),
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
+
+    rc = runner.run(
+        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+    )
+    assert rc == 0
+
+    (row,) = _read_csv(csv_path)
+    assert row["Fit"] == "7"
+    assert row["Date Enriched"]
+    # The healed description reached descriptions.jsonl, so the fetch never
+    # repeats on later runs.
+    assert load_descriptions(csv_path)[url] == "fetched body"
+    manifest = _manifest(tmp_path)
+    assert manifest["backlog_enriched"] == 1
+    assert manifest["backlog_remaining"] == 0
+
+
+def test_backlog_skip_descriptions_keeps_no_desc_rows_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With fetch_descriptions=False (--skip-descriptions), a description-less
+    row stays out of the wave even on a host that serves descriptions."""
+    from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
+
+    _no_archive(monkeypatch)
+    csv_path = tmp_path / "jobs.csv"
+    _seed_jobs_csv(
+        csv_path, [_preexisting_row("https://apply.workable.com/acme/j/1", "NoDesc")]
+    )
+    monkeypatch.setattr(runner, "run_all_scrapers", _fake_scrape_returning([]))
+    _stub_fit(monkeypatch)
+
+    def guard(jobs: list[Any], ctx: Any, **_kw: Any) -> Any:
+        # The new-row wave legitimately runs (with zero rows); the excluded
+        # backlog row must never reach any detail phase.
+        assert jobs == [], "no backlog row may reach the detail phase"
+        return jobs, {
+            "enriched": 0,
+            "fetched": 0,
+            "skipped": 0,
+            "skip_reasons": {},
+            "total": 0,
+        }
+
+    monkeypatch.setattr(enrichment_pkg, "enrich_job_details", guard)
+
+    rc = runner.run(
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        ai=_serial_ctx().ai,
+        no_enrich=False,
+        fetch_descriptions=False,
+    )
+    assert rc == 0
+
+    (row,) = _read_csv(csv_path)
+    assert row["Fit"] == ""
+    assert row["Date Enriched"] == ""
 
 
 def test_legacy_scored_rows_not_counted_as_backlog(

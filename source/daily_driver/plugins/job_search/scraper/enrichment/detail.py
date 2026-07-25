@@ -113,6 +113,23 @@ def comp_recompute_value(job: EnrichedJob, *, force: bool) -> str:
     return ""
 
 
+def needs_description_fetch(job: EnrichedJob, fetch_descriptions: bool) -> bool:
+    """Whether a detail fetch could heal ``job``'s missing description: the
+    caller allows it, the row lacks one, and the URL's host serves them.
+
+    The single predicate behind the backlog admission gate and the backfill
+    needs count, so the two can never drift: Workable/Workday rows heal;
+    LinkedIn-legacy and Apple rows stay out of pointless fetch loops.
+    """
+    url = (job.url or "").strip()
+    return (
+        fetch_descriptions
+        and not job.description_text.strip()
+        and bool(url)
+        and "description" in _capability_for(url).fields
+    )
+
+
 def _row_needs(job: EnrichedJob, fill_fields: frozenset[str]) -> frozenset[str]:
     """Fields a detail fetch would fill on ``job``: missing ∩ host-capable ∩
     caller-enabled.
