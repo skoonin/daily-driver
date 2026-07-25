@@ -208,7 +208,8 @@ def _parse_detail_page(html: str, url: str) -> dict:
     ``compensation__salary`` is server-rendered when the poster provided
     structured pay).
     """
-    if "linkedin.com" in urlsplit(url).netloc:
+    host = urlsplit(url).netloc
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
         return parse_linkedin_salary_card(html)
     return parse_jsonld_jobposting(html)
 
