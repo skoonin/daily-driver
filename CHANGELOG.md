@@ -4,6 +4,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-08-13
+
 ### Added
 
 - **New `daily-driver resume` command reattaches to the workspace's most recent Claude session.** When a `day-start`, `day-end`, or `check-in` tab is closed or lost, `resume` reopens that conversation via `claude --resume <uuid>` through the normal launcher path — so your configured interactive model, agent, and workspace `--add-dir` still apply, unlike a bare `claude -c`. With no session recorded yet it says so instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that and `resume` exits with claude's code (run `day-start` to begin fresh). Every launcher now records the session it starts, so "most recent" tracks `day-start`, `day-end`, and `check-in` alike. (#199)
