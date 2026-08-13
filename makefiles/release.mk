@@ -100,6 +100,6 @@ release-push: ## Push the release commit and tag (separate step, explicit)
 		exit 1; \
 	fi; \
 	echo "Pushing commit + $$current_tag to origin..."; \
-	git push origin HEAD; \
-	git push origin "$$current_tag"; \
-	echo "  Pushed. CI release.yml will build and attach artifacts."
+	git push origin HEAD && \
+	git push origin "$$current_tag" && \
+	echo "  Pushed. CI release.yaml will build and attach artifacts."
