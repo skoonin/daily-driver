@@ -1045,6 +1045,22 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     return 0
 
 
+def _configure_dedup(workspace) -> None:  # type: ignore[no-untyped-def]
+    """Seed the dedup normalizer from config before any key is built.
+
+    Every `jobs` action funnels through `run`, so configuring here is what keeps
+    one vocabulary across a command -- a scrape and a later prune must not
+    normalize the same company two ways.
+    """
+    from daily_driver.plugins.job_search.scraper.rows import configure_company_noise
+
+    plugins = getattr(workspace.config, "plugins", None)
+    job_search = getattr(plugins, "job_search", None) if plugins else None
+    configure_company_noise(
+        job_search.scraper.company_noise_words if job_search else None
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     from daily_driver.core.workspace import WorkspaceError
 
@@ -1060,6 +1076,8 @@ def run(args: argparse.Namespace) -> int:
     except WorkspaceError as exc:
         Console.error(str(exc))
         return 1
+
+    _configure_dedup(workspace)
 
     try:
         return args.func(args, workspace)

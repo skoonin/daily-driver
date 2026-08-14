@@ -12,6 +12,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 - **A job board that dies after being matched now leaves the scrape list on its own.** An incremental `jobs discover-boards` sweep only probed slugs it had never seen, so a board that started returning 404 after discovery matched it kept its matched status forever and was re-fetched on every `jobs run` — the only way out was a full re-sweep or a hand-written `exclude_boards` entry. Sweeps now also re-probe boards last checked more than `plugins.job_search.discovery.reprobe_days` (default 30) ago, which retires dead ones into the dead cache during a normal sweep; at most `discovery.max_reprobe_per_sweep` (default 500) are re-probed per sweep, oldest first, so retirement spreads out instead of the whole universe coming due on the same day. Relatedly, a board source is no longer reported degraded for a handful of permanently-gone boards: below `discovery.degraded_failure_ratio` (default 0.25) the run logs the success rate (`greenhouse: 420/427 boards ok, 7 failed`) and reserves the degraded flag for a real outage. Row closure is unchanged — a board that failed to fetch was never, and still is not, read as "absent = closed". (#217)
 
+- **A job found on both a company's own board and an aggregator is now recognized as one job.** Ashby and Lever postings carry no company field, so the scraper names the company after the board slug — `menlosecurity` — while the same job from LinkedIn is stored as `Menlo Security Inc.`. The duplicate check compared those names with only case and spacing normalized, so the two never matched: both rows sat in `jobs.csv`, and the board record never replaced the aggregator's row even though board sources are meant to win (they carry a stable URL and the full description). Company names are now compared with punctuation, common noise words (`inc`, `ltd`, `labs`, `technologies`, ...) and spacing removed, which fixes the whole class rather than one company. `plugins.job_search.scraper.company_noise_words` overrides the shipped word list. The comparison shapes the duplicate key only — the Company value shown in `jobs.csv` is never rewritten. (#219)
+
 ## [1.2.0] — 2026-08-13
 
 ### Added
@@ -97,11 +99,17 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **New `lever` source: scrape Lever job boards.** Each configured board slug (`sources.lever.lever_boards`, the `<slug>` in jobs.lever.co/<slug>) is fetched in one request via Lever's public Postings API, with full plain-text descriptions (including the requirements/benefits list sections) captured at scrape time, remote roles labeled from Lever's workplace-type field so the location filter never drops them, and board-diff closure verifying stored rows against the complete listing. Like Greenhouse and Ashby, it scrapes the union of pins and the discovery matched cache minus `exclude_boards`; the sweep itself learns Lever in a follow-up. (#158)
 
 - **`jobs run` now scrapes the boards `jobs discover-boards` found.** Each run's Greenhouse and Ashby board list is the union of your hand-pinned `greenhouse_boards`/`ashby_boards` config entries (always enumerated; rows still pass the role filter) and the discovery matched cache — no config edit needed when a sweep finds new boards. New per-platform `exclude_boards` blocklist silences a noisy or broken board even when pinned or matched. (#157)
+
 - **New `jobs discover-boards`: find company boards for you instead of you hand-curating slugs.** Sweeps every known Greenhouse and Ashby board slug (~11.5k, seeded from the job-board-aggregator project's daily-refreshed lists with a local offline cache), probes each board's public titles listing, and caches boards with at least one role-matching title in the workspace state dir. Incremental by default (only never-probed slugs); `--full` re-probes everything so stale matches drop out; permanently-gone boards (404/410) enter a dead-slug cache and are never probed again, while rate limits and timeouts always retry next sweep. Interruption-safe (completed probes are saved). `jobs status` gains a `Discovered boards` section (boards matched, slugs swept, last sweep). The matched cache feeds `jobs run` (see the entry above). (#156)
+
 - **`jobs status` now shows the cumulative unscored backlog** — active (`found`/`pending`) rows with no fit score yet, counted across all runs (not just the last one). Growth here means new jobs are arriving faster than the per-run fit budget can score them; raise `max_enrich_fit` or run `jobs backfill`. Note the count also includes rows with no cached description (the run summary's "awaiting description" bucket), which only a re-scrape can score — so it can sit above the run summary's `Backlog: N remaining`. `--json` gains an `unscored_backlog` key. (#154)
+
 - **`jobs run` now verifies closure for board-backed sources (board-diff).** Greenhouse, Ashby, Workable, and Workday scrapes already fetch each company's complete current listing; a stored job absent from a successfully-fetched listing on TWO consecutive runs is marked `Status: closed` with a `Date Closed` stamp and a Notes annotation — at zero extra request cost. Guards: the diff runs against the raw listing before role filtering (a retitled job is not "gone"), only boards actually enumerated this run count (a removed or failed board closes nothing), partial/page-capped listings are ignored, and only untriaged rows (`found`/`pending`) are touched. Closed rows leave for the archive via `jobs prune` and can resurface loudly as `Reopened` if the closure was wrong. The run summary shows `Closed: N verified gone` and the manifest gains `closed_verified`. (#149)
+
 - **`jobs run` now reports saturated queries — truncated coverage is never silent.** A search query that returns its full per-query cap saw only part of its window; the run summary now prints a `Saturated` warning naming the affected source and queries, and the manifest gains a `saturated_queries` key (source, query, returned/requested, kind). Detects the configured cap on LinkedIn/Indeed queries, LinkedIn's ~100-per-IP rate-limit plateau, Workday's page ceiling, and Apple's scroll cap. Detection only — nothing about the scrape itself changes. (#144)
+
 - **`jobs run` now finishes the never-enriched backlog.** After enriching the run's new rows, pre-existing rows with no `Date Enriched` (status `found`/`pending`) are scored in place using the cached descriptions — so a run after `--no-enrich` (or an interrupted run) picks up where it left off instead of silently enriching nothing. New rows keep fit-budget priority; the backlog spends only the leftover budget, the summary shows `Backlog: N scored, M remaining`, and the run manifest gains `backlog_enriched` / `backlog_remaining`. Row order in `jobs.csv` and the `new_jobs` count are unaffected. (#142)
+
 - **`jobs backfill --cooldown-hours missing`** (and config `plugins.job_search.enrichment.force_recook_cooldown_hours: missing`): under `--force-update`, re-enrich only rows that have no enrichment timestamp yet — useful for catching rows enriched before the `Date Enriched` column existed without re-scoring everything. `--cooldown-hours` now accepts a non-negative integer (hours) or `missing`; `0` still disables the cooldown. Set the config value to `missing` to make it the default.
 
 ### Changed
@@ -109,10 +117,13 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **When the same job arrives from both an aggregator and its company's job board, the board record now wins.** The same posting often reaches `jobs.csv` twice — once via LinkedIn/Indeed or a feed, once via the company's Greenhouse/Ashby/Lever/Workable/Workday board — and first-scraper-wins dedup usually kept the aggregator row (fast feeds finish before multi-board walks). The stored row now upgrades in place to the board record's Source and Link: board URLs stay reachable (no LinkedIn signup wall) and board-diff closure can actually verify them. Applies whether the aggregator row landed this run or any earlier run. Untriaged rows only — a row you've applied to or triaged never changes under you (it still gets its Date Verified freshness bump, which cross-source re-sightings previously missed entirely). A blank Comp also fills from the board record when it carries pay; board-to-board duplicates keep first-wins; there is no downgrade path. The run summary shows `Upgraded: N` and the manifest gains an `upgraded` count. (#164)
 
 - **`locations.countries` is now a per-country city map — city-level location filtering.** `countries: {CA: [Vancouver, Victoria], US: []}` narrows a country to the listed cities (matched whole-word against the scraped location string; the bare country name no longer passes for a city-narrowed country), while an empty list keeps the whole-country behavior; remote jobs pass regardless when `remote: true`. The fit-scoring prompt states the same city scope. Hard break from the flat `countries: [CA, US]` list, no migration: wrap each code as a map key with `[]` to keep today's behavior. (#155)
+
 - **Archived jobs now suppress re-discovery based on WHY they left.** Rows you triaged (dropped, rejected, skipped) still never come back: their URL is blocked forever, and their company+role pairing is blocked for 45 days (so a genuinely re-posted role under a new URL resurfaces after a cooling-off period instead of being invisible forever). Rows the system verified as closed (`Status: closed` — written by board-diff closure and `jobs verify`) block nothing: if a "closed" job shows up in a scrape again, it is re-added and loudly announced as `Reopened` in the log and run summary, so a false-positive closure heals itself instead of burying a live job. (#148)
 
 - **jobs.csv schema: `Date Last Seen` is now `Date Verified`, and a `Date Closed` column was added** (14 -> 15 columns). `Date Verified` records the last date a job was affirmatively confirmed live (a scrape re-sighting, a board-diff pass, or a `jobs verify` URL check), and `jobs prune --older-than` ages from it. `Date Closed` is written when verification finds a posting gone. There is no automatic migration: an old-schema file (pre-1.0 `Date Last Seen` header) should be fixed by hand (rename the header cell, append an empty `Date Closed` column) or the workspace restarted fresh. (#145)
+
 - **The `Date Enriched` timestamp is now written in local time** (the machine's timezone, e.g. PST) instead of UTC, so `jobs.csv` reads in your own clock. It stays timezone-aware, so the force-update cooldown comparison is unaffected; existing UTC timestamps continue to work.
+
 - **`jobs backfill` no longer fetches job descriptions over the network — it relies entirely on the `descriptions.jsonl` cache.** Descriptions are now captured only at scrape time (`jobs run`): each source that ships a description does so in its listing/API/RSS payload, and the detail-page enricher fills the rest. During `backfill`, a row whose description is already cached is fully (re-)enriched, while a row with no cached description is left un-scored and reported in a warning (rather than triggering a network fetch). This makes `backfill --force-update` fast and quiet instead of re-hitting thousands of (mostly signup-walled) LinkedIn pages every run. The detail-page fetch still runs during backfill to fill missing `comp`, but no longer writes descriptions there. (#135)
 
 ### Removed
@@ -128,8 +139,11 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **US-state and Canadian-province abbreviations no longer become the wrong country in the Location column.** Location normalization resolved any standalone 2-letter token as an ISO country code, so "San Francisco, CA" persisted as "Canada, San Francisco" (likewise MA→Morocco, IL→Israel, PA→Panama, SK→Slovakia, PE→Peru...) — and the fit-scoring prompt read the wrong country, skewing scores and notes. Subdivision postal codes now pass through verbatim; a Location cell either names a real country or keeps the original text, never a minted wrong one. Unambiguous codes ("Remote (US)", "London, UK") still resolve. The accepted cost: a bare 2-letter code that genuinely means a country but collides with a subdivision code (e.g. "Berlin, DE", "Bangalore, IN") no longer resolves either — the cell keeps the original text, and spelled-out country names are unaffected. Rows persisted before this fix keep their stored Location — re-verify any country-first cell whose city contradicts it. (#163)
 
 - **A failed Greenhouse board now marks the source degraded instead of looking like a clean scrape.** Greenhouse silently skipped a board whose fetch failed (transient 404, timeout), so its jobs were simply missing from an apparently healthy run. It now reports partial results the same way Ashby/Workable/Workday do: the run summary and manifest list the source as degraded, naming the failed boards, while successful boards' jobs are kept. Also a safety prerequisite for board-diff closure, which must never read a failed board's rows as "gone". (#146)
+
 - **`jobs run --no-enrich` no longer silently drops the descriptions it scraped.** The sidecar description store is only written on a flush, and a `--no-enrich` run used to flush only when it re-sighted a known row — a fresh `--no-enrich` run threw away every scraped description, leaving the follow-up run (and `jobs backfill`) nothing to score from. Scrape-captured descriptions now always persist. (#142)
+
 - **`jobs run` now refreshes `Date Verified` for jobs it re-sees** (the column shipped as `Date Last Seen` in #136 and was renamed before release — see the schema entry above), so the cell reflects when a job was last confirmed live rather than first discovery. `jobs prune --older-than` now ages from last-sighting; rows no longer returned by a scrape age out as stale. Re-sighting is a scrape fact, so it also applies under `--no-enrich`. The end-of-run summary is now split into two labeled funnels, `Scraping` (found/new/known/re-seen split) and `Enrichment` (Fit/Notes), and `-v` logs each row whose freshness date or description was updated. (#136)
+
 - **`jobs run` now heals a missing description for an already-known row** when a scrape re-returns one (e.g. Indeed via JobSpy, bot-walled at enrichment time), folding it into `descriptions.jsonl` so the next `jobs backfill` can score it. Fill-only; an existing cached description is never overwritten. (#136)
 
 ## [0.3.0] — 2026-07-02
@@ -163,8 +177,11 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **Per-task AI provider/model routing**: every headless AI task (`summary`, `voice-update`, and the job-search enrichment passes) now resolves its provider and model through a fallback chain — task/phase override → domain default → global `ai:` default → claude. Set `ai.provider: ollama` (and optionally `ai.model:`) once to route the whole app to a local model, or mix per task (e.g. keep `summary` on claude while enrichment runs on ollama, with a different model per enrichment phase). `voice-update` gains routing too (claude keeps its workspace/session context; other providers use the plain dispatch path). Omitting the new fields keeps the prior claude-only behavior. Also fixes `ai.summary.model` being ignored on the claude path. (#116)
 
 - **`tracker update` can now edit title, link, and due date**: the `update` action gained `-T`/`--title`, `-l`/`--link`, and `-d`/`--due` flags, matching `tracker add`, so these fields no longer require hand-editing `tracker.yaml`. (#115)
+
 - **`paths tracker`**: resolves and prints the workspace `tracker.yaml` path, and the path is included in the `paths --json` payload under the `tracker` key. (#115)
+
 - **`help statuses` shows the job lifecycle**: the statuses reference now lists the `job`-category recommended statuses (`found`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`) alongside the general recommended set, in both text and `--json` output. (#115)
+
 - **AshbyHQ board source**: a new `ashby` scraper source pulls postings from any company's AshbyHQ board via the public Job Posting API (`jobs.ashbyhq.com/<slug>`). List the company slugs under `plugins.job_search.sources.ashby.ashby_boards` (slugs are case-sensitive, e.g. `Notion`); each board is fetched in one request and filtered to your configured roles, mirroring the Greenhouse source. Enable it with `enabled: true`, or select it on a single run with `jobs run -S ashby`. (#111)
 
 ### Changed
@@ -210,9 +227,13 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **Calendar gather no longer collapses the whole calendar into one event**: `gather calendar` (and the calendar context behind `day-start` / `check-in`) split events on blank lines, but icalBuddy 1.10.x with the app's flags prints events with no blank line between them — so every event was merged into a single garbage entry. Events are now grouped by their unindented title line, which parses each event correctly and also keeps a wrapped multi-line location attached to its event. (#123)
 
 - **`voice-update` no longer risks clobbering your voice profile**: the default `--append` mode now backs up the existing `voice-profile.md` to `.bak` before writing (previously only `--replace` did), and it refuses to write when the model returns content materially shorter than the current profile — the failure mode that silently replaced a full profile with a short summary. A backup, lock, or write error now reports a clear message and leaves the original profile untouched, instead of surfacing a raw traceback. (#114)
+
 - **HN "Who is hiring?" source falls back to the most-recent thread**: when no thread title matches the current month exactly (e.g. the new month's thread is not yet titled, or the clock is off), the source now uses the most-recent "who is hiring?" story instead of returning nothing. The exact month match still wins when present. (#113)
+
 - **Calendar all-day events are no longer dropped**: an all-day event (a bare date line with no time, from icalBuddy) now records a start at midnight instead of being skipped as unparseable. (#113)
+
 - **Calendar date tracking ignores stray digits**: the per-day date context now reads only genuine date lines (a bare date or date+time at the start of a line), so digits inside a URL or title can no longer corrupt the date of later events. (#113)
+
 - **A second concurrent `jobs run` / `backfill` / `prune` no longer hangs silently**: when one jobs command is already writing the workspace, a second one now prints a visible `Another jobs command is writing the workspace; waiting for it to finish...` notice the moment it has to wait, instead of parking with zero output (which read as frozen). The top-level commands wait up to 10 minutes and then give up with a clear message rather than blocking forever; an uncontended run prints no notice. `--json` stdout stays clean (the notice goes to stderr). (#118)
 
 ## [0.2.0] — 2026-06-16
@@ -220,6 +241,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 ### Added
 
 - **Total run time in the completion summary**: `jobs run` and `jobs backfill` end with the wall-clock duration (e.g. `Total run time: 4h 16m.`), so a long run's cost is visible at a glance. (0d953ae)
+
 - **A Ctrl-C / `SIGTERM` during scraping now keeps the in-flight sources' results.** Previously an interrupt mid-scrape kept only the sources that had fully finished; the source still scraping lost everything it had fetched. Now the first interrupt asks every running source to stop at its next natural unit boundary — one search for LinkedIn/Indeed, one board for Greenhouse, one category for We Work Remotely, one fetch for the HN/RemoteOK sources, one country for Apple — and return what it already has. Those rows are deduped and appended to `jobs.csv`, the run is marked interrupted (`phase_reached=scraping`) in `jobs-last-run.json`, and it exits `130` (`SIGINT`) / `143` (`SIGTERM`). An interrupt during scraping skips enrichment entirely (fill those rows later with `jobs backfill`). A second Ctrl-C is the escape hatch: it quits immediately and abandons the in-flight work. (#102)
 
 - **The slow board sources checkpoint to `jobs.csv` per search unit.** LinkedIn and Indeed (the only multi-hour sources) now hand each finished search unit (one search term × country) straight to `jobs.csv` as it completes, instead of accumulating the whole source in memory and writing it once at the end. A crash, `kill`, or power loss two hours into a LinkedIn scrape now keeps every completed unit — the loss window is the one in-flight unit, not the whole source. The fast single-call sources (RemoteOK, the HN sources, Greenhouse, We Work Remotely, Apple) still append once when they finish; their crash-loss window is seconds. (#102)
@@ -237,11 +259,17 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **Ollama preflight at `jobs run` start**: when enrichment routes to ollama and at least one LLM pass is on, the run pings the server once (a short 3s reachability probe) before the per-job enrichment loop. If the server is unreachable or the configured model is not pulled, the product / fit / notes passes are skipped with a single warning naming the endpoint or model — instead of letting each job burn a full per-call timeout against a down server. Detail-page enrichment (plain HTTP) still runs, the scraped rows are still appended, and the run manifest records zero LLM enrichment counters; fill the empty rows later with `jobs backfill`. The claude provider is unaffected. (#92)
 
 - **`Remote` column in `jobs.csv`** (immediately after `Location`): records whether a job is `remote`, `hybrid`, `onsite`, or blank. A free heuristic fills `remote` at scrape time when the raw location or title carries a remote token (so `--no-enrich` runs still get it); the fit/notes LLM pass refines it to a definite `remote`/`hybrid`/`onsite` from the description at no extra cost, gated by the new `plugins.job_search.enrichment.enrich_is_remote` toggle (default `true`). Hand-entered values are preserved verbatim and never overwritten by a blank or unrecognized answer. Older `jobs.csv` files without a `Remote` column read with a blank `Remote`; the column is added on the next rewrite. (#91)
+
 - **Per-request `num_ctx` for ollama enrichment**: each ollama call now sends an `options.num_ctx` sized to the prompt (estimated tokens + output headroom, floored at 4096, capped at 16384). Ollama's effective context default is machine-dependent and silently truncates longer prompts; sizing it per request keeps enrichment prompts from being cut off. (#90)
+
 - **`plugins.job_search.enrichment.enrich_product` toggle** (default `true`): gates the company Product/Purpose lookup independently of the Glassdoor rating. The two share one LLM call per company; with both `enrich_product` and `enrich_gd_rating` off the company pass is skipped entirely, and with only one on the prompt asks for and writes only that field. (#90)
+
 - **Detail-phase skip breakdown**: the `jobs run` detail phase summary now itemizes why pages were skipped, e.g. `0 enriched, 7 skipped (5 already complete, 2 blocked host)`, instead of a bare skip count. (#90)
+
 - **`jobs run --no-enrich`**: scrape, dedup, location-filter, and append rows without running any enrichment — skips detail pages, company products, and fit/notes (no enrichment bars, no detail-page or LLM calls). For fast, cheap runs; fill the empty fields later with `jobs backfill`. (#89)
+
 - **Selectable Playwright browser engine**: `plugins.job_search.scraper.browser` (`firefox` default, or `chromium`/`webkit`) chooses the engine for browser-driven sources (Apple). The launcher resolves it via `getattr(pw, engine).launch(...)`, the `Literal` field rejects unknown engines at config-load, and `doctor` / `doctor --fix` check and install whichever engine is configured rather than always Firefox. (#68)
+
 - **`enlighten` runtime dependency** (reverses the earlier "no enlighten" decision): the `jobs run` live display is now built on enlighten's terminal scroll region instead of Rich's `Progress`. Rich is unchanged for every other table (`status`, `tracker`, `doctor`, dry-run output).
 
 ### Removed
@@ -253,11 +281,15 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 ### Changed
 
 - **`jobs run` exit code now reflects partial success.** It exits `0` only when every source succeeded and persistence was clean; it exits `1` when any source failed or when periodic saves degraded during the run — even if the final save recovered the data on disk — so a scripted or scheduled caller can tell a fully clean run from a degraded one. (#99)
+
 - **`jobs run` live progress block shows the company currently being enriched.** The Company products and Fit and notes phase bars now fold the company name into their label as each job is processed, so a long enrichment phase shows live which work it is doing rather than only a count. A per-job enrichment failure now logs a one-line summary at `-v` (INFO), so a single failed job is identifiable without `-vv`. (#99)
+
 - **`init` surfaces a broken config template on the terminal.** When the bundled `.dd-config.yaml` template can't be rendered, `init` now warns on the terminal (not just in the log) that it wrote a minimal fallback config with job-search settings absent; when the packaged template is missing entirely (a broken install), `init` fails loudly instead of silently scaffolding a half-configured workspace. (#99)
 
 - **`jobs.csv` `Location` is now geography-only, country-first for newly scraped rows.** Each value is normalized to a canonical full country name first, then the city/region remainder in original order (e.g. `Amsterdam, North Holland, Netherlands` becomes `Netherlands, Amsterdam, North Holland`). Remote tokens are stripped from `Location` (remote-ness now lives in the `Remote` column), so a remote-only posting has a blank `Location` instead of the literal `Remote` — including parenthesised and connective forms (`Remote (US)` becomes `United States`, `San Francisco or Remote` becomes `San Francisco`). When a string names more than one country (`US or Canada`), the first in text order wins and the connective + later country are dropped. When the scraped text names no country, the per-search country a source knows (LinkedIn/Indeed, Apple) supplies it. Only new rows are normalized — stored `Location` values in an existing `jobs.csv` are read faithfully and left as-is (no auto-migration). The location allow-list filter is unaffected — it still runs on the raw scraped text. (#91)
+
 - **`jobs.csv` column order changed**: `Remote` is inserted immediately after `Location`, and `Product/Purpose` moves to immediately after `Notes`. Reads are header-name-based, so files written in the old order still load; they adopt the new order on the next rewrite. Unknown / hand-added columns (e.g. a user's own `Priority`) are carried through a `jobs backfill` rewrite verbatim, positionally — both the header label (appended after the canonical columns) and every cell, even on rows with a blank or duplicate Link. Stored cell values are not otherwise changed. (#91)
+
 - **BREAKING: AI enrichment routing moved off `ai:` onto the job_search plugin.** The core `ai:` block keeps `summary` routing and the shared `claude:` / `ollama:` provider-connection blocks; the enrichment `provider` / `model` now live under `plugins.job_search.enrichment` (where enrichment is actually used). `ai.enrichment` is rejected — there is no compat shim. Move the routing (#90):
 
   ```yaml
@@ -276,9 +308,13 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   ```
 
 - **AI timeout warnings now name the provider**: an enrichment timeout logs `<provider> timed out after Ns` (e.g. `ollama timed out after 60s`) instead of a generic message. For ollama, the first timeout in a run also logs a one-time hint that queued requests count against the timeout and to set `OLLAMA_NUM_PARALLEL` (or `ai.ollama.max_parallel: 1`). (#90)
+
 - **`jobs run` now fills the Product column for newly found jobs during the run** (previously only `jobs backfill` filled it). Capped by `max_enrich_companies` (default 50) per run. (#86)
+
 - **Faster CLI startup**: template-rendering dependencies now load only during `init`, not on every command invocation. (#76)
+
 - **LinkedIn and Indeed are fetched separately, each under its own progress row.** When both `linkedin` and `indeed` are enabled, each runs in its own backend fetch with its own progress row, retry, and failure isolation — a slow or failing LinkedIn scrape never blocks or fails the fast Indeed one. The selectors, config keys, progress rows, and `Source` column are all the site names (`linkedin`, `indeed`), never the backend library. An enabled site that returns zero rows across the whole run logs a warning. (#87)
+
 - **BREAKING: `linkedin` and `indeed` are now top-level config sources** (was a single `sources.jobspy:` block with `linkedin` / `indeed` sub-flags and a nested `jobs:` query block). Each site now carries its own `results_wanted_per_query` and `hours_old`; the Indeed-only `country` knob replaces `country_indeed` (and lives only on `indeed`, the one site it affects). `jobs run -S jobspy` is gone — select `-S linkedin` and/or `-S indeed`. There is no compat shim: a config still carrying `sources.jobspy:` fails the normal config-validation check and must be rewritten. Before:
 
   ```yaml
@@ -309,31 +345,53 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   ```
   (#88)
 - **Faster `jobs run`**: the Product and Fit/Notes enrichment phases now overlap under one shared concurrency cap (never more than `claude.max_parallel` provider calls in flight across both), detail-page fetches run on a small per-host-throttled pool instead of a single serial loop, the Apple scrape waits on the live search response instead of fixed multi-second sleeps, and the headless scrape pool default rose from 4 to 8 workers so all headless sources run in one wave. (#87)
+
 - **HN "Who's Hiring" now surfaces up to 500 matching posts** (was 100): the default `hn_max_posts` cap was hitting on every run, so the same first 100 relevance-ranked roles recurred and nothing past them was ever scraped. Raised to 500 (the thread fetch already pulls the whole thread).
+
 - **`jobs run` now shows live progress instead of going silent**: in normal mode the run renders a phased live block — a `Scraping sources` group listing every source (each a per-source progress bar, pending -> running -> done), then an `Enriching jobs` group with detail / company-product / fit-and-notes counters — so a long run is visibly alive rather than looking hung. A per-source breakdown (`found / new / already in csv / skipped by location`) and a reconciling `Completed:` line print at the end. The live block renders on any interactive terminal and stays pinned; verbosity controls only how much scrolls above it (normal: warnings only; `-v`: INFO heartbeats and per-source timings; `-vv`: the full stream; `-q`: suppresses the display and every progress line, leaving only errors). Problems surface live above the block as they happen, with a terse end-of-run `Warnings: N (shown above)` line, instead of being held back to a section at the end. During the serial Apple phase the browser runs headless while the block is pinned so its window can't cut into the display. Non-interactive output (cron, launchd, pipes) falls back to plain lines with no ANSI. All human progress now goes to stderr, leaving stdout for the dry-run table and a future `--json`. (#71, #72)
+
 - **`jobs run` live display rebuilt on enlighten** (no behaviour regression, fixes long-run stranding): a 2.5-hour run previously stranded ~700 stale copies of the block in the scrollback because Rich repainted the region on every write and ran a background refresh thread that raced the log stream. enlighten pins the bars in a terminal scroll region and lets the terminal scroll logs above them, with no per-line repaint and no refresh thread. Every source is now its own progress bar that fills as it works and stays pinned at its result (`linkedin  61 found`, red on failure), under a `Scraping sources` header bar with green (ok) / red (failed) segments. The per-row ticking elapsed timer is gone — a known-slow board (LinkedIn, Indeed, the headless Apple scrape) shows a one-time "can take several minutes" note until real progress arrives. An unresponsive terminal now falls back to plain-line mode on entry rather than stalling.
+
 - **Live per-source progress for every board.** Sources used to sit silent during a scrape; now each advances its bar against its own natural unit — search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest. One uniform `ctx.report(done, total)` callback drives them all (no per-library log parsing, no extra requests, no background thread).
+
 - **Finished source bars show a coloured outcome breakdown.** When a source completes, its bar re-colours into stacked segments — new (green), already in `jobs.csv` (magenta), skipped by location (yellow), and the duplicate/url-less remainder (grey) — so the result is readable at a glance, not just a count.
+
 - **Generated `.dd-config.yaml` now surfaces every user-configurable setting**: the scaffold exposes the scraper transport knobs (`user_agent`, `timeout`, `search_terms`, `parallel_workers`, `max_pages`), the per-source knobs nested under each source (`wwr_categories`, `greenhouse_boards`, `hn_max_posts`, and the `linkedin` / `indeed` query knobs), and `ai.ollama.max_parallel` — all previously valid config but hidden from the template. `scraper.headless` stays out: it is overridden per scrape phase, so a value set there has no effect. (#71)
+
 - **BREAKING: removed the `plugins.job_search.locations.cities` config field** and the city branch of `location_matches`; filtering is now on `countries` (and `remote`) only. Hard break, no compat shim (pre-1.0 personal tool). (#70)
+
 - **Apple scraper now scopes by Apple's postLocation code** (resolved live via the `jobs.apple.com` refData API), navigating `en-us/search?location=x-<CODE>` so titles return in English for every country; country lookups moved from `sources/_http.py` to a new `scraper/countries.py` module. Removes the old six-country ceiling — Apple now covers any country it posts in. (#70)
 
 ### Fixed
 
 - **The interactive Claude launchers now invoke the correctly namespaced slash commands.** `daily-driver day-start`, `day-end`, and `check-in` spawned `claude` with bare slash commands (`/day-start`, `/day-end`, `/check-in`), but the workflow commands install under `.claude/commands/daily-driver/`, so Claude Code namespaces them as `/daily-driver:day-start` (etc.) — the bare names did not resolve. The launchers now send the namespaced form, and the in-workspace command/agent/template docs that cross-reference these commands were updated to match. (#109)
+
 - **RemoteOK now collects infra roles**: the source queried only the unfiltered `/api`, which returns the newest ~100 listings site-wide where SRE/DevOps/Platform roles are sparse — so it routinely matched nothing (0 of 100 in a live check). It now also queries RemoteOK's focused `?tags=devops|kubernetes|aws` views and dedupes across them, surfacing ~20 matching roles in the same live check; `matches_roles` still decides what's kept. (224de38)
+
 - **Enrichment of the earlier sources is no longer lost when an Apple scrape follows.** On a `jobs run` where Apple (or any browser source) runs after the fast sources, the earlier sources' rows are enriched concurrently in the background while Apple scrapes. That background wave was writing its Fit/Notes/Product/Glassdoor results into a throwaway copy of the row list, so they never reached `jobs.csv` even though the run reported them as enriched and spent the LLM budget — leaving those columns blank and forcing a re-run of `jobs backfill`. The wave now writes into the live row list, so its enrichment lands on disk. A Ctrl-C or `SIGTERM` during the overlap now signals that background wave to stop, cancels its pending LLM calls, and joins it (bounded) before the final save, so its in-flight enrichment is kept and counted in `jobs-last-run.json` instead of being abandoned. If the wave can't settle within the bound (a stuck in-flight call), the run logs a warning that the manifest under-reports rather than failing silently. (#107)
+
 - **Several smaller correctness fixes.** A Glassdoor rating is now written when the company's Product cell was already filled (both enrichment fields default on) — previously the rating was fetched and discarded, re-fetched and discarded again on every run and `jobs backfill`, never landing. `jobs prune` no longer corrupts `jobs.archive.csv` when the archive was written by an older release with a different column layout (the 0.2.0 Remote-column upgrade) — it reconciles the headers so archived URLs stay in the dedup set and triaged jobs aren't re-discovered. `jobs status` per-state counts now normalize status spelling the same way the rest of the tool does, so a hand-edited `Ruled_Out` and a canonical `ruled-out` no longer split into two buckets. `gather git --json` (configured search paths but no repos), `jobs run --json --list-sources`, and `jobs run --json` on a non-interrupt crash now all emit valid JSON on stdout instead of empty or plain-text output. (#107)
+
 - **Internal accuracy fixes (no user-visible behavior change in normal runs).** The fit/notes enrichment counter no longer counts a job as enriched when the model returned nothing to write, so the run manifest's `enriched_fit_notes` reflects actual writes. Chatty LLM responses that open with a valid JSON object then add trailing prose now parse instead of being dropped as malformed. URL deduplication strips whitespace at the same boundary the writer and reader use, so a future source emitting padded URLs can't produce duplicate rows. A whitespace-only role coerces to `(unknown)` instead of crashing the row lift. The `jobs prune --status` help text and `docs/commands.md` now show a real status example (`applied`/`interviewing`) rather than the non-existent `active`. The JobSpy live progress bar reaches 100% during the scrape instead of snapping there only at the end. (#107)
+
 - **Disabled enrichment passes no longer render a phase bar**: with both `enrich_product` and `enrich_gd_rating` off (or fit/notes off), the pass's bar previously sat pinned at `0/<all rows>`, reading as a stuck or ignored toggle; a disabled pass now renders no row at all. (#106)
+
 - **Ollama enrichment responses wrapped in markdown fences now parse**: local models routinely fence their JSON (```json ... ```) or preface it with prose despite the strict-JSON prompt; those jobs failed with "non-JSON response" and were left unenriched. The parser now peels the wrapping before parsing; genuinely malformed responses still count as failures. (#103)
+
 - **Fit scoring no longer calls allowed countries a "location mismatch"**: the enrichment prompt now states explicitly that a job located in any configured country is acceptable — previously the bare country list read as candidate metadata and models scored every non-home-country role as a mismatch. (#103)
+
 - **Glassdoor-only company pass is labeled honestly**: with `enrich_product: false` (and `enrich_gd_rating` on), the live phase row now says "Glassdoor ratings" instead of "Company products", so the product toggle no longer looks ignored. (#103)
+
 - **Enrichment budgets are exact and visible**: when wave 1 of an overlapped `jobs run` exhausted `max_enrich_companies` / `max_enrich_fit`, wave 2 could overspend each cap by one call — wave 2 now receives exactly the remaining budget (zero spends nothing). The Company products / Fit and notes progress bars now show the budget-capped call count as their denominator instead of the whole row count, so a capped `jobs backfill` no longer looks like it is ignoring the caps, and the backfill dry-run says when a pass would be capped and that running backfill again continues. (#103)
+
 - **`jobs status` per-state counts are now correct.** The status breakdown read a lowercase `status` column while `jobs.csv` uses the capitalized `Status`, so every row was bucketed as `unknown` and the applied/interviewing/etc. counts (and the awaiting-action total) were always wrong. (#99)
+
 - **LLM scaffolding no longer leaks into the `Product/Purpose` cell.** When the model echoed the prompt's own list/label structure (`Line 1: ...`, a leading `1.`/`1)`/`-`/`*` bullet, or a `Product:`/`Purpose:` label), that prefix was stored verbatim; it is now stripped before the value is written. (#99)
+
 - **A malformed salary in a RemoteOK listing no longer fails the whole source during `jobs run`**: a float or float-string pay value used to raise an error that dropped every RemoteOK result; the value is now coerced tolerantly and the listing is kept (with comp blank if it can't be parsed). (#83)
+
 - **Job fit scores now appear in jobs.csv**: scores were computed by the enricher but silently dropped, leaving the Fit column blank after `jobs run`. Legacy `7/10`-style cells are still readable and normalize to bare integers on the next backfill. (#79)
+
 - **Custom edits to `.claude/hooks` scripts now survive `doctor --fix` and version upgrades**: hook scripts previously were overwritten on every regenerate, bypassing the SHA-256 manifest contract every other managed file follows. They now join that contract — user-edited hooks are preserved (and counted as preserved), and hooks dropped from the package are reaped. Note: the first regenerate after this release refreshes hooks from the package once; edits made after that are preserved. (#78)
 - `tracker update --extra` now merges keys into the existing extras instead of replacing them; unmentioned keys are no longer dropped. (#77)
 - **Apple jobs no longer dropped by the location filter**: the Apple scraper emitted a bare city (`"Seattle"`) as the job location, which matches no country-name alias, so `location_matches` silently dropped every Apple job when filtering by country (the run funnel collapsed to `new → 0 after location`). Apple's API hands `countryName` in the same record; the scraper now joins city, state/province, and country into `"Seattle, United States of America"`, so the existing country branch matches. Fix is Apple-only — other bare-location sources (greenhouse, HN, remoteok, wwr) genuinely lack a country in their upstream data and are left as a follow-up. (#69)
@@ -345,37 +403,57 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 ### Fixed
 
 - **Compensation now recovered for non-US jobs**: JobSpy only regexes salary out of job descriptions for US listings, so Indeed/LinkedIn jobs in Canada (and every other country) landed with a blank `Comp`. `scraper/sources/jobspy.py` now runs the same description extraction for every search country and annualizes hourly/monthly figures so the `Comp` column reads as a comparable yearly amount.
+
 - **generate fallbacks no longer silently corrupt installs or discard user `settings.local.json`**: three bare `except Exception` catches in the generate path were masking real failures. `_render_settings` and `_render_initial_config` now narrow to the expected error types and log the offending path/template at WARNING before falling back. A malformed existing `settings.local.json` is now copied to `settings.local.json.invalid` (and logged) before the rendered defaults replace it, instead of being discarded silently on the next `doctor --fix`.
+
 - **Three concurrency races (P0 correctness)**: (1) `tracker update --note` lost one of two concurrent appends — the note was read and concatenated outside the lock, then clobbered the freshly-loaded entry inside it; the append now happens inside `Tracker.update` under the lock via a new `append_note` argument. (2) `voice-update` locked the data file itself, so `apply_update`'s `os.replace` severed the locked fd from the live inode and broke mutual exclusion between concurrent runs; it now locks a sentinel `voice-profile.md.lock`. (3) `jobs prune` read and classified rows before acquiring `.jobs.lock`, so a concurrent `jobs run` append between the read and the rewrite was silently deleted; the read and classification now run inside the lock.
 
 ### Changed
 
 - **Fit scoring now reads `context.md`**: the fit/notes enrichment prompt injects the workspace's `context.md` (when present) into every job evaluation, so fit weighs how well the candidate's real experience matches the role — not just the one-line `persona`. Notes now justify the score and the location fit instead of listing the tech stack; the criteria block is reworded to state the ask explicitly. Without a `context.md`, fit falls back to role/company/location scoring as before. `jobs run` logs a token-cost estimate when `context.md` is large, since it rides every per-job call. The scaffolded `context.md` template gained Experience/Skills and Location-preferences sections to match.
+
 - **Location is the only filter that removes jobs**: `jobs run` surfaces every job matching your configured countries/cities. Compensation is display-only — the scraper writes whatever amount it finds to the `Comp` column and never filters, drops, or flags a job on it.
+
 - **`jobs run` output reconciles the filter funnel**: the location-filter count, enrichment failure/skip counts, a real-run enrichment heads-up, and a one-line `Funnel: N scraped → … → K written` summary are now shown at default verbosity, so jobs no longer vanish between pipeline stages unexplained.
+
 - **Country support is derived from JobSpy's `Country` enum** (~70 countries, was a hand-maintained 6). Any country JobSpy can scrape now works for both the location filter and Indeed search, with no per-country code to add. Bare 2-letter ISO codes are still excluded from location matching to avoid false positives (e.g. "us" matching "Austin").
+
 - **Comp is no longer labeled with a currency**: recovered comp keeps the source's own symbol instead of being re-stamped per search country; the number alongside the location is enough.
 
 ### Removed
 
 - **Compensation is now a plain display string**: the typed `Comp` model (with its free-form parser, currency normalization, and period handling), the `plugins.job_search.min_comp_usd` config field, the comp-threshold filter pass, and the `skipped-comp` status are all gone. The scraper still extracts whatever amount it finds and writes it to the `Comp` column verbatim, but comp never filters, drops, or flags a job — location is the only filter that removes jobs. Existing configs that set `min_comp_usd` must remove it (the config model is `extra="forbid"`).
+
 - **Currency filter and FX conversion**: the `plugins.job_search.primary_currency` config field, the currency-mismatch drop, and the `_fx` USD-conversion table are gone. Comp is shown in the listing's own currency and non-matching currencies are no longer dropped (existing configs with `primary_currency` set must remove it — the config model is `extra="forbid"`).
+
 - **Dead code in scraper module**: deleted `scraper/runner.py` `__all__` block (mis-described public surface), removed `scraper/runner.py:_to_int` duplicate (the surviving copy lives in `scraper/comp.py`), and dropped the parallel `SOURCE_REGISTRY` + `_typed_source` wrapper from `scraper/sources/__init__.py` (its lone consumer in `cli/commands/help.py` now enumerates `SCRAPERS` directly). Tautological `tests/test_scraper/test_source_registry.py` removed.
+
 - **Legacy CSV scaffolding**: the on-disk `jobs.csv` legacy-header / `archived`-status migration is gone — the current canonical header is now assumed (a non-canonical `jobs.csv` is used as-is rather than rewritten). Also removed the unused dict-based `append_jobs` writer (the typed `append_jobs_typed` is the only writer) and collapsed the two dry-run table renderers into a single typed one.
+
 - **Legacy launchd label sweep and the dead `plan_summary` daily-state field**: plugins no longer carry `legacy_launchd_labels` (the scheduler only manages current labels); the `daily-state.yaml` `plan_summary` field (never written by the app) is dropped — an existing daily-state file still carrying it will be rejected on read (the model is `extra="forbid"`).
 
 ### Added
 
 - **Config-driven criteria scanner for enrichment**: `plugins.job_search.enrichment.criteria` lets users declare extra things to assess in each job description (`{label, assess}` pairs). The scanner rides the existing fit/notes enrichment call — no new LLM requests — extending that prompt's JSON contract with a `criteria` object; meaningful answers fold into the `Notes` column as `Label: value` segments. Quiet by default: empty, whitespace-only, `unknown`, and `n/a` answers (case-insensitive) add nothing, so the common case stays clean. With no criteria configured, the fit/notes prompt is byte-for-byte unchanged. The whole `enrichment` block is now surfaced (commented) in the scaffolded `.dd-config.yaml` with per-knob descriptions, so timeout, cost caps, and which passes run are user-editable.
+
 - **`doctor` check for the Playwright Firefox browser**: when a Playwright source (Apple) is enabled, `doctor` warns on macOS if the browser binary is missing (the pip package installs without it, so the source dies at launch), and `doctor --fix` installs it via a new `integrations/playwright.py` wrapper. Plugin doctor checks can now carry a self-contained `plugin_fixer` callable, run by `_run_plugin_fixers` — so `--fix` repairs plugin findings without core importing plugin code (core's own drift/contract fixes stay dispatched by name via `generate()`).
+
 - **Per-provider enrichment concurrency**: enrichment now fans out for claude as well as ollama. A new `ai.claude.max_parallel` knob (default 4, lower than ollama since claude is rate-limited and runs one CLI subprocess per call) controls claude worker threads; `_ollama_pool_size` is replaced by a provider-agnostic `_enrich_pool_size`. Parallelism raises throughput only — it does not change the `max_enrich_*` budgets or the per-call timeout.
+
 - **`.dd-config.yaml.j2` is codegen'd from `core/config_models.py`**: every Pydantic `Field` now carries `description=` + `json_schema_extra` template metadata; `core/config_template.py` walks `Config` and emits the template. `make config-template` regenerates, `make check-config-template` (wired into `lint`) fails on drift, and a pre-commit hook catches stale templates locally.
+
 - **install-smoke CI**: workspace scaffold step (`init + doctor + tracker add/list`) catches missing package-data regressions; smoke now also runs on direct pushes to `main`.
+
 - **Scraper tests**: dedicated test modules for `weworkremotely` (RSS) and `apple` (Playwright/JSON API) with committed fixtures under `tests/fixtures/scraper/`.
+
 - **`integrations/notify.py`**: `desktop_notify()` wrapper lifts osascript/terminal-notifier subprocess calls out of `scraper/runner.py` into the integrations layer; tests in `tests/test_integrations/test_notify.py`.
+
 - **generate double-check locking test**: `test_concurrent_invocations_only_one_wipe` asserts the flock + re-check-inside-lock pattern prevents duplicate wipes under concurrent invocation.
+
 - **release CI gate**: `tox -e py311,py312` (both interpreters set up explicitly) runs before `python -m build`; post-build wheel install smoke confirms package-data before artifacts attach to the GitHub Release.
+
 - **SHA-pinned GitHub Actions**: all four third-party Actions (`checkout`, `setup-python`, `upload-artifact`, `softprops/action-gh-release`) pinned to 40-char commit SHAs with trailing version comments. Bumped to current latest (major-version jumps across the board). Dependabot `github-actions` ecosystem keeps SHAs current.
+
 - **`make test-quick-parallel`**: exposes the existing `tox -e test-parallel` env (pytest-xdist `-n auto`) for fast inner-loop runs.
 
 ### Removed
@@ -434,52 +512,81 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   ```
 
 - **Job search extracted into a real plugin (`plugins/job_search/`).** The feature's config, CLI, scraper sources, scheduler jobs, and doctor checks now live under `source/daily_driver/plugins/job_search/` and are wired through a static `Plugin` contract (`plugins/_base.py`) listed in `PLUGINS`. Core no longer hardcodes job-search specifics: `core.scheduler`, `core.doctor`, and `core.generate` iterate `PLUGINS` (importing it lazily so core stays import-light), and `PluginsConfig` is assembled from the registry (`extra="forbid"`, matching the strict root). `Plugin.package_data_dirs` adds an extension point so a future plugin can ship slash-commands; `job_search` ships none, but the generate path is exercised by a synthetic-plugin test. Deliberate non-changes for honesty: scraper **source IDs were not namespaced** (qualifying them would break existing workspace configs and CLI args — deferred to a future migration); the **`plugins.job_search` config namespace is unchanged**, so no user migration is needed; and **`integrations/notify.py` stays the generic desktop-notify primitive** (the W11 integrations boundary), not absorbed into the plugin.
+
 - **Logging now uses `core.logging.get_logger` consistently** across the CLI and scraper layers, removing bare `logging.getLogger` and a stray `print(..., file=sys.stderr)` in the tracker. All loggers live under the `daily_driver` namespace so verbosity flags and the Rich handler apply uniformly.
+
 - **CLI startup latency reduced via lazy command/import loading.** The parser no longer imports every subcommand module up front; argv is scanned for the invoked command and only that module's parser is built (other commands get help-only stubs for the top-level listing). `init` defers `core.generate` (Jinja2 + pydantic) and `summary` defers `core.summary` (requests ~47ms), `ai_provider`, and `clipboard` into their consumers. Warm `daily-driver --version` drops from ~240ms to ~180ms wall-clock (~200ms to ~145ms in-process); residual cost is `core.config`/pydantic pulled transitively via workspace resolution.
+
 - **BREAKING: `.dd-config.yaml` root is now strict (`extra="forbid"`).** Unknown top-level keys raise `pydantic.ValidationError` at parse time instead of being silently accepted, so typos like `tracer:` for `tracker:` fail loudly. Pre-existing top-level user keys must move to a documented seam: per-entry data goes under `tracker.extras` (via `daily-driver tracker add --extra key=value`), per-category fields under `tracker.categories.<name>`, and narrative context into `voice-profile.md` (or a sibling `.notes.md` in the workspace).
+
 - **Console stream tests**: rewrote four placeholder tests in `test_console.py` to actually capture stdout/stderr with `capsys` and assert routing; added `test_user_output_is_stdout_not_stderr` regression guard.
+
 - **`scheduler` config is now a typed `SchedulerConfig`** (`checkin.times` list + `jobs.time` string) instead of a freeform `dict[str, Any]`. Unknown scheduler keys — including the legacy `scrape_jobs` — are now rejected at parse time via `extra="forbid"`, replacing the previous runtime "scrape_jobs was renamed" error message.
+
 - **Subprocess calls funnel through `integrations/`.** Git and icalBuddy invocations moved out of `gathers/` into new `integrations/git.py` and `integrations/icalbuddy.py`; `claude_cli` now raises domain exceptions (`ClaudeInvocationError`, `ClaudeTimeoutError`) instead of leaking `subprocess.CalledProcessError` / `TimeoutExpired` to the CLI. Scraper HTTP funnels through `sources/_http.py` (it re-exports `Session` / `HTTPError` / `HTTPTimeout`); `scraper/runner.py` and `scraper/enrichment.py` no longer import `requests` directly.
+
 - **Workspace + output_dir resolution consolidated into `cli/_common.resolve_workspace`.** The discover-or-fail boilerplate copy-pasted across the CLI commands now flows through one helper that raises `WorkspaceError`; the two divergent helpers (`scheduler._resolve_workspace` returning `None`, `_claude_session.resolve_workspace` raising `SessionError`) are removed, and both `_resolve_output_dir` re-implementations (jobs, doctor) now defer to `Workspace.output_dir`.
+
 - **`summary` AI-routing now reads the validated `Config`** instead of a separate `yaml.safe_load` of `.dd-config.yaml`, so config validation is consistent across commands.
+
 - **Top-level CLI errors now show the exception class + cause** without needing `-v`: the non-verbose error path prints `ClassName: message` (and `caused by: ...` one level deep) instead of a bare `str(exc)`, and always logs a full traceback (best-effort) to `<state_dir>/logs/cli-error.log`.
 
 ### AI providers
 
 - **Ollama backend for headless tasks** via the `ai:` config block. `enrichment` and `summary` route per-task (`provider: claude | ollama`); each has its own `model` field. Omitting the block preserves claude-only behavior.
+
 - **Parallel ollama enrichment** via `ai.ollama.max_parallel` (default 4). Per-worker log tags (`[enrich w2]`) help trace interleaved failures.
+
 - **`AI providers` doctor row** reports reachability, confirms the configured model is pulled, and shows effective parallelism. Omitted when no task routes to ollama.
+
 - **Interactive launchers stay claude-only** (session resume, agents, workspace `--add-dir` context that ollama does not provide).
 
 ### Jobs scraper
 
 - **JobSpy split into per-site scrapers.** `jobspy` now expands to three registry entries — `jobspy_linkedin`, `jobspy_indeed`, `jobspy_google` — so all three sites run concurrently in the Phase 1 parallel pool instead of serially inside one upstream call. Config stays under a single `jobspy:` key, now a nested block with per-site flags (`enabled`, `linkedin`, `indeed`, `google`); the legacy `jobspy: true|false` bool still coerces.
+
 - **Fix: Apple scraper now runs in non-headless mode.** `_non_headless_sources` previously relied on a `type: playwright` config key that `SourceToggle` (`extra="forbid"`) silently rejects, so Apple always fell into the headless phase and crashed on macOS with a Mach port error. Classification now uses the code-level `_PLAYWRIGHT_SOURCES` constant.
+
 - **Playwright browser switched from Chromium to Firefox.** `playwright install firefox` is now required for the Apple scraper. Default `user_agent` updated to a Firefox/128 UA to match. Validated parity: 120 jobs / 115s (Firefox) vs 121 jobs / 114.5s (Chromium).
+
 - **Shared `.jobs.lock`** serializes `jobs run` / `jobs prune` / `jobs run --backfill` mutations on `jobs.csv`.
+
 - **Ctrl-C during `--backfill` flushes partial progress** and names the pre-run `jobs.csv.bak.<unix>` snapshot in the interrupt message. Second Ctrl-C force-quits. CLI exits 130.
+
 - **HN sources hardened**: 429 retry/backoff, Algolia thread discovery, new `hn_jobs` source, age filter. Detail-fetch skipped for HN and Indeed (no useful enrichment).
+
 - **Backfill counters now exclude `status=skipped` rows.** `Backfill complete` reports `+N Notes` (previously hidden). `enrich-fit-notes` logs startup + end-of-pass INFO lines so silent ollama failures are visible.
+
 - **`Jobs backups` doctor row** warns when more than 5 `jobs.csv.bak.*` files accumulate.
+
 - **Backups moved to `<output_dir>/backups/`** with human-readable UTC ISO-8601 stamps (`jobs.csv.bak.YYYY-MM-DDTHH-MM-SS-ffffffZ`, hyphens for Windows filesystem portability). The `Jobs backups` doctor row globs the new location; existing `jobs.csv.bak.<unix>` snapshots in `output_dir/` are left in place for manual cleanup.
+
 - **`jobs run` per-source progress on stdout**: each scraper prints `Now checking <id>...` before starting and a `<id>: N jobs (Xs)` or `<id>: failed (reason)` summary on completion, so the user sees activity before any scraper finishes. Lines are atomic; ordering across the parallel phase is non-deterministic.
+
 - **JobStatus rename**: `archived` → `dropped`. `_migrate_legacy_header` rewrites legacy `Status=archived` rows on next scraper / backfill invocation. Hard break per the MVP no-compat policy.
+
 - **Category-aware tracker statuses**: `category=job` entries warn against statuses outside `{found, skipped, applied, rejected, dropped}`; other categories keep the generic recommended set.
 
 ### Logging and output
 
 - **Two-stream Console** (`core.console.Console`): data payloads on stdout, status / warnings / errors / logs on stderr. Module loggers share `Console.get_log_console()` for theme consistency.
+
 - **Repeatable verbosity**: `-v` = INFO, `-vv` = DEBUG, `-q` = errors only. Single `-v` no longer jumps straight to DEBUG.
+
 - **`--no-color` decoupled from markup.** Color is suppressed via `color_system=None`; Rich markup and highlights stay on so tables and styled prefixes still render cleanly.
 
 ### CLI
 
 - **W8 polish**: `scheduler {install,uninstall,status}` group replaces the old top-level commands; `materialize` renamed to `generate`; focus/tracker/status improvements; short flags across subcommands; idempotent `init` and `doctor --fix` (restores deleted managed files).
+
 - **`/interview-prep` → `/daily-learning`** slash command rename.
+
 - **W2 breaking rename**: `scrape-jobs` family → `jobs run` / `jobs status` / `jobs prune`.
 
 ### Docs
 
 - **Restructured into Diataxis quadrants.** New `docs/README.md` navigation index, new `docs/concepts.md` (mental model + workspace layout), `customization.md` merged into `configuration.md#customization`, developer docs moved to `docs/dev/`.
+
 - **`docs/cli-tree.md`** reframed as orientation-only reference.
+
 - **New `docs/ollama-setup.md`** walkthrough for the Ollama provider.

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.roles import matches_roles
+from daily_driver.plugins.job_search.scraper.rows import configure_company_noise
 from daily_driver.plugins.job_search.scraper.runner import (
     dedup_key,
     location_matches,
@@ -295,3 +296,44 @@ class TestDedupKey:
 
     def test_different_company_different_key(self) -> None:
         assert dedup_key("Acme", "SRE") != dedup_key("Globex", "SRE")
+
+    def test_slug_derived_company_matches_aggregator_display_name(self) -> None:
+        """The #210 case: Ashby names a company after its board slug, so the
+        board row and an aggregator's row for the same job must key alike or
+        the board-preference upgrade can never fire.
+        """
+        assert dedup_key("Menlosecurity", "SRE") == dedup_key(
+            "Menlo Security Inc.", "SRE"
+        )
+
+    def test_noise_words_and_punctuation_ignored(self) -> None:
+        assert dedup_key("Acme Technologies, LLC", "SRE") == dedup_key("Acme", "SRE")
+
+    def test_distinct_companies_still_differ_after_noise_stripping(self) -> None:
+        assert dedup_key("Acme Labs", "SRE") != dedup_key("Globex Labs", "SRE")
+
+    def test_all_noise_name_keeps_an_identity(self) -> None:
+        """Stripping every word would collapse unrelated companies onto one key."""
+        assert dedup_key("Holdings Group", "SRE") != dedup_key("Technology Co", "SRE")
+
+    def test_role_keeps_its_words(self) -> None:
+        """Noise stripping is company-only: roles use those words legitimately."""
+        assert dedup_key("Acme", "Software Engineer") != dedup_key("Acme", "Engineer")
+
+
+class TestCompanyNoiseWords:
+    """`plugins.job_search.scraper.company_noise_words` replaces the shipped list."""
+
+    def teardown_method(self) -> None:
+        configure_company_noise(None)
+
+    def test_configured_words_replace_the_default_list(self) -> None:
+        configure_company_noise(["widgets"])
+        assert dedup_key("Acme Widgets", "SRE") == dedup_key("Acme", "SRE")
+        # "inc" stops being noise once the list is replaced.
+        assert dedup_key("Acme Inc", "SRE") != dedup_key("Acme", "SRE")
+
+    def test_empty_config_keeps_the_shipped_list(self) -> None:
+        configure_company_noise(["widgets"])
+        configure_company_noise([])
+        assert dedup_key("Acme Inc", "SRE") == dedup_key("Acme", "SRE")
