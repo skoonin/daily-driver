@@ -1509,6 +1509,7 @@ def _discover_summary() -> dict:
                 "universe": 3,
                 "universe_source": "fetched",
                 "candidates": 2,
+                "restaled": 1,
                 "swept": 2,
                 "matched_new": 1,
                 "matched_total": 1,
@@ -1536,6 +1537,7 @@ def test_discover_boards_success_prints_summary(
     err = " ".join(capsys.readouterr().err.split())
     assert "1 newly matched" in err
     assert "1 already swept or dead" in err
+    assert "1 stale re-probed" in err
 
 
 def test_discover_boards_json_emits_envelope(

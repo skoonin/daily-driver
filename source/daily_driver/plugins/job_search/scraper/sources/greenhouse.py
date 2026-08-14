@@ -32,11 +32,13 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     from daily_driver.plugins.job_search.config import GreenhouseToggle
     from daily_driver.plugins.job_search.scraper.context import (
         CheckpointAborted,
-        PartialSourceError,
         source_toggle,
     )
     from daily_driver.plugins.job_search.scraper.discovery import resolve_boards
     from daily_driver.plugins.job_search.scraper.roles import matches_roles
+    from daily_driver.plugins.job_search.scraper.sources._boards import (
+        report_board_failures,
+    )
 
     toggle = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle)
     boards = resolve_boards(
@@ -135,14 +137,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
                 )
                 return jobs
 
-    if failed_boards:
-        # Incomplete scrape (one or more boards failed) -> degraded, not a
-        # clean run. The gathered jobs ride along and still append.
-        raise PartialSourceError(
-            jobs,
-            f"{len(failed_boards)} of {len(boards)} boards failed: "
-            f"{', '.join(failed_boards)}",
-        )
+    report_board_failures("greenhouse", failed_boards, len(boards), jobs, ctx)
     return jobs
 
 

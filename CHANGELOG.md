@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Fixed
+
+- **A job board that dies after being matched now leaves the scrape list on its own.** An incremental `jobs discover-boards` sweep only probed slugs it had never seen, so a board that started returning 404 after discovery matched it kept its matched status forever and was re-fetched on every `jobs run` — the only way out was a full re-sweep or a hand-written `exclude_boards` entry. Sweeps now also re-probe boards last checked more than `plugins.job_search.discovery.reprobe_days` (default 30) ago, which retires dead ones into the dead cache during a normal sweep; at most `discovery.max_reprobe_per_sweep` (default 500) are re-probed per sweep, oldest first, so retirement spreads out instead of the whole universe coming due on the same day. Relatedly, a board source is no longer reported degraded for a handful of permanently-gone boards: below `discovery.degraded_failure_ratio` (default 0.25) the run logs the success rate (`greenhouse: 420/427 boards ok, 7 failed`) and reserves the degraded flag for a real outage. Row closure is unchanged — a board that failed to fetch was never, and still is not, read as "absent = closed". (#217)
+
 ## [1.2.0] — 2026-08-13
 
 ### Added

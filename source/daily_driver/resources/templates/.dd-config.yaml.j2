@@ -271,6 +271,26 @@ tracker:
 #       # re-sightings, else Date Found) is this old. Generous by design; a
 #       # re-found posting reopens loudly.
 #       unverified_age_days: 30
+#
+#     # `jobs discover-boards` sweep behaviour: how stale a matched board
+#     # may get before it is re-probed, and how many failed boards make a
+#     # board source degraded.
+#     discovery:
+#       # Re-probe an already-swept board slug when its last probe is at
+#       # least this many days old. Without this an incremental sweep only
+#       # ever probes new slugs, so a board that dies after being matched
+#       # stays in the scrape list until a --full sweep.
+#       reprobe_days: 30
+#       # Cap on stale boards re-probed per sweep, oldest first. One sweep
+#       # writes every stamp on the same day, so an uncapped threshold would
+#       # re-probe the whole universe at once and repeat that every
+#       # reprobe_days. The cap spreads retirement over successive sweeps.
+#       max_reprobe_per_sweep: 500
+#       # Share of a platform's boards that must fail before the source is
+#       # reported degraded. Below it the run logs the success rate instead:
+#       # a handful of permanently-gone 404s is not an outage, and flagging
+#       # every run trains the reader to ignore the warning.
+#       degraded_failure_ratio: 0.25
 #     sources:
 #
 #       # All keys optional; omitted = enabled (SourceToggle default).

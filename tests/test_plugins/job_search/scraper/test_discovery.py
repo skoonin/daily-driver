@@ -12,26 +12,39 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from daily_driver.core.clock import now
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import discovery
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 
 
-def _ctx(roles: list[str] | None = None) -> ScrapeContext:
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "roles": roles or ["SRE"],
-                "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
-            }
+def _ctx(
+    roles: list[str] | None = None,
+    reprobe_days: int | None = None,
+    max_reprobe_per_sweep: int | None = None,
+) -> ScrapeContext:
+    payload: dict[str, Any] = {
+        "roles": roles or ["SRE"],
+        "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+    }
+    discovery_cfg = {
+        key: value
+        for key, value in (
+            ("reprobe_days", reprobe_days),
+            ("max_reprobe_per_sweep", max_reprobe_per_sweep),
         )
-    )
+        if value is not None
+    }
+    if discovery_cfg:
+        payload["discovery"] = discovery_cfg
+    return ScrapeContext(plugin=JobSearchPlugin.model_validate(payload))
 
 
 def _resp(status: int, payload: Any = None) -> MagicMock:
@@ -314,16 +327,27 @@ def _sweep(
     outcomes: dict[str, discovery.ProbeResult],
     *,
     full: bool = False,
+    ctx: ScrapeContext | None = None,
 ) -> discovery.PlatformSweep:
     monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(200, slugs))
     monkeypatch.setitem(discovery._PROBES, "greenhouse", _fake_probe_map(outcomes))
     return discovery.sweep_platform(
         "greenhouse",
-        _ctx(),
+        ctx or _ctx(),
         tmp_path,
         full=full,
         jitter=lambda: None,
     )
+
+
+def _age_sweep_stamps(tmp_path: Path, days: int) -> None:
+    """Backdate every recorded last_swept stamp, simulating an old sweep."""
+    path = tmp_path / "discovery" / "sweep-greenhouse.json"
+    payload = json.loads(path.read_text())
+    stamp = (now() - timedelta(days=days)).isoformat()
+    for info in payload["swept"].values():
+        info["last_swept"] = stamp
+    path.write_text(json.dumps(payload))
 
 
 class TestSweepPlatform:
@@ -394,6 +418,112 @@ class TestSweepPlatform:
 
         assert result.candidates == 1
         assert discovery.load_matched_boards(tmp_path, "greenhouse") == {}
+
+    def test_incremental_reprobes_stale_slugs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes = {"match-co": discovery.ProbeResult("match-co", "swept", 1)}
+        _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+        _age_sweep_stamps(tmp_path, 31)
+
+        second = _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+
+        assert second.candidates == 1
+        assert second.restaled == 1
+
+    def test_stale_board_that_died_retires_without_full(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The #214 case: a board matched, then 404s, must leave the scrape list."""
+        _sweep(
+            tmp_path,
+            monkeypatch,
+            ["match-co"],
+            {"match-co": discovery.ProbeResult("match-co", "swept", 4)},
+        )
+        assert set(discovery.load_matched_boards(tmp_path, "greenhouse")) == {
+            "match-co"
+        }
+        _age_sweep_stamps(tmp_path, 45)
+
+        result = _sweep(
+            tmp_path,
+            monkeypatch,
+            ["match-co"],
+            {"match-co": discovery.ProbeResult("match-co", "dead")},
+        )
+
+        assert result.dead_new == 1
+        assert discovery.load_matched_boards(tmp_path, "greenhouse") == {}
+
+    def test_fresh_slugs_are_not_reprobed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes = {"match-co": discovery.ProbeResult("match-co", "swept", 1)}
+        _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+        _age_sweep_stamps(tmp_path, 29)
+
+        second = _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+
+        assert second.candidates == 0
+        assert second.restaled == 0
+
+    def test_reprobe_days_knob_sets_the_staleness_threshold(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes = {"match-co": discovery.ProbeResult("match-co", "swept", 1)}
+        _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+        _age_sweep_stamps(tmp_path, 8)
+
+        second = _sweep(
+            tmp_path, monkeypatch, ["match-co"], outcomes, ctx=_ctx(reprobe_days=7)
+        )
+
+        assert second.candidates == 1
+
+    def test_stale_reprobes_are_capped_oldest_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One sweep stamps every slug the same day, so an uncapped threshold
+        would re-probe the whole universe at once and repeat that herd every
+        reprobe_days. The cap takes the oldest slugs and defers the rest.
+        """
+        slugs = ["a-co", "b-co", "c-co"]
+        outcomes = {slug: discovery.ProbeResult(slug, "swept", 1) for slug in slugs}
+        _sweep(tmp_path, monkeypatch, slugs, outcomes)
+
+        path = tmp_path / "discovery" / "sweep-greenhouse.json"
+        payload = json.loads(path.read_text())
+        for offset, slug in enumerate(slugs):
+            payload["swept"][slug]["last_swept"] = (
+                now() - timedelta(days=40 - offset)
+            ).isoformat()
+        path.write_text(json.dumps(payload))
+
+        second = _sweep(
+            tmp_path,
+            monkeypatch,
+            slugs,
+            outcomes,
+            ctx=_ctx(max_reprobe_per_sweep=2),
+        )
+
+        assert second.candidates == 2
+        assert second.restaled == 2
+
+    def test_unparseable_last_swept_counts_as_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outcomes = {"match-co": discovery.ProbeResult("match-co", "swept", 1)}
+        _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+        path = tmp_path / "discovery" / "sweep-greenhouse.json"
+        payload = json.loads(path.read_text())
+        payload["swept"]["match-co"]["last_swept"] = "not-a-timestamp"
+        path.write_text(json.dumps(payload))
+
+        second = _sweep(tmp_path, monkeypatch, ["match-co"], outcomes)
+
+        assert second.candidates == 1
 
     def test_full_resweep_never_reprobes_dead(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
