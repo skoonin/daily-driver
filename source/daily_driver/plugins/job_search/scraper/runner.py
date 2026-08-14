@@ -1315,6 +1315,7 @@ def _run_impl(
     from daily_driver.plugins.job_search.scraper.discovery import (
         SWEEP_PLATFORMS,
         load_matched_boards,
+        sweep_ages,
     )
 
     # Boards the discovery sweep matched: sorted for a stable scrape order,
@@ -1330,6 +1331,14 @@ def _run_impl(
                 platform,
                 len(boards),
             )
+    # Slugs never probed are invisible to this run: an interrupted or never-run
+    # sweep silently shrinks the board list, and nothing else reports it.
+    # Collected here (where the caches are already read) for the run summary.
+    coverage_gaps = {
+        platform: {"matched": len(discovered_boards.get(platform, ())), **stats}
+        for platform, stats in sweep_ages(ephemeral_dir).items()
+        if stats.get("never_probed")
+    }
 
     # Carry the merged dedup set on the context so adapters that build their
     # URL deterministically (Apple, Wellfound) can short-circuit during
@@ -1946,6 +1955,14 @@ def _run_impl(
         Console.warning(
             "  Degraded sources (incomplete results, kept what was scraped): "
             + ", ".join(_display_name(sid) for sid in degraded_sources)
+        )
+    # Same completeness class as the degraded line above, and the only place a
+    # user is ever shown the board-coverage gap during a run.
+    for platform, gap in sorted(coverage_gaps.items()):
+        Console.warning(
+            f"  {'Coverage':<{label_width}}  {platform}: scraping "
+            f"{gap['matched']} boards, {gap['never_probed']} slugs never "
+            "probed (run jobs discover-boards)"
         )
     # Truncated queries: a query that returned its full cap saw only part of
     # its window. One line per (source, kind) so a mixed LinkedIn run shows

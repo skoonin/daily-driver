@@ -13,6 +13,6 @@ PLUGIN = Plugin(
     scheduled_jobs_builder=(
         "daily_driver.plugins.job_search.scheduler.build_scheduled_jobs"
     ),
-    launchd_labels=("com.daily-driver.jobs",),
+    launchd_labels=("com.daily-driver.jobs", "com.daily-driver.jobs-discover"),
     doctor_checks="daily_driver.plugins.job_search.doctor.run_checks",
 )

@@ -308,7 +308,7 @@ Sweeps the ATS slug universe — every known Greenhouse, Ashby, and Lever board 
 
 ### `jobs status [--json]`
 
-Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment. Below the per-status table it prints the cumulative unscored backlog — active (`found`/`pending`) rows with no `Date Enriched` yet — so a fit budget that cannot keep up with inflow is visible before the review queue starves (`--json` key: `unscored_backlog`). The count includes rows with no cached description; `jobs backfill` (or the next run) can now fetch one when the board serves it, but rows on boards that don't (LinkedIn legacy, Apple) only heal via a re-scrape — so it is an upper bound on the run summary's `Backlog: N remaining`. When a discovery sweep has run, a `Discovered boards` section shows per-platform matched-board counts, slugs swept, and the last sweep date (`--json` key: `discovery`).
+Reads `jobs-last-run.json` and `jobs.csv` metadata. When the last run was cut short, it prints a recovery line naming the phase it reached and pointing at `jobs backfill` to finish enrichment. Below the per-status table it prints the cumulative unscored backlog — active (`found`/`pending`) rows with no `Date Enriched` yet — so a fit budget that cannot keep up with inflow is visible before the review queue starves (`--json` key: `unscored_backlog`). The count includes rows with no cached description; `jobs backfill` (or the next run) can now fetch one when the board serves it, but rows on boards that don't (LinkedIn legacy, Apple) only heal via a re-scrape — so it is an upper bound on the run summary's `Backlog: N remaining`. When a discovery sweep has run, a `Discovered boards` section shows per-platform matched-board counts, slugs swept, and the last sweep date (`--json` key: `discovery`). Any platform with slugs that have never been probed also reports that count: those boards cannot be scraped at all, so an interrupted or never-run sweep silently shrinks coverage. `jobs run` reports the same figure in its summary.
 
 ### `jobs verify [--reverify-days N] [--unverified-age-days N] [-S|--sources LIST] [--limit N] [-n|--dry-run] [-j|--json]`
 
@@ -332,13 +332,15 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 ### `scheduler install`
 
-Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
+Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, board discovery at 23:59 on Saturday and Tuesday, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
 
-Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
+Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`, `jobs-discover`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
 
-Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape runs headless as before.
+Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape and the board sweep run headless.
 
-Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
+`jobs-discover` runs `jobs discover-boards` on its own cadence rather than as part of the scrape: the board universe turns over far more slowly than postings do, launchd takes a single command, and a sweep that hangs must not block the scrape. Schedule it to land the day before a scrape. Without it, nothing ever refreshes the board list — `jobs run` keeps scraping whatever the last manual sweep found, and reports how many slugs remain unprobed.
+
+Every job fires daily unless narrowed with a `days` key: `"daily"` (default), `"weekdays"`, or a list of day names (e.g. `[sun, wed]`). `scheduler.checkin.days`, `scheduler.jobs.days` and `scheduler.discovery.days` scope those jobs; `schedule.days` applies to both day-start and day-end. Example:
 
 ```yaml
 schedule:

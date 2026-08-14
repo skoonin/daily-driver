@@ -235,12 +235,47 @@ class TestBuildJobs:
         ]
 
     def test_default_days_daily_omits_weekday(self, tmp_path: Path) -> None:
-        """No days config -> entries carry no weekday key (fires every day)."""
+        """No days config -> entries carry no weekday key (fires every day).
+
+        Board discovery is excluded: it ships a packaged twice-weekly cadence,
+        so it is not a "no days configured" job.
+        """
         ws = _FakeWorkspace.make(tmp_path)
-        jobs = scheduler.build_jobs(ws)
-        for job in jobs:
+        for job in scheduler.build_jobs(ws):
+            if job.label == "com.daily-driver.jobs-discover":
+                continue
             for entry in job.context["times"]:
                 assert "weekday" not in entry
+
+    def test_discovery_job_uses_its_own_cadence(self, tmp_path: Path) -> None:
+        """Discovery is a separate agent from the scrape, on its own days."""
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            scheduler_cfg={
+                "jobs": {"time": "23:59", "days": ["sun", "wed"]},
+                "discovery": {"time": "22:00", "days": ["sat"]},
+            },
+        )
+        jobs = scheduler.build_jobs(ws)
+
+        sweep = next(j for j in jobs if j.label == "com.daily-driver.jobs-discover")
+        assert sweep.context["times"] == [{"hour": 22, "minute": 0, "weekday": 6}]
+        assert sweep.program_arguments[1:3] == ["jobs", "discover-boards"]
+        # The scrape keeps its own cadence, unaffected by discovery's.
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
+        assert scrape.context["times"] == [
+            {"hour": 23, "minute": 59, "weekday": 0},
+            {"hour": 23, "minute": 59, "weekday": 3},
+        ]
+
+    def test_discovery_without_a_time_installs_no_job(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            scheduler_cfg={"jobs": {"time": "07:00"}, "discovery": {"time": None}},
+        )
+        labels = {job.label for job in scheduler.build_jobs(ws)}
+        assert "com.daily-driver.jobs-discover" not in labels
+        assert "com.daily-driver.jobs" in labels
 
     def test_session_jobs_carry_launch_modes(self, tmp_path: Path) -> None:
         """launchd has no TTY: every interactive session job passes --launch
@@ -347,8 +382,12 @@ class TestRenderPlist:
         assert xml_str.count("<key>Hour</key>") == 3
 
     def test_daily_jobs_render_without_weekday_key(self, tmp_path: Path) -> None:
+        # Discovery excluded: its packaged cadence is twice-weekly, so its
+        # plist carries Weekday keys by design.
         ws = _FakeWorkspace.make(tmp_path)
         for job in scheduler.build_jobs(ws):
+            if job.label == "com.daily-driver.jobs-discover":
+                continue
             assert "<key>Weekday</key>" not in scheduler.render_plist(job)
 
     def test_jobs_plist_renders_weekday_entries(self, tmp_path: Path) -> None:
@@ -464,6 +503,7 @@ class TestInstallUninstall:
         assert set(installed) == {
             "com.daily-driver.checkin",
             "com.daily-driver.jobs",
+            "com.daily-driver.jobs-discover",
         }
         assert set(calls["load"]) == set(installed)
         # State mirror written
@@ -504,6 +544,7 @@ class TestInstallUninstall:
         assert set(removed) == {
             "com.daily-driver.checkin",
             "com.daily-driver.jobs",
+            "com.daily-driver.jobs-discover",
         }
         assert not (ws.ephemeral_dir / "launchd").exists()
 
