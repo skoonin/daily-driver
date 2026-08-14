@@ -201,6 +201,16 @@ class HackerNewsToggle(SourceToggle):
     hn_max_posts: int = Field(default=500, description="")
 
 
+_MAX_CITY_QUERIES_DESC = (
+    "Cap on per-city searches this run. Each city named in\n"
+    "locations.countries gets its own search, so a local posting competes\n"
+    "with its own city instead of the whole country under a shallow\n"
+    "results_wanted_per_query cap. A precautionary bound on request volume:\n"
+    "a throttled site returns nothing rather than an error. Skipped cities\n"
+    "are reported, never dropped silently."
+)
+
+
 class LinkedInToggle(SourceToggle):
     """LinkedIn source toggle plus its query knobs.
 
@@ -212,6 +222,7 @@ class LinkedInToggle(SourceToggle):
 
     results_wanted_per_query: int = Field(default=50, description="")
     hours_old: int = Field(default=168, description="")
+    max_city_queries: int = Field(default=40, description=_MAX_CITY_QUERIES_DESC)
 
 
 class IndeedToggle(SourceToggle):
@@ -225,6 +236,7 @@ class IndeedToggle(SourceToggle):
     results_wanted_per_query: int = Field(default=50, description="")
     hours_old: int = Field(default=168, description="")
     country: str = Field(default="USA", description="")
+    max_city_queries: int = Field(default=40, description=_MAX_CITY_QUERIES_DESC)
 
 
 # Maps a source key to the SourceToggle subclass that carries its per-source
@@ -660,12 +672,14 @@ class JobSearchPlugin(BaseModel):
                     "enabled": True,
                     "results_wanted_per_query": 50,
                     "hours_old": 168,
+                    "max_city_queries": 40,
                 },
                 "indeed": {
                     "enabled": True,
                     "results_wanted_per_query": 50,
                     "hours_old": 168,
                     "country": "USA",
+                    "max_city_queries": 40,
                 },
             },
             "template_example_field_comments": {

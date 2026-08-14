@@ -76,7 +76,9 @@ def test_query_at_cap_records_saturation(monkeypatch: pytest.MonkeyPatch) -> Non
     assert rec.returned == 10
     assert rec.requested == 10
     assert rec.kind == "cap"
-    assert "sre" in rec.query and "US" in rec.query
+    # The searched place, so a country pass and a city pass within that country
+    # stay distinguishable in the saturation report.
+    assert "sre" in rec.query and "usa" in rec.query
 
 
 def test_query_under_cap_records_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

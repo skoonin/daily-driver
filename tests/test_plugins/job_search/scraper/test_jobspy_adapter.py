@@ -328,6 +328,111 @@ class TestMergedJobspyScraper:
         assert any("linkedin" in m for m in warns), warns
         assert not any("indeed" in m for m in warns), "indeed contributed, no warn"
 
+    @staticmethod
+    def _city_config(
+        city_map: dict[str, list[str]], **sources: object
+    ) -> ScrapeContext:
+        cfg: dict[str, object] = {
+            "roles": ["software engineer"],
+            "locations": {"countries": city_map},
+            "scraper": {"enabled": True, "search_terms": ["software engineer"]},
+        }
+        cfg["sources"] = sources or {"indeed": True}
+        return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))
+
+    @staticmethod
+    def _record_locations(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        import jobspy as jobspy_pkg
+        import pandas as pd
+
+        locations: list[str] = []
+
+        def fake(**kwargs: object) -> object:
+            locations.append(str(kwargs["location"]))
+            return pd.DataFrame()
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        return locations
+
+    def test_configured_cities_get_their_own_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The #152 case: a country-wide search ranks a city's postings against
+        the whole country's under a shallow per-query cap, so a local role can
+        be listed and still never come back. Each configured city gets its own
+        query, where it competes only with its own city.
+        """
+        locations = self._record_locations(monkeypatch)
+        scrape_jobspy(
+            self._city_config({"CA": ["Vancouver", "Toronto"]}), sites=["indeed"]
+        )
+
+        assert "Vancouver, Canada" in locations
+        assert "Toronto, Canada" in locations
+        # The nationwide pass still runs: remote and unlisted-city roles only
+        # ever surface there.
+        assert len(locations) == 3
+
+    def test_whole_country_entry_adds_no_city_search(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        locations = self._record_locations(monkeypatch)
+        scrape_jobspy(self._city_config({"CA": []}), sites=["indeed"])
+        assert locations == ["canada"]
+
+    def test_city_searches_are_capped_and_the_shortfall_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The request matrix is what draws rate limiting, so city passes are
+        bounded -- but a silent cap reads as full coverage, which is the defect
+        this change exists to fix.
+        """
+        import logging
+
+        locations = self._record_locations(monkeypatch)
+        with caplog.at_level(logging.WARNING):
+            scrape_jobspy(
+                self._city_config(
+                    {"CA": ["Vancouver", "Toronto", "Montreal"]},
+                    indeed={"enabled": True, "max_city_queries": 1},
+                ),
+                sites=["indeed"],
+            )
+
+        # One country pass plus the single permitted city pass.
+        assert len(locations) == 2
+        assert "city search capped at 1 queries; 2 skipped" in caplog.text
+
+    def test_city_units_checkpoint_and_advance_progress(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A city pass is a first-class unit: it counts toward the progress
+        total and checkpoints its rows like any other."""
+        from dataclasses import replace
+
+        import jobspy as jobspy_pkg
+        import pandas as pd
+
+        def fake(**kwargs: object) -> object:
+            url = f"https://indeed.com/job/{kwargs['location']}"
+            return pd.DataFrame([self._row("indeed", url)])
+
+        monkeypatch.setattr(jobspy_pkg, "scrape_jobs", fake)
+        batches: list[list[dict]] = []
+        reports: list[tuple[int, int | None]] = []
+        ctx = replace(
+            self._city_config({"CA": ["Vancouver"]}),
+            checkpoint=lambda batch: batches.append(list(batch)),
+            report=lambda done, total: reports.append((done, total)),
+        )
+
+        out = scrape_jobspy(ctx, sites=["indeed"])
+
+        # Country pass + one city pass = two units.
+        assert len(batches) == 2
+        assert len(out) == 2
+        assert all(total == 2 for _done, total in reports)
+
     def test_reports_progress_per_term_country(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

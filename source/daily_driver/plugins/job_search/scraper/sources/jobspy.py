@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 from daily_driver.core.clock import today
 from daily_driver.core.logging import get_logger
@@ -13,6 +13,7 @@ from daily_driver.plugins.job_search.scraper.countries import (
 )
 
 if TYPE_CHECKING:
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
     from daily_driver.plugins.job_search.scraper.context import ScrapeContext
     from daily_driver.plugins.job_search.scraper.models import RawScrapedJob
 
@@ -158,10 +159,10 @@ def _record_saturation(
     frames: list[Any],
     enabled_sites: list[str],
     term: str,
-    country_code: str,
+    place: str,
     results_wanted: int,
 ) -> None:
-    """Flag truncated (term x country) queries via ``ctx.record_saturation``.
+    """Flag truncated (term x place) queries via ``ctx.record_saturation``.
 
     Counts RAW rows per site (pre role-filter -- truncation happens at the
     board, before our filters), against the single ``results_wanted`` the
@@ -178,7 +179,10 @@ def _record_saturation(
             for site, count in df["site"].value_counts().items():
                 if site in counts:
                     counts[site] += int(count)
-    query = f"{term} x {country_code}"
+    # The place, not the country code: a country pass and a city pass in the
+    # same country would otherwise report under one indistinguishable label,
+    # and saturation is the signal that a place needs more depth.
+    query = f"{term} x {place}"
     for site, returned in counts.items():
         if returned >= results_wanted:
             kind: Literal["cap", "plateau"] = "cap"
@@ -197,6 +201,77 @@ def _record_saturation(
             requested=results_wanted,
             kind=kind,
         )
+
+
+class _SearchUnit(NamedTuple):
+    """One jobspy call's search space: a term, a place, and Indeed's host hint."""
+
+    term: str
+    country_code: str
+    country_indeed: str
+    location: str
+    city: str | None
+
+
+def _search_units(
+    terms: list[str],
+    countries: list[str],
+    plugin: JobSearchPlugin,
+    *,
+    default_country_indeed: str,
+    max_city_queries: int,
+) -> tuple[list[_SearchUnit], int]:
+    """Build the search matrix: a country pass per term, plus configured cities.
+
+    A country-wide LinkedIn/Indeed search ranks a city's postings against the
+    whole country's under a shallow per-query cap, so a local role can be listed
+    and still never come back. Searching the cities already named in
+    ``locations.countries`` puts them in their own query, where they compete
+    only with each other -- no new config, and it targets exactly the places the
+    location filter would keep anyway.
+
+    Returns (units, dropped_city_queries). City passes are capped as a
+    precaution, not against a measured limit: LinkedIn's anonymous endpoint
+    rate-limits, and a throttled JobSpy returns an empty frame rather than
+    raising, so an unbounded matrix could quietly return nothing. The known
+    limit is per-request pagination (``_LINKEDIN_PLATEAU``); whether query
+    volume across a run throttles too is untested here.
+    """
+    from daily_driver.plugins.job_search.scraper.countries import (
+        canonical_country_name,
+    )
+
+    configured = (plugin.locations.countries if plugin.locations else {}) or {}
+    country_units: list[_SearchUnit] = []
+    city_units: list[_SearchUnit] = []
+    for term in terms:
+        for country in countries:
+            country_code = country.upper()
+            country_indeed = jobspy_country(country_code, default_country_indeed)
+            names = country_names(country_code)
+            country_units.append(
+                _SearchUnit(
+                    term=term,
+                    country_code=country_code,
+                    country_indeed=country_indeed,
+                    location=names[0] if names else country,
+                    city=None,
+                )
+            )
+            country_name = canonical_country_name(country_code) or country
+            for city in configured.get(country_code, []) or []:
+                city_units.append(
+                    _SearchUnit(
+                        term=term,
+                        country_code=country_code,
+                        country_indeed=country_indeed,
+                        location=f"{city}, {country_name}",
+                        city=city,
+                    )
+                )
+
+    dropped = max(0, len(city_units) - max_city_queries)
+    return country_units + city_units[:max_city_queries], dropped
 
 
 def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list[dict]:
@@ -296,143 +371,160 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             linkedin_fetch_description=True,
         )
 
-    # Live progress unit: one (search term x country) pair. Reported at the top
-    # of each iteration so a skipped/failed pair (continue below) still advances.
+    units, dropped_city_queries = _search_units(
+        terms,
+        countries,
+        ctx.plugin,
+        default_country_indeed=default_country_indeed,
+        max_city_queries=knob_toggle.max_city_queries,
+    )
+    if dropped_city_queries:
+        # Never drop coverage silently: an unreported cap reads as full coverage,
+        # which is the defect this search change exists to fix.
+        log.warning(
+            "[%s] city search capped at %d queries; %d skipped this run "
+            "(raise max_city_queries or trim locations.countries)",
+            site_label,
+            knob_toggle.max_city_queries,
+            dropped_city_queries,
+        )
+
+    # Live progress unit: one (search term x place) search. Reported at the top
+    # of each iteration so a skipped/failed unit (continue below) still advances.
     # The per-board search count is announced once by the runner (on_note).
-    total = len(terms) * len(countries)
+    total = len(units)
     done = 0
 
-    for term in terms:
-        for country in countries:
-            # Graceful-stop checkpoint between (term x country) searches: a
-            # Ctrl-C/SIGTERM during scraping sets this on the main thread; return
-            # the jobs matched so far rather than starting the next search.
-            if ctx.stop_event.is_set():
-                log.info(
-                    "[%s] stop requested; keeping %d jobs so far",
+    for unit in units:
+        term = unit.term
+        country_code = unit.country_code
+        country_indeed = unit.country_indeed
+        location_name = unit.location
+        # Graceful-stop checkpoint between searches: a Ctrl-C/SIGTERM during
+        # scraping sets this on the main thread; return the jobs matched so far
+        # rather than starting the next search.
+        if ctx.stop_event.is_set():
+            log.info(
+                "[%s] stop requested; keeping %d jobs so far",
+                site_label,
+                len(jobs),
+            )
+            return jobs
+        ctx.report(done, total)
+        done += 1
+
+        # Happy path: one merged call for all enabled sites. The installed
+        # jobspy (1.1.82) has no per-site try/except, so one site RAISING
+        # kills the merged DataFrame and would drop the healthy site's rows
+        # for this unit too. On failure, retry each site alone so an outage
+        # on one board doesn't blank the other.
+        frames = []
+        try:
+            merged = _call(enabled_sites, term, location_name, country_indeed)
+            if merged is not None and not merged.empty:
+                frames.append(merged)
+        except TypeError as exc:
+            # python-jobspy < 1.1.82 doesn't accept linkedin_fetch_description.
+            # Bail the whole run with an actionable hint, not a per-unit warn.
+            log.error(
+                "[%s] job board library is too old (%s); upgrade with "
+                "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                site_label,
+                exc,
+            )
+            return jobs
+        except Exception as exc:
+            log.warning(
+                "[%s] scrape failed for %r / %s (%s); retrying each site "
+                "individually to isolate the failure",
+                site_label,
+                term,
+                location_name,
+                exc,
+            )
+            for site in enabled_sites:
+                try:
+                    one = _call([site], term, location_name, country_indeed)
+                except TypeError as exc2:
+                    log.error(
+                        "[%s] job board library is too old (%s); upgrade with "
+                        "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                        site,
+                        exc2,
+                    )
+                    return jobs
+                except Exception as exc2:
+                    log.warning(
+                        "[%s] scrape failed for %r / %s: %s",
+                        site,
+                        term,
+                        location_name,
+                        exc2,
+                    )
+                    continue
+                if one is not None and not one.empty:
+                    frames.append(one)
+
+        if not frames:
+            log.debug("[%s] no results for %r / %s", site_label, term, location_name)
+            continue
+
+        _record_saturation(
+            ctx, frames, enabled_sites, term, location_name, results_wanted
+        )
+
+        matched_before = len(jobs)
+        for df in frames:
+            for row in df.to_dict("records"):
+                normalized = normalize_jobspy_row(row)
+                if not normalized["role"] or not matches_roles(
+                    normalized["role"], ctx.plugin
+                ):
+                    continue
+                url = normalized["url"]
+                if url and url in seen_urls:
+                    continue
+                if url:
+                    seen_urls.add(url)
+                site = normalized["source"]
+                if site in rows_per_site:
+                    rows_per_site[site] += 1
+                # Preserve description from JobSpy so detail-page enrichment
+                # is skipped (enrich_job_details short-circuits on comp, and
+                # the enricher skips rows that already have description_text).
+                normalized["description_text"] = normalized.pop("description", "")
+                # The per-search ISO country is the origin-country hint the
+                # row lift uses when the location text names no country.
+                normalized["origin_country"] = country_code
+                jobs.append(normalized)
+
+        unit_new = jobs[matched_before:]
+        log.debug(
+            "[%s] %s / %s: %d matched after role filter",
+            site_label,
+            term,
+            location_name,
+            len(unit_new),
+        )
+        # Durable checkpoint per finished (term x place) unit: hand this unit's
+        # matched rows to the sink as it completes, so a crash / kill two hours
+        # into a multi-hour LinkedIn scrape keeps every completed unit instead
+        # of losing the whole source. A no-op when no durable sink is attached
+        # (dry-run / direct adapter tests). The sink dedups, so the unchanged
+        # end-of-source return (the orchestrator skips a checkpointed source's
+        # final append) never double-appends. A persist failure raises
+        # CheckpointAborted: stop AT this unit (the source is already marked
+        # failed) rather than scrape on against a dead disk.
+        if unit_new:
+            try:
+                ctx.checkpoint(unit_new)
+            except CheckpointAborted:
+                log.warning(
+                    "[%s] checkpoint persist failed; stopping after %d jobs",
                     site_label,
                     len(jobs),
                 )
                 return jobs
-            ctx.report(done, total)
-            done += 1
-            country_code = country.upper()
-            country_indeed = jobspy_country(country_code, default_country_indeed)
-            names = country_names(country_code)
-            location_name = names[0] if names else country
-
-            # Happy path: one merged call for all enabled sites. The installed
-            # jobspy (1.1.82) has no per-site try/except, so one site RAISING
-            # kills the merged DataFrame and would drop the healthy site's rows
-            # for this pair too. On failure, retry each site alone so an outage
-            # on one board doesn't blank the other.
-            frames = []
-            try:
-                merged = _call(enabled_sites, term, location_name, country_indeed)
-                if merged is not None and not merged.empty:
-                    frames.append(merged)
-            except TypeError as exc:
-                # python-jobspy < 1.1.82 doesn't accept linkedin_fetch_description.
-                # Bail the whole run with an actionable hint, not a per-pair warn.
-                log.error(
-                    "[%s] job board library is too old (%s); upgrade with "
-                    "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
-                    site_label,
-                    exc,
-                )
-                return jobs
-            except Exception as exc:
-                log.warning(
-                    "[%s] scrape failed for %r / %s (%s); retrying each site "
-                    "individually to isolate the failure",
-                    site_label,
-                    term,
-                    country,
-                    exc,
-                )
-                for site in enabled_sites:
-                    try:
-                        one = _call([site], term, location_name, country_indeed)
-                    except TypeError as exc2:
-                        log.error(
-                            "[%s] job board library is too old (%s); upgrade with "
-                            "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
-                            site,
-                            exc2,
-                        )
-                        return jobs
-                    except Exception as exc2:
-                        log.warning(
-                            "[%s] scrape failed for %r / %s: %s",
-                            site,
-                            term,
-                            country,
-                            exc2,
-                        )
-                        continue
-                    if one is not None and not one.empty:
-                        frames.append(one)
-
-            if not frames:
-                log.debug("[%s] no results for %r / %s", site_label, term, country)
-                continue
-
-            _record_saturation(
-                ctx, frames, enabled_sites, term, country_code, results_wanted
-            )
-
-            matched_before = len(jobs)
-            for df in frames:
-                for row in df.to_dict("records"):
-                    normalized = normalize_jobspy_row(row)
-                    if not normalized["role"] or not matches_roles(
-                        normalized["role"], ctx.plugin
-                    ):
-                        continue
-                    url = normalized["url"]
-                    if url and url in seen_urls:
-                        continue
-                    if url:
-                        seen_urls.add(url)
-                    site = normalized["source"]
-                    if site in rows_per_site:
-                        rows_per_site[site] += 1
-                    # Preserve description from JobSpy so detail-page enrichment
-                    # is skipped (enrich_job_details short-circuits on comp, and
-                    # the enricher skips rows that already have description_text).
-                    normalized["description_text"] = normalized.pop("description", "")
-                    # The per-search ISO country is the origin-country hint the
-                    # row lift uses when the location text names no country.
-                    normalized["origin_country"] = country_code
-                    jobs.append(normalized)
-
-            unit_new = jobs[matched_before:]
-            log.debug(
-                "[%s] %s / %s: %d matched after role filter",
-                site_label,
-                term,
-                country,
-                len(unit_new),
-            )
-            # Durable checkpoint per finished (term x country) unit: hand this
-            # unit's matched rows to the sink as it completes, so a crash / kill
-            # two hours into a multi-hour LinkedIn scrape keeps every completed
-            # unit instead of losing the whole source. A no-op when no durable
-            # sink is attached (dry-run / direct adapter tests). The sink dedups,
-            # so the unchanged end-of-source return (the orchestrator skips a
-            # checkpointed source's final append) never double-appends. A persist
-            # failure raises CheckpointAborted: stop AT this unit (the source is
-            # already marked failed) rather than scrape on against a dead disk.
-            if unit_new:
-                try:
-                    ctx.checkpoint(unit_new)
-                except CheckpointAborted:
-                    log.warning(
-                        "[%s] checkpoint persist failed; stopping after %d jobs",
-                        site_label,
-                        len(jobs),
-                    )
-                    return jobs
 
     # Every unit completed: report the final count so the live bar reaches
     # total/total during the run, not total-1/total (the per-iteration report

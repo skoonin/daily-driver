@@ -349,8 +349,8 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 | `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |
 | `workday` | `WorkdayToggle` | `workday_boards` (`[]`) |
 | `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
-| `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`) |
-| `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`) |
+| `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `max_city_queries` (`40`) |
+| `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`), `max_city_queries` (`40`) |
 | any other | `SourceToggle` | (enable/disable only) |
 
 For `greenhouse`, `ashby`, and `lever`, the `*_boards` lists are pins: those boards are always enumerated, even when a `jobs discover-boards` sweep found no matching roles on them (rows still pass the role filter — pinning only guarantees the board is fetched). Each run scrapes the union of the pins and the discovery matched cache, minus `exclude_boards`, which trumps both.
@@ -363,10 +363,21 @@ For `greenhouse`, `ashby`, and `lever`, the `*_boards` lists are pins: those boa
 | `results_wanted_per_query` | int | 50 | both |
 | `hours_old` | int | 168 (7 days) | both |
 | `country` | string | `USA` | indeed only |
+| `max_city_queries` | int | 40 | both |
 
 `country` sets Indeed's regional host and is the fallback used when a configured
 country code is not one the scraper recognizes. LinkedIn takes no country
 parameter, so it has no `country` knob.
+
+Each search runs once per country, then once per city named in
+`locations.countries`. A country-wide search ranks a city's postings against the
+whole country's under the `results_wanted_per_query` cap, so a local role can be
+listed and still never come back; giving the city its own query makes it compete
+only with its own city. `max_city_queries` bounds those extra searches as a
+precaution: a throttled site returns an empty result rather than an error, so
+an unbounded number of searches could quietly return nothing. Skipped cities
+are reported in the run output. A country mapped to an empty city list adds no
+city search.
 
 ```yaml
 sources:
