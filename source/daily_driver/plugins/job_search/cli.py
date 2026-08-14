@@ -889,18 +889,22 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         )
         skipped = stats["universe"] - stats["candidates"]
         skip_note = f"; {skipped} already swept or dead" if skipped > 0 else ""
+        stale_note = (
+            f", {stats['restaled']} stale re-probed" if stats["restaled"] else ""
+        )
         Console.info(
             f"{platform}: {stats['swept']} probed of {stats['candidates']} "
             f"candidates ({stats['universe']} known slugs{source_note}"
             f"{skip_note}) -> {stats['matched_new']} newly matched "
             f"({stats['matched_total']} total in cache), "
-            f"{stats['dead_new']} newly dead, "
+            f"{stats['dead_new']} newly dead{stale_note}, "
             f"{stats['transient']} transient failures (retry next sweep)"
         )
     Console.info(
         "Matched boards are scraped by jobs run alongside your configured "
-        "*_boards pins (exclude_boards drops noisy ones). Use --full to "
-        "re-probe already-swept boards."
+        "*_boards pins (exclude_boards drops noisy ones). Boards last probed "
+        "over discovery.reprobe_days ago are re-probed each sweep so dead ones "
+        "retire; --full re-probes every already-swept board now."
     )
     return 0
 

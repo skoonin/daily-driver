@@ -322,6 +322,16 @@ Sibling block of `scraper` under `job_search`. Thresholds for the `jobs verify` 
 | `reverify_days` | int (≥1) | 7 | Re-check a row's URL when its last affirmative liveness evidence (Date Verified, else Date Found) is at least this many days old |
 | `unverified_age_days` | int (≥1) | 30 | Rows with no URL to check (Indeed's bot wall, HN comment permalinks) close as age-unverified once their last affirmative liveness evidence is this many days old |
 
+### `discovery` (`DiscoveryConfig`)
+
+Sibling block of `scraper` under `job_search`. Controls the `jobs discover-boards` sweep and how board failures are reported.
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `reprobe_days` | int (≥1) | 30 | Re-probe an already-swept board slug when its last probe is at least this many days old. Without this an incremental sweep only probes new slugs, so a board that dies after being matched stays in the scrape list until a `--full` sweep |
+| `max_reprobe_per_sweep` | int (≥1) | 500 | Cap on stale boards re-probed per sweep, oldest first. One sweep stamps every slug on the same day, so without a cap the whole universe would come due at once and repeat every `reprobe_days` |
+| `degraded_failure_ratio` | float (0-1] | 0.25 | Share of a platform's boards that must fail before the source is reported degraded. Below it the run logs the success rate instead |
+
 ### `sources` (`dict[str, SourceToggle]`)
 
 Sibling block of `scraper` under `job_search`. A dict whose keys are source identifiers and whose values are per-source toggles. Bool values coerce to `{enabled: <bool>}`. Per-source knobs live on the matching `SourceToggle` subclass, so each source owns its own configuration:

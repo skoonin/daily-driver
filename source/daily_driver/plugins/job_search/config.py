@@ -502,6 +502,54 @@ class VerifyConfig(BaseModel):
         return value
 
 
+class DiscoveryConfig(BaseModel):
+    """Knobs for the `jobs discover-boards` sweep and board-health reporting."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reprobe_days: int = Field(
+        default=30,
+        description=(
+            "Re-probe an already-swept board slug when its last probe is at\n"
+            "least this many days old. Without this an incremental sweep only\n"
+            "ever probes new slugs, so a board that dies after being matched\n"
+            "stays in the scrape list until a --full sweep."
+        ),
+    )
+    max_reprobe_per_sweep: int = Field(
+        default=500,
+        description=(
+            "Cap on stale boards re-probed per sweep, oldest first. One sweep\n"
+            "writes every stamp on the same day, so an uncapped threshold would\n"
+            "re-probe the whole universe at once and repeat that every\n"
+            "reprobe_days. The cap spreads retirement over successive sweeps."
+        ),
+    )
+    degraded_failure_ratio: float = Field(
+        default=0.25,
+        description=(
+            "Share of a platform's boards that must fail before the source is\n"
+            "reported degraded. Below it the run logs the success rate instead:\n"
+            "a handful of permanently-gone 404s is not an outage, and flagging\n"
+            "every run trains the reader to ignore the warning."
+        ),
+    )
+
+    @field_validator("reprobe_days", "max_reprobe_per_sweep")
+    @classmethod
+    def _positive(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("reprobe_days and max_reprobe_per_sweep must be >= 1")
+        return value
+
+    @field_validator("degraded_failure_ratio")
+    @classmethod
+    def _fraction(cls, value: float) -> float:
+        if not 0.0 < value <= 1.0:
+            raise ValueError("degraded_failure_ratio must be > 0 and <= 1")
+        return value
+
+
 class JobSearchPlugin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -546,6 +594,14 @@ class JobSearchPlugin(BaseModel):
         description=(
             "`jobs verify` liveness checks for sources without full board\n"
             "listings (board-backed rows verify by board-diff each run)."
+        ),
+    )
+    discovery: DiscoveryConfig = Field(
+        default=DiscoveryConfig(),
+        description=(
+            "`jobs discover-boards` sweep behaviour: how stale a matched board\n"
+            "may get before it is re-probed, and how many failed boards make a\n"
+            "board source degraded."
         ),
     )
     sources: dict[str, SourceToggle] = Field(

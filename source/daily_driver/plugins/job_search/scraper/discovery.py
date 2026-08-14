@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -160,6 +161,41 @@ def load_matched_boards(state_dir: Path, platform: str) -> dict[str, dict[str, A
         for slug, info in swept.items()
         if isinstance(info, dict) and (info.get("matched") or 0) > 0
     }
+
+
+def _stale_slugs(swept: dict[str, Any], reprobe_days: int, limit: int) -> set[str]:
+    """The ``limit`` stalest swept slugs whose last probe is ``reprobe_days`` old.
+
+    A missing, unparseable, or naive ``last_swept`` counts as maximally stale:
+    the entry predates the aware-timestamp convention or was written by a broken
+    run, and one re-probe is cheap next to leaving a dead board in the scrape
+    list indefinitely. The re-probe rewrites the stamp in the current form.
+
+    The oldest-first cap matters because a workspace's stamps are not spread out
+    — one big sweep writes them all on the same day, so an uncapped threshold
+    would re-probe the entire universe at once and then repeat that herd every
+    ``reprobe_days``. Capping spreads retirement over successive sweeps and
+    staggers the stamps as a side effect.
+    """
+    cutoff = now() - timedelta(days=reprobe_days)
+    # Sorts ahead of any real stamp, so unusable entries are re-probed first.
+    unusable = datetime.min.replace(tzinfo=timezone.utc)
+    stale: list[tuple[datetime, str]] = []
+    for slug, info in swept.items():
+        if not isinstance(info, dict):
+            stale.append((unusable, slug))
+            continue
+        try:
+            last = datetime.fromisoformat(str(info.get("last_swept")))
+        except (TypeError, ValueError):
+            stale.append((unusable, slug))
+            continue
+        if last.tzinfo is None:
+            stale.append((unusable, slug))
+        elif last <= cutoff:
+            stale.append((last, slug))
+    stale.sort(key=lambda entry: entry[0])
+    return {slug for _stamp, slug in stale[:limit]}
 
 
 def resolve_boards(
@@ -385,6 +421,7 @@ class PlatformSweep:
     universe: int = 0
     universe_source: str = "fetched"
     candidates: int = 0
+    restaled: int = 0
     swept: int = 0
     matched_new: int = 0
     matched_total: int = 0
@@ -427,8 +464,9 @@ def sweep_platform(
 ) -> PlatformSweep:
     """Sweep one platform's slug universe into its sweep/dead caches.
 
-    Incremental by default (probe only slugs never swept); ``full`` re-probes
-    every non-dead slug so stale matches age out. ``progress(platform, total)``
+    Incremental by default: probe slugs never swept, plus swept slugs older
+    than ``discovery.reprobe_days`` so dead boards are retired without a full
+    sweep. ``full`` re-probes every non-dead slug. ``progress(platform, total)``
     is called once the candidate count is known and returns the per-slug
     advance callback; ``jitter`` overrides the pre-probe pacing sleep (tests
     pass a no-op). ``stop_event`` defaults to ``ctx.stop_event`` so callers
@@ -460,12 +498,29 @@ def sweep_platform(
 
     # dict.fromkeys dedups a slug the upstream list repeats while preserving
     # order, so summary counts never double-count a board.
+    universe = dict.fromkeys(slugs)
+
+    discovery_cfg = ctx.plugin.discovery
+    # Staleness is scored over the universe only: a slug the upstream list has
+    # dropped can never become a candidate below, so letting it place in the
+    # oldest-first cap would spend a re-probe slot on a board never fetched.
+    stale = _stale_slugs(
+        {slug: info for slug, info in swept.items() if slug in universe},
+        discovery_cfg.reprobe_days,
+        discovery_cfg.max_reprobe_per_sweep,
+    )
+
+    # Stale slugs re-enter an incremental sweep. Without them a board that dies
+    # AFTER being matched is never probed again: it keeps matched > 0 forever
+    # and `load_matched_boards` hands it to every `jobs run`. Re-probing is what
+    # lets `_record` retire it into the dead cache.
     candidates = [
         slug
-        for slug in dict.fromkeys(slugs)
-        if slug not in dead and (full or slug not in swept)
+        for slug in universe
+        if slug not in dead and (full or slug not in swept or slug in stale)
     ]
     result.candidates = len(candidates)
+    result.restaled = sum(1 for slug in candidates if slug in stale)
     advance = progress(platform, len(candidates)) if progress is not None else None
 
     state = _SweepState(sweep=swept, dead=dead)

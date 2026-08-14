@@ -15,16 +15,17 @@ from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
 from daily_driver.plugins.job_search.scraper.sources import greenhouse as gh_module
 
 
-def _config(boards: list[str]) -> ScrapeContext:
-    return ScrapeContext(
-        plugin=JobSearchPlugin.model_validate(
-            {
-                "roles": ["Engineer"],
-                "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
-                "sources": {"greenhouse": {"greenhouse_boards": boards}},
-            }
-        )
-    )
+def _config(
+    boards: list[str], degraded_failure_ratio: float | None = None
+) -> ScrapeContext:
+    payload: dict[str, Any] = {
+        "roles": ["Engineer"],
+        "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+        "sources": {"greenhouse": {"greenhouse_boards": boards}},
+    }
+    if degraded_failure_ratio is not None:
+        payload["discovery"] = {"degraded_failure_ratio": degraded_failure_ratio}
+    return ScrapeContext(plugin=JobSearchPlugin.model_validate(payload))
 
 
 def _empty_response() -> MagicMock:
@@ -65,11 +66,10 @@ def _job_response(jobs: list[dict[str, Any]]) -> MagicMock:
 def test_greenhouse_failed_board_raises_degraded_keeping_data(
     monkeypatch: Any,
 ) -> None:
-    """A board whose request fails raises PartialSourceError carrying the jobs
-    matched from the boards that succeeded — a transient board 404 must never
-    look identical to a clean, complete scrape. Prerequisite for board-diff
-    closure: without this signal a failed board's rows would read as absent
-    (closed) while the source reports healthy.
+    """Failures past discovery.degraded_failure_ratio raise PartialSourceError
+    carrying the jobs matched from the boards that succeeded — a broad outage
+    must never look identical to a clean, complete scrape. Here 1 of 2 boards
+    fails, well past the 0.25 default.
     """
     import pytest
 
@@ -95,6 +95,55 @@ def test_greenhouse_failed_board_raises_degraded_keeping_data(
 
     assert len(excinfo.value.jobs) == 1
     assert "down" in excinfo.value.reason
+
+
+def test_greenhouse_few_dead_boards_log_the_rate_instead_of_degrading(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """A handful of permanently-gone 404s out of many boards is not an outage.
+
+    Flagging every run degraded at a 98%+ success rate trains the reader to
+    ignore the warning, which is how 26 dead slugs went unnoticed for a month.
+    """
+    import logging
+
+    ok_jobs = [
+        {
+            "title": "Platform Engineer",
+            "location": {"name": "Remote"},
+            "absolute_url": "https://boards.greenhouse.io/ok/jobs/1",
+            "content": "",
+        }
+    ]
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        return None if "/down/" in url else _job_response(ok_jobs)
+
+    monkeypatch.setattr(gh_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(gh_module, "_http_session", lambda cfg: MagicMock())
+
+    boards = ["down", *[f"ok{n}" for n in range(9)]]
+    with caplog.at_level(logging.WARNING):
+        jobs = gh_module.scrape_greenhouse(_config(boards))
+
+    assert len(jobs) == 9
+    assert "9/10 boards ok, 1 failed: down" in caplog.text
+
+
+def test_greenhouse_degraded_ratio_knob_lowers_the_bar(monkeypatch: Any) -> None:
+    import pytest
+
+    from daily_driver.plugins.job_search.scraper.context import PartialSourceError
+
+    def fake_api_get(session: Any, url: str, *a: Any, **kw: Any) -> Any:
+        return None if "/down/" in url else _job_response([])
+
+    monkeypatch.setattr(gh_module, "_api_get", fake_api_get)
+    monkeypatch.setattr(gh_module, "_http_session", lambda cfg: MagicMock())
+
+    boards = ["down", *[f"ok{n}" for n in range(9)]]
+    with pytest.raises(PartialSourceError):
+        gh_module.scrape_greenhouse(_config(boards, degraded_failure_ratio=0.05))
 
 
 def test_greenhouse_all_boards_failed_raises_degraded_empty(
