@@ -44,12 +44,21 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     warn_unknown_job_statuses,
 )
 from daily_driver.plugins.job_search.scraper.descriptions import gc_descriptions
+from daily_driver.plugins.job_search.scraper.models import parse_fit_cell
 
 log = get_logger(__name__)
 
 # Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
 # row reaches and never leaves, so prune archives them by default.
 DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
+
+# The only statuses --min-fit may archive. A blank Status counts: it is what a
+# hand-edited or pre-status row carries. Deliberately NARROWER than the active
+# funnel elsewhere (ENRICH_ELIGIBLE_STATUSES, closure, verify all pair `found`
+# with `pending`): those passes only read or annotate a row, while this one
+# moves it out of jobs.csv, and `pending` is a mark the user typed. Archiving
+# on fit alone is for rows nobody has looked at.
+_UNTRIAGED_STATUSES: frozenset[str] = frozenset({"found", ""})
 
 
 def archive_path_for(jobs_csv: Path) -> Path:
@@ -66,22 +75,45 @@ def _parse_iso(s: str) -> date | None:
         return None
 
 
-def _is_stale(
-    row: dict[str, str], *, cutoff: date, statuses: tuple[str, ...] | frozenset[str]
-) -> bool:
-    """Row qualifies for prune when status matches AND last-verified date < cutoff.
+def _low_fit_untriaged(row: dict[str, str], min_fit: int) -> bool:
+    """Row is untriaged and its own scorer judged it below ``min_fit``.
 
-    Falls back to ``Date Found`` when ``Date Verified`` is empty -- a row never
-    confirmed since discovery.
+    Untriaged is `found` or a blank Status: a row the user has acted on is never
+    archived by fit, whatever it scored. An unscored row is left alone too --
+    absence of a score is not a low score.
     """
-    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
-    status = normalize_status(row.get("Status") or "")
-    if status not in {normalize_status(s) for s in statuses}:
+    if normalize_status(row.get("Status") or "") not in _UNTRIAGED_STATUSES:
         return False
+    fit = parse_fit_cell(row.get("Fit", ""), company=row.get("Company", "unknown"))
+    return fit is not None and fit < min_fit
+
+
+def _is_stale(
+    row: dict[str, str],
+    *,
+    cutoff: date,
+    statuses: tuple[str, ...] | frozenset[str],
+    min_fit: int | None = None,
+) -> bool:
+    """Row qualifies for prune when it is old enough AND matches a channel.
+
+    Age is the gate both channels share: ``Date Verified``, falling back to
+    ``Date Found`` when it is empty (a row never confirmed since discovery).
+    Past that gate a row qualifies either by carrying one of the target
+    statuses, or -- when ``min_fit`` is set -- by being an untriaged row scored
+    below it. The two channels are independent: almost every row in a real file
+    is untriaged, so a status filter alone never reaches the bulk of it.
+    """
     seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
         row.get("Date Found", "")
     )
-    return seen is not None and seen < cutoff
+    if seen is None or seen >= cutoff:
+        return False
+    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
+    status = normalize_status(row.get("Status") or "")
+    if status in {normalize_status(s) for s in statuses}:
+        return True
+    return min_fit is not None and _low_fit_untriaged(row, min_fit)
 
 
 def prune(
@@ -90,9 +122,13 @@ def prune(
     *,
     cutoff: date,
     statuses: tuple[str, ...] | frozenset[str] = DEFAULT_PRUNE_STATUSES,
+    min_fit: int | None = None,
     dry_run: bool = False,
 ) -> tuple[list[dict[str, str]], int]:
     """Move stale rows from ``jobs_csv`` to ``jobs.archive.csv``.
+
+    ``min_fit`` additionally archives untriaged rows scored below it; see
+    ``_is_stale`` for how the two selection channels combine.
 
     Returns (candidates, archived_count). ``archived_count`` is 0 in dry-run.
     Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
@@ -119,7 +155,7 @@ def prune(
         keep: list[dict[str, str]] = []
         candidates: list[dict[str, str]] = []
         for row in rows:
-            if _is_stale(row, cutoff=cutoff, statuses=statuses):
+            if _is_stale(row, cutoff=cutoff, statuses=statuses, min_fit=min_fit):
                 candidates.append(row)
             else:
                 keep.append(row)

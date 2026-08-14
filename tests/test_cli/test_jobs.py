@@ -1029,6 +1029,263 @@ def test_prune_status_filter(tmp_path: Path, capsys: pytest.CaptureFixture) -> N
     assert "OldApplied" in capsys.readouterr().out
 
 
+def _min_fit_rows() -> list[dict]:
+    """One row per --min-fit decision: low, high, unscored, and triaged-low."""
+    return [
+        {
+            "Status": "found",
+            "Company": "LowFitCo",
+            "Role": "SRE",
+            "Fit": "3",
+            "Date Verified": "2026-01-01",
+            "Link": "https://x/1",
+        },
+        {
+            "Status": "found",
+            "Company": "HighFitCo",
+            "Role": "SRE",
+            "Fit": "8",
+            "Date Verified": "2026-01-01",
+            "Link": "https://x/2",
+        },
+        {
+            "Status": "found",
+            "Company": "UnscoredCo",
+            "Role": "SRE",
+            "Fit": "",
+            "Date Verified": "2026-01-01",
+            "Link": "https://x/3",
+        },
+        {
+            "Status": "applied",
+            "Company": "AppliedPoorCo",
+            "Role": "SRE",
+            "Fit": "2",
+            "Date Verified": "2026-01-01",
+            "Link": "https://x/4",
+        },
+    ]
+
+
+def test_prune_min_fit_archives_only_low_scoring_untriaged_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The #209 case: untriaged rows are the bulk of a real file and no status
+    filter reaches them. --min-fit archives the ones the tool's own scorer
+    already judged poor, and nothing else: a high score, an unscored row
+    (absence of a score is not a low score), and a row the user has acted on
+    all stay.
+    """
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, _min_fit_rows())
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--min-fit",
+            "5",
+        ]
+    )
+
+    assert rc == 0
+    archived = (ws / "jobs.archive.csv").read_text()
+    remaining = (ws / "jobs.csv").read_text()
+    assert "LowFitCo" in archived
+    assert "LowFitCo" not in remaining
+    for kept in ("HighFitCo", "UnscoredCo", "AppliedPoorCo"):
+        assert kept in remaining
+        assert kept not in archived
+
+
+def test_prune_min_fit_treats_blank_status_as_untriaged(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "",
+                "Company": "BlankStatusCo",
+                "Role": "SRE",
+                "Fit": "2",
+                "Date Verified": "2026-01-01",
+                "Link": "https://x/1",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--min-fit",
+            "5",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert "BlankStatusCo" in capsys.readouterr().out
+
+
+def test_prune_min_fit_still_respects_older_than(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Age gates both selection channels: a low-fit row seen recently stays."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "found",
+                "Company": "RecentLowFitCo",
+                "Role": "SRE",
+                "Fit": "2",
+                "Date Verified": "2026-05-01",
+                "Link": "https://x/1",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--min-fit",
+            "5",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "RecentLowFitCo" not in out
+    assert "No rows match prune criteria." in out
+
+
+def test_prune_min_fit_keeps_the_status_channel(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """--min-fit adds a selection channel, it does not replace the status one."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "RejectedHighFitCo",
+                "Role": "SRE",
+                "Fit": "9",
+                "Date Verified": "2026-01-01",
+                "Link": "https://x/1",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--min-fit",
+            "5",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert "RejectedHighFitCo" in capsys.readouterr().out
+
+
+def test_prune_min_fit_json_envelope_carries_candidates(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    import json as _json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, _min_fit_rows())
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--min-fit",
+            "5",
+            "--dry-run",
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    payload = _json.loads(capsys.readouterr().out)["data"]
+    assert payload["dry_run"] is True
+    assert payload["archived"] == 0
+    assert [row["Company"] for row in payload["candidates"]] == ["LowFitCo"]
+
+
+def test_prune_min_fit_below_one_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, [])
+
+    # argparse rejects the value itself, so this exits rather than returning.
+    with pytest.raises(SystemExit) as excinfo:
+        app(["--workspace", str(ws), "jobs", "prune", "--min-fit", "0"])
+    assert excinfo.value.code == 2
+    assert "--min-fit must be >= 1" in capsys.readouterr().err
+
+
+def test_prune_min_fit_above_the_fit_scale_exits_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An out-of-scale N would mean "every scored untriaged row" -- one typo
+    archiving most of the file. The parser rejects it instead.
+    """
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, [])
+
+    with pytest.raises(SystemExit) as excinfo:
+        app(["--workspace", str(ws), "jobs", "prune", "--min-fit", "15"])
+    assert excinfo.value.code == 2
+    assert "--min-fit must be <= 10" in capsys.readouterr().err
+
+
 def test_prune_invalid_spec_exits_2(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

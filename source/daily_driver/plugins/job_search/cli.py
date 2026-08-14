@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
+from daily_driver.plugins.job_search.scraper.models import FIT_MAX, FIT_MIN
 
 
 def _int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
@@ -23,6 +24,20 @@ def _int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
             raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
         if n < minimum:
             raise argparse.ArgumentTypeError(f"{flag} must be >= {minimum} (got {n})")
+        return n
+
+    return _parse
+
+
+def _int_in_range(minimum: int, maximum: int, flag: str) -> Callable[[str], int]:
+    """Build an argparse ``type=`` callable parsing an integer in a closed range."""
+
+    at_least = _int_at_least(minimum, flag)
+
+    def _parse(value: str) -> int:
+        n = at_least(value)
+        if n > maximum:
+            raise argparse.ArgumentTypeError(f"{flag} must be <= {maximum} (got {n})")
         return n
 
     return _parse
@@ -299,6 +314,20 @@ def add_parser(
             "Status to prune (repeatable). Default: dropped, rejected, closed. "
             "Use --status applied --status interviewing to prune stale "
             "in-progress rows."
+        ),
+    )
+    p_prune.add_argument(
+        "--min-fit",
+        # Bounded by the Fit scale: an out-of-scale N would quietly mean "every
+        # scored untriaged row", archiving most of the file in one destructive
+        # pass. Fail at the parser instead.
+        type=_int_in_range(FIT_MIN, FIT_MAX, "--min-fit"),
+        default=None,
+        metavar="N",
+        help=(
+            f"Also prune untriaged rows (found/blank status) scoring below N "
+            f"({FIT_MIN}-{FIT_MAX}). Rows you have acted on are never pruned "
+            f"by fit, and an unscored row is left alone"
         ),
     )
     p_prune.add_argument(
@@ -643,6 +672,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         workspace.ephemeral_dir,
         cutoff=cutoff,
         statuses=statuses,
+        min_fit=args.min_fit,
         dry_run=args.dry_run,
     )
 
@@ -669,13 +699,19 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     table.add_column("Status")
     table.add_column("Date Verified")
     table.add_column("Role")
+    # Only when pruning by fit: the score is the reason those rows are listed.
+    if args.min_fit is not None:
+        table.add_column("Fit")
     for row in candidates:
-        table.add_row(
+        cells = [
             row.get("Company", ""),
             row.get("Status", ""),
             row.get("Date Verified", "") or row.get("Date Found", ""),
             row.get("Role", ""),
-        )
+        ]
+        if args.min_fit is not None:
+            cells.append(row.get("Fit", ""))
+        table.add_row(*cells)
     console.print(table)
     if args.dry_run:
         console.print(f"[yellow]Dry-run: {len(candidates)} would be pruned.[/yellow]")
