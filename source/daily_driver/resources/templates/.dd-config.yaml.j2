@@ -200,6 +200,13 @@ tracker:
 #       max_age_days: 30
 #       # User-Agent header sent by the HTTP/RSS scrapers.
 #       user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
+#       # Words dropped from a company name when comparing rows for
+#       # duplicates, replacing the shipped list (legal suffixes such as
+#       # inc/ltd/gmbh plus generic tails such as labs/technologies). Board
+#       # sources name a company after their board slug, so this is what
+#       # lets a `menlosecurity` board row match an aggregator's `Menlo
+#       # Security Inc.`. Never changes the stored Company value.
+#       company_noise_words: []  # ["inc", "ltd", "labs"]
 #       # Per-source HTTP / browser timeout, in seconds.
 #       timeout: 30
 #       # Override search terms for query-based sources (JobSpy, Apple).

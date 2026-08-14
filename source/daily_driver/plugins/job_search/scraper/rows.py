@@ -10,6 +10,7 @@ so hoisting that import would reintroduce the cycle.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
@@ -100,19 +101,85 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
 
 
 _WHITESPACE_RE = re.compile(r"\s+")
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
+
+# Words dropped from a company name before comparison. Legal suffixes and
+# generic tails carry no identity: an ATS board slug never has them, while an
+# aggregator's copy of the same company usually does.
+DEFAULT_COMPANY_NOISE_WORDS: tuple[str, ...] = (
+    "inc",
+    "llc",
+    "ltd",
+    "limited",
+    "corp",
+    "corporation",
+    "co",
+    "gmbh",
+    "bv",
+    "nv",
+    "plc",
+    "pty",
+    "sa",
+    "ag",
+    "technologies",
+    "technology",
+    "labs",
+    "software",
+    "group",
+    "holdings",
+)
+
+# Process-wide because the config cannot reach every caller: `_csv_row_identity`
+# below, `csv_io.dedup_sets_from_rows` and `jobs_archive.load_archive_dedup` all
+# key raw CSV dicts with no plugin in scope, so threading the words through
+# dedup_key's signature would stop at them. `run` calls
+# `configure_company_noise` once before dispatch, so one command uses one
+# vocabulary; unset, every caller gets the shipped list.
+_company_noise_words: frozenset[str] = frozenset(DEFAULT_COMPANY_NOISE_WORDS)
+
+
+def configure_company_noise(words: Sequence[str] | None) -> None:
+    """Set the company noise-word list for this process's dedup comparisons.
+
+    Called once per command before any key is built, so every key in a run
+    comes from one vocabulary. ``None`` restores the shipped default.
+    """
+    global _company_noise_words
+    _company_noise_words = frozenset(
+        word.strip().lower() for word in (words or DEFAULT_COMPANY_NOISE_WORDS)
+    ) - {""}
 
 
 def _dedup_norm(s: str) -> str:
     return _WHITESPACE_RE.sub(" ", s.lower().strip())
 
 
+def _dedup_norm_company(company: str) -> str:
+    """Normalize a company name to a comparison-only identity token.
+
+    Board sources that derive a company from their board slug (Ashby, Lever)
+    produce "menlosecurity" where an aggregator carries "Menlo Security Inc.".
+    Dropping punctuation, then noise words, then ALL whitespace reduces both to
+    the same token, so the board record is recognized as the same job and wins
+    the source upgrade. The stored Company cell keeps its raw value -- this
+    shapes the dedup key alone.
+    """
+    words = _PUNCTUATION_RE.sub(" ", company.lower()).split()
+    kept = [word for word in words if word not in _company_noise_words]
+    # An all-noise name ("Limited Group") still needs an identity of its own,
+    # or every such company would collapse onto one empty key.
+    return "".join(kept or words)
+
+
 def dedup_key(company: str, role: str) -> str:
     """Normalized dedup key for cross-site duplicate detection.
 
-    Lowercases and collapses whitespace in both fields so the same job posted
-    on RemoteOK and LinkedIn produces an identical key.
+    The role lowercases and collapses whitespace, so the same job posted on
+    RemoteOK and LinkedIn produces an identical key. The company additionally
+    drops punctuation, noise words, and spacing (see ``_dedup_norm_company``),
+    so a slug-derived board name matches an aggregator's display name.
     """
-    return f"{_dedup_norm(company)}::{_dedup_norm(role)}"
+    return f"{_dedup_norm_company(company)}::{_dedup_norm(role)}"
 
 
 def _csv_row_identity(row: dict[str, str]) -> str:

@@ -271,6 +271,18 @@ class ScraperConfig(BaseModel):
         ),
         description="User-Agent header sent by the HTTP/RSS scrapers.",
     )
+    company_noise_words: list[str] = Field(
+        default=[],
+        description=(
+            "Words dropped from a company name when comparing rows for\n"
+            "duplicates, replacing the shipped list (legal suffixes such as\n"
+            "inc/ltd/gmbh plus generic tails such as labs/technologies). Board\n"
+            "sources name a company after their board slug, so this is what\n"
+            "lets a `menlosecurity` board row match an aggregator's `Menlo\n"
+            "Security Inc.`. Never changes the stored Company value."
+        ),
+        json_schema_extra={"inline_comment": '["inc", "ltd", "labs"]'},
+    )
     timeout: int = Field(
         default=30,
         description="Per-source HTTP / browser timeout, in seconds.",

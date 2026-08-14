@@ -251,11 +251,14 @@ Transport / retry knobs shared by every source.
 | `max_retries` | int | 3 |
 | `max_age_days` | int | 30 |
 | `user_agent` | string | Firefox/128 UA |
+| `company_noise_words` | list[string] | `[]` (shipped list) |
 | `timeout` | int | 30 |
 | `search_terms` | list[string] or null | null |
 | `parallel_workers` | int | 8 |
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
+
+`company_noise_words` replaces the shipped list of words dropped from a company name when rows are compared for duplicates — legal suffixes (`inc`, `ltd`, `gmbh`, ...) and generic tails (`labs`, `technologies`, ...). Board sources name a company after their board slug, so this is what lets a `menlosecurity` board row match an aggregator's `Menlo Security Inc.` and win the source upgrade. Comparison only: the stored Company value is never rewritten. An empty list keeps the shipped words.
 
 `headless` is not user-configurable. The field exists on the model but is overridden per scrape phase, so a value set in `.dd-config.yaml` has no effect; it is intentionally omitted from the generated config scaffold.
 
