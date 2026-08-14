@@ -1041,6 +1041,14 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
                 f"({stats.get('slugs_swept', 0)} slugs swept, "
                 f"last sweep {last_day})"
             )
+            # An unprobed slug can never be scraped, so a partial sweep quietly
+            # shrinks what jobs run covers. Say so where the sweep is reported.
+            never_probed = stats.get("never_probed", 0)
+            if never_probed:
+                console.print(
+                    f"    [yellow]{never_probed} slugs never probed "
+                    "-- run jobs discover-boards[/yellow]"
+                )
 
     return 0
 

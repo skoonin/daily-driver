@@ -756,6 +756,37 @@ def test_jobs_status_no_run_yet(
     assert "No scraper run recorded" in captured.out
 
 
+def test_jobs_status_reports_unprobed_slugs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The #213 gap: a partial sweep leaves a partial board list, and a user
+    cannot act on a number they are never shown."""
+    import json as _json
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    discovery_dir = ws / ".daily-driver" / "state" / "discovery"
+    discovery_dir.mkdir(parents=True, exist_ok=True)
+    (discovery_dir / "sweep-ashby.json").write_text(
+        _json.dumps(
+            {"swept": {"acme": {"last_swept": "2026-07-13T10:00:00", "matched": 1}}}
+        )
+    )
+    (discovery_dir / "slugs-ashby.json").write_text(
+        _json.dumps(
+            {"fetched_at": "2026-07-13", "slugs": ["acme", "globex", "initech"]}
+        )
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "status"])
+
+    assert rc == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "2 slugs never probed" in out
+    assert "run jobs discover-boards" in out
+
+
 def test_jobs_status_json_no_run(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

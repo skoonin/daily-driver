@@ -213,11 +213,24 @@ def resolve_boards(
     ]
 
 
-def sweep_ages(state_dir: Path) -> dict[str, dict[str, Any]]:
-    """Per-platform sweep metadata for `jobs status`.
+def _cached_count(path: Path, key: str) -> int:
+    """Size of a discovery cache's top-level mapping, 0 when absent or corrupt."""
+    payload = _read_json(path) or {}
+    entries = payload.get(key)
+    return len(entries) if isinstance(entries, (dict, list)) else 0
 
-    ``{platform: {"boards_matched": N, "slugs_swept": M, "last_swept": iso|None}}``
-    for platforms that have sweep state on disk.
+
+def sweep_ages(state_dir: Path) -> dict[str, dict[str, Any]]:
+    """Per-platform sweep metadata for `jobs run` and `jobs status`.
+
+    ``{platform: {"boards_matched": N, "slugs_swept": M, "slugs_dead": D,
+    "universe": U, "never_probed": P, "last_swept": iso|None}}`` for platforms
+    that have sweep state on disk.
+
+    ``never_probed`` is the coverage gap: a slug in neither the swept nor the
+    dead cache has never been looked at, so `jobs run` cannot scrape it and
+    nothing else reports it. A partial sweep is otherwise indistinguishable
+    from a complete one.
     """
     out: dict[str, dict[str, Any]] = {}
     for platform in SWEEP_PLATFORMS:
@@ -232,6 +245,8 @@ def sweep_ages(state_dir: Path) -> dict[str, dict[str, Any]]:
             for info in swept.values()
             if isinstance(info, dict) and info.get("last_swept")
         ]
+        dead = _cached_count(_dead_path(state_dir, platform), "dead")
+        universe = _cached_count(_slugs_path(state_dir, platform), "slugs")
         out[platform] = {
             "boards_matched": sum(
                 1
@@ -239,6 +254,9 @@ def sweep_ages(state_dir: Path) -> dict[str, dict[str, Any]]:
                 if isinstance(info, dict) and (info.get("matched") or 0) > 0
             ),
             "slugs_swept": len(swept),
+            "slugs_dead": dead,
+            "universe": universe,
+            "never_probed": max(0, universe - len(swept) - dead),
             "last_swept": max(stamps) if stamps else None,
         }
     return out

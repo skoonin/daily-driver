@@ -2599,6 +2599,39 @@ def test_run_reports_reseen_summary_line(
     assert "1 still visible, 1 not seen this run" in err
 
 
+def test_run_reports_unprobed_board_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The #213 gap: a slug never probed cannot be scraped, so a partial sweep
+    silently shrinks the board list. The run summary has to say so."""
+    import json
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set(), {}),
+    )
+    discovery_dir = tmp_path / "discovery"
+    discovery_dir.mkdir(parents=True, exist_ok=True)
+    (discovery_dir / "sweep-ashby.json").write_text(
+        json.dumps(
+            {"swept": {"acme": {"last_swept": "2026-07-13T10:00:00", "matched": 1}}}
+        )
+    )
+    (discovery_dir / "slugs-ashby.json").write_text(
+        json.dumps({"fetched_at": "2026-07-13", "slugs": ["acme", "globex", "initech"]})
+    )
+
+    monkeypatch.setattr(runner, "run_all_scrapers", lambda ctx, *a, **kw: ([], [], []))
+
+    rc = runner.run(_enrich_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    assert rc == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert "ashby: scraping 1 boards, 2 slugs never probed" in err
+
+
 def test_run_no_enrich_persists_resightings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

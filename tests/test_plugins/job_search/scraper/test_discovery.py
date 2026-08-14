@@ -651,12 +651,60 @@ class TestSweepAges:
             "greenhouse": {
                 "boards_matched": 1,
                 "slugs_swept": 2,
+                "slugs_dead": 0,
+                "universe": 0,
+                "never_probed": 0,
                 "last_swept": "2026-07-02T10:00:00",
             }
         }
 
     def test_empty_state_dir_reports_nothing(self, tmp_path: Path) -> None:
         assert discovery.sweep_ages(tmp_path) == {}
+
+    def test_never_probed_is_the_universe_minus_swept_and_dead(
+        self, tmp_path: Path
+    ) -> None:
+        """The #213 coverage gap: a slug in neither cache has never been looked
+        at, so `jobs run` cannot scrape it and nothing else reports it."""
+        discovery_dir = tmp_path / "discovery"
+        discovery_dir.mkdir(parents=True)
+        (discovery_dir / "sweep-greenhouse.json").write_text(
+            json.dumps(
+                {"swept": {"a": {"last_swept": "2026-07-01T10:00:00", "matched": 1}}}
+            )
+        )
+        (discovery_dir / "dead-greenhouse.json").write_text(
+            json.dumps({"dead": {"b": "2026-07-01T10:00:00"}})
+        )
+        (discovery_dir / "slugs-greenhouse.json").write_text(
+            json.dumps({"fetched_at": "2026-07-01", "slugs": ["a", "b", "c", "d"]})
+        )
+
+        stats = discovery.sweep_ages(tmp_path)["greenhouse"]
+
+        assert stats["universe"] == 4
+        assert stats["slugs_dead"] == 1
+        assert stats["never_probed"] == 2
+
+    def test_never_probed_never_goes_negative(self, tmp_path: Path) -> None:
+        """The upstream slug list can shrink below what was already swept."""
+        discovery_dir = tmp_path / "discovery"
+        discovery_dir.mkdir(parents=True)
+        (discovery_dir / "sweep-greenhouse.json").write_text(
+            json.dumps(
+                {
+                    "swept": {
+                        "a": {"last_swept": "2026-07-01T10:00:00", "matched": 1},
+                        "b": {"last_swept": "2026-07-01T10:00:00", "matched": 1},
+                    }
+                }
+            )
+        )
+        (discovery_dir / "slugs-greenhouse.json").write_text(
+            json.dumps({"fetched_at": "2026-07-01", "slugs": ["a"]})
+        )
+
+        assert discovery.sweep_ages(tmp_path)["greenhouse"]["never_probed"] == 0
 
 
 class TestRunDiscovery:

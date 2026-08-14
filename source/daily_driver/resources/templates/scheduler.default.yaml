@@ -4,3 +4,9 @@ checkin:
   times: ["11:00", "15:00"]
 jobs:
   time: "07:00"
+# Board discovery runs on its own cadence: the ATS slug universe changes far
+# more slowly than postings do, and a sweep is long enough that it should land
+# before a scrape rather than inside one.
+discovery:
+  time: "23:59"
+  days: ["sat", "tue"]
