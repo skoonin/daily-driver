@@ -64,6 +64,7 @@ def scrape_ashby(ctx: ScrapeContext) -> list[dict]:
 
     toggle = source_toggle(ctx.plugin, "ashby", AshbyToggle)
     boards = resolve_boards(
+        "ashby",
         toggle.ashby_boards,
         ctx.discovered_boards.get("ashby", ()),
         toggle.exclude_boards,

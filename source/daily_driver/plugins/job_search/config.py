@@ -133,7 +133,7 @@ class GreenhouseToggle(SourceToggle):
     """Greenhouse source toggle plus its pinned/excluded board slug lists."""
 
     greenhouse_boards: list[str] = Field(
-        default=["anthropic"], description=_GREENHOUSE_BOARDS_DESC
+        default=[], description=_GREENHOUSE_BOARDS_DESC
     )
     exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
 
@@ -642,7 +642,7 @@ class JobSearchPlugin(BaseModel):
                 "hn_jobs": {"enabled": False, "hn_max_posts": 500},
                 "greenhouse": {
                     "enabled": False,
-                    "greenhouse_boards": ["anthropic"],
+                    "greenhouse_boards": [],
                     "exclude_boards": [],
                 },
                 "ashby": {

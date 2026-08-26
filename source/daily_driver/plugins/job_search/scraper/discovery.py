@@ -199,18 +199,28 @@ def _stale_slugs(swept: dict[str, Any], reprobe_days: int, limit: int) -> set[st
 
 
 def resolve_boards(
-    pins: list[str], discovered: tuple[str, ...], excludes: list[str]
+    platform: str, pins: list[str], discovered: tuple[str, ...], excludes: list[str]
 ) -> list[str]:
     """Effective board list for one platform: (pins ∪ discovered) − excludes.
 
     Pins keep their configured order and come first (they are the boards the
     user always wants, role matches or not); discovered boards follow in their
     given (sorted) order. The exclude blocklist trumps both.
+
+    An empty result is logged: the adapter then scrapes nothing and reports 0
+    jobs, which otherwise reads the same as "boards had no matching roles".
     """
     excluded = set(excludes)
-    return [
+    boards = [
         slug for slug in dict.fromkeys([*pins, *discovered]) if slug not in excluded
     ]
+    if not boards:
+        log.warning(
+            "[%s] no boards to scrape: none pinned in config and the "
+            "discover-boards cache is empty; run `daily-driver jobs discover-boards`",
+            platform,
+        )
+    return boards
 
 
 def _cached_count(path: Path, key: str) -> int:

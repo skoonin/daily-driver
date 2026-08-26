@@ -350,7 +350,7 @@ Sibling block of `scraper` under `job_search`. A dict whose keys are source iden
 |-----------|--------|---------------------------|
 | `remoteok` | `RemoteOkToggle` | `remoteok_tags` (`[]`) |
 | `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
-| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[anthropic]`), `exclude_boards` (`[]`) |
+| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[]`), `exclude_boards` (`[]`) |
 | `ashby` | `AshbyToggle` | `ashby_boards` (`[]`), `exclude_boards` (`[]`) |
 | `lever` | `LeverToggle` | `lever_boards` (`[]`), `exclude_boards` (`[]`) |
 | `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |

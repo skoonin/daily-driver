@@ -122,6 +122,46 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
     )
 
 
+def _check_board_sources_have_boards(workspace: Workspace) -> CheckResult | None:
+    """Warn when an enabled board source has no boards to scrape.
+
+    Greenhouse, Ashby and Lever scrape (pinned config slugs ∪ discover-boards
+    matched cache). With no pins and no sweep on disk the source runs a clean,
+    empty scrape, which is easy to mistake for "no matching roles".
+    """
+    from daily_driver.core.doctor import CheckResult
+    from daily_driver.plugins.job_search.scraper.discovery import (
+        SWEEP_PLATFORMS,
+        load_matched_boards,
+    )
+
+    config = getattr(workspace, "config", None)
+    job_cfg = getattr(getattr(config, "plugins", None), "job_search", None)
+    if job_cfg is None:
+        return None
+    empty: list[str] = []
+    for platform in SWEEP_PLATFORMS:
+        toggle = job_cfg.sources.get(platform)
+        if toggle is None or not toggle.enabled:
+            continue
+        if getattr(toggle, f"{platform}_boards", None):
+            continue
+        if load_matched_boards(workspace.ephemeral_dir, platform):
+            continue
+        empty.append(platform)
+    if not empty:
+        return None
+    return CheckResult(
+        name="Job boards",
+        status="WARNING",
+        detail=(
+            f"{', '.join(empty)} enabled but no boards to scrape: none pinned "
+            "in config and no discover-boards sweep has run"
+        ),
+        fix_hint="Run: daily-driver jobs discover-boards",
+    )
+
+
 def _enrichment_cfg(workspace: Workspace):  # type: ignore[no-untyped-def]
     """Resolve the job_search enrichment config, or None if unavailable.
 
@@ -262,4 +302,7 @@ def run_checks(workspace: Workspace) -> list[CheckResult]:
     parallel_row = _check_ollama_num_parallel(workspace)
     if parallel_row is not None:
         results.append(parallel_row)
+    boards_row = _check_board_sources_have_boards(workspace)
+    if boards_row is not None:
+        results.append(boards_row)
     return results

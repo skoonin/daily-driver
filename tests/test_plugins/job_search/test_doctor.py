@@ -1,4 +1,4 @@
-"""Tests for daily_driver.plugins.job_search.doctor — backups + Playwright."""
+"""Tests for daily_driver.plugins.job_search.doctor — backups, Playwright, boards."""
 
 from __future__ import annotations
 
@@ -279,3 +279,57 @@ def test_num_parallel_hint_absent_when_claude(monkeypatch):
     ws = _ws_with_enrichment("claude", max_parallel=4)
     rows = doctor.run_checks(ws)
     assert not [r for r in rows if r.name == "Ollama NUM_PARALLEL"]
+
+
+# ── Board sources have boards ────────────────────────────────────────────────
+
+
+def _ws_with_boards(tmp_path: Path, **sources: list[str] | None) -> SimpleNamespace:
+    """Workspace stand-in: each kwarg is an enabled board source with its pins.
+
+    ``None`` marks the source disabled; a list is its pinned board slugs.
+    """
+    toggles = {}
+    for platform, pins in sources.items():
+        toggles[platform] = SimpleNamespace(
+            enabled=pins is not None, **{f"{platform}_boards": pins or []}
+        )
+    job_search = SimpleNamespace(sources=toggles)
+    return SimpleNamespace(
+        config=SimpleNamespace(plugins=SimpleNamespace(job_search=job_search)),
+        ephemeral_dir=tmp_path,
+    )
+
+
+def test_boards_check_none_when_no_board_source_enabled(tmp_path: Path) -> None:
+    ws = _ws_with_boards(tmp_path, greenhouse=None)
+    assert doctor._check_board_sources_have_boards(ws) is None
+
+
+def test_boards_check_none_when_pinned(tmp_path: Path) -> None:
+    ws = _ws_with_boards(tmp_path, greenhouse=["acme"])
+    assert doctor._check_board_sources_have_boards(ws) is None
+
+
+def test_boards_check_none_when_discovery_cache_has_matches(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.discovery.load_matched_boards",
+        lambda _dir, _platform: {"acme": {"matched": 3}},
+    )
+    ws = _ws_with_boards(tmp_path, greenhouse=[])
+    assert doctor._check_board_sources_have_boards(ws) is None
+
+
+def test_boards_check_warns_when_enabled_with_nothing_to_scrape(
+    tmp_path: Path,
+) -> None:
+    ws = _ws_with_boards(tmp_path, greenhouse=[], ashby=["pinned"], lever=[])
+    row = doctor._check_board_sources_have_boards(ws)
+    assert row is not None
+    assert row.status == "WARNING"
+    assert row.name == "Job boards"
+    assert "greenhouse, lever" in row.detail
+    assert "ashby" not in row.detail
+    assert "jobs discover-boards" in row.fix_hint
