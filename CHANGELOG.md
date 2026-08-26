@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs and examples no longer name real companies.** Board slugs, dedup examples, sample job titles and test fixtures now use placeholder names (`company-a`, `Foo Systems Inc.`, `Company H`) instead of real employers. Example slugs in the config docs are deliberately fake; replace them with the boards you want to scrape. (#PR)
+
 ### Added
 
 - **`jobs prune --min-fit N` archives untriaged rows the fit scorer already judged poor.** Prune could only select rows by Status and age, and its default targets (`dropped`, `rejected`, `closed`) never reach the bulk of a real file — in a live workspace 4,801 of 4,872 rows were untriaged, over half of them scoring Fit 1-4, and `jobs prune --older-than month` reported "No rows match prune criteria". `--min-fit` adds a second selection channel: rows with `found` or blank Status scoring below N are archived alongside the usual status targets. A row you have acted on is never archived by fit whatever it scored, an unscored row is left alone (absence of a score is not a low score), and `--older-than` still gates both channels, so a low-fit row confirmed live recently stays. Archiving runs through the normal path, so orphaned cached descriptions are cleaned up — the hand-written scripts this replaces bypassed that. (#218)
@@ -18,7 +22,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 - **A job board that dies after being matched now leaves the scrape list on its own.** An incremental `jobs discover-boards` sweep only probed slugs it had never seen, so a board that started returning 404 after discovery matched it kept its matched status forever and was re-fetched on every `jobs run` — the only way out was a full re-sweep or a hand-written `exclude_boards` entry. Sweeps now also re-probe boards last checked more than `plugins.job_search.discovery.reprobe_days` (default 30) ago, which retires dead ones into the dead cache during a normal sweep; at most `discovery.max_reprobe_per_sweep` (default 500) are re-probed per sweep, oldest first, so retirement spreads out instead of the whole universe coming due on the same day. Relatedly, a board source is no longer reported degraded for a handful of permanently-gone boards: below `discovery.degraded_failure_ratio` (default 0.25) the run logs the success rate (`greenhouse: 420/427 boards ok, 7 failed`) and reserves the degraded flag for a real outage. Row closure is unchanged — a board that failed to fetch was never, and still is not, read as "absent = closed". (#217)
 
-- **A job found on both a company's own board and an aggregator is now recognized as one job.** Ashby and Lever postings carry no company field, so the scraper names the company after the board slug — `menlosecurity` — while the same job from LinkedIn is stored as `Menlo Security Inc.`. The duplicate check compared those names with only case and spacing normalized, so the two never matched: both rows sat in `jobs.csv`, and the board record never replaced the aggregator's row even though board sources are meant to win (they carry a stable URL and the full description). Company names are now compared with punctuation, common noise words (`inc`, `ltd`, `labs`, `technologies`, ...) and spacing removed, which fixes the whole class rather than one company. `plugins.job_search.scraper.company_noise_words` overrides the shipped word list. The comparison shapes the duplicate key only — the Company value shown in `jobs.csv` is never rewritten. (#219)
+- **A job found on both a company's own board and an aggregator is now recognized as one job.** Ashby and Lever postings carry no company field, so the scraper names the company after the board slug — `foosystems` — while the same job from LinkedIn is stored as `Foo Systems Inc.`. The duplicate check compared those names with only case and spacing normalized, so the two never matched: both rows sat in `jobs.csv`, and the board record never replaced the aggregator's row even though board sources are meant to win (they carry a stable URL and the full description). Company names are now compared with punctuation, common noise words (`inc`, `ltd`, `labs`, `technologies`, ...) and spacing removed, which fixes the whole class rather than one company. `plugins.job_search.scraper.company_noise_words` overrides the shipped word list. The comparison shapes the duplicate key only — the Company value shown in `jobs.csv` is never rewritten. (#219)
 
 - **LinkedIn and Indeed searches no longer bury postings in your own city.** Those searches ran at country granularity only, so a role in your home city competed against the entire country's listings while only the top ~50 results per search term were pulled — a clean match could be listed on LinkedIn and never appear in `jobs.csv`. Each search term now also runs once per city named in `plugins.job_search.locations.countries`, where a local posting competes only with its own city. The nationwide pass still runs, so remote and unlisted-city roles are unaffected, and a country mapped to an empty city list adds no extra search. City searches are capped by `max_city_queries` (default 40) on the `linkedin`/`indeed` toggles, because the size of the request matrix is what draws rate limiting; anything skipped by the cap is reported rather than dropped silently. (#220)
 
@@ -481,7 +485,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
         max_enrich_companies: 30
         detail_delay_seconds: 0
         wwr_categories: [devops, sysadmin]
-        greenhouse_boards: [anthropic, stripe]
+        greenhouse_boards: [company-a, company-b]
         hn_max_posts: 50
         sources:
           weworkremotely: true
@@ -509,7 +513,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
           wwr_categories: [devops, sysadmin]
         greenhouse:
           enabled: true
-          greenhouse_boards: [anthropic, stripe]
+          greenhouse_boards: [company-a, company-b]
         hn_jobs:
           enabled: true
           hn_max_posts: 50

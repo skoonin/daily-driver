@@ -44,13 +44,14 @@ def test_greenhouse_boards_drive_fetched_api_urls(monkeypatch: Any) -> None:
     monkeypatch.setattr(gh_module, "_api_get", fake_api_get)
     monkeypatch.setattr(gh_module, "_http_session", lambda cfg: MagicMock())
 
-    gh_module.scrape_greenhouse(_config(["stripe", "datadog"]))
+    gh_module.scrape_greenhouse(_config(["company-a", "company-b"]))
 
     assert (
-        "https://boards-api.greenhouse.io/v1/boards/stripe/jobs?content=true" in fetched
+        "https://boards-api.greenhouse.io/v1/boards/company-a/jobs?content=true"
+        in fetched
     )
     assert (
-        "https://boards-api.greenhouse.io/v1/boards/datadog/jobs?content=true"
+        "https://boards-api.greenhouse.io/v1/boards/company-b/jobs?content=true"
         in fetched
     )
     # The default ["anthropic"] board is not fetched when overridden.
@@ -183,7 +184,7 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
             "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
             "sources": {
                 "greenhouse": {
-                    "greenhouse_boards": ["stripe"],
+                    "greenhouse_boards": ["company-a"],
                     "exclude_boards": ["noisy-co"],
                 }
             },
@@ -197,6 +198,6 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
     gh_module.scrape_greenhouse(ctx)
 
     assert [u.split("/boards/")[1].split("/")[0] for u in fetched] == [
-        "stripe",
+        "company-a",
         "movableink",
     ]

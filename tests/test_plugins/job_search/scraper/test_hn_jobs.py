@@ -55,9 +55,9 @@ def test_parse_title_bare_in_phrase_does_not_match_location() -> None:
     also missed — accepted because false data is worse than missing data.
     """
     company, role, location = _parse_title(
-        "GovernGPT (YC W24) Is Hiring Engineers to Build Thinking Systems in Montreal"
+        "Company A (YC W24) Is Hiring Engineers to Build Thinking Systems in Montreal"
     )
-    assert company == "GovernGPT"
+    assert company == "Company A"
     assert "Engineers" in role
     assert location == "Unknown"
 
@@ -90,9 +90,9 @@ def test_parse_title_extracts_parenthesized_city() -> None:
 
 def test_parse_title_with_remote_marker() -> None:
     company, role, location = _parse_title(
-        "Infisical (YC W23) Is Hiring Full Stack Software Engineers (Remote)"
+        "Company B (YC W23) Is Hiring Full Stack Software Engineers (Remote)"
     )
-    assert company == "Infisical"
+    assert company == "Company B"
     assert "Full Stack" in role
     assert location == "Remote"
 
@@ -107,9 +107,9 @@ def test_parse_title_seeks_variant() -> None:
 
 def test_parse_title_no_yc_tag() -> None:
     company, role, _ = _parse_title(
-        "Stardex Is Hiring a Founding Customer Success Lead"
+        "Company C Is Hiring a Founding Customer Success Lead"
     )
-    assert company == "Stardex"
+    assert company == "Company C"
     assert "Founding Customer Success Lead" in role
 
 

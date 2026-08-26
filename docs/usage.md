@@ -156,7 +156,7 @@ plugins:
     sources:
       greenhouse:
         enabled: true
-        greenhouse_boards: [anthropic, stripe, figma]
+        greenhouse_boards: [company-a, company-b, company-c]
       hn_jobs: {}
       hn_who_is_hiring: {}
       remoteok: {remoteok_tags: [devops, kubernetes, aws]}

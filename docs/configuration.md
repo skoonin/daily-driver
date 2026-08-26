@@ -265,7 +265,7 @@ Transport / retry knobs shared by every source.
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
 
-`company_noise_words` replaces the shipped list of words dropped from a company name when rows are compared for duplicates — legal suffixes (`inc`, `ltd`, `gmbh`, ...) and generic tails (`labs`, `technologies`, ...). Board sources name a company after their board slug, so this is what lets a `menlosecurity` board row match an aggregator's `Menlo Security Inc.` and win the source upgrade. Comparison only: the stored Company value is never rewritten. An empty list keeps the shipped words.
+`company_noise_words` replaces the shipped list of words dropped from a company name when rows are compared for duplicates — legal suffixes (`inc`, `ltd`, `gmbh`, ...) and generic tails (`labs`, `technologies`, ...). Board sources name a company after their board slug, so this is what lets a `foosystems` board row match an aggregator's `Foo Systems Inc.` and win the source upgrade. Comparison only: the stored Company value is never rewritten. An empty list keeps the shipped words.
 
 `headless` is not user-configurable. The field exists on the model but is overridden per scrape phase, so a value set in `.dd-config.yaml` has no effect; it is intentionally omitted from the generated config scaffold.
 
@@ -393,14 +393,14 @@ sources:
     wwr_categories: [devops, sysadmin]
   greenhouse:
     enabled: true
-    greenhouse_boards: [anthropic, stripe]  # pins: always scraped
+    greenhouse_boards: [company-a, company-b]  # pins: always scraped
     exclude_boards: []  # blocklist: never scraped, even when discovery matches them
   ashby:
     enabled: true
-    ashby_boards: [ramp, linear]  # slugs are case-sensitive (e.g. Notion)
+    ashby_boards: [company-d, company-e]  # slugs are case-sensitive (e.g. CompanyF)
   lever:
     enabled: true
-    lever_boards: [15five]  # the <slug> in jobs.lever.co/<slug>
+    lever_boards: [company-g]  # the <slug> in jobs.lever.co/<slug>
   workable:
     enabled: true
     workable_accounts: [huggingface]  # the <slug> in apply.workable.com/<slug>
@@ -408,7 +408,7 @@ sources:
     enabled: true
     # Each board names the 3 parts of a Workday URL; `company` is optional.
     workday_boards:
-      - {tenant: crowdstrike, host: wd5, site: crowdstrikecareers, company: CrowdStrike}
+      - {tenant: companyh, host: wd5, site: companyhcareers, company: Company H}
   linkedin:
     enabled: true
     results_wanted_per_query: 50
@@ -472,7 +472,7 @@ plugins:
     sources:
       greenhouse:
         enabled: true
-        greenhouse_boards: [anthropic, stripe, figma]
+        greenhouse_boards: [company-a, company-b, company-c]
 ```
 
 ## Customization

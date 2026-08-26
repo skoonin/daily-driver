@@ -324,14 +324,14 @@ def test_sources_per_source_knobs_on_toggles():
     m = JobSearchPlugin(
         sources={
             "weworkremotely": {"enabled": True, "wwr_categories": ["devops"]},
-            "greenhouse": {"enabled": True, "greenhouse_boards": ["stripe"]},
+            "greenhouse": {"enabled": True, "greenhouse_boards": ["company-a"]},
             "hn_jobs": {"enabled": True, "hn_max_posts": 25},
         }
     )
     assert isinstance(m.sources["weworkremotely"], WeWorkRemotelyToggle)
     assert m.sources["weworkremotely"].wwr_categories == ["devops"]
     assert isinstance(m.sources["greenhouse"], GreenhouseToggle)
-    assert m.sources["greenhouse"].greenhouse_boards == ["stripe"]
+    assert m.sources["greenhouse"].greenhouse_boards == ["company-a"]
     assert isinstance(m.sources["hn_jobs"], HackerNewsToggle)
     assert m.sources["hn_jobs"].hn_max_posts == 25
 

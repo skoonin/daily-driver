@@ -2752,12 +2752,12 @@ def test_slug_named_board_twin_upgrades_despite_company_name_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The #210 case, end to end. Ashby and Lever name a company after their
-    board slug, so the same job reads "Menlosecurity" from the board and
-    "Menlo Security Inc." from LinkedIn. Those keyed differently, so the
+    board slug, so the same job reads "Foosystems" from the board and
+    "Foo Systems Inc." from LinkedIn. Those keyed differently, so the
     upgrade never fired and both rows sat in the file as duplicates.
     """
     csv_path = tmp_path / "jobs.csv"
-    _seed_jobs_csv(csv_path, [_linkedin_row(Company="Menlo Security Inc.")])
+    _seed_jobs_csv(csv_path, [_linkedin_row(Company="Foo Systems Inc.")])
     monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
     monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
 
@@ -2766,9 +2766,9 @@ def test_slug_named_board_twin_upgrades_despite_company_name_mismatch(
         "ashby",
         [
             _scraped(
-                "https://jobs.ashbyhq.com/menlosecurity/9",
-                "Menlosecurity",
-                source="Ashby (menlosecurity)",
+                "https://jobs.ashbyhq.com/foosystems/9",
+                "Foosystems",
+                source="Ashby (foosystems)",
             )
         ],
     )
@@ -2777,10 +2777,10 @@ def test_slug_named_board_twin_upgrades_despite_company_name_mismatch(
 
     rows = _read_csv(csv_path)
     assert len(rows) == 1
-    assert rows[0]["Source"] == "Ashby (menlosecurity)"
-    assert rows[0]["Link"] == "https://jobs.ashbyhq.com/menlosecurity/9"
+    assert rows[0]["Source"] == "Ashby (foosystems)"
+    assert rows[0]["Link"] == "https://jobs.ashbyhq.com/foosystems/9"
     # The display name is never rewritten: normalization shapes the key alone.
-    assert rows[0]["Company"] == "Menlo Security Inc."
+    assert rows[0]["Company"] == "Foo Systems Inc."
 
 
 def test_same_run_aggregator_then_board_ends_upgraded(

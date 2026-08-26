@@ -53,7 +53,7 @@ plugins:
     scraper:
       enabled: true
     sources:
-      greenhouse: {enabled: true, greenhouse_boards: [anthropic, stripe]}
+      greenhouse: {enabled: true, greenhouse_boards: [company-a, company-b]}
       ashby:      {enabled: true}   # boards come from discover-boards below
       lever:      {enabled: true}   # ditto
       remoteok:   {remoteok_tags: [devops, kubernetes, aws]}

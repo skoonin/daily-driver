@@ -64,10 +64,10 @@ def test_lever_boards_drive_fetched_api_urls(monkeypatch: Any) -> None:
     monkeypatch.setattr(lever_module, "_api_get", fake_api_get)
     monkeypatch.setattr(lever_module, "_http_session", lambda cfg: MagicMock())
 
-    lever_module.scrape_lever(_config(["15five", "1inch"]))
+    lever_module.scrape_lever(_config(["company-g", "company-h"]))
 
-    assert "https://api.lever.co/v0/postings/15five?mode=json" in fetched
-    assert "https://api.lever.co/v0/postings/1inch?mode=json" in fetched
+    assert "https://api.lever.co/v0/postings/company-g?mode=json" in fetched
+    assert "https://api.lever.co/v0/postings/company-h?mode=json" in fetched
 
 
 def test_lever_maps_fields_and_applies_role_filter(monkeypatch: Any) -> None:
@@ -325,16 +325,16 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
             "roles": ["Engineer"],
             "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
             "sources": {
-                "lever": {"lever_boards": ["15five"], "exclude_boards": ["noisy-co"]}
+                "lever": {"lever_boards": ["company-g"], "exclude_boards": ["noisy-co"]}
             },
         }
     )
     ctx = replace(
         ScrapeContext(plugin=plugin),
-        discovered_boards={"lever": ("1inch", "noisy-co")},
+        discovered_boards={"lever": ("company-h", "noisy-co")},
     )
 
     lever_module.scrape_lever(ctx)
 
     slugs = [u.rsplit("/", 1)[1].removesuffix("?mode=json") for u in fetched]
-    assert slugs == ["15five", "1inch"]
+    assert slugs == ["company-g", "company-h"]

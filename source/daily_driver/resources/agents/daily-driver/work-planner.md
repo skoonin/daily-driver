@@ -79,7 +79,7 @@ the user to look it up. Format depends on category:
 - Other categories: `{category}-NNN - <human-readable label> | Status`
 
 Examples:
-- `job-003 - Stripe | Staff SRE | applied`
+- `job-003 - Company A | Staff SRE | applied`
 - `task-012 - Migration | Cut over read replicas | in-progress`
 - `errand-005 - Renew passport | scheduled`
 
@@ -119,7 +119,7 @@ date: 2026-04-06
 generated_at: "09:15"
 carry_forward:
   - id: cf-001
-    text: "job-003 - Stripe Staff SRE - send follow-up email"
+    text: "job-003 - Company A Staff SRE - send follow-up email"
     type: work
     tracker_id: job-003
     pr: null
@@ -142,7 +142,7 @@ carry_forward:
     dropped_reason: null
 plan_items:
   - id: pi-001
-    text: "job-003 - Stripe Staff SRE - follow up"
+    text: "job-003 - Company A Staff SRE - follow up"
     type: work
     tracker_id: job-003
     time_block: "10:00-10:30"

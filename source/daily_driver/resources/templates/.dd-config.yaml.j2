@@ -208,8 +208,8 @@ tracker:
 #       # duplicates, replacing the shipped list (legal suffixes such as
 #       # inc/ltd/gmbh plus generic tails such as labs/technologies). Board
 #       # sources name a company after their board slug, so this is what
-#       # lets a `menlosecurity` board row match an aggregator's `Menlo
-#       # Security Inc.`. Never changes the stored Company value.
+#       # lets a `foosystems` board row match an aggregator's `Foo Systems
+#       # Inc.`. Never changes the stored Company value.
 #       company_noise_words: []  # ["inc", "ltd", "labs"]
 #       # Per-source HTTP / browser timeout, in seconds.
 #       timeout: 30
@@ -333,7 +333,7 @@ tracker:
 #         # unioned with the discover-boards matched cache.
 #         greenhouse_boards: []
 #         # Slugs NEVER scraped, even if pinned or discovered. Matched exactly
-#         # incl. case: to silence Notion, write Notion not notion.
+#         # incl. case: to silence CompanyF, write CompanyF not companyf.
 #         exclude_boards: []
 #       ashby:            # AshbyHQ boards (configurable list)
 #         enabled: false
@@ -341,7 +341,7 @@ tracker:
 #         # unioned with the discover-boards matched cache. Case-sensitive.
 #         ashby_boards: []
 #         # Slugs NEVER scraped, even if pinned or discovered. Matched exactly
-#         # incl. case: to silence Notion, write Notion not notion.
+#         # incl. case: to silence CompanyF, write CompanyF not companyf.
 #         exclude_boards: []
 #       lever:            # Lever boards (configurable list)
 #         enabled: false
@@ -349,7 +349,7 @@ tracker:
 #         # unioned with the discover-boards matched cache.
 #         lever_boards: []
 #         # Slugs NEVER scraped, even if pinned or discovered. Matched exactly
-#         # incl. case: to silence Notion, write Notion not notion.
+#         # incl. case: to silence CompanyF, write CompanyF not companyf.
 #         exclude_boards: []
 #       workable:            # Workable accounts (configurable list)
 #         enabled: false
@@ -359,14 +359,14 @@ tracker:
 #       workday:            # Workday careers sites (configurable list)
 #         enabled: false
 #         # Each site named by the three URL parts. For
-#         # crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is
-#         # tenant=crowdstrike, host=wd5, site=crowdstrikecareers. Optional `company`
+#         # companyh.wd5.myworkdayjobs.com/companyhcareers that is
+#         # tenant=companyh, host=wd5, site=companyhcareers. Optional `company`
 #         # overrides the display name (default: title-cased tenant).
 #         workday_boards:
-#         - tenant: crowdstrike
+#         - tenant: companyh
 #           host: wd5
-#           site: crowdstrikecareers
-#           company: CrowdStrike
+#           site: companyhcareers
+#           company: "Company H"
 #
 #       # Shipped scrapers (Playwright, needs `playwright install`):
 #       apple: false            # jobs.apple.com (API intercept)
