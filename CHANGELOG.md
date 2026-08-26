@@ -6,7 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
-- **Docs and examples no longer name real companies.** Board slugs, dedup examples, sample job titles and test fixtures now use placeholder names (`company-a`, `Foo Systems Inc.`, `Company H`) instead of real employers. Example slugs in the config docs are deliberately fake; replace them with the boards you want to scrape. (#PR)
+- **Docs and examples no longer name real companies.** Board slugs, dedup examples, sample job titles and test fixtures now use placeholder names (`company-a`, `Foo Systems Inc.`, `Company H`) instead of real employers. Example slugs in the config docs are deliberately fake; replace them with the boards you want to scrape. (#244)
 
 ### Added
 
