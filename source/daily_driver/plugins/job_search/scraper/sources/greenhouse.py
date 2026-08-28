@@ -23,7 +23,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
     """Scrape jobs from the Greenhouse Job Board API (public, no auth required).
 
     Scrapes the union of the hand-pinned config boards
-    (job_search.sources.greenhouse.greenhouse_boards, default ["anthropic"])
+    (job_search.sources.greenhouse.greenhouse_boards, default [])
     and the boards the `jobs discover-boards` sweep matched
     (ctx.discovered_boards), minus the exclude_boards blocklist. Each slug
     maps to https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
@@ -42,6 +42,7 @@ def scrape_greenhouse(ctx: ScrapeContext) -> list[dict]:
 
     toggle = source_toggle(ctx.plugin, "greenhouse", GreenhouseToggle)
     boards = resolve_boards(
+        "greenhouse",
         toggle.greenhouse_boards,
         ctx.discovered_boards.get("greenhouse", ()),
         toggle.exclude_boards,

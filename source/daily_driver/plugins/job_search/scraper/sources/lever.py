@@ -130,6 +130,7 @@ def scrape_lever(ctx: ScrapeContext) -> list[dict]:
 
     toggle = source_toggle(ctx.plugin, "lever", LeverToggle)
     boards = resolve_boards(
+        "lever",
         toggle.lever_boards,
         ctx.discovered_boards.get("lever", ()),
         toggle.exclude_boards,

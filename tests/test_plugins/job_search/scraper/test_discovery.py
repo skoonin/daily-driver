@@ -753,19 +753,29 @@ class TestRunDiscovery:
 class TestResolveBoards:
     def test_union_pins_first_then_discovered(self) -> None:
         assert discovery.resolve_boards(
-            ["pin-a", "pin-b"], ("disc-a", "disc-b"), []
+            "greenhouse", ["pin-a", "pin-b"], ("disc-a", "disc-b"), []
         ) == ["pin-a", "pin-b", "disc-a", "disc-b"]
 
     def test_pin_discovered_overlap_dedups(self) -> None:
-        assert discovery.resolve_boards(["both"], ("both", "disc"), []) == [
+        assert discovery.resolve_boards(
+            "greenhouse", ["both"], ("both", "disc"), []
+        ) == [
             "both",
             "disc",
         ]
 
     def test_exclude_trumps_pins_and_discovered(self) -> None:
         assert discovery.resolve_boards(
-            ["pin", "noisy"], ("noisy", "disc"), ["noisy"]
+            "greenhouse", ["pin", "noisy"], ("noisy", "disc"), ["noisy"]
         ) == ["pin", "disc"]
 
-    def test_empty_everything(self) -> None:
-        assert discovery.resolve_boards([], (), []) == []
+    def test_empty_everything_warns(self, caplog: Any) -> None:
+        with caplog.at_level("WARNING"):
+            assert discovery.resolve_boards("lever", [], (), []) == []
+        assert "[lever] no boards to scrape" in caplog.text
+        assert "jobs discover-boards" in caplog.text
+
+    def test_non_empty_does_not_warn(self, caplog: Any) -> None:
+        with caplog.at_level("WARNING"):
+            discovery.resolve_boards("lever", ["pin"], (), [])
+        assert "no boards to scrape" not in caplog.text
