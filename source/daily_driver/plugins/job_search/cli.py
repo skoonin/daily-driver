@@ -1,4 +1,4 @@
-"""jobs subcommand: job-search workflows (run, discover-boards, backfill, promote, status, prune)."""
+"""jobs subcommand: job-search workflows (run, discover-boards, backfill, promote, status, prune, verify)."""
 
 from __future__ import annotations
 

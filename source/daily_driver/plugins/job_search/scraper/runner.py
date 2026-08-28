@@ -33,7 +33,6 @@ from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import (
     LOCK_GIVEUP_MESSAGE,
     LOCK_WAIT_TIMEOUT_SECONDS,
-    clear_stale_adjacent_lock,
     jobs_lock_path,
     workspace_busy_notice,
 )
@@ -325,7 +324,6 @@ def run_backfill(
     backfill_started_at = datetime.now(timezone.utc)
     ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
     ai_cfg = ctx.ai
-    clear_stale_adjacent_lock(csv_path)
     lock_path = jobs_lock_path(ephemeral_dir)
 
     # Force-update cooldown: skip rows enriched within the window so an
@@ -1207,7 +1205,6 @@ def _run_impl(
     )
 
     csv_path = output_dir / "jobs.csv"
-    clear_stale_adjacent_lock(csv_path)
     lock_path = jobs_lock_path(ephemeral_dir)
     ai_cfg = ai or AIConfig()
 

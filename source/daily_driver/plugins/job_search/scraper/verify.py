@@ -63,7 +63,6 @@ from daily_driver.plugins.job_search.jobs_lock import (
     LOCK_GIVEUP_MESSAGE,
     LOCK_WAIT_TIMEOUT_SECONDS,
     JobsLockTimeout,
-    clear_stale_adjacent_lock,
     jobs_lock_path,
     workspace_busy_notice,
 )
@@ -447,7 +446,6 @@ def verify_jobs(
     dry_run: bool = False,
     today: date | None = None,
     sleep: Callable[[float], None] = time.sleep,
-    session: Session | None = None,
 ) -> VerifyReport:
     """Probe stale untriaged rows on url-check sources and stamp the outcomes.
 
@@ -473,7 +471,6 @@ def verify_jobs(
     today_iso = today.isoformat()
     started_at = datetime.now(timezone.utc).isoformat()
 
-    clear_stale_adjacent_lock(jobs_csv)
     lock_stack = ExitStack()
     try:
         lock_stack.enter_context(
@@ -508,7 +505,7 @@ def verify_jobs(
             targets = targets[:limit]
         targets = _order_by_host(targets)
 
-        http = session or _http_session(ctx)
+        http = _http_session(ctx)
         # Same knob the enrichment detail fetcher paces itself with -- both are
         # polite per-host page fetches against the same hosts.
         delay = plugin.enrichment.detail_delay_seconds
