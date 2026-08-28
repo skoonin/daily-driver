@@ -4,10 +4,6 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
-### Changed
-
-- **Docs and examples no longer name real companies.** Board slugs, dedup examples, sample job titles and test fixtures now use placeholder names (`company-a`, `Foo Systems Inc.`, `Company H`) instead of real employers. Example slugs in the config docs are deliberately fake; replace them with the boards you want to scrape. (#244)
-
 ### Added
 
 - **`jobs prune --min-fit N` archives untriaged rows the fit scorer already judged poor.** Prune could only select rows by Status and age, and its default targets (`dropped`, `rejected`, `closed`) never reach the bulk of a real file — in a live workspace 4,801 of 4,872 rows were untriaged, over half of them scoring Fit 1-4, and `jobs prune --older-than month` reported "No rows match prune criteria". `--min-fit` adds a second selection channel: rows with `found` or blank Status scoring below N are archived alongside the usual status targets. A row you have acted on is never archived by fit whatever it scored, an unscored row is left alone (absence of a score is not a low score), and `--older-than` still gates both channels, so a low-fit row confirmed live recently stays. Archiving runs through the normal path, so orphaned cached descriptions are cleaned up — the hand-written scripts this replaces bypassed that. (#218)
@@ -15,6 +11,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **Board discovery can now run on a schedule, and `jobs run` reports how much of the board universe it has never looked at.** Only `jobs discover-boards` populated the matched-board cache and nothing called it automatically, so an interrupted sweep left a shrunken board list that every later run scraped silently — in a live workspace the sweep had last run a month earlier and 428 Ashby slugs had still never been probed. `scheduler install` now installs a `jobs-discover` agent on its own `scheduler.discovery` cadence (default 23:59 Saturday and Tuesday), separate from the scrape so a hung sweep cannot block it. Both `jobs run` and `jobs status` now report per-platform coverage — how many boards are being scraped and how many slugs have never been probed — so a partial sweep is visible instead of silent. Re-run `scheduler install` to pick up the new agent. (#221)
 
 ### Changed
+
+- **Docs and examples no longer name real companies.** Board slugs, dedup examples, sample job titles and test fixtures now use placeholder names (`company-a`, `Foo Systems Inc.`, `Company H`) instead of real employers. Example slugs in the config docs are deliberately fake; replace them with the boards you want to scrape. (#244)
 
 - **The Greenhouse source no longer ships a pre-pinned board.** `plugins.job_search.sources.greenhouse.greenhouse_boards` now defaults to `[]`, matching Ashby and Lever: the boards a run scrapes come from `jobs discover-boards`, and the pin list is for boards you always want regardless of role matches. The old `[anthropic]` seed dated from before discovery existed. Because a fresh workspace now scrapes no Greenhouse boards until the first sweep, `jobs run` warns when an enabled board source resolves to zero boards, and `doctor` reports the same with the command to run. (#243)
 
