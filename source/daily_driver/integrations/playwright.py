@@ -63,8 +63,13 @@ class BrowserProbe:
     playwright_error: str | None = None
 
 
-def _first_line(*candidates: str) -> str:
-    """Last non-blank line of the first non-empty candidate, for one-line detail."""
+def _summary_line(*candidates: str) -> str:
+    """Condense subprocess output to the one line worth showing a user.
+
+    Takes the LAST non-blank line of the first non-empty candidate: a Python
+    failure ends with the line that names it (`ModuleNotFoundError: ...`),
+    while the first line is the useless `Traceback (most recent call last):`.
+    """
     for text in candidates:
         lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
         if lines:
@@ -89,7 +94,7 @@ def probe_browser(engine: str = DEFAULT_ENGINE) -> BrowserProbe:
             playwright_error=f"{sys.executable} cannot run `-m playwright`",
         )
     if proc.returncode != 0:
-        detail = _first_line(proc.stderr, proc.stdout)
+        detail = _summary_line(proc.stderr, proc.stdout)
         return BrowserProbe(
             installed=False,
             playwright_error=detail or f"playwright exited {proc.returncode}",
@@ -107,15 +112,6 @@ def probe_browser(engine: str = DEFAULT_ENGINE) -> BrowserProbe:
         installed=False,
         playwright_error=f"playwright named no install location for {engine}",
     )
-
-
-def browser_installed(engine: str = DEFAULT_ENGINE) -> bool:
-    """True if the Playwright build for ``engine`` is downloaded.
-
-    Convenience wrapper over ``probe_browser`` for callers that cannot act on
-    why the build is unavailable.
-    """
-    return probe_browser(engine).installed
 
 
 def install_browser(engine: str = DEFAULT_ENGINE) -> None:

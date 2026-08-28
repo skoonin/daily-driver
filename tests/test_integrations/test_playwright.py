@@ -9,7 +9,6 @@ import pytest
 from daily_driver.integrations import playwright as pw
 from daily_driver.integrations.playwright import (
     PlaywrightError,
-    browser_installed,
     install_browser,
     probe_browser,
 )
@@ -47,11 +46,9 @@ def test_probe_reports_a_downloaded_build_with_no_error(monkeypatch, tmp_path):
     assert probe.playwright_error is None
 
 
-def test_probe_separates_a_missing_build_from_a_broken_playwright(
-    monkeypatch, tmp_path
-):
-    """The remedies differ — download a browser vs repair the install — so a
-    caller must be able to tell the two apart."""
+def test_probe_reports_a_missing_build_as_no_error(monkeypatch, tmp_path):
+    """Playwright answered; the build is simply not downloaded. The remedy is
+    to install the browser, so this must NOT read as a playwright failure."""
     browser_dir = tmp_path / "firefox-1511"
     monkeypatch.setattr(
         subprocess, "run", _run_stub(stdout=_dry_run_stdout(browser_dir))
@@ -73,7 +70,6 @@ def test_probe_reports_an_unrunnable_playwright(monkeypatch):
 
     assert probe.installed is False
     assert probe.playwright_error is not None
-    assert browser_installed() is False
 
 
 def test_probe_surfaces_stderr_from_a_failing_dry_run(monkeypatch):
@@ -89,6 +85,42 @@ def test_probe_surfaces_stderr_from_a_failing_dry_run(monkeypatch):
     assert "No module named 'playwright'" in (probe.playwright_error or "")
 
 
+def test_probe_takes_the_last_line_of_a_traceback(monkeypatch):
+    """The first line of a traceback is boilerplate; the last line names the
+    failure. Grabbing the wrong end would surface "Traceback (most recent call
+    last):" as the whole explanation."""
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _run_stub(
+            stderr=(
+                "Traceback (most recent call last):\n"
+                '  File "<frozen runpy>", line 198, in _run_module_as_main\n'
+                "ModuleNotFoundError: No module named 'playwright'\n"
+            ),
+            rc=1,
+        ),
+    )
+
+    probe = probe_browser()
+
+    assert probe.playwright_error == "ModuleNotFoundError: No module named 'playwright'"
+
+
+def test_probe_falls_back_to_stdout_when_stderr_is_blank(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _run_stub(
+            stderr="   \n", stdout="playwright: unknown browser 'firefox'\n", rc=1
+        ),
+    )
+
+    probe = probe_browser()
+
+    assert probe.playwright_error == "playwright: unknown browser 'firefox'"
+
+
 def test_probe_reports_an_unparseable_dry_run(monkeypatch):
     """Playwright answered but named no install location for the engine."""
     monkeypatch.setattr(subprocess, "run", _run_stub(stdout="nothing useful here\n"))
@@ -99,29 +131,7 @@ def test_probe_reports_an_unparseable_dry_run(monkeypatch):
     assert probe.playwright_error is not None
 
 
-def test_firefox_installed_true_when_location_exists(monkeypatch, tmp_path):
-    browser_dir = tmp_path / "firefox-1511"
-    browser_dir.mkdir()
-    monkeypatch.setattr(
-        subprocess, "run", _run_stub(stdout=_dry_run_stdout(browser_dir))
-    )
-
-    assert browser_installed() is True
-
-
-def test_firefox_installed_false_when_location_missing(monkeypatch, tmp_path):
-    # Dry-run resolves a path, but nothing is downloaded there yet.
-    browser_dir = tmp_path / "firefox-1511"
-    monkeypatch.setattr(
-        subprocess, "run", _run_stub(stdout=_dry_run_stdout(browser_dir))
-    )
-
-    assert browser_installed() is False
-
-
-def test_firefox_installed_picks_firefox_when_other_entry_precedes(
-    monkeypatch, tmp_path
-):
+def test_probe_picks_firefox_when_another_entry_precedes(monkeypatch, tmp_path):
     # A transitive entry (ffmpeg) listed before firefox must not be mistaken
     # for the firefox build path.
     ffmpeg_dir = tmp_path / "ffmpeg-1011"  # deliberately not created
@@ -135,28 +145,7 @@ def test_firefox_installed_picks_firefox_when_other_entry_precedes(
     )
     monkeypatch.setattr(subprocess, "run", _run_stub(stdout=stdout))
 
-    assert browser_installed() is True
-
-
-def test_firefox_installed_false_when_dry_run_nonzero(monkeypatch):
-    monkeypatch.setattr(subprocess, "run", _run_stub(rc=1))
-
-    assert browser_installed() is False
-
-
-def test_firefox_installed_false_when_no_location_line(monkeypatch):
-    monkeypatch.setattr(subprocess, "run", _run_stub(stdout="no useful output"))
-
-    assert browser_installed() is False
-
-
-def test_firefox_installed_false_when_playwright_absent(monkeypatch):
-    def _raise(args, **kw):
-        raise FileNotFoundError("python missing")
-
-    monkeypatch.setattr(subprocess, "run", _raise)
-
-    assert browser_installed() is False
+    assert probe_browser().installed is True
 
 
 def test_install_firefox_runs_install_command(monkeypatch):
@@ -203,7 +192,7 @@ def test_install_browser_passes_engine_through(monkeypatch):
     assert captured["args"][-1] == "chromium"
 
 
-def test_browser_installed_matches_engine_specific_dir(monkeypatch, tmp_path):
+def test_probe_matches_the_engine_specific_dir(monkeypatch, tmp_path):
     # chromium build present; the chromium_headless_shell sibling must not be
     # mistaken for it (both names start with "chromium").
     shell_dir = tmp_path / "chromium_headless_shell-1234"  # deliberately uncreated
@@ -217,4 +206,4 @@ def test_browser_installed_matches_engine_specific_dir(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(subprocess, "run", _run_stub(stdout=stdout))
 
-    assert browser_installed("chromium") is True
+    assert probe_browser("chromium").installed is True

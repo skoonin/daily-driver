@@ -126,7 +126,7 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
             status="WARNING",
             detail=(
                 f"cannot tell whether the {display} browser is installed for "
-                f"{sys.executable}: {probe.playwright_error}. "
+                f"{sys.executable}: {probe.playwright_error}; "
                 f"source(s) {sources} will fail at launch"
             ),
             fix_hint=(
