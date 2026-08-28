@@ -324,8 +324,6 @@ Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress r
 
 `--min-fit N` adds a second selection channel for the untriaged bulk of the file, which no status filter reaches: rows with `found` or blank Status scoring below N are archived too. It never touches a row you have acted on, whatever its score, and never touches an unscored row — absence of a score is not a low score. Both channels are gated by `--older-than`, so a low-fit row confirmed live recently stays. The dry-run table gains a Fit column when this flag is used.
 
-**Schema note:** `Date Verified` replaced the pre-1.0 `Date Last Seen` column, and a `Date Closed` column (written by board-diff closure and `jobs verify`) was added. There is no automatic migration — an old-schema file should be fixed by hand (rename the `Date Last Seen` header cell to `Date Verified`, append an empty `Date Closed` column) or the workspace restarted fresh.
-
 ## Scheduler (macOS)
 
 `scheduler {install,uninstall,status}` manages launchd plists.
