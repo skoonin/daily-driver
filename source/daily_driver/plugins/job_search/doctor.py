@@ -19,8 +19,10 @@ def _check_jobs_csv_custom_columns(workspace: Workspace) -> CheckResult | None:
     """Report jobs.csv columns outside the canonical header.
 
     Headers are never migrated: an unrecognized column is carried through every
-    rewrite verbatim (``runner``'s ``extra_columns`` passthrough), which is what
-    keeps a deliberately hand-added column alive. The same mechanism silently
+    rewrite verbatim, which is what keeps a deliberately hand-added column
+    alive. Two different mechanisms do it -- ``jobs run`` hands the sink the raw
+    on-disk header, extras included, while ``run_backfill`` tracks them
+    separately as ``extra_columns``. The same carry-through silently
     preserves one left behind by a rename, and nothing here can tell the two
     apart — so this reports OK, not WARNING: a column you meant to keep must
     not raise a row you can never clear.
