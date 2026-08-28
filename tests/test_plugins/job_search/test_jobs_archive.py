@@ -342,6 +342,25 @@ def test_is_stale_fit_channel_prunes_an_unseen_low_fit_row() -> None:
     )
 
 
+def test_is_stale_evaluates_the_fit_channel_after_the_status_channel_misses() -> None:
+    """`--status found` makes the channels overlap. The status channel checks
+    Date Found (recent here, so it misses) and must NOT short-circuit — the fit
+    channel checks Date Verified (old here) and is what selects this row.
+    Collapsing the two into if/elif would silently lose this case."""
+    row = {
+        "Status": "found",
+        "Company": "X",
+        "Role": "SRE",
+        "Fit": "2",
+        "Date Found": "2026-04-20",
+        "Date Verified": "2026-04-01",
+        "Link": "x",
+    }
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=frozenset({"found"}), min_fit=5
+    )
+
+
 def test_skipped_is_a_default_prune_target() -> None:
     """User triage, not a scraper verdict: nothing in the pipeline writes it."""
     assert "skipped" in jobs_archive.DEFAULT_PRUNE_STATUSES

@@ -4,9 +4,11 @@ Pruned rows move to ``jobs.archive.csv`` (same schema as ``jobs.csv``). The
 scraper unions URLs and dedup-keys from BOTH files at run start so a triaged
 listing is never re-discovered.
 
-`prune` selects rows where ``Date Verified`` is older than the cutoff AND
-``Status`` is in the allowed status set, archives them, then atomically
-rewrites ``jobs.csv`` without them via temp-file + ``os.replace``. The read,
+`prune` selects rows through two independent channels — ``Status`` in the
+allowed set, aged on ``Date Found``, or (with ``min_fit``) an untriaged
+low-scoring row aged on ``Date Verified``; see ``_is_stale`` for why they
+differ. It archives the matches, then atomically rewrites ``jobs.csv``
+without them via temp-file + ``os.replace``. The read,
 classification, archive, and rewrite all run under ``core.locking.file_lock``
 so a concurrent scrape cannot append rows between the read and the rewrite
 (which would silently delete them). With ``dry_run=True`` no files change.
@@ -101,10 +103,13 @@ def _is_stale(
     row: dict[str, str],
     *,
     cutoff: date,
-    statuses: tuple[str, ...] | frozenset[str],
+    statuses: frozenset[str],
     min_fit: int | None = None,
 ) -> bool:
     """Row qualifies for prune when it is old enough AND matches a channel.
+
+    ``statuses`` must already be normalized -- ``prune`` does it once for the
+    whole call rather than rebuilding the set for every row.
 
     The two channels are independent and age on different columns, because they
     answer different questions.
@@ -121,9 +126,8 @@ def _is_stale(
     liveness is the point and it ages on ``Date Verified``, falling back to
     ``Date Found`` for a row never confirmed since discovery.
     """
-    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
-    status = normalize_status(row.get("Status") or "")
-    if status in {normalize_status(s) for s in statuses}:
+    # Normalize this side too, so a `ruled_out` cell matches a `ruled-out` target.
+    if normalize_status(row.get("Status") or "") in statuses:
         found = _parse_iso(row.get("Date Found", ""))
         if found is not None and found < cutoff:
             return True
@@ -171,10 +175,11 @@ def prune(
         if not header:
             return [], 0
 
+        targets = frozenset(normalize_status(s) for s in statuses)
         keep: list[dict[str, str]] = []
         candidates: list[dict[str, str]] = []
         for row in rows:
-            if _is_stale(row, cutoff=cutoff, statuses=statuses, min_fit=min_fit):
+            if _is_stale(row, cutoff=cutoff, statuses=targets, min_fit=min_fit):
                 candidates.append(row)
             else:
                 keep.append(row)

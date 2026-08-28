@@ -1254,6 +1254,46 @@ def test_prune_archives_a_triaged_row_a_scrape_re_sighted_today(
     assert "StillPostedCo" in capsys.readouterr().out
 
 
+def test_prune_default_older_than_is_fourteen_days(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Every other prune test passes --older-than explicitly, so the default
+    was never exercised end to end. The cutoff is strict: a row found exactly
+    14 days ago is kept."""
+    import datetime as dt
+
+    from daily_driver.cli.cli import app
+
+    today = dt.date.today()
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "WellPastCutoffCo",
+                "Role": "SRE",
+                "Date Found": (today - dt.timedelta(days=15)).isoformat(),
+                "Link": "https://x/1",
+            },
+            {
+                "Status": "rejected",
+                "Company": "OnTheBoundaryCo",
+                "Role": "SRE",
+                "Date Found": (today - dt.timedelta(days=14)).isoformat(),
+                "Link": "https://x/2",
+            },
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "prune", "--dry-run"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WellPastCutoffCo" in out
+    assert "OnTheBoundaryCo" not in out
+
+
 def test_prune_min_fit_keeps_the_status_channel(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
