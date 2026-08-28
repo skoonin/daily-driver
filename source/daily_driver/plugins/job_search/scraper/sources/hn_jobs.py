@@ -56,9 +56,9 @@ def _parse_title(title: str) -> tuple[str, str, str]:
 
     Title patterns observed:
       "Mux (YC W16) Is Hiring"                                       → Unknown
-      "GovernGPT (YC W24) Is Hiring Engineers in Montreal"           → Unknown (no comma)
+      "Company A (YC W24) Is Hiring Engineers in Montreal"           → Unknown (no comma)
       "Coverage Cat (YC S22) Seeks Fractional Engineer ..."          → Unknown
-      "Infisical (YC W23) Is Hiring Engineers (Remote)"              → Remote
+      "Company B (YC W23) Is Hiring Engineers (Remote)"              → Remote
       "Acme (YC W22) Is Hiring SRE in San Francisco, CA"             → "San Francisco, CA"
     """
     cleaned = _YC_BATCH_RE.sub(" ", title).strip()

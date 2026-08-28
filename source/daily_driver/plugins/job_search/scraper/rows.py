@@ -61,7 +61,7 @@ def location_matches(job: dict[str, Any], plugin: JobSearchPlugin) -> bool:
         city list is empty (whole-country acceptance)
       - job location names a listed city of a mapped country. The city match
         stands alone — real ATS location strings usually name the city
-        WITHOUT the country ("Movable Ink - Toronto", "New York, New York"),
+        WITHOUT the country ("Company A - Toronto", "New York, New York"),
         so requiring both would drop nearly everything. Conversely, for a
         city-narrowed country the bare country name does NOT pass: naming
         cities means "only these cities (or remote)".
@@ -158,7 +158,7 @@ def _dedup_norm_company(company: str) -> str:
     """Normalize a company name to a comparison-only identity token.
 
     Board sources that derive a company from their board slug (Ashby, Lever)
-    produce "menlosecurity" where an aggregator carries "Menlo Security Inc.".
+    produce "foosystems" where an aggregator carries "Foo Systems Inc.".
     Dropping punctuation, then noise words, then ALL whitespace reduces both to
     the same token, so the board record is recognized as the same job and wins
     the source upgrade. The stored Company cell keeps its raw value -- this

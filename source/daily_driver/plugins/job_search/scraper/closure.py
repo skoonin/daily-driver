@@ -97,7 +97,7 @@ def decide_closures(
     """Diff stored rows against this run's board enumerations.
 
     ``enumerations`` is keyed by the exact Source-cell display string the
-    adapter writes (e.g. "Greenhouse (stripe)"), so row matching needs no
+    adapter writes (e.g. "Greenhouse (company-a)"), so row matching needs no
     model lift and only board-diff-capable adapters ever appear.
 
     Returns (closures, updated_misses, stats): ``closures`` maps a row's URL to

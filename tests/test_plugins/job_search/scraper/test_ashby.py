@@ -44,10 +44,10 @@ def test_ashby_boards_drive_fetched_api_urls(monkeypatch: Any) -> None:
     monkeypatch.setattr(ashby_module, "_api_get", fake_api_get)
     monkeypatch.setattr(ashby_module, "_http_session", lambda cfg: MagicMock())
 
-    ashby_module.scrape_ashby(_config(["ramp", "linear"]))
+    ashby_module.scrape_ashby(_config(["company-d", "company-e"]))
 
-    assert "https://api.ashbyhq.com/posting-api/job-board/ramp" in fetched
-    assert "https://api.ashbyhq.com/posting-api/job-board/linear" in fetched
+    assert "https://api.ashbyhq.com/posting-api/job-board/company-d" in fetched
+    assert "https://api.ashbyhq.com/posting-api/job-board/company-e" in fetched
 
 
 def test_ashby_maps_fields_and_applies_skips(monkeypatch: Any) -> None:
@@ -248,15 +248,15 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
             "roles": ["Engineer"],
             "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
             "sources": {
-                "ashby": {"ashby_boards": ["ramp"], "exclude_boards": ["noisy-co"]}
+                "ashby": {"ashby_boards": ["company-d"], "exclude_boards": ["noisy-co"]}
             },
         }
     )
     ctx = replace(
         ScrapeContext(plugin=plugin),
-        discovered_boards={"ashby": ("linear", "noisy-co")},
+        discovered_boards={"ashby": ("company-e", "noisy-co")},
     )
 
     ashby_module.scrape_ashby(ctx)
 
-    assert [u.rsplit("/", 1)[1] for u in fetched] == ["ramp", "linear"]
+    assert [u.rsplit("/", 1)[1] for u in fetched] == ["company-d", "company-e"]

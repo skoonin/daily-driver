@@ -217,7 +217,7 @@ def test_greenhouse_hosted_page_is_skipped_without_fetch(
     HTTP seam. Applies to the legacy boards.greenhouse.io host too."""
     jobs = [
         _job("https://job-boards.greenhouse.io/trueanomalyinc/jobs/5108466007"),
-        _job("https://boards.greenhouse.io/anthropic/jobs/123"),
+        _job("https://boards.greenhouse.io/company-a/jobs/123"),
     ]
     with patch(
         "daily_driver.plugins.job_search.scraper.enrichment.detail._api_get"

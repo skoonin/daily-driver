@@ -98,7 +98,7 @@ def test_gather_git_text_mode(
     commit = GitCommit(
         sha="abc1234",
         timestamp=datetime(2026, 4, 20, 14, 30),
-        author="Shawn",
+        author="Alice",
         subject="Add widget",
     )
     monkeypatch.setattr(git, "gather_commits", lambda repo, since, until: [commit])

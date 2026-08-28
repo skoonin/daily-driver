@@ -32,7 +32,7 @@ Verify the pulled model actually generates before wiring it into daily-driver. T
 **1. CLI smoke test** — confirms the model loads and produces output:
 
 ```
-ollama run qwen2.5:14b "In one sentence, what does Stripe build?"
+ollama run qwen2.5:14b "In one sentence, what does Company A build?"
 ```
 
 Expect a single-sentence answer. First invocation is slow (model loads into RAM); subsequent runs are fast.
@@ -43,7 +43,7 @@ Expect a single-sentence answer. First invocation is slow (model loads into RAM)
 curl -s http://localhost:11434/api/generate \
   -d '{
     "model": "qwen2.5:14b",
-    "prompt": "Answer in one line, no preamble: What does Stripe build? (max 12 words)",
+    "prompt": "Answer in one line, no preamble: What does Company A build? (max 12 words)",
     "stream": false
   }' | jq -r .response
 ```
@@ -56,7 +56,7 @@ You should see a short line back. An empty `response` or an `error` field means 
 curl -s http://localhost:11434/api/generate \
   -d '{
     "model": "qwen2.5:14b",
-    "prompt": "Return only valid JSON: {\"fit\": <int 1-10>, \"notes\": \"<one sentence max 15 words>\"}\nJob: Staff SRE at Cloudflare, Remote Canada, $180k-$220k USD.",
+    "prompt": "Return only valid JSON: {\"fit\": <int 1-10>, \"notes\": \"<one sentence max 15 words>\"}\nJob: Staff SRE at Company A, Remote Canada, $180k-$220k USD.",
     "stream": false,
     "format": "json"
   }' | jq -r .response | jq .

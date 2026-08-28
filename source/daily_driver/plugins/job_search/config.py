@@ -26,7 +26,7 @@ _LEVER_BOARDS_DESC = (
 )
 _EXCLUDE_BOARDS_DESC = (
     "Slugs NEVER scraped, even if pinned or discovered. Matched exactly\n"
-    "incl. case: to silence Notion, write Notion not notion."
+    "incl. case: to silence CompanyF, write CompanyF not companyf."
 )
 _WORKABLE_ACCOUNTS_DESC = (
     'Account slugs (the "<slug>" in apply.workable.com/<slug>). Each\n'
@@ -34,8 +34,8 @@ _WORKABLE_ACCOUNTS_DESC = (
 )
 _WORKDAY_BOARDS_DESC = (
     "Each site named by the three URL parts. For\n"
-    "crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers that is\n"
-    "tenant=crowdstrike, host=wd5, site=crowdstrikecareers. Optional `company`\n"
+    "companyh.wd5.myworkdayjobs.com/companyhcareers that is\n"
+    "tenant=companyh, host=wd5, site=companyhcareers. Optional `company`\n"
     "overrides the display name (default: title-cased tenant)."
 )
 _REMOTEOK_TAGS_DESC = (
@@ -163,8 +163,8 @@ class WorkableToggle(SourceToggle):
 class WorkdayBoard(BaseModel):
     """One Workday careers site, named by the three parts of its URL.
 
-    For ``crowdstrike.wd5.myworkdayjobs.com/crowdstrikecareers`` that is
-    ``tenant=crowdstrike``, ``host=wd5``, ``site=crowdstrikecareers``. The
+    For ``companyh.wd5.myworkdayjobs.com/companyhcareers`` that is
+    ``tenant=companyh``, ``host=wd5``, ``site=companyhcareers``. The
     Workday payload has no company field (the tenant is the company), so
     ``company`` is an optional display-name override; it defaults to the
     title-cased tenant.
@@ -174,9 +174,7 @@ class WorkdayBoard(BaseModel):
 
     tenant: str = Field(description="The <tenant> in <tenant>.<host>.myworkdayjobs.com")
     host: str = Field(description="The <host> data-center segment, e.g. wd5")
-    site: str = Field(
-        description="The careers-site path segment, e.g. crowdstrikecareers"
-    )
+    site: str = Field(description="The careers-site path segment, e.g. companyhcareers")
     company: str | None = Field(
         default=None,
         description="Display name for the company; defaults to the title-cased tenant.",
@@ -290,8 +288,8 @@ class ScraperConfig(BaseModel):
             "duplicates, replacing the shipped list (legal suffixes such as\n"
             "inc/ltd/gmbh plus generic tails such as labs/technologies). Board\n"
             "sources name a company after their board slug, so this is what\n"
-            "lets a `menlosecurity` board row match an aggregator's `Menlo\n"
-            "Security Inc.`. Never changes the stored Company value."
+            "lets a `foosystems` board row match an aggregator's `Foo Systems\n"
+            "Inc.`. Never changes the stored Company value."
         ),
         json_schema_extra={"inline_comment": '["inc", "ltd", "labs"]'},
     )
@@ -660,10 +658,10 @@ class JobSearchPlugin(BaseModel):
                     "enabled": False,
                     "workday_boards": [
                         {
-                            "tenant": "crowdstrike",
+                            "tenant": "companyh",
                             "host": "wd5",
-                            "site": "crowdstrikecareers",
-                            "company": "CrowdStrike",
+                            "site": "companyhcareers",
+                            "company": "Company H",
                         }
                     ],
                 },

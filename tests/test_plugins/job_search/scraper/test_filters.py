@@ -67,11 +67,11 @@ class TestLocationMatches:
 
     def test_listed_city_matches_without_country_name(self) -> None:
         # Real ATS strings usually name the city, never the country
-        # ("Movable Ink - Toronto"); a listed city must stand alone.
+        # ("Company A - Toronto"); a listed city must stand alone.
         plugin = _plugin(
             locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
         )
-        assert location_matches({"location": "Movable Ink - Vancouver"}, plugin) is True
+        assert location_matches({"location": "Company A - Vancouver"}, plugin) is True
         assert (
             location_matches({"location": "Vancouver, British Columbia"}, plugin)
             is True
@@ -81,7 +81,7 @@ class TestLocationMatches:
         plugin = _plugin(
             locations={"remote": False, "countries": {"CA": ["Vancouver"]}}
         )
-        assert location_matches({"location": "Movable Ink - Toronto"}, plugin) is False
+        assert location_matches({"location": "Company A - Toronto"}, plugin) is False
 
     def test_country_name_alone_rejected_when_cities_listed(self) -> None:
         # Naming cities means "only these cities (or remote)": a bare
@@ -302,9 +302,7 @@ class TestDedupKey:
         board row and an aggregator's row for the same job must key alike or
         the board-preference upgrade can never fire.
         """
-        assert dedup_key("Menlosecurity", "SRE") == dedup_key(
-            "Menlo Security Inc.", "SRE"
-        )
+        assert dedup_key("Foosystems", "SRE") == dedup_key("Foo Systems Inc.", "SRE")
 
     def test_noise_words_and_punctuation_ignored(self) -> None:
         assert dedup_key("Acme Technologies, LLC", "SRE") == dedup_key("Acme", "SRE")

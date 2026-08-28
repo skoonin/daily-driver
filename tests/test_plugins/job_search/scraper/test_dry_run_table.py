@@ -42,7 +42,7 @@ def test_dry_run_table_renders_columns_and_count():
 
     jobs = [
         EnrichedJob(
-            company="Cayuse",
+            company="Company A",
             role="Staff SRE",
             location="Remote",
             url="https://remoteok.com/x",
@@ -57,7 +57,7 @@ def test_dry_run_table_renders_columns_and_count():
 
     out = buf.getvalue()
     assert "RemoteOK" in out
-    assert "Cayuse" in out
+    assert "Company A" in out
     assert "Staff SRE" in out
     assert "1 new jobs" in out
 

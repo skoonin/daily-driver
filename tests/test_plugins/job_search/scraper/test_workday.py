@@ -39,7 +39,7 @@ def _response(total: int, postings: list[dict[str, Any]]) -> MagicMock:
     return resp
 
 
-_BOARD = {"tenant": "crowdstrike", "host": "wd5", "site": "crowdstrikecareers"}
+_BOARD = {"tenant": "companyh", "host": "wd5", "site": "companyhcareers"}
 
 
 def test_workday_paginates_until_total(monkeypatch: Any) -> None:
@@ -59,7 +59,9 @@ def test_workday_paginates_until_total(monkeypatch: Any) -> None:
 
     results = workday_module.scrape_workday(_config([_BOARD]))
 
-    api = "https://crowdstrike.wd5.myworkdayjobs.com/wday/cxs/crowdstrike/crowdstrikecareers/jobs"
+    api = (
+        "https://companyh.wd5.myworkdayjobs.com/wday/cxs/companyh/companyhcareers/jobs"
+    )
     assert [c for c in calls] == [(api, 0), (api, 20)]
     assert len(results) == 25
 
@@ -77,19 +79,19 @@ def test_workday_maps_fields_and_builds_url(monkeypatch: Any) -> None:
     monkeypatch.setattr(workday_module, "_http_session", lambda cfg: MagicMock())
 
     results = workday_module.scrape_workday(
-        _config([{**_BOARD, "company": "CrowdStrike"}])
+        _config([{**_BOARD, "company": "Company H"}])
     )
 
     assert len(results) == 1
     job = results[0]
-    assert job["company"] == "CrowdStrike"  # explicit override wins
+    assert job["company"] == "Company H"  # explicit override wins
     assert job["role"] == "Senior Cloud Engineer"
     assert job["location"] == "USA - Remote"
-    assert job["source"] == "Workday (crowdstrike)"
+    assert job["source"] == "Workday (companyh)"
     assert job["description_text"] == ""
     assert (
         job["url"]
-        == "https://crowdstrike.wd5.myworkdayjobs.com/en-US/crowdstrikecareers/job/USA---Remote/Sr_R1"
+        == "https://companyh.wd5.myworkdayjobs.com/en-US/companyhcareers/job/USA---Remote/Sr_R1"
     )
 
 
@@ -153,7 +155,7 @@ def test_workday_partial_fetch_failure_raises_degraded_keeping_data(
 
     # The fetched page rides along on the exception, not discarded.
     assert len(excinfo.value.jobs) == 20
-    assert "crowdstrike" in excinfo.value.reason
+    assert "companyh" in excinfo.value.reason
     assert any("PARTIAL" in r.message for r in caplog.records)
 
 

@@ -229,7 +229,7 @@ class TestCompFromText:
     def test_markdown_escaped_range_with_decimals(self) -> None:
         """JobSpy/markdownify backslash-escapes LinkedIn descriptions; the
         escaped separator and decimals broke the range down to its low figure
-        (observed live: Activision posting, 2026-07-24)."""
+        (observed live, 2026-07-24)."""
         text = (
             "The standard base pay range for this role is "
             "$100,220\\.00 \\- $197,758\\.00 CAD. These values reflect the "
@@ -275,7 +275,7 @@ class TestCompFromText:
 
 
 class TestLinkedInSalaryCard:
-    # Structure observed live on a guest job page (Mojio posting, 2026-07-24):
+    # Structure observed live on a guest job page (2026-07-24):
     # an outer range div holding a heading and the inner salary value node.
     _CARD = (
         '<div class="compensation__salary-range"><h3>Base pay range</h3>'
