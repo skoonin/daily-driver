@@ -47,9 +47,19 @@ from daily_driver.plugins.job_search.scraper.models import parse_fit_cell
 
 log = get_logger(__name__)
 
-# Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
-# row reaches and never leaves, so prune archives them by default.
-DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
+# Statuses a job row reaches and never leaves, so prune archives them by
+# default: core.tracker.TERMINAL_STATUSES' job-terminal subset, plus `skipped`.
+# `skipped` is not terminal for a tracker entry but is settled for a jobs.csv
+# row — nothing in the pipeline ever writes it (`skip_reason` is only read back
+# on rows that already carry it), so it is purely the user's own triage, and
+# every other pass already treats it as decided (ENRICH_SKIP_STATUSES, and its
+# absence from ENRICH_ELIGIBLE_STATUSES).
+DEFAULT_PRUNE_STATUSES: tuple[str, ...] = (
+    "dropped",
+    "rejected",
+    "closed",
+    "skipped",
+)
 
 # The only statuses --min-fit may archive. A blank Status counts: it is what a
 # hand-edited or pre-status row carries. Deliberately NARROWER than the active
@@ -96,23 +106,34 @@ def _is_stale(
 ) -> bool:
     """Row qualifies for prune when it is old enough AND matches a channel.
 
-    Age is the gate both channels share: ``Date Verified``, falling back to
-    ``Date Found`` when it is empty (a row never confirmed since discovery).
-    Past that gate a row qualifies either by carrying one of the target
-    statuses, or -- when ``min_fit`` is set -- by being an untriaged row scored
-    below it. The two channels are independent: almost every row in a real file
-    is untriaged, so a status filter alone never reaches the bulk of it.
+    The two channels are independent and age on different columns, because they
+    answer different questions.
+
+    The status channel asks how long a decided row has sat in the file, so it
+    ages on ``Date Found``. It must NOT read ``Date Verified``: every scrape
+    re-stamps that to today for any row still posted
+    (``sink._JobSink._apply_rescan_updates``), so ageing on it kept a row the
+    user had already rejected for exactly as long as the posting stayed live. A
+    blank ``Date Found`` cannot be aged and keeps the row, rather than falling
+    back to the re-stamped column and restoring that behaviour.
+
+    The fit channel asks whether an untriaged low-scoring row is also dead, so
+    liveness is the point and it ages on ``Date Verified``, falling back to
+    ``Date Found`` for a row never confirmed since discovery.
     """
-    seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
-        row.get("Date Found", "")
-    )
-    if seen is None or seen >= cutoff:
-        return False
     # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
     status = normalize_status(row.get("Status") or "")
     if status in {normalize_status(s) for s in statuses}:
-        return True
-    return min_fit is not None and _low_fit_untriaged(row, min_fit)
+        found = _parse_iso(row.get("Date Found", ""))
+        if found is not None and found < cutoff:
+            return True
+    if min_fit is not None and _low_fit_untriaged(row, min_fit):
+        seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
+            row.get("Date Found", "")
+        )
+        if seen is not None and seen < cutoff:
+            return True
+    return False
 
 
 def prune(

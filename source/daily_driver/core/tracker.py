@@ -46,10 +46,12 @@ JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
 
 
 # Terminal lifecycle states (entry won't progress): union across categories.
-# status.py uses this to exclude entries from "stalled"; the job-prune default
-# (jobs_archive.DEFAULT_PRUNE_STATUSES) is the job-terminal subset. A workspace
-# can extend (never shrink) this set via `tracker.terminal_statuses`; resolve the
-# effective set with `terminal_statuses_for`.
+# status.py uses this to exclude entries from "stalled". Scope is tracker
+# entries only — the job-prune default (jobs_archive.DEFAULT_PRUNE_STATUSES)
+# governs jobs.csv rows independently and is not derived from this set; it also
+# carries `skipped`, which is settled for a scraped row but not for a task. A
+# workspace can extend (never shrink) this set via `tracker.terminal_statuses`;
+# resolve the effective set with `terminal_statuses_for`.
 TERMINAL_STATUSES: frozenset[str] = frozenset(
     {"done", "ruled-out", "dropped", "rejected", "closed"}
 )

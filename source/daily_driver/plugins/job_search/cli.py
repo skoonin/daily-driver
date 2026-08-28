@@ -298,9 +298,10 @@ def add_parser(
     p_prune.add_argument(
         "--older-than",
         metavar="SPEC",
-        default="1d",
+        default="14d",
         help=(
-            "Prune rows last verified before SPEC "
+            "Prune rows older than SPEC (default: 14d). Triaged rows age from "
+            "Date Found, --min-fit rows from Date Verified "
             "(today, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
         ),
     )
@@ -311,8 +312,8 @@ def add_parser(
         default=None,
         metavar="STATUS",
         help=(
-            "Status to prune (repeatable). Default: dropped, rejected, closed. "
-            "Use --status applied --status interviewing to prune stale "
+            "Status to prune (repeatable). Default: dropped, rejected, closed, "
+            "skipped. Use --status applied --status interviewing to prune stale "
             "in-progress rows."
         ),
     )
