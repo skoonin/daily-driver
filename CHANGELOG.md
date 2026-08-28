@@ -12,7 +12,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
-- **`doctor` now names any `jobs.csv` column daily-driver does not write.** Headers are never migrated, so an unrecognized column is carried through every rewrite verbatim — that is what keeps a column you added by hand alive, and it equally preserves one left behind by an old rename. The check names which columns those are and reports OK rather than a warning, because nothing can tell a column you meant to keep from one an old rename stranded — so a stale leftover stops being invisible without nagging you about a deliberate addition. It repairs nothing; removing a column stays a by-hand edit. (#PR3)
+- **`doctor` now names any `jobs.csv` column daily-driver does not write.** Headers are never migrated, so an unrecognized column is carried through every rewrite verbatim — that is what keeps a column you added by hand alive, and it equally preserves one left behind by an old rename. The check names which columns those are and reports OK rather than a warning, because nothing can tell a column you meant to keep from one an old rename stranded — so a stale leftover stops being invisible without nagging you about a deliberate addition. It repairs nothing; removing a column stays a by-hand edit. (#249)
 
 ### Changed
 
@@ -22,7 +22,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Removed
 
-- **Dropped the last references to the pre-0.4 `Date Last Seen` column.** `Date Verified` replaced it before 0.4 and no code has read, written, or renamed the old cell since, but a source comment still claimed the column was "renamed in place on first write" — contradicting the comment four lines below it, and the actual behaviour. That comment, its companion, and the migration paragraph under `jobs prune` in the command docs are gone. Nothing changes at runtime; there was no migration code to delete. (#PR3)
+- **Dropped the last references to the pre-0.4 `Date Last Seen` column.** `Date Verified` replaced it before 0.4 and no code has read, written, or renamed the old cell since, but a source comment still claimed the column was "renamed in place on first write" — contradicting the comment four lines below it, and the actual behaviour. That comment, its companion, and the migration paragraph under `jobs prune` in the command docs are gone. Nothing changes at runtime; there was no migration code to delete. (#249)
 
 - **Dropped the pre-0.2.0 legacy jobs-lock cleanup.** The lock sentinel moved out of the output dir into the workspace state dir in 0.2.0, and every `jobs run` / `backfill` / `prune` / `verify` since has opportunistically unlinked any `.jobs.lock` left beside `jobs.csv`. Four releases on, the migration is done, so the helper and its four call sites are gone. (#246)
 
