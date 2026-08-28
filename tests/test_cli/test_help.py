@@ -208,7 +208,15 @@ def test_help_commands_includes_jobs_search_summary(
     assert "job" in summary
     assert "search" in summary or "workflow" in summary
     # Every jobs subcommand must be named so the reference stays complete.
-    for action in ("run", "backfill", "promote", "status", "prune"):
+    for action in (
+        "run",
+        "discover-boards",
+        "backfill",
+        "promote",
+        "status",
+        "prune",
+        "verify",
+    ):
         assert action in summary
 
 

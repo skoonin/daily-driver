@@ -26,7 +26,6 @@ from daily_driver.plugins.job_search.jobs_lock import (
     LOCK_GIVEUP_MESSAGE,
     LOCK_WAIT_TIMEOUT_SECONDS,
     JobsLockTimeout,
-    clear_stale_adjacent_lock,
     jobs_lock_path,
     workspace_busy_notice,
 )
@@ -135,7 +134,6 @@ def prune(
     classification, archive, and rewrite so a concurrent scrape can't append
     rows between the read and the rewrite (which would silently delete them).
     """
-    clear_stale_adjacent_lock(jobs_csv)
     lock_stack = ExitStack()
     try:
         lock_stack.enter_context(
