@@ -110,14 +110,23 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
     engine = _configured_browser(workspace)
     if pw.browser_installed(engine):
         return None
+    # Playwright pins a browser build revision per release, so two interpreters
+    # on different playwright versions want different builds from the same
+    # cache. Name the interpreter, and qualify the manual command with it: a
+    # bare `playwright` on PATH can be a different install than the one probed,
+    # and installing there leaves this warning standing.
     return CheckResult(
         name="Playwright browser",
         status="WARNING",
         detail=(
             f"{_ENGINE_DISPLAY.get(engine, engine.capitalize())} browser not "
-            f"installed; source(s) {', '.join(enabled)} will fail at launch"
+            f"installed for {sys.executable}; source(s) {', '.join(enabled)} "
+            "will fail at launch"
         ),
-        fix_hint=f"Run: daily-driver doctor --fix (or: playwright install {engine})",
+        fix_hint=(
+            "Run: daily-driver doctor --fix "
+            f"(or: {sys.executable} -m playwright install {engine})"
+        ),
         plugin_fixer=lambda: pw.install_browser(engine),
     )
 

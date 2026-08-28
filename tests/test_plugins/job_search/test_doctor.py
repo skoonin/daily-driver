@@ -128,6 +128,24 @@ def test_playwright_check_uses_configured_engine(monkeypatch):
     assert "playwright install chromium" in row.fix_hint
 
 
+def test_playwright_warning_names_the_interpreter_it_probed(monkeypatch):
+    """Two interpreters on different playwright versions pin different browser
+    builds, so a bare `playwright install` can install into the wrong one and
+    leave this warning standing. Both strings must name the probed interpreter."""
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "daily_driver.integrations.playwright.browser_installed", lambda engine: False
+    )
+    ws = _ws_with_sources(apple=True)
+    ws.config.plugins.job_search.scraper = SimpleNamespace(browser="firefox")
+
+    row = doctor._check_playwright_browser(ws)
+
+    assert row is not None
+    assert doctor.sys.executable in row.detail
+    assert f"{doctor.sys.executable} -m playwright install firefox" in row.fix_hint
+
+
 def test_playwright_check_webkit_display_casing(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     monkeypatch.setattr(
