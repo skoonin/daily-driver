@@ -11,6 +11,7 @@ from daily_driver.integrations.playwright import (
     PlaywrightError,
     browser_installed,
     install_browser,
+    probe_browser,
 )
 
 
@@ -31,6 +32,71 @@ def _run_stub(*, stdout: str = "", stderr: str = "", rc: int = 0):
         return proc
 
     return _run
+
+
+def test_probe_reports_a_downloaded_build_with_no_error(monkeypatch, tmp_path):
+    browser_dir = tmp_path / "firefox-1511"
+    browser_dir.mkdir()
+    monkeypatch.setattr(
+        subprocess, "run", _run_stub(stdout=_dry_run_stdout(browser_dir))
+    )
+
+    probe = probe_browser()
+
+    assert probe.installed is True
+    assert probe.playwright_error is None
+
+
+def test_probe_separates_a_missing_build_from_a_broken_playwright(
+    monkeypatch, tmp_path
+):
+    """The remedies differ — download a browser vs repair the install — so a
+    caller must be able to tell the two apart."""
+    browser_dir = tmp_path / "firefox-1511"
+    monkeypatch.setattr(
+        subprocess, "run", _run_stub(stdout=_dry_run_stdout(browser_dir))
+    )
+
+    probe = probe_browser()
+
+    assert probe.installed is False
+    assert probe.playwright_error is None
+
+
+def test_probe_reports_an_unrunnable_playwright(monkeypatch):
+    def _boom(args, **kw):
+        raise FileNotFoundError(args[0])
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+
+    probe = probe_browser()
+
+    assert probe.installed is False
+    assert probe.playwright_error is not None
+    assert browser_installed() is False
+
+
+def test_probe_surfaces_stderr_from_a_failing_dry_run(monkeypatch):
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _run_stub(stderr="ModuleNotFoundError: No module named 'playwright'", rc=1),
+    )
+
+    probe = probe_browser()
+
+    assert probe.installed is False
+    assert "No module named 'playwright'" in (probe.playwright_error or "")
+
+
+def test_probe_reports_an_unparseable_dry_run(monkeypatch):
+    """Playwright answered but named no install location for the engine."""
+    monkeypatch.setattr(subprocess, "run", _run_stub(stdout="nothing useful here\n"))
+
+    probe = probe_browser()
+
+    assert probe.installed is False
+    assert probe.playwright_error is not None
 
 
 def test_firefox_installed_true_when_location_exists(monkeypatch, tmp_path):
