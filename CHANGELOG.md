@@ -18,7 +18,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Removed
 
-- **Dropped the pre-0.2.0 legacy jobs-lock cleanup.** The lock sentinel moved out of the output dir into the workspace state dir in 0.2.0, and every `jobs run` / `backfill` / `prune` / `verify` since has opportunistically unlinked any `.jobs.lock` left beside `jobs.csv`. Four releases on, the migration is done, so the helper and its four call sites are gone. (#PR)
+- **Dropped the pre-0.2.0 legacy jobs-lock cleanup.** The lock sentinel moved out of the output dir into the workspace state dir in 0.2.0, and every `jobs run` / `backfill` / `prune` / `verify` since has opportunistically unlinked any `.jobs.lock` left beside `jobs.csv`. Four releases on, the migration is done, so the helper and its four call sites are gone. (#246)
 
 ### Fixed
 
