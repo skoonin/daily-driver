@@ -115,11 +115,20 @@ def build_status(output_dir: Path, state_dir: Path | None = None) -> dict[str, A
       discovery     - per-platform board-discovery sweep state (boards matched,
                       slugs swept, last sweep timestamp); {} when no sweep has
                       run or ``state_dir`` is not given
+
+    Raises ``ScraperError`` when a workspace that has scraped before has lost
+    its jobs.csv: zero counts would otherwise be indistinguishable from a
+    workspace pointing at the wrong path. A never-scraped workspace has no
+    jobs.csv by definition, so run history is what separates the two.
     """
+    from daily_driver.plugins.job_search.scraper.context import ScraperError
     from daily_driver.plugins.job_search.scraper.discovery import sweep_ages
 
     csv_path = output_dir / "jobs.csv"
     last_run = load_last_run(output_dir)
+    if not csv_path.exists() and last_run is not None:
+        raise ScraperError(f"jobs.csv not found at {csv_path}")
+
     counts = count_jobs_by_state(csv_path)
     awaiting = sum(v for k, v in counts.items() if k in _AWAITING_ACTION_STATES)
     return {

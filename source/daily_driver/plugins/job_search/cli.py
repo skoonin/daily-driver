@@ -1034,7 +1034,9 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             f"{status['unscored_backlog']}"
         )
     else:
-        console.print("[dim]No jobs.csv found.[/dim]")
+        # Covers both an empty jobs.csv and a workspace that has never scraped;
+        # a lost jobs.csv raises out of build_status before this point.
+        console.print("[dim]No jobs recorded yet.[/dim]")
 
     discovery = status.get("discovery") or {}
     if discovery:

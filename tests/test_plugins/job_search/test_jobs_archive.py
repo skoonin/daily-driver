@@ -8,9 +8,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from daily_driver.core.locking import file_lock
 from daily_driver.plugins.job_search import jobs_archive
 from daily_driver.plugins.job_search.jobs_lock import jobs_lock_path
+from daily_driver.plugins.job_search.scraper.context import ScraperError
 
 HEADER = [
     "Status",
@@ -530,8 +533,18 @@ def test_prune_dry_run_leaves_descriptions_untouched(tmp_path: Path) -> None:
     assert load_descriptions(csv_path) == {"old": "stale body"}
 
 
-def test_prune_missing_csv_returns_empty(tmp_path: Path) -> None:
+def test_prune_missing_csv_raises(tmp_path: Path) -> None:
+    """An absent file must not read as a clean empty prune."""
     csv_path = tmp_path / "absent.csv"
+
+    with pytest.raises(ScraperError, match="jobs.csv not found"):
+        jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
+
+
+def test_prune_empty_csv_returns_empty(tmp_path: Path) -> None:
+    """A present-but-headerless file is a real empty result, not an error."""
+    csv_path = tmp_path / "jobs.csv"
+    csv_path.write_text("", encoding="utf-8")
 
     candidates, archived = jobs_archive.prune(csv_path, tmp_path, cutoff=_CUTOFF)
 
