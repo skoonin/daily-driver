@@ -298,9 +298,10 @@ def add_parser(
     p_prune.add_argument(
         "--older-than",
         metavar="SPEC",
-        default="1d",
+        default="14d",
         help=(
-            "Prune rows last verified before SPEC "
+            "Prune rows older than SPEC (default: 14d). Triaged rows age from "
+            "Date Found, --min-fit rows from Date Verified "
             "(today, week, month, quarter, year, Nd, Nw, Nm, Ny, YYYY-MM-DD)"
         ),
     )
@@ -311,8 +312,8 @@ def add_parser(
         default=None,
         metavar="STATUS",
         help=(
-            "Status to prune (repeatable). Default: dropped, rejected, closed. "
-            "Use --status applied --status interviewing to prune stale "
+            "Status to prune (repeatable). Default: dropped, rejected, closed, "
+            "skipped. Use --status applied --status interviewing to prune stale "
             "in-progress rows."
         ),
     )
@@ -697,6 +698,11 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     )
     table.add_column("Company")
     table.add_column("Status")
+    # Both dates, because the two channels age on different ones: a status
+    # match is decided by Date Found, a --min-fit match by Date Verified.
+    # Showing only one made a row selected on an old Date Found display
+    # today's date, hiding the very reason it was listed.
+    table.add_column("Date Found")
     table.add_column("Date Verified")
     table.add_column("Role")
     # Only when pruning by fit: the score is the reason those rows are listed.
@@ -706,7 +712,8 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
         cells = [
             row.get("Company", ""),
             row.get("Status", ""),
-            row.get("Date Verified", "") or row.get("Date Found", ""),
+            row.get("Date Found", ""),
+            row.get("Date Verified", ""),
             row.get("Role", ""),
         ]
         if args.min_fit is not None:

@@ -265,7 +265,8 @@ def test_is_stale_recent_date_keeps_row() -> None:
     )
 
 
-def test_is_stale_falls_back_to_date_found_when_last_seen_empty() -> None:
+def test_is_stale_status_channel_ages_on_date_found() -> None:
+    """Date Found alone decides the status channel; Date Verified is not consulted."""
     row = {
         "Status": "rejected",
         "Company": "X",
@@ -277,6 +278,95 @@ def test_is_stale_falls_back_to_date_found_when_last_seen_empty() -> None:
     assert jobs_archive._is_stale(
         row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
     )
+
+
+def test_is_stale_status_channel_ignores_a_refreshed_date_verified() -> None:
+    """A triaged row still posted is re-stamped to today by every scrape
+    (sink._apply_rescan_updates). Ageing the status channel on Date Verified
+    therefore kept a decided row forever, the longer the more live it was."""
+    row = {
+        "Status": "skipped",
+        "Company": "X",
+        "Role": "SRE",
+        "Date Found": "2026-01-15",
+        "Date Verified": "2026-06-20",
+        "Link": "x",
+    }
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_status_channel_keeps_a_row_with_no_date_found() -> None:
+    """A blank Date Found cannot be aged, and falling back to the re-stamped
+    Date Verified would restore the bug above for hand-authored rows."""
+    row = {
+        "Status": "rejected",
+        "Company": "X",
+        "Role": "SRE",
+        "Date Found": "",
+        "Date Verified": "2026-06-20",
+        "Link": "x",
+    }
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES
+    )
+
+
+def test_is_stale_fit_channel_still_ages_on_date_verified() -> None:
+    """Liveness is the point of the fit channel: an untriaged low-fit row a
+    recent scrape re-sighted is a real opening and stays."""
+    row = {
+        "Status": "found",
+        "Company": "X",
+        "Role": "SRE",
+        "Fit": "2",
+        "Date Found": "2026-01-15",
+        "Date Verified": "2026-06-20",
+        "Link": "x",
+    }
+    assert not jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES, min_fit=5
+    )
+
+
+def test_is_stale_fit_channel_prunes_an_unseen_low_fit_row() -> None:
+    row = {
+        "Status": "found",
+        "Company": "X",
+        "Role": "SRE",
+        "Fit": "2",
+        "Date Found": "2026-01-15",
+        "Date Verified": "2026-04-01",
+        "Link": "x",
+    }
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=jobs_archive.DEFAULT_PRUNE_STATUSES, min_fit=5
+    )
+
+
+def test_is_stale_evaluates_the_fit_channel_after_the_status_channel_misses() -> None:
+    """`--status found` makes the channels overlap. The status channel checks
+    Date Found (recent here, so it misses) and must NOT short-circuit — the fit
+    channel checks Date Verified (old here) and is what selects this row.
+    Collapsing the two into if/elif would silently lose this case."""
+    row = {
+        "Status": "found",
+        "Company": "X",
+        "Role": "SRE",
+        "Fit": "2",
+        "Date Found": "2026-04-20",
+        "Date Verified": "2026-04-01",
+        "Link": "x",
+    }
+    assert jobs_archive._is_stale(
+        row, cutoff=_CUTOFF, statuses=frozenset({"found"}), min_fit=5
+    )
+
+
+def test_skipped_is_a_default_prune_target() -> None:
+    """User triage, not a scraper verdict: nothing in the pipeline writes it."""
+    assert "skipped" in jobs_archive.DEFAULT_PRUNE_STATUSES
 
 
 def test_is_stale_no_usable_date_keeps_row() -> None:
