@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from daily_driver.plugins.job_search import scraper_status
+from daily_driver.plugins.job_search.scraper.context import ScraperError
 
 
 def _write_csv(path: Path, statuses: list[str]) -> None:
@@ -83,6 +86,24 @@ def test_count_jobs_by_state_reads_capitalized_status_column(tmp_path: Path) -> 
         "rejected": 1,
         "unknown": 1,
     }
+
+
+def test_build_status_missing_csv_after_a_run_raises(tmp_path: Path) -> None:
+    """Run history plus no jobs.csv is a lost file, not a workspace with no jobs."""
+    (tmp_path / "jobs-last-run.json").write_text(
+        json.dumps({"started_at": "2026-06-10T00:00:00+00:00"}), encoding="utf-8"
+    )
+
+    with pytest.raises(ScraperError, match="jobs.csv not found"):
+        scraper_status.build_status(tmp_path)
+
+
+def test_build_status_missing_csv_without_a_run_is_quiet(tmp_path: Path) -> None:
+    """A never-scraped workspace has no jobs.csv by definition."""
+    status = scraper_status.build_status(tmp_path)
+
+    assert status["job_counts"] == {}
+    assert status["last_run"] is None
 
 
 def test_build_status_counts_awaiting_action(tmp_path: Path) -> None:

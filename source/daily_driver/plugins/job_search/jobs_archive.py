@@ -4,9 +4,11 @@ Pruned rows move to ``jobs.archive.csv`` (same schema as ``jobs.csv``). The
 scraper unions URLs and dedup-keys from BOTH files at run start so a triaged
 listing is never re-discovered.
 
-`prune` selects rows where ``Date Verified`` is older than the cutoff AND
-``Status`` is in the allowed status set, archives them, then atomically
-rewrites ``jobs.csv`` without them via temp-file + ``os.replace``. The read,
+`prune` selects rows through two independent channels — ``Status`` in the
+allowed set, aged on ``Date Found``, or (with ``min_fit``) an untriaged
+low-scoring row aged on ``Date Verified``; see ``_is_stale`` for why they
+differ. It archives the matches, then atomically rewrites ``jobs.csv``
+without them via temp-file + ``os.replace``. The read,
 classification, archive, and rewrite all run under ``core.locking.file_lock``
 so a concurrent scrape cannot append rows between the read and the rewrite
 (which would silently delete them). With ``dry_run=True`` no files change.
@@ -29,6 +31,7 @@ from daily_driver.plugins.job_search.jobs_lock import (
     jobs_lock_path,
     workspace_busy_notice,
 )
+from daily_driver.plugins.job_search.scraper.context import ScraperError
 from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
 from daily_driver.plugins.job_search.scraper.csv_io import (
     atomic_write_rows as _atomic_write_rows,
@@ -47,9 +50,19 @@ from daily_driver.plugins.job_search.scraper.models import parse_fit_cell
 
 log = get_logger(__name__)
 
-# Job-terminal subset of core.tracker.TERMINAL_STATUSES — the statuses a job
-# row reaches and never leaves, so prune archives them by default.
-DEFAULT_PRUNE_STATUSES: tuple[str, ...] = ("dropped", "rejected", "closed")
+# Statuses a job row reaches and never leaves, so prune archives them by
+# default: core.tracker.TERMINAL_STATUSES' job-terminal subset, plus `skipped`.
+# `skipped` is not terminal for a tracker entry but is settled for a jobs.csv
+# row — nothing in the pipeline ever writes it (`skip_reason` is only read back
+# on rows that already carry it), so it is purely the user's own triage, and
+# every other pass already treats it as decided (ENRICH_SKIP_STATUSES, and its
+# absence from ENRICH_ELIGIBLE_STATUSES).
+DEFAULT_PRUNE_STATUSES: tuple[str, ...] = (
+    "dropped",
+    "rejected",
+    "closed",
+    "skipped",
+)
 
 # The only statuses --min-fit may archive. A blank Status counts: it is what a
 # hand-edited or pre-status row carries. Deliberately NARROWER than the active
@@ -91,28 +104,41 @@ def _is_stale(
     row: dict[str, str],
     *,
     cutoff: date,
-    statuses: tuple[str, ...] | frozenset[str],
+    statuses: frozenset[str],
     min_fit: int | None = None,
 ) -> bool:
     """Row qualifies for prune when it is old enough AND matches a channel.
 
-    Age is the gate both channels share: ``Date Verified``, falling back to
-    ``Date Found`` when it is empty (a row never confirmed since discovery).
-    Past that gate a row qualifies either by carrying one of the target
-    statuses, or -- when ``min_fit`` is set -- by being an untriaged row scored
-    below it. The two channels are independent: almost every row in a real file
-    is untriaged, so a status filter alone never reaches the bulk of it.
+    ``statuses`` must already be normalized -- ``prune`` does it once for the
+    whole call rather than rebuilding the set for every row.
+
+    The two channels are independent and age on different columns, because they
+    answer different questions.
+
+    The status channel asks how long a decided row has sat in the file, so it
+    ages on ``Date Found``. It must NOT read ``Date Verified``: every scrape
+    re-stamps that to today for any row still posted
+    (``sink._JobSink._apply_rescan_updates``), so ageing on it kept a row the
+    user had already rejected for exactly as long as the posting stayed live. A
+    blank ``Date Found`` cannot be aged and keeps the row, rather than falling
+    back to the re-stamped column and restoring that behaviour.
+
+    The fit channel asks whether an untriaged low-scoring row is also dead, so
+    liveness is the point and it ages on ``Date Verified``, falling back to
+    ``Date Found`` for a row never confirmed since discovery.
     """
-    seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
-        row.get("Date Found", "")
-    )
-    if seen is None or seen >= cutoff:
-        return False
-    # Normalize both sides so a `ruled_out` cell matches a `ruled-out` target.
-    status = normalize_status(row.get("Status") or "")
-    if status in {normalize_status(s) for s in statuses}:
-        return True
-    return min_fit is not None and _low_fit_untriaged(row, min_fit)
+    # Normalize this side too, so a `ruled_out` cell matches a `ruled-out` target.
+    if normalize_status(row.get("Status") or "") in statuses:
+        found = _parse_iso(row.get("Date Found", ""))
+        if found is not None and found < cutoff:
+            return True
+    if min_fit is not None and _low_fit_untriaged(row, min_fit):
+        seen = _parse_iso(row.get("Date Verified", "")) or _parse_iso(
+            row.get("Date Found", "")
+        )
+        if seen is not None and seen < cutoff:
+            return True
+    return False
 
 
 def prune(
@@ -133,7 +159,13 @@ def prune(
     Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
     classification, archive, and rewrite so a concurrent scrape can't append
     rows between the read and the rewrite (which would silently delete them).
+
+    Raises ``ScraperError`` when ``jobs_csv`` is absent: an empty result and a
+    workspace pointing at the wrong path are otherwise indistinguishable.
     """
+    if not jobs_csv.exists():
+        raise ScraperError(f"jobs.csv not found at {jobs_csv}")
+
     lock_stack = ExitStack()
     try:
         lock_stack.enter_context(
@@ -150,10 +182,11 @@ def prune(
         if not header:
             return [], 0
 
+        targets = frozenset(normalize_status(s) for s in statuses)
         keep: list[dict[str, str]] = []
         candidates: list[dict[str, str]] = []
         for row in rows:
-            if _is_stale(row, cutoff=cutoff, statuses=statuses, min_fit=min_fit):
+            if _is_stale(row, cutoff=cutoff, statuses=targets, min_fit=min_fit):
                 candidates.append(row)
             else:
                 keep.append(row)
