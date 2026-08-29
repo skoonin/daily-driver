@@ -10,6 +10,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 - **Board discovery can now run on a schedule, and `jobs run` reports how much of the board universe it has never looked at.** Only `jobs discover-boards` populated the matched-board cache and nothing called it automatically, so an interrupted sweep left a shrunken board list that every later run scraped silently — in a live workspace the sweep had last run a month earlier and 428 Ashby slugs had still never been probed. `scheduler install` now installs a `jobs-discover` agent on its own `scheduler.discovery` cadence (default 23:59 Saturday and Tuesday), separate from the scrape so a hung sweep cannot block it. Both `jobs run` and `jobs status` now report per-platform coverage — how many boards are being scraped and how many slugs have never been probed — so a partial sweep is visible instead of silent. Re-run `scheduler install` to pick up the new agent. (#221)
 
+### Added
+
+- **`doctor` now names any `jobs.csv` column daily-driver does not write.** Headers are never migrated, so an unrecognized column is carried through every rewrite verbatim — that is what keeps a column you added by hand alive, and it equally preserves one left behind by an old rename. The check names which columns those are and reports OK rather than a warning, because nothing can tell a column you meant to keep from one an old rename stranded — so a stale leftover stops being invisible without nagging you about a deliberate addition. It repairs nothing; removing a column stays a by-hand edit. (#249)
+
 ### Changed
 
 - **`jobs prune` now targets `skipped` rows by default, and `--older-than` defaults to `14d`.** `skipped` is not a scraper verdict — nothing in the pipeline ever writes it, so it is purely your own triage, and every other pass already treats it as settled. It was nonetheless absent from the default target set, which left it unreachable: in a live workspace 1,992 of 3,163 rows carried it and no default invocation could ever archive one. `--older-than` also moves from `1d` to `14d`, a fortnight being a more honest default for "I am done with this" than a single day. Both changes mean a bare `jobs prune` selects considerably more than it used to on an established workspace — preview with `--dry-run` before the first run. (#248)
@@ -19,6 +23,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 - **The Greenhouse source no longer ships a pre-pinned board.** `plugins.job_search.sources.greenhouse.greenhouse_boards` now defaults to `[]`, matching Ashby and Lever: the boards a run scrapes come from `jobs discover-boards`, and the pin list is for boards you always want regardless of role matches. The old `[anthropic]` seed dated from before discovery existed. Because a fresh workspace now scrapes no Greenhouse boards until the first sweep, `jobs run` warns when an enabled board source resolves to zero boards, and `doctor` reports the same with the command to run. (#243)
 
 ### Removed
+
+- **Dropped the last references to the pre-0.4 `Date Last Seen` column.** `Date Verified` replaced it before 0.4 and no code has read, written, or renamed the old cell since, but a source comment still claimed the column was "renamed in place on first write" — contradicting the comment four lines below it, and the actual behaviour. That comment, its companion, and the migration paragraph under `jobs prune` in the command docs are gone. Nothing changes at runtime; there was no migration code to delete. (#249)
 
 - **Dropped the pre-0.2.0 legacy jobs-lock cleanup.** The lock sentinel moved out of the output dir into the workspace state dir in 0.2.0, and every `jobs run` / `backfill` / `prune` / `verify` since has opportunistically unlinked any `.jobs.lock` left beside `jobs.csv`. Four releases on, the migration is done, so the helper and its four call sites are gone. (#246)
 

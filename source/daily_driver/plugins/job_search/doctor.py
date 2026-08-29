@@ -15,6 +15,45 @@ if TYPE_CHECKING:
     from daily_driver.core.workspace import Workspace
 
 
+def _check_jobs_csv_custom_columns(workspace: Workspace) -> CheckResult | None:
+    """Report jobs.csv columns outside the canonical header.
+
+    Headers are never migrated: an unrecognized column is carried through every
+    rewrite verbatim, which is what keeps a deliberately hand-added column
+    alive. Two different mechanisms do it -- ``jobs run`` hands the sink the raw
+    on-disk header, extras included, while ``run_backfill`` tracks them
+    separately as ``extra_columns``. The same carry-through silently
+    preserves one left behind by a rename, and nothing here can tell the two
+    apart — so this reports OK, not WARNING: a column you meant to keep must
+    not raise a row you can never clear.
+    """
+    from daily_driver.core.doctor import CheckResult
+    from daily_driver.plugins.job_search.scraper.csv_io import (
+        CANONICAL_HEADER,
+        read_rows,
+    )
+
+    jobs_csv = workspace.output_dir / "jobs.csv"
+    if not jobs_csv.exists():
+        return None
+    header, _rows = read_rows(jobs_csv)
+    extra = [column for column in header if column not in CANONICAL_HEADER]
+    if not extra:
+        return None
+    return CheckResult(
+        name="Jobs CSV columns",
+        status="OK",
+        detail=(
+            f"{jobs_csv} carries {len(extra)} column(s) daily-driver does not "
+            f"write: {', '.join(extra)}. They are preserved on every rewrite."
+        ),
+        fix_hint=(
+            "Keep them if they are yours. Otherwise delete the column(s) by "
+            "hand — no automatic migration exists"
+        ),
+    )
+
+
 def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
     """Warn if `jobs.csv.bak.*` snapshots have accumulated under backups/.
 
@@ -305,4 +344,7 @@ def run_checks(workspace: Workspace) -> list[CheckResult]:
     boards_row = _check_board_sources_have_boards(workspace)
     if boards_row is not None:
         results.append(boards_row)
+    columns_row = _check_jobs_csv_custom_columns(workspace)
+    if columns_row is not None:
+        results.append(columns_row)
     return results
