@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_ENGINE = "firefox"
@@ -47,29 +48,70 @@ class PlaywrightError(RuntimeError):
         self.stderr = stderr
 
 
-def browser_installed(engine: str = DEFAULT_ENGINE) -> bool:
-    """True if the Playwright build for ``engine`` is downloaded.
+@dataclass(frozen=True)
+class BrowserProbe:
+    """Outcome of probing for a browser build.
+
+    ``playwright_error`` is what separates the two ways a probe fails, because
+    their remedies are opposite: ``None`` means playwright answered and the
+    build simply is not downloaded (install the browser), while a message means
+    playwright could not answer at all (repair the install). Collapsing both to
+    "not installed" told users with a broken playwright to download a browser.
+    """
+
+    installed: bool
+    playwright_error: str | None = None
+
+
+def _summary_line(*candidates: str) -> str:
+    """Condense subprocess output to the one line worth showing a user.
+
+    Takes the LAST non-blank line of the first non-empty candidate: a Python
+    failure ends with the line that names it (`ModuleNotFoundError: ...`),
+    while the first line is the useless `Traceback (most recent call last):`.
+    """
+    for text in candidates:
+        lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return ""
+
+
+def probe_browser(engine: str = DEFAULT_ENGINE) -> BrowserProbe:
+    """Resolve whether the Playwright build for ``engine`` is downloaded.
 
     `playwright install --dry-run <engine>` resolves the version-pinned cache
     path (e.g. .../ms-playwright/firefox-1511) without downloading anything;
     that path's existence on disk is authoritative. Dry-run exits 0 whether or
     not the build is present, so the path check — not the exit code — is the
-    signal. Returns False if playwright cannot be invoked at all.
+    signal.
     """
     try:
         proc = subprocess.run(_dry_run_cmd(engine), capture_output=True, text=True)
     except FileNotFoundError:
-        return False
+        return BrowserProbe(
+            installed=False,
+            playwright_error=f"{sys.executable} cannot run `-m playwright`",
+        )
     if proc.returncode != 0:
-        return False
+        detail = _summary_line(proc.stderr, proc.stdout)
+        return BrowserProbe(
+            installed=False,
+            playwright_error=detail or f"playwright exited {proc.returncode}",
+        )
     for match in _INSTALL_LOCATION_RE.finditer(proc.stdout):
         location = Path(match.group(1).strip())
         # Version-pinned dir is "<engine>-<rev>" (e.g. firefox-1511). The
         # "<engine>-" prefix avoids matching siblings like
         # chromium_headless_shell when engine is "chromium".
         if location.name.lower().startswith(f"{engine}-"):
-            return location.exists()
-    return False
+            return BrowserProbe(installed=location.exists())
+    # Exited 0 but named no path for the engine: playwright answered in a shape
+    # this parser does not understand, which is a broken probe, not a verdict.
+    return BrowserProbe(
+        installed=False,
+        playwright_error=f"playwright named no install location for {engine}",
+    )
 
 
 def install_browser(engine: str = DEFAULT_ENGINE) -> None:

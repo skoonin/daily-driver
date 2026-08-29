@@ -115,6 +115,18 @@ def test_playwright_check_skipped_when_no_playwright_source(monkeypatch):
     assert doctor._check_playwright_browser(ws) is None
 
 
+def _patch_probe(monkeypatch, *, installed, error=None, seen=None):
+    """Stub the browser probe. ``seen`` collects the engines it was asked about."""
+    from daily_driver.integrations.playwright import BrowserProbe
+
+    def _probe(engine: str) -> BrowserProbe:
+        if seen is not None:
+            seen.append(engine)
+        return BrowserProbe(installed=installed, playwright_error=error)
+
+    monkeypatch.setattr("daily_driver.integrations.playwright.probe_browser", _probe)
+
+
 def test_playwright_check_skipped_when_apple_disabled(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     ws = _ws_with_sources(apple=False)
@@ -123,18 +135,14 @@ def test_playwright_check_skipped_when_apple_disabled(monkeypatch):
 
 def test_playwright_check_ok_when_browser_installed(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        "daily_driver.integrations.playwright.browser_installed", lambda engine: True
-    )
+    _patch_probe(monkeypatch, installed=True)
     ws = _ws_with_sources(apple=True)
     assert doctor._check_playwright_browser(ws) is None
 
 
 def test_playwright_check_warns_with_fixer_when_missing(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        "daily_driver.integrations.playwright.browser_installed", lambda engine: False
-    )
+    _patch_probe(monkeypatch, installed=False)
     ws = _ws_with_sources(apple=True)
     row = doctor._check_playwright_browser(ws)
 
@@ -150,14 +158,7 @@ def test_playwright_check_warns_with_fixer_when_missing(monkeypatch):
 def test_playwright_check_uses_configured_engine(monkeypatch):
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     seen: list[str] = []
-
-    def _installed(engine: str) -> bool:
-        seen.append(engine)
-        return False
-
-    monkeypatch.setattr(
-        "daily_driver.integrations.playwright.browser_installed", _installed
-    )
+    _patch_probe(monkeypatch, installed=False, seen=seen)
     ws = _ws_with_sources(apple=True)
     ws.config.plugins.job_search.scraper = SimpleNamespace(browser="chromium")
     row = doctor._check_playwright_browser(ws)
@@ -168,11 +169,49 @@ def test_playwright_check_uses_configured_engine(monkeypatch):
     assert "playwright install chromium" in row.fix_hint
 
 
-def test_playwright_check_webkit_display_casing(monkeypatch):
+def test_playwright_warning_names_the_interpreter_it_probed(monkeypatch):
+    """Two interpreters on different playwright versions pin different browser
+    builds, so a bare `playwright install` can install into the wrong one and
+    leave this warning standing. Both strings must name the probed interpreter."""
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    _patch_probe(monkeypatch, installed=False)
+    ws = _ws_with_sources(apple=True)
+    ws.config.plugins.job_search.scraper = SimpleNamespace(browser="firefox")
+
+    row = doctor._check_playwright_browser(ws)
+
+    assert row is not None
+    assert doctor.sys.executable in row.detail
+    assert f"{doctor.sys.executable} -m playwright install firefox" in row.fix_hint
+
+
+def test_playwright_broken_install_does_not_offer_a_browser_download(monkeypatch):
+    """Downloading a browser cannot repair a playwright that failed to answer,
+    so this branch offers a repair command and no --fix hook."""
+    from daily_driver.integrations.playwright import BrowserProbe
+
     monkeypatch.setattr(doctor.sys, "platform", "darwin")
     monkeypatch.setattr(
-        "daily_driver.integrations.playwright.browser_installed", lambda engine: False
+        "daily_driver.integrations.playwright.probe_browser",
+        lambda engine: BrowserProbe(
+            installed=False, playwright_error="No module named 'playwright'"
+        ),
     )
+    ws = _ws_with_sources(apple=True)
+    ws.config.plugins.job_search.scraper = SimpleNamespace(browser="firefox")
+
+    row = doctor._check_playwright_browser(ws)
+
+    assert row is not None
+    assert row.status == "WARNING"
+    assert "No module named 'playwright'" in row.detail
+    assert "pip install --force-reinstall playwright" in row.fix_hint
+    assert row.plugin_fixer is None
+
+
+def test_playwright_check_webkit_display_casing(monkeypatch):
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    _patch_probe(monkeypatch, installed=False)
     ws = _ws_with_sources(apple=True)
     ws.config.plugins.job_search.scraper = SimpleNamespace(browser="webkit")
     row = doctor._check_playwright_browser(ws)

@@ -147,16 +147,43 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
     if not enabled:
         return None
     engine = _configured_browser(workspace)
-    if pw.browser_installed(engine):
+    probe = pw.probe_browser(engine)
+    if probe.installed:
         return None
+    display = _ENGINE_DISPLAY.get(engine, engine.capitalize())
+    sources = ", ".join(enabled)
+    # Playwright pins a browser build revision per release, so two interpreters
+    # on different playwright versions want different builds from the same
+    # cache. Name the interpreter, and qualify every manual command with it: a
+    # bare `playwright` on PATH can be a different install than the one probed,
+    # and installing there leaves this warning standing.
+    if probe.playwright_error is not None:
+        # No plugin_fixer: --fix downloads a browser, which cannot repair a
+        # playwright that could not answer in the first place.
+        return CheckResult(
+            name="Playwright browser",
+            status="WARNING",
+            detail=(
+                f"cannot tell whether the {display} browser is installed for "
+                f"{sys.executable}: {probe.playwright_error}; "
+                f"source(s) {sources} will fail at launch"
+            ),
+            fix_hint=(
+                f"Repair playwright for that interpreter: {sys.executable} "
+                "-m pip install --force-reinstall playwright"
+            ),
+        )
     return CheckResult(
         name="Playwright browser",
         status="WARNING",
         detail=(
-            f"{_ENGINE_DISPLAY.get(engine, engine.capitalize())} browser not "
-            f"installed; source(s) {', '.join(enabled)} will fail at launch"
+            f"{display} browser not installed for {sys.executable}; "
+            f"source(s) {sources} will fail at launch"
         ),
-        fix_hint=f"Run: daily-driver doctor --fix (or: playwright install {engine})",
+        fix_hint=(
+            "Run: daily-driver doctor --fix "
+            f"(or: {sys.executable} -m playwright install {engine})"
+        ),
         plugin_fixer=lambda: pw.install_browser(engine),
     )
 
