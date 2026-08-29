@@ -66,7 +66,7 @@ from daily_driver.plugins.job_search.jobs_lock import (
     jobs_lock_path,
     workspace_busy_notice,
 )
-from daily_driver.plugins.job_search.scraper.context import ScrapeContext
+from daily_driver.plugins.job_search.scraper.context import ScrapeContext, ScraperError
 from daily_driver.plugins.job_search.scraper.csv_io import atomic_write_rows, read_rows
 from daily_driver.plugins.job_search.scraper.models import (
     BOARD_SOURCE_CANONICALS,
@@ -458,7 +458,13 @@ def verify_jobs(
     Holds the jobs flock for the whole probe + rewrite: a concurrent scrape
     appending between our read and rewrite would otherwise be silently
     deleted. Ctrl-C mid-probe applies the outcomes gathered so far.
+
+    Raises ``ScraperError`` when ``jobs_csv`` is absent: "nothing due" and a
+    workspace pointing at the wrong path are otherwise indistinguishable.
     """
+    if not jobs_csv.exists():
+        raise ScraperError(f"jobs.csv not found at {jobs_csv}")
+
     report = VerifyReport(dry_run=dry_run)
     ctx = ScrapeContext(plugin=plugin)
     days = plugin.verify.reverify_days if reverify_days is None else reverify_days

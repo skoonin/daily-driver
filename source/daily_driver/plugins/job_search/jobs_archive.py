@@ -29,6 +29,7 @@ from daily_driver.plugins.job_search.jobs_lock import (
     jobs_lock_path,
     workspace_busy_notice,
 )
+from daily_driver.plugins.job_search.scraper.context import ScraperError
 from daily_driver.plugins.job_search.scraper.csv_io import append_rows as _append_rows
 from daily_driver.plugins.job_search.scraper.csv_io import (
     atomic_write_rows as _atomic_write_rows,
@@ -133,7 +134,13 @@ def prune(
     Holds an exclusive flock (sentinel under ``ephemeral_dir``) for the read,
     classification, archive, and rewrite so a concurrent scrape can't append
     rows between the read and the rewrite (which would silently delete them).
+
+    Raises ``ScraperError`` when ``jobs_csv`` is absent: an empty result and a
+    workspace pointing at the wrong path are otherwise indistinguishable.
     """
+    if not jobs_csv.exists():
+        raise ScraperError(f"jobs.csv not found at {jobs_csv}")
+
     lock_stack = ExitStack()
     try:
         lock_stack.enter_context(
