@@ -58,6 +58,46 @@ def test_accumulated_backups_warns(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# _check_jobs_csv_custom_columns
+# ---------------------------------------------------------------------------
+
+
+def _write_header(path: Path, columns: list[str]) -> None:
+    path.write_text(",".join(columns) + "\n", encoding="utf-8")
+
+
+def test_custom_columns_check_skipped_without_jobs_csv(tmp_path: Path) -> None:
+    ws = _FakeWorkspace(output_dir=tmp_path)
+    assert doctor._check_jobs_csv_custom_columns(ws) is None
+
+
+def test_canonical_header_reports_nothing(tmp_path: Path) -> None:
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    _write_header(tmp_path / "jobs.csv", CANONICAL_HEADER)
+    ws = _FakeWorkspace(output_dir=tmp_path)
+    assert doctor._check_jobs_csv_custom_columns(ws) is None
+
+
+def test_column_outside_the_canonical_header_is_named(tmp_path: Path) -> None:
+    """A column no writer produces survives every rewrite, so say which one."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    _write_header(tmp_path / "jobs.csv", [*CANONICAL_HEADER, "Date Last Seen"])
+    ws = _FakeWorkspace(output_dir=tmp_path)
+
+    row = doctor._check_jobs_csv_custom_columns(ws)
+
+    assert row is not None
+    assert row.name == "Jobs CSV columns"
+    # OK, not WARNING: a column kept on purpose must not raise a row that can
+    # never be cleared, and the check cannot tell intent from leftover.
+    assert row.status == "OK"
+    assert "Date Last Seen" in row.detail
+    assert row.plugin_fixer is None
+
+
+# ---------------------------------------------------------------------------
 # _check_playwright_browser
 # ---------------------------------------------------------------------------
 

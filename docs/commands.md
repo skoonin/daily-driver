@@ -318,13 +318,20 @@ Rows with **no URL to check** — Indeed (bot-walled) and HN Who's Hiring (comme
 
 `-S|--sources` takes a comma-separated list (same shape as `jobs run -S`) validated against the verifiable sources (exit 2 on anything else; board-backed sources are covered by `jobs run`, not here). `--limit N` bounds the URL probes only, spending them on the stalest evidence first — age closures need no probe and are not capped (preview the full set with `--dry-run`). The report lands in `jobs-last-verify.json` (self-describing: it records the `reverify_days`/`unverified_age_days`/`limit`/`sources` that shaped the run) and surfaces in `jobs status`, including a suspect-detector warning. Requests pace per host with `enrichment.detail_delay_seconds`.
 
-### `jobs prune --older-than SPEC [--status STATUS]... [--min-fit N] [-n|--dry-run] [-j|--json]`
+### `jobs prune [--older-than SPEC] [--status STATUS]... [--min-fit N] [-n|--dry-run] [-j|--json]`
 
-Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress re-discovery by WHY they left: user-triaged rows (dropped/rejected/skipped) never return (URL blocked forever; company+role blocked for 45 days so a re-posted role eventually resurfaces), while verification-closed rows (`Status: closed`) stay re-discoverable — a re-scraped closed job is re-added and announced as `Reopened`. Staleness ages from the `Date Verified` column — the last date the job was affirmatively confirmed live (a scrape re-sighting, presence in a board's full listing, or a `jobs verify` URL check) — falling back to `Date Found` for rows never confirmed since discovery. `--older-than` is required and accepts the same grammar as `tracker prune --older-than`. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`. `--json` emits the candidate/archived set (`dry_run`, `candidates`, `archived`) in the `{schema, data}` envelope.
+Moves stale rows from `jobs.csv` to `jobs.archive.csv`. Archived rows suppress re-discovery by WHY they left: user-triaged rows (dropped/rejected/skipped) never return (URL blocked forever; company+role blocked for 45 days so a re-posted role eventually resurfaces), while verification-closed rows (`Status: closed`) stay re-discoverable — a re-scraped closed job is re-added and announced as `Reopened`. `--older-than` defaults to `14d` and accepts the same grammar as `tracker prune --older-than`; the comparison is strict, so `14d` archives rows older than 14 days and keeps one dated exactly 14 days ago. `--status` is repeatable; default targets are `dropped`, `rejected`, `closed`, `skipped`. To prune stale in-progress rows, pass the real statuses, e.g. `--status applied --status interviewing`. `--json` emits the candidate/archived set (`dry_run`, `candidates`, `archived`) in the `{schema, data}` envelope.
+
+**The two channels age on different columns**, because they ask different questions:
+
+| Channel | Question | Ages from |
+|---|---|---|
+| Status (`--status`) | How long has this decided row sat in the file? | `Date Found` |
+| Fit (`--min-fit`) | Is this unreviewed low scorer also dead? | `Date Verified`, else `Date Found` |
+
+The status channel must not read `Date Verified`: every run re-stamps it to today for any row still posted, so a job you rejected months ago stayed in `jobs.csv` for exactly as long as its posting stayed live. A row with a blank `Date Found` cannot be aged and is kept rather than falling back to that column.
 
 `--min-fit N` adds a second selection channel for the untriaged bulk of the file, which no status filter reaches: rows with `found` or blank Status scoring below N are archived too. It never touches a row you have acted on, whatever its score, and never touches an unscored row — absence of a score is not a low score. Both channels are gated by `--older-than`, so a low-fit row confirmed live recently stays. The dry-run table gains a Fit column when this flag is used.
-
-**Schema note:** `Date Verified` replaced the pre-1.0 `Date Last Seen` column, and a `Date Closed` column (written by board-diff closure and `jobs verify`) was added. There is no automatic migration — an old-schema file should be fixed by hand (rename the `Date Last Seen` header cell to `Date Verified`, append an empty `Date Closed` column) or the workspace restarted fresh.
 
 ## Scheduler (macOS)
 

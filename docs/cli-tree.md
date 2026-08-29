@@ -107,8 +107,9 @@ daily-driver/
 │   ├── status
 │   │   └── -j, --json
 │   ├── prune
-│   │   ├── --older-than SPEC (required)
-│   │   ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed)
+│   │   ├── --older-than SPEC (default: 14d)
+│   │   ├── -s, --status STATUS (repeatable; default: dropped, rejected, closed, skipped)
+│   │   ├── --min-fit N
 │   │   ├── -n, --dry-run
 │   │   └── -j, --json
 │   └── verify

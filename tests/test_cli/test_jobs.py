@@ -756,6 +756,24 @@ def test_jobs_status_no_run_yet(
     assert "No scraper run recorded" in captured.out
 
 
+def test_jobs_status_missing_jobs_csv_after_a_run_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Run history plus no jobs.csv is a lost file, not a workspace with no jobs."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    (ws / "jobs-last-run.json").write_text(
+        json.dumps({"started_at": "2026-06-10T00:00:00+00:00", "new_jobs": 12}),
+        encoding="utf-8",
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "status"])
+
+    assert rc == 1
+    assert "jobs.csv not found" in capsys.readouterr().err
+
+
 def test_jobs_status_reports_unprobed_slugs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -885,8 +903,38 @@ def _seed_jobs_csv(ws: Path, rows: list[dict]) -> Path:
         )
         w.writeheader()
         for r in rows:
-            w.writerow(r)
+            # Prune's status channel ages on Date Found, so a fixture that sets
+            # only Date Verified would describe a row no cutoff can reach.
+            w.writerow({"Date Found": r.get("Date Verified", ""), **r})
     return p
+
+
+def test_prune_missing_jobs_csv_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An absent jobs.csv must not read as "no rows match prune criteria"."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    rc = app(["--workspace", str(ws), "jobs", "prune"])
+
+    assert rc == 1
+    assert "jobs.csv not found" in capsys.readouterr().err
+
+
+def test_verify_missing_jobs_csv_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An absent jobs.csv must not read as "no rows due for verification"."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+
+    rc = app(["--workspace", str(ws), "jobs", "verify"])
+
+    assert rc == 1
+    assert "jobs.csv not found" in capsys.readouterr().err
 
 
 def test_prune_dry_run_lists_candidates_without_writing(
@@ -1212,6 +1260,84 @@ def test_prune_min_fit_still_respects_older_than(
     out = capsys.readouterr().out
     assert "RecentLowFitCo" not in out
     assert "No rows match prune criteria." in out
+
+
+def test_prune_archives_a_triaged_row_a_scrape_re_sighted_today(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The row shape the age-anchor fix exists for: triaged long ago, but still
+    posted, so every run re-stamps Date Verified and the old anchor never aged."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "skipped",
+                "Company": "StillPostedCo",
+                "Role": "SRE",
+                "Date Found": "2026-01-01",
+                "Date Verified": "2026-06-20",
+                "Link": "https://x/1",
+            },
+        ],
+    )
+
+    rc = app(
+        [
+            "--workspace",
+            str(ws),
+            "jobs",
+            "prune",
+            "--older-than",
+            "2026-04-01",
+            "--dry-run",
+        ]
+    )
+
+    assert rc == 0
+    assert "StillPostedCo" in capsys.readouterr().out
+
+
+def test_prune_default_older_than_is_fourteen_days(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Every other prune test passes --older-than explicitly, so the default
+    was never exercised end to end. The cutoff is strict: a row found exactly
+    14 days ago is kept."""
+    import datetime as dt
+
+    from daily_driver.cli.cli import app
+
+    today = dt.date.today()
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(
+        ws,
+        [
+            {
+                "Status": "rejected",
+                "Company": "WellPastCutoffCo",
+                "Role": "SRE",
+                "Date Found": (today - dt.timedelta(days=15)).isoformat(),
+                "Link": "https://x/1",
+            },
+            {
+                "Status": "rejected",
+                "Company": "OnTheBoundaryCo",
+                "Role": "SRE",
+                "Date Found": (today - dt.timedelta(days=14)).isoformat(),
+                "Link": "https://x/2",
+            },
+        ],
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "prune", "--dry-run"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WellPastCutoffCo" in out
+    assert "OnTheBoundaryCo" not in out
 
 
 def test_prune_min_fit_keeps_the_status_channel(
@@ -1570,6 +1696,7 @@ def test_jobs_status_shows_recovery_line_when_interrupted(
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
+    _seed_jobs_csv(ws, [])
     (ws / "jobs-last-run.json").write_text(
         json.dumps(
             {

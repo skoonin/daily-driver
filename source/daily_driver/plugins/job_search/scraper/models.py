@@ -320,8 +320,7 @@ class EnrichedJob(BaseModel):
     # in a full board listing, or a direct URL check. Drives `jobs prune
     # --older-than`. `jobs run` refreshes it to today for every re-seen row
     # (_JobSink._apply_rescan_updates). Falls back to Date Found on write when
-    # unset -- a legacy row, or one never confirmed since discovery. Replaces
-    # the pre-0.4 "Date Last Seen" column (renamed in place on first write).
+    # unset -- a row never confirmed since discovery.
     date_verified: dt.date | None = None
     # Set when verification affirmatively found the posting gone (board-diff
     # miss or URL check). None == never verified closed. Written by the
@@ -334,9 +333,9 @@ class EnrichedJob(BaseModel):
     date_enriched: dt.datetime | None = None
 
     # Ordered to match the on-disk jobs.csv column layout; CANONICAL_HEADER is
-    # derived from this map's key order. An old-schema file (pre-0.4
-    # "Date Last Seen") is not auto-migrated: fix the header by hand or start
-    # fresh.
+    # derived from this map's key order. Headers are never migrated: a column
+    # outside this map is carried through verbatim as a user-added one, so a
+    # renamed cell must be fixed by hand.
     CSV_COLUMN_TO_ATTR: ClassVar[dict[str, str]] = {
         "Status": "status",
         "Company": "company",

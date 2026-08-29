@@ -197,14 +197,14 @@ daily-driver jobs backfill --limit 20           # cap LLM spend at 20 fit/notes 
 daily-driver jobs run -S remoteok,hn_jobs       # source override
 daily-driver jobs promote https://acme.example/jobs/123   # row -> tracker job entry
 daily-driver jobs status                        # last-run metadata + csv size
-daily-driver jobs prune --older-than month      # archive dropped/rejected/closed rows
+daily-driver jobs prune --older-than month      # archive triaged rows found over a month ago
 ```
 
 `jobs run` writes as it works, so an interrupt (Ctrl-C or a scheduled `SIGTERM`) keeps what finished. Each source appends as it completes; LinkedIn and Indeed checkpoint after every search unit. A graceful stop drains in-flight work and exits (`130` for Ctrl-C, `143` for `SIGTERM`); a second Ctrl-C quits immediately. An interrupt during scraping skips enrichment — run `jobs backfill` to fill the empty cells later.
 
 `jobs promote` copies a triaged row into a tracker `job` entry once it needs active driving (interviews, follow-ups). The tracker drives work; `jobs.csv` is the discovery record; promotion is the explicit, idempotent bridge — it never mutates `jobs.csv`. Select by exact Link URL or an unambiguous Company substring.
 
-`jobs prune` requires `--older-than SPEC`. Default target statuses are `dropped`, `rejected`, `closed`; pass `-s active` (repeatable) to override. Pruned rows move to `jobs.archive.csv` — nothing is deleted outright.
+`jobs prune --older-than SPEC` defaults to `14d`. Default target statuses are `dropped`, `rejected`, `closed`, `skipped`; pass `-s active` (repeatable) to override. Those statuses age from `Date Found`, while `--min-fit` rows age from `Date Verified` — see `commands.md` for why. Pruned rows move to `jobs.archive.csv` — nothing is deleted outright.
 
 ### Choosing an AI provider
 

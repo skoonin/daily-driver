@@ -1183,8 +1183,12 @@ def test_status_prints_recovery_line_when_interrupted(tmp_path: Path) -> None:
     """jobs status surfaces a recovery line for an interrupted last run."""
     import json
 
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
     from daily_driver.plugins.job_search.scraper_status import build_status
 
+    (tmp_path / "jobs.csv").write_text(
+        ",".join(CANONICAL_HEADER) + "\n", encoding="utf-8"
+    )
     (tmp_path / "jobs-last-run.json").write_text(
         json.dumps(
             {
