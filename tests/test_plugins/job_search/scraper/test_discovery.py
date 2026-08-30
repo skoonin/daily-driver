@@ -129,6 +129,7 @@ class TestGreenhouseProbe:
         res = discovery._probe_greenhouse("movableink", _ctx(["SRE"]), MagicMock())
         assert res.outcome == "swept"
         assert res.matched == 2
+        assert res.total == 3
 
     def test_404_is_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(404))
@@ -160,6 +161,32 @@ class TestGreenhouseProbe:
         res = discovery._probe_greenhouse("weird-co", _ctx(), MagicMock())
         assert res.outcome == "transient"
 
+    def test_non_list_body_is_transient_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A malformed 200 body must not persist a bogus total (dict keys,
+        string chars); it retries next sweep like any other broken fetch."""
+        monkeypatch.setattr(
+            discovery,
+            "_api_request",
+            lambda *a, **kw: _resp(200, {"jobs": {"error": "oops"}}),
+        )
+        res = discovery._probe_greenhouse("weird-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
+
+    def test_empty_board_is_swept_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A live board with no openings answers 200 with an empty list
+        # (Ashby/Lever verified live 2026-08-30; greenhouse same shape).
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, {"jobs": []})
+        )
+        res = discovery._probe_greenhouse("quiet-co", _ctx(), MagicMock())
+        assert res.outcome == "swept"
+        assert res.matched == 0
+        assert res.total == 0
+
 
 class TestAshbyProbe:
     def test_counts_matching_titles(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,6 +208,46 @@ class TestAshbyProbe:
         )
         assert res.outcome == "swept"
         assert res.matched == 1
+        assert res.total == 2
+
+    def test_empty_board_is_swept_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The snyk case (verified live 2026-08-30): org exists, zero postings.
+        payload = {"data": {"jobBoard": {"jobPostings": []}}}
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, payload)
+        )
+        res = discovery._probe_ashby("quiet-co", _ctx(), MagicMock())
+        assert res.outcome == "swept"
+        assert res.matched == 0
+        assert res.total == 0
+
+    def test_null_postings_on_live_board_counts_as_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A present jobBoard whose jobPostings is null is an empty board,
+        not a dead one and not a probe failure."""
+        payload = {"data": {"jobBoard": {"jobPostings": None}}}
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, payload)
+        )
+        res = discovery._probe_ashby("quiet-co", _ctx(), MagicMock())
+        assert res.outcome == "swept"
+        assert res.matched == 0
+        assert res.total == 0
+
+    def test_non_list_postings_is_transient_not_dead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A truthy non-list jobPostings survives the `or []` null guard; it
+        must read as a broken fetch, not a board with key-count postings."""
+        payload = {"data": {"jobBoard": {"jobPostings": {"error": "oops"}}}}
+        monkeypatch.setattr(
+            discovery, "_api_request", lambda *a, **kw: _resp(200, payload)
+        )
+        res = discovery._probe_ashby("weird-co", _ctx(), MagicMock())
+        assert res.outcome == "transient"
 
     def test_null_job_board_is_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The GraphQL endpoint answers 200 with jobBoard null for unknown orgs
@@ -256,6 +323,7 @@ class TestLeverProbe:
         res = discovery._probe_lever("some-co", _ctx(["SRE"]), MagicMock())
         assert res.outcome == "swept"
         assert res.matched == 2
+        assert res.total == 3
 
     def test_empty_board_is_swept_not_dead(
         self, monkeypatch: pytest.MonkeyPatch
@@ -266,6 +334,7 @@ class TestLeverProbe:
         res = discovery._probe_lever("quiet-co", _ctx(), MagicMock())
         assert res.outcome == "swept"
         assert res.matched == 0
+        assert res.total == 0
 
     def test_404_is_dead(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(discovery, "_api_request", lambda *a, **kw: _resp(404))
@@ -418,6 +487,66 @@ class TestSweepPlatform:
 
         assert result.candidates == 1
         assert discovery.load_matched_boards(tmp_path, "greenhouse") == {}
+
+    def test_swept_entry_records_total(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cache must tell an empty board (total 0) from a populated one
+        whose roles merely don't match (total > 0) — both have matched 0."""
+        outcomes = {
+            "nomatch-co": discovery.ProbeResult("nomatch-co", "swept", 0, total=9),
+            "quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0),
+        }
+        _sweep(tmp_path, monkeypatch, list(outcomes), outcomes)
+
+        swept = json.loads(
+            (tmp_path / "discovery" / "sweep-greenhouse.json").read_text()
+        )["swept"]
+        assert swept["nomatch-co"]["total"] == 9
+        assert swept["quiet-co"]["total"] == 0
+
+    def test_stale_board_gone_empty_leaves_matched_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The 200-empty analog of the #214 404 case: a matched board whose
+        listing empties out (moved ATS) retires from the scrape list on its
+        stale re-probe, and the cache records that it is truly empty."""
+        _sweep(
+            tmp_path,
+            monkeypatch,
+            ["match-co"],
+            {"match-co": discovery.ProbeResult("match-co", "swept", 4, total=12)},
+        )
+        _age_sweep_stamps(tmp_path, 45)
+
+        result = _sweep(
+            tmp_path,
+            monkeypatch,
+            ["match-co"],
+            {"match-co": discovery.ProbeResult("match-co", "swept", 0, total=0)},
+        )
+
+        assert result.restaled == 1
+        assert discovery.load_matched_boards(tmp_path, "greenhouse") == {}
+        entry = json.loads(
+            (tmp_path / "discovery" / "sweep-greenhouse.json").read_text()
+        )["swept"]["match-co"]
+        assert entry["matched"] == 0
+        assert entry["total"] == 0
+
+    def test_entry_without_total_reads_without_error(self, tmp_path: Path) -> None:
+        """Pre-total cache entries (two keys) must load fine; total is absent,
+        never assumed zero. Entries refresh to the new shape on re-probe."""
+        path = tmp_path / "discovery" / "sweep-greenhouse.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {"swept": {"old-co": {"last_swept": now().isoformat(), "matched": 2}}}
+            )
+        )
+
+        assert set(discovery.load_matched_boards(tmp_path, "greenhouse")) == {"old-co"}
+        assert discovery.sweep_ages(tmp_path)["greenhouse"]["boards_matched"] == 1
 
     def test_incremental_reprobes_stale_slugs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
