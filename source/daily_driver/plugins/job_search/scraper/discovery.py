@@ -12,10 +12,14 @@ Three cache files per platform under ``<state>/discovery/``:
 - ``slugs-<platform>.json`` — the upstream slug universe + fetched_at; the
   sweep falls back to this cache when the upstream fetch fails (offline or
   upstream gone).
-- ``sweep-<platform>.json`` — per-slug sweep outcomes (``last_swept`` +
-  ``matched`` title count). Entries with ``matched > 0`` ARE the matched-board
-  cache. Incremental sweeps probe only slugs never swept; ``--full`` re-probes
-  everything, so a board that stopped matching drops out then.
+- ``sweep-<platform>.json`` — per-slug sweep outcomes (``last_swept``,
+  ``matched`` title count, ``total`` raw posting count). Entries with
+  ``matched > 0`` ARE the matched-board cache. ``total`` tells an empty board
+  (0 — likely moved ATS) from a live one whose roles merely don't match;
+  entries written before the field exists lack it (unknown, never zero) and
+  pick it up on re-probe. Incremental sweeps probe only slugs never swept;
+  ``--full`` re-probes everything, so a board that stopped matching drops
+  out then.
 - ``dead-<platform>.json`` — slugs that answered 404/410 (or Ashby's
   ``jobBoard: null``): permanently gone, never probed again. Transient
   failures (429 after retries, timeouts, 5xx) are NEVER cached as dead — they
@@ -149,8 +153,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def load_matched_boards(state_dir: Path, platform: str) -> dict[str, dict[str, Any]]:
     """The matched-board cache: swept slugs with at least one role match.
 
-    Returns ``{slug: {"matched": N, "last_swept": iso}}``; empty when no sweep
-    has run. This is the seam `jobs run` unions with hand-pinned config boards.
+    Returns ``{slug: {"matched": N, "last_swept": iso, "total": T}}`` (entries
+    swept before the ``total`` field shipped lack it); empty when no sweep has
+    run. This is the seam `jobs run` unions with hand-pinned config boards.
     """
     payload = _read_json(_sweep_path(state_dir, platform)) or {}
     swept = payload.get("swept", {})
@@ -321,11 +326,17 @@ def fetch_slug_universe(
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """Outcome of probing one slug: matched title count, dead, or transient."""
+    """Outcome of probing one slug: matched title count, dead, or transient.
+
+    ``total`` is the raw listing size before any role filtering — the signal
+    that separates an empty board from one whose postings merely don't match
+    the configured roles (both score ``matched`` 0).
+    """
 
     slug: str
     outcome: Literal["swept", "dead", "transient"]
     matched: int = 0
+    total: int = 0
 
 
 def _count_matches(titles: list[str], plugin: JobSearchPlugin) -> int:
@@ -353,8 +364,14 @@ def _probe_greenhouse(slug: str, ctx: ScrapeContext, session: Session) -> ProbeR
         jobs = resp.json().get("jobs", [])
     except ValueError:
         return ProbeResult(slug, "transient")
+    # A non-list 200 body is a broken fetch, classified transient (never dead)
+    # so it cannot poison the dead cache or persist a bogus total.
+    if not isinstance(jobs, list):
+        return ProbeResult(slug, "transient")
     titles = [entry.get("title", "") for entry in jobs if isinstance(entry, dict)]
-    return ProbeResult(slug, "swept", _count_matches(titles, ctx.plugin))
+    return ProbeResult(
+        slug, "swept", _count_matches(titles, ctx.plugin), total=len(jobs)
+    )
 
 
 def _probe_ashby(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult:
@@ -392,9 +409,15 @@ def _probe_ashby(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult
     board = body["data"].get("jobBoard")
     if board is None:
         return ProbeResult(slug, "dead")
+    # `or []` reads a live board's null jobPostings as empty: total 0 means
+    # "board exists, nothing listed", the same verdict a [] listing gets.
     postings = board.get("jobPostings") or []
+    if not isinstance(postings, list):
+        return ProbeResult(slug, "transient")
     titles = [p.get("title", "") for p in postings if isinstance(p, dict)]
-    return ProbeResult(slug, "swept", _count_matches(titles, ctx.plugin))
+    return ProbeResult(
+        slug, "swept", _count_matches(titles, ctx.plugin), total=len(postings)
+    )
 
 
 def _probe_lever(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult:
@@ -428,7 +451,9 @@ def _probe_lever(slug: str, ctx: ScrapeContext, session: Session) -> ProbeResult
     if not isinstance(postings, list):
         return ProbeResult(slug, "transient")
     titles = [entry.get("text", "") for entry in postings if isinstance(entry, dict)]
-    return ProbeResult(slug, "swept", _count_matches(titles, ctx.plugin))
+    return ProbeResult(
+        slug, "swept", _count_matches(titles, ctx.plugin), total=len(postings)
+    )
 
 
 _PROBES: dict[str, Callable[[str, ScrapeContext, Session], ProbeResult]] = {
@@ -586,7 +611,11 @@ def sweep_platform(
     def _record(res: ProbeResult) -> None:
         stamp = now().isoformat()
         if res.outcome == "swept":
-            state.sweep[res.slug] = {"last_swept": stamp, "matched": res.matched}
+            state.sweep[res.slug] = {
+                "last_swept": stamp,
+                "matched": res.matched,
+                "total": res.total,
+            }
             result.swept += 1
             if res.matched > 0:
                 # INFO so -v answers "which boards matched, how strongly".
