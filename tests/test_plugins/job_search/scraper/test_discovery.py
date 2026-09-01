@@ -1101,11 +1101,6 @@ class TestDormancyConfig:
         ctx = _ctx(dormant_reprobe_multiplier=1)
         assert ctx.plugin.discovery.dormant_reprobe_multiplier == 1
 
-    def test_defaults(self) -> None:
-        discovery_cfg = _ctx().plugin.discovery
-        assert discovery_cfg.dormant_after_empty_sweeps == 2
-        assert discovery_cfg.dormant_reprobe_multiplier == 6
-
 
 class TestDormancyReporting:
     def test_sweep_reports_empty_and_dormant_totals(

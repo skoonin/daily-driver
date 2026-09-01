@@ -955,7 +955,12 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         "Matched boards are scraped by jobs run alongside your configured "
         "*_boards pins (exclude_boards drops noisy ones). Boards last probed "
         "over discovery.reprobe_days ago are re-probed each sweep so dead ones "
-        "retire; --full re-probes every already-swept board now."
+        "retire, except dormant boards -- ones that listed nothing on their "
+        "last discovery.dormant_after_empty_sweeps probes -- which wait "
+        "discovery.dormant_reprobe_multiplier times as long. A board needs "
+        "that many re-probes before it can go dormant, so a fresh workspace "
+        "reports 0 dormant for several cycles. --full re-probes every "
+        "already-swept board now, dormant ones included."
     )
     return 0
 

@@ -575,7 +575,9 @@ class DiscoveryConfig(BaseModel):
             "Multiplier on reprobe_days for a dormant board, so the default\n"
             "30-day cadence becomes 180. Dormancy defers a re-probe, never\n"
             "cancels it: --full still re-probes every dormant board, and a\n"
-            "pinned board is scraped whatever discovery concluded."
+            "pinned board is scraped whatever discovery concluded. Setting 1\n"
+            "keeps the normal cadence but still REPORTS dormant boards; to\n"
+            "turn the feature off entirely use dormant_after_empty_sweeps: 0."
         ),
     )
 

@@ -667,8 +667,9 @@ def sweep_platform(
                 if res.slug not in previously_matched:
                     result.matched_new += 1
             elif res.total == 0:
-                # Distinct from the line below: nothing listed at all, the
-                # case dormancy acts on.
+                # Nothing listed at all -- the case dormancy acts on. Kept
+                # separate from the no-matching-titles branch because those
+                # two read identically in a log yet mean opposite things.
                 log.debug("[discover/%s] %s: empty board", platform, res.slug)
             else:
                 log.debug(
