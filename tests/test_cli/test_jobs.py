@@ -1928,6 +1928,8 @@ def _discover_summary() -> dict:
                 "swept": 2,
                 "matched_new": 1,
                 "matched_total": 1,
+                "empty_total": 4,
+                "dormant_total": 2,
                 "dead_new": 0,
                 "transient": 0,
             }
@@ -1953,6 +1955,7 @@ def test_discover_boards_success_prints_summary(
     assert "1 newly matched" in err
     assert "1 already swept or dead" in err
     assert "1 stale re-probed" in err
+    assert "4 empty (2 dormant)" in err
 
 
 def test_discover_boards_json_emits_envelope(

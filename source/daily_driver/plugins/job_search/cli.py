@@ -935,11 +935,19 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         stale_note = (
             f", {stats['restaled']} stale re-probed" if stats["restaled"] else ""
         )
+        dormant_note = (
+            f" ({stats['dormant_total']} dormant)" if stats["dormant_total"] else ""
+        )
+        empty_note = (
+            f", {stats['empty_total']} empty{dormant_note}"
+            if stats["empty_total"]
+            else ""
+        )
         Console.info(
             f"{platform}: {stats['swept']} probed of {stats['candidates']} "
             f"candidates ({stats['universe']} known slugs{source_note}"
             f"{skip_note}) -> {stats['matched_new']} newly matched "
-            f"({stats['matched_total']} total in cache), "
+            f"({stats['matched_total']} total in cache{empty_note}), "
             f"{stats['dead_new']} newly dead{stale_note}, "
             f"{stats['transient']} transient failures (retry next sweep)"
         )

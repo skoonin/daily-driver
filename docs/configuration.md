@@ -339,8 +339,10 @@ Sibling block of `scraper` under `job_search`. Controls the `jobs discover-board
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
 | `reprobe_days` | int (≥1) | 30 | Re-probe an already-swept board slug when its last probe is at least this many days old. Without this an incremental sweep only probes new slugs, so a board that dies after being matched stays in the scrape list until a `--full` sweep |
-| `max_reprobe_per_sweep` | int (≥1) | 500 | Cap on stale boards re-probed per sweep, oldest first. One sweep stamps every slug on the same day, so without a cap the whole universe would come due at once and repeat every `reprobe_days` |
+| `max_reprobe_per_sweep` | int (≥1) | 500 | Cap on stale boards re-probed per sweep, most-overdue first — ranked by how late each board is against its own cadence, so a dormant board cannot take every slot on the strength of its older timestamp. One sweep stamps every slug on the same day, so without a cap the whole universe would come due at once and repeat every `reprobe_days` |
 | `degraded_failure_ratio` | float (0-1] | 0.25 | Share of a platform's boards that must fail before the source is reported degraded. Below it the run logs the success rate instead |
+| `dormant_after_empty_sweeps` | int (≥0) | 2 | Consecutive probes finding zero postings before a board's re-probe cadence stretches. A board listing nothing has likely moved ATS; one listing jobs you don't match is alive and keeps the normal cadence. One non-empty probe resets the streak. `0` disables dormancy |
+| `dormant_reprobe_multiplier` | int (≥1) | 6 | Multiplier on `reprobe_days` for a dormant board, so 30 days becomes 180. Dormancy defers a re-probe, never cancels it |
 
 ### `sources` (`dict[str, SourceToggle]`)
 

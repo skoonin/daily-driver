@@ -18,6 +18,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from daily_driver.core.clock import now
 from daily_driver.plugins.job_search.config import JobSearchPlugin
@@ -29,6 +30,8 @@ def _ctx(
     roles: list[str] | None = None,
     reprobe_days: int | None = None,
     max_reprobe_per_sweep: int | None = None,
+    dormant_after_empty_sweeps: int | None = None,
+    dormant_reprobe_multiplier: int | None = None,
 ) -> ScrapeContext:
     payload: dict[str, Any] = {
         "roles": roles or ["SRE"],
@@ -39,6 +42,8 @@ def _ctx(
         for key, value in (
             ("reprobe_days", reprobe_days),
             ("max_reprobe_per_sweep", max_reprobe_per_sweep),
+            ("dormant_after_empty_sweeps", dormant_after_empty_sweeps),
+            ("dormant_reprobe_multiplier", dormant_reprobe_multiplier),
         )
         if value is not None
     }
@@ -908,3 +913,239 @@ class TestResolveBoards:
         with caplog.at_level("WARNING"):
             discovery.resolve_boards("lever", ["pin"], (), [])
         assert "no boards to scrape" not in caplog.text
+
+
+# ── Dormancy backoff ─────────────────────────────────────────────────────────
+
+
+def _swept_entry(tmp_path: Path, slug: str) -> dict[str, Any]:
+    path = tmp_path / "discovery" / "sweep-greenhouse.json"
+    entry: dict[str, Any] = dict(json.loads(path.read_text())["swept"][slug])
+    return entry
+
+
+def _write_sweep(tmp_path: Path, swept: dict[str, Any]) -> None:
+    path = tmp_path / "discovery" / "sweep-greenhouse.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"swept": swept}))
+
+
+class TestDormancyStreak:
+    """`empty_streak` counts consecutive probes that found zero postings."""
+
+    def test_streak_increments_on_consecutive_empty_probes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        empty = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        _sweep(tmp_path, monkeypatch, ["quiet-co"], empty)
+        assert _swept_entry(tmp_path, "quiet-co")["empty_streak"] == 1
+
+        _age_sweep_stamps(tmp_path, 45)
+        _sweep(tmp_path, monkeypatch, ["quiet-co"], empty)
+        assert _swept_entry(tmp_path, "quiet-co")["empty_streak"] == 2
+
+    def test_streak_resets_when_the_board_posts_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slug = "wakes-co"
+        empty = {slug: discovery.ProbeResult(slug, "swept", 0, total=0)}
+        _sweep(tmp_path, monkeypatch, [slug], empty)
+        _age_sweep_stamps(tmp_path, 45)
+        _sweep(tmp_path, monkeypatch, [slug], empty)
+        assert _swept_entry(tmp_path, slug)["empty_streak"] == 2
+
+        # Two empties arms dormancy at the default threshold, so the board is
+        # only due again after the stretched 180-day cadence.
+        _age_sweep_stamps(tmp_path, 200)
+        posting = {slug: discovery.ProbeResult(slug, "swept", 0, total=7)}
+        _sweep(tmp_path, monkeypatch, [slug], posting)
+        entry = _swept_entry(tmp_path, slug)
+        assert entry["empty_streak"] == 0
+        assert entry["total"] == 7
+
+    def test_a_populated_board_never_starts_a_streak(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """total > 0 is alive-but-not-matching, the 83% that must keep cadence."""
+        outcomes = {"busy-co": discovery.ProbeResult("busy-co", "swept", 0, total=40)}
+        _sweep(tmp_path, monkeypatch, ["busy-co"], outcomes)
+        assert _swept_entry(tmp_path, "busy-co")["empty_streak"] == 0
+
+
+class TestDormancyBackoff:
+    """A dormant board's re-probe cadence stretches by the multiplier."""
+
+    def _dormant_ctx(self, **over: int) -> ScrapeContext:
+        args: dict[str, int] = {
+            "reprobe_days": 30,
+            "dormant_after_empty_sweeps": 1,
+            "dormant_reprobe_multiplier": 6,
+        }
+        args.update(over)
+        return _ctx(**args)
+
+    def _seed_dormant(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ctx: ScrapeContext
+    ) -> None:
+        empty = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        _sweep(tmp_path, monkeypatch, ["quiet-co"], empty, ctx=ctx)
+
+    def test_dormant_board_is_not_reprobed_before_the_stretched_cutoff(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._dormant_ctx()
+        self._seed_dormant(tmp_path, monkeypatch, ctx)
+        _age_sweep_stamps(tmp_path, 45)  # past 30d, well short of 180d
+        result = _sweep(tmp_path, monkeypatch, ["quiet-co"], {}, ctx=ctx)
+        assert result.candidates == 0
+        assert result.restaled == 0
+
+    def test_dormant_board_is_reprobed_after_the_stretched_cutoff(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = self._dormant_ctx()
+        self._seed_dormant(tmp_path, monkeypatch, ctx)
+        _age_sweep_stamps(tmp_path, 200)  # past 180d
+        empty = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        result = _sweep(tmp_path, monkeypatch, ["quiet-co"], empty, ctx=ctx)
+        assert result.restaled == 1
+        assert _swept_entry(tmp_path, "quiet-co")["empty_streak"] == 2
+
+    def test_full_sweep_reprobes_a_dormant_board(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--full is the escape hatch for a board wrongly judged dormant."""
+        ctx = self._dormant_ctx()
+        self._seed_dormant(tmp_path, monkeypatch, ctx)
+        _age_sweep_stamps(tmp_path, 45)
+        empty = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        result = _sweep(tmp_path, monkeypatch, ["quiet-co"], empty, ctx=ctx, full=True)
+        assert result.candidates == 1
+        assert result.swept == 1
+
+    def test_zero_threshold_disables_dormancy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A streak is always >= 0, so 0 must mean off, not "every board"."""
+        ctx = self._dormant_ctx(dormant_after_empty_sweeps=0)
+        self._seed_dormant(tmp_path, monkeypatch, ctx)
+        _age_sweep_stamps(tmp_path, 45)
+        empty = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        result = _sweep(tmp_path, monkeypatch, ["quiet-co"], empty, ctx=ctx)
+        assert result.restaled == 1
+
+    def test_entry_without_total_never_arms_dormancy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pre-#251 entries have no total; they must not read as empty."""
+        stamp = (now() - timedelta(days=200)).isoformat()
+        _write_sweep(tmp_path, {"old-co": {"last_swept": stamp, "matched": 0}})
+        ctx = self._dormant_ctx()
+        empty = {"old-co": discovery.ProbeResult("old-co", "swept", 0, total=0)}
+        result = _sweep(tmp_path, monkeypatch, ["old-co"], empty, ctx=ctx)
+        assert result.restaled == 1
+        assert _swept_entry(tmp_path, "old-co")["empty_streak"] == 1
+
+    def test_dormant_boards_do_not_crowd_out_live_ones_at_the_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ranking is by how overdue a board is against its OWN cadence.
+
+        Sorting on the raw stamp would always rank the dormant board first —
+        it waits six times as long, so its stamp is necessarily older — and
+        starve the boards that actually post.
+        """
+        dormant_stamp = (now() - timedelta(days=185)).isoformat()  # due 5d ago
+        live_stamp = (now() - timedelta(days=40)).isoformat()  # due 10d ago
+        _write_sweep(
+            tmp_path,
+            {
+                "quiet-co": {
+                    "last_swept": dormant_stamp,
+                    "matched": 0,
+                    "total": 0,
+                    "empty_streak": 3,
+                },
+                "busy-co": {
+                    "last_swept": live_stamp,
+                    "matched": 2,
+                    "total": 60,
+                    "empty_streak": 0,
+                },
+            },
+        )
+        ctx = self._dormant_ctx(max_reprobe_per_sweep=1)
+        outcomes = {
+            "busy-co": discovery.ProbeResult("busy-co", "swept", 2, total=60),
+            "quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0),
+        }
+        result = _sweep(
+            tmp_path, monkeypatch, ["quiet-co", "busy-co"], outcomes, ctx=ctx
+        )
+        assert result.restaled == 1
+        assert _swept_entry(tmp_path, "busy-co")["last_swept"] != live_stamp
+        assert _swept_entry(tmp_path, "quiet-co")["last_swept"] == dormant_stamp
+
+
+class TestDormancyConfig:
+    def test_negative_threshold_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="dormant_after_empty_sweeps"):
+            _ctx(dormant_after_empty_sweeps=-1)
+
+    def test_zero_multiplier_is_rejected(self) -> None:
+        """0 would mean "never re-probe" -- that is retirement, not dormancy."""
+        with pytest.raises(ValidationError, match="dormant_reprobe_multiplier"):
+            _ctx(dormant_reprobe_multiplier=0)
+
+    def test_multiplier_of_one_is_a_legal_no_op(self) -> None:
+        ctx = _ctx(dormant_reprobe_multiplier=1)
+        assert ctx.plugin.discovery.dormant_reprobe_multiplier == 1
+
+    def test_defaults(self) -> None:
+        discovery_cfg = _ctx().plugin.discovery
+        assert discovery_cfg.dormant_after_empty_sweeps == 2
+        assert discovery_cfg.dormant_reprobe_multiplier == 6
+
+
+class TestDormancyReporting:
+    def test_sweep_reports_empty_and_dormant_totals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(dormant_after_empty_sweeps=1)
+        outcomes = {
+            "quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0),
+            "busy-co": discovery.ProbeResult("busy-co", "swept", 0, total=40),
+            "match-co": discovery.ProbeResult("match-co", "swept", 3, total=12),
+        }
+        result = _sweep(
+            tmp_path,
+            monkeypatch,
+            ["quiet-co", "busy-co", "match-co"],
+            outcomes,
+            ctx=ctx,
+        )
+        assert result.empty_total == 1
+        assert result.dormant_total == 1
+        assert result.matched_total == 1
+        assert result.as_dict()["empty_total"] == 1
+
+    def test_dormant_total_is_zero_when_disabled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ctx = _ctx(dormant_after_empty_sweeps=0)
+        outcomes = {"quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0)}
+        result = _sweep(tmp_path, monkeypatch, ["quiet-co"], outcomes, ctx=ctx)
+        assert result.empty_total == 1
+        assert result.dormant_total == 0
+
+    def test_empty_board_logs_differently_from_a_non_matching_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        outcomes = {
+            "quiet-co": discovery.ProbeResult("quiet-co", "swept", 0, total=0),
+            "busy-co": discovery.ProbeResult("busy-co", "swept", 0, total=40),
+        }
+        with caplog.at_level("DEBUG"):
+            _sweep(tmp_path, monkeypatch, ["quiet-co", "busy-co"], outcomes)
+        assert "quiet-co: empty board" in caplog.text
+        assert "busy-co: no matching titles (40 postings)" in caplog.text
