@@ -1951,11 +1951,67 @@ def test_discover_boards_success_prints_summary(
 
     assert rc == 0
     assert run_mock.call_args.kwargs["full"] is False
-    err = " ".join(capsys.readouterr().err.split())
-    assert "1 newly matched" in err
-    assert "1 already swept or dead" in err
-    assert "1 stale re-probed" in err
-    assert "4 empty (2 dormant)" in err
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Board discovery sweep" in out
+    # Cell content, not box glyphs: the row must carry probed, matched, +new,
+    # empty and dormant, with a dash for each zero and a + on what this sweep
+    # added. Asserting the drawn borders would pin us to a Rich box style.
+    row = out.split("greenhouse", 1)[1]
+    assert [cell.strip() for cell in row.split("│")][1:8] == [
+        "2",
+        "1",
+        "+1",
+        "4",
+        "2",
+        "-",
+        "-",
+    ]
+    assert "Matched, Empty and Dormant are cache totals" in out
+    assert "3 slugs known, 1 already swept or dead." in out
+    assert ".dd-config.yaml" in out
+
+
+def test_discover_boards_reports_failures_as_actionable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rate-limited platform must say what to do, not just show a count."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    summary = _discover_summary()
+    summary["platforms"]["greenhouse"]["transient"] = 1959
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        return_value=summary,
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "greenhouse: 1959 probes failed" in out
+    assert "Rerun with the same flags" in out
+    # A cached board is not re-probed until it ages out, so the flags matter.
+    assert "or under --full" in out
+
+
+def test_discover_boards_flags_a_cached_slug_universe(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A cached universe means the upstream fetch failed -- say so."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    summary = _discover_summary()
+    summary["platforms"]["greenhouse"]["universe_source"] = "cache"
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        return_value=summary,
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 0
+    out = " ".join(capsys.readouterr().out.split())
+    assert "upstream slug list unreachable" in out
 
 
 def test_discover_boards_json_emits_envelope(

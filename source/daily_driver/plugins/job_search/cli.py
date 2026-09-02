@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable
+from typing import Any
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
@@ -926,43 +927,74 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         Console.emit_json(summary)
         return 0
 
-    for platform, stats in summary["platforms"].items():
-        source_note = (
-            " (cached slug list)" if stats["universe_source"] == "cache" else ""
-        )
-        skipped = stats["universe"] - stats["candidates"]
-        skip_note = f"; {skipped} already swept or dead" if skipped > 0 else ""
-        stale_note = (
-            f", {stats['restaled']} stale re-probed" if stats["restaled"] else ""
-        )
-        dormant_note = (
-            f" ({stats['dormant_total']} dormant)" if stats["dormant_total"] else ""
-        )
-        empty_note = (
-            f", {stats['empty_total']} empty{dormant_note}"
-            if stats["empty_total"]
-            else ""
-        )
-        Console.info(
-            f"{platform}: {stats['swept']} probed of {stats['candidates']} "
-            f"candidates ({stats['universe']} known slugs{source_note}"
-            f"{skip_note}) -> {stats['matched_new']} newly matched "
-            f"({stats['matched_total']} total in cache{empty_note}), "
-            f"{stats['dead_new']} newly dead{stale_note}, "
-            f"{stats['transient']} transient failures (retry next sweep)"
-        )
-    Console.info(
-        "Matched boards are scraped by jobs run alongside your configured "
-        "*_boards pins (exclude_boards drops noisy ones). Boards last probed "
-        "over discovery.reprobe_days ago are re-probed each sweep so dead ones "
-        "retire, except dormant boards -- ones that listed nothing on their "
-        "last discovery.dormant_after_empty_sweeps probes -- which wait "
-        "discovery.dormant_reprobe_multiplier times as long. A board needs "
-        "that many re-probes before it can go dormant, so a fresh workspace "
-        "reports 0 dormant for several cycles. --full re-probes every "
-        "already-swept board now, dormant ones included."
-    )
+    _render_discovery_summary(summary)
     return 0
+
+
+def _render_discovery_summary(summary: dict[str, Any]) -> None:
+    """One row per platform, then only the notes that need acting on."""
+    from rich.table import Table
+
+    console = Console.get_user_console()
+    table = Table(
+        title="Board discovery sweep",
+        show_header=True,
+        # Half these columns count this sweep and half are running cache
+        # totals; unlabelled they read as one scale, and "Empty 670" looks
+        # like this sweep found 670 empty boards.
+        caption="Matched, Empty and Dormant are cache totals; the rest count this sweep",
+    )
+    table.add_column("Platform")
+    for heading in ("Probed", "Matched", "New", "Empty", "Dormant", "Dead", "Failed"):
+        table.add_column(heading, justify="right")
+
+    def count(value: int, *, delta: bool = False) -> str:
+        """A dash for zero, so the counts that matter carry the eye.
+
+        ``delta`` prefixes a ``+``: those two columns are what this sweep
+        added, sitting beside cache totals they would otherwise resemble.
+        """
+        if not value:
+            return "-"
+        return f"+{value}" if delta else str(value)
+
+    notes: list[str] = []
+    known = skipped = 0
+    for platform, stats in summary["platforms"].items():
+        known += stats["universe"]
+        skipped += stats["universe"] - stats["candidates"]
+        table.add_row(
+            platform,
+            count(stats["swept"]),
+            count(stats["matched_total"]),
+            count(stats["matched_new"], delta=True),
+            count(stats["empty_total"]),
+            count(stats["dormant_total"]),
+            count(stats["dead_new"], delta=True),
+            count(stats["transient"]),
+        )
+        if stats["transient"]:
+            notes.append(
+                f"{platform}: {stats['transient']} probes failed (rate limits, "
+                "timeouts or upstream errors). Rerun with the same flags to "
+                "retry them -- a board already in the cache is only re-probed "
+                "once it ages out, or under --full."
+            )
+        if stats["universe_source"] == "cache":
+            notes.append(
+                f"{platform}: upstream slug list unreachable; swept the cached one."
+            )
+    console.print(table)
+    console.print(f"{known} slugs known, {skipped} already swept or dead.")
+    for note in notes:
+        console.print(f"[yellow]{note}[/yellow]")
+    # Points at the config file rather than docs/: the generated template
+    # ships in the wheel and carries every knob's description, while docs/
+    # is repo-only and unreachable from a pip install.
+    console.print(
+        "Matched boards are scraped by jobs run. The discovery section of "
+        "your .dd-config.yaml explains the re-probe and dormancy knobs."
+    )
 
 
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]

@@ -1101,6 +1101,17 @@ class TestDormancyConfig:
         ctx = _ctx(dormant_reprobe_multiplier=1)
         assert ctx.plugin.discovery.dormant_reprobe_multiplier == 1
 
+    def test_defaults(self) -> None:
+        """The docs quote these two numbers; nothing else pins them in CI.
+
+        `make check-config-template` would catch a changed default, but it is
+        wired into the Makefile's lint target and a pre-commit hook only --
+        neither `make test` nor the CI lint job runs it.
+        """
+        discovery_cfg = _ctx().plugin.discovery
+        assert discovery_cfg.dormant_after_empty_sweeps == 2
+        assert discovery_cfg.dormant_reprobe_multiplier == 6
+
 
 class TestDormancyReporting:
     def test_sweep_reports_empty_and_dormant_totals(
