@@ -36,6 +36,26 @@ jobs:
         run: |
           source /tmp/smoke-venv/bin/activate
           python -c "import daily_driver; print(daily_driver.__version__)"
+      # Freshness is checked against the INSTALLED package, not the source
+      # tree: init renders the workspace config from the bundled template, so
+      # the copy inside the wheel is the one that reaches a user. The Makefile
+      # lint target runs the equivalent source-tree diff for local feedback.
+      - name: Assert shipped config template is fresh
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          python -m daily_driver.core.config_template > /tmp/config-template-generated.j2
+          SHIPPED=$(python -c "import importlib.resources as r; print(r.files('daily_driver.resources.templates').joinpath('.dd-config.yaml.j2'))")
+          # joinpath does not check existence, and diff exits 2 for a missing
+          # file just as it does for a real difference -- so absence must be
+          # ruled out first or a packaging break reads as a stale template.
+          if [ ! -f "$SHIPPED" ]; then
+            echo "::error::.dd-config.yaml.j2 is missing from the installed package; check the package-data patterns in pyproject.toml"
+            exit 1
+          fi
+          if ! diff -u "$SHIPPED" /tmp/config-template-generated.j2; then
+            echo "::error::the shipped config template does not match the models that generate it; run 'make setup && make config-template' and commit the result"
+            exit 1
+          fi
       - name: Workspace smoke (init + doctor + tracker)
         run: |
           source /tmp/smoke-venv/bin/activate
