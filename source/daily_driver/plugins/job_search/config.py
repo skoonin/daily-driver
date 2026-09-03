@@ -541,10 +541,13 @@ class DiscoveryConfig(BaseModel):
     max_reprobe_per_sweep: int = Field(
         default=500,
         description=(
-            "Cap on stale boards re-probed per sweep, oldest first. One sweep\n"
-            "writes every stamp on the same day, so an uncapped threshold would\n"
-            "re-probe the whole universe at once and repeat that every\n"
-            "reprobe_days. The cap spreads retirement over successive sweeps."
+            "Cap on stale boards re-probed per sweep, most-overdue first --\n"
+            "ranked by how late each board is against its own cadence, so a\n"
+            "dormant board cannot take every slot on the strength of its older\n"
+            "timestamp. One sweep writes every stamp on the same day, so an\n"
+            "uncapped threshold would re-probe the whole universe at once and\n"
+            "repeat that every reprobe_days. The cap spreads retirement over\n"
+            "successive sweeps."
         ),
     )
     degraded_failure_ratio: float = Field(
@@ -556,12 +559,49 @@ class DiscoveryConfig(BaseModel):
             "every run trains the reader to ignore the warning."
         ),
     )
+    dormant_after_empty_sweeps: int = Field(
+        default=2,
+        description=(
+            "Consecutive probes finding zero postings before a board's\n"
+            "re-probe cadence is stretched by dormant_reprobe_multiplier. A\n"
+            "board that lists nothing has likely moved ATS; one that lists\n"
+            "jobs you don't match is alive and keeps the normal cadence. A\n"
+            "single non-empty probe resets the streak. Set 0 to disable."
+        ),
+    )
+    dormant_reprobe_multiplier: int = Field(
+        default=6,
+        description=(
+            "Multiplier on reprobe_days for a dormant board, so the default\n"
+            "30-day cadence becomes 180. Dormancy defers a re-probe, never\n"
+            "cancels it: --full still re-probes every dormant board, and a\n"
+            "pinned board is scraped whatever discovery concluded. Setting 1\n"
+            "keeps the normal cadence but still REPORTS dormant boards; to\n"
+            "turn the feature off entirely use dormant_after_empty_sweeps: 0."
+        ),
+    )
 
     @field_validator("reprobe_days", "max_reprobe_per_sweep")
     @classmethod
     def _positive(cls, value: int) -> int:
         if value < 1:
             raise ValueError("reprobe_days and max_reprobe_per_sweep must be >= 1")
+        return value
+
+    @field_validator("dormant_after_empty_sweeps")
+    @classmethod
+    def _non_negative(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("dormant_after_empty_sweeps must be >= 0")
+        return value
+
+    @field_validator("dormant_reprobe_multiplier")
+    @classmethod
+    def _at_least_one(cls, value: int) -> int:
+        # 1 is a legal no-op. 0 would mean "never re-probe", which is
+        # retirement, not dormancy -- the dead cache owns permanence.
+        if value < 1:
+            raise ValueError("dormant_reprobe_multiplier must be >= 1")
         return value
 
     @field_validator("degraded_failure_ratio")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Callable
+from typing import Any
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
@@ -865,7 +866,7 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
 
 def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]
-    from daily_driver.core.progress import RunProgress
+    from daily_driver.core.progress import Phase, RunProgress
     from daily_driver.plugins.job_search.scraper.discovery import (
         DiscoveryError,
         run_discovery,
@@ -890,9 +891,15 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
             Console.get_log_console(), tty=tty, title="Board discovery sweep"
         ) as rp:
             group = rp.group("Sweeping slug universe")
+            # run_discovery's progress contract hands back a per-slug advance
+            # and has no per-platform completion hook, so the phases are marked
+            # done here. Without it no child is ever counted finished and the
+            # group header stays at 0/N for the whole sweep.
+            phases: list[Phase] = []
 
             def _progress(platform: str, total: int):  # type: ignore[no-untyped-def]
                 phase = group.phase(platform, total=total)
+                phases.append(phase)
                 return phase.advance
 
             summary = run_discovery(
@@ -901,6 +908,14 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
                 full=args.full,
                 progress=_progress,
             )
+            # Only when bars are live. Phase.done() is dual-purpose: it
+            # advances the group header under a TTY, but in plain mode it
+            # prints "<platform>: N done" -- one stderr line per platform on
+            # exactly the runs with no bars to correct (launchd, pipes,
+            # --json), restating the Probed column the table already carries.
+            if tty:
+                for phase in phases:
+                    phase.done()
             group.done()
     except DiscoveryError as exc:
         Console.error(str(exc))
@@ -926,30 +941,70 @@ def _run_discover_boards(args: argparse.Namespace, workspace) -> int:  # type: i
         Console.emit_json(summary)
         return 0
 
-    for platform, stats in summary["platforms"].items():
-        source_note = (
-            " (cached slug list)" if stats["universe_source"] == "cache" else ""
-        )
-        skipped = stats["universe"] - stats["candidates"]
-        skip_note = f"; {skipped} already swept or dead" if skipped > 0 else ""
-        stale_note = (
-            f", {stats['restaled']} stale re-probed" if stats["restaled"] else ""
-        )
-        Console.info(
-            f"{platform}: {stats['swept']} probed of {stats['candidates']} "
-            f"candidates ({stats['universe']} known slugs{source_note}"
-            f"{skip_note}) -> {stats['matched_new']} newly matched "
-            f"({stats['matched_total']} total in cache), "
-            f"{stats['dead_new']} newly dead{stale_note}, "
-            f"{stats['transient']} transient failures (retry next sweep)"
-        )
-    Console.info(
-        "Matched boards are scraped by jobs run alongside your configured "
-        "*_boards pins (exclude_boards drops noisy ones). Boards last probed "
-        "over discovery.reprobe_days ago are re-probed each sweep so dead ones "
-        "retire; --full re-probes every already-swept board now."
-    )
+    _render_discovery_summary(summary)
     return 0
+
+
+def _render_discovery_summary(summary: dict[str, Any]) -> None:
+    """One row per platform, then only the notes that need acting on."""
+    from rich.table import Table
+
+    console = Console.get_user_console()
+    # No title: RunProgress already announces the sweep on stderr, and a
+    # second copy over the table only repeats it.
+    table = Table(show_header=True)
+    table.add_column("Platform")
+    for heading in ("Probed", "Matched", "New", "Empty", "Dormant", "Dead", "Failed"):
+        table.add_column(heading, justify="right")
+
+    def count(value: int, *, delta: bool = False) -> str:
+        """A dash for zero, so the counts that matter carry the eye.
+
+        ``delta`` prefixes a ``+``: those two columns are what this sweep
+        added, sitting beside cache totals they would otherwise resemble.
+        """
+        if not value:
+            return "-"
+        return f"+{value}" if delta else str(value)
+
+    notes: list[str] = []
+    known = skipped = 0
+    for platform, stats in summary["platforms"].items():
+        known += stats["universe"]
+        skipped += stats["universe"] - stats["candidates"]
+        table.add_row(
+            platform,
+            count(stats["swept"]),
+            count(stats["matched_total"]),
+            count(stats["matched_new"], delta=True),
+            count(stats["empty_total"]),
+            count(stats["dormant_total"]),
+            count(stats["dead_new"], delta=True),
+            count(stats["transient"]),
+        )
+        if stats["transient"]:
+            # No flag caveat: a transient outcome is never recorded, so the
+            # slug stays absent from the swept cache and is a candidate again
+            # on the next plain sweep -- ageing and --full govern boards that
+            # were swept successfully, not these.
+            notes.append(
+                f"{platform}: {stats['transient']} probes failed -- "
+                "rerun to retry them."
+            )
+        if stats["universe_source"] == "cache":
+            notes.append(
+                f"{platform}: upstream slug list unreachable; swept the cached one."
+            )
+    console.print(table)
+    # Half these columns count this sweep and half are running cache totals;
+    # unlabelled they read as one scale, and "Empty 670" looks like this sweep
+    # found 670 empty boards.
+    console.print(
+        f"{known} slugs known, {skipped} already swept or dead. "
+        "Matched, Empty and Dormant are cache totals."
+    )
+    for note in notes:
+        console.print(f"[yellow]{note}[/yellow]")
 
 
 def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-untyped-def]

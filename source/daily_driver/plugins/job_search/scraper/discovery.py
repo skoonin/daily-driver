@@ -13,13 +13,16 @@ Three cache files per platform under ``<state>/discovery/``:
   sweep falls back to this cache when the upstream fetch fails (offline or
   upstream gone).
 - ``sweep-<platform>.json`` — per-slug sweep outcomes (``last_swept``,
-  ``matched`` title count, ``total`` raw posting count). Entries with
-  ``matched > 0`` ARE the matched-board cache. ``total`` tells an empty board
-  (0 — likely moved ATS) from a live one whose roles merely don't match;
-  entries written before the field exists lack it (unknown, never zero) and
-  pick it up on re-probe. Incremental sweeps probe only slugs never swept;
+  ``matched`` title count, ``total`` raw posting count, ``empty_streak``).
+  Entries with ``matched > 0`` ARE the matched-board cache. ``total`` tells an
+  empty board (0 — likely moved ATS) from a live one whose roles merely don't
+  match; entries written before the field exists lack it (unknown, never zero)
+  and pick it up on re-probe. ``empty_streak`` counts consecutive zero-posting
+  probes: past ``discovery.dormant_after_empty_sweeps`` the slug is dormant and
+  its re-probe cadence stretches by ``dormant_reprobe_multiplier``, until one
+  non-empty probe resets it. Incremental sweeps probe only slugs never swept;
   ``--full`` re-probes everything, so a board that stopped matching drops
-  out then.
+  out then and a dormant one is reconsidered.
 - ``dead-<platform>.json`` — slugs that answered 404/410 (or Ashby's
   ``jobBoard: null``): permanently gone, never probed again. Transient
   failures (429 after retries, timeouts, 5xx) are NEVER cached as dead — they
@@ -168,22 +171,41 @@ def load_matched_boards(state_dir: Path, platform: str) -> dict[str, dict[str, A
     }
 
 
-def _stale_slugs(swept: dict[str, Any], reprobe_days: int, limit: int) -> set[str]:
-    """The ``limit`` stalest swept slugs whose last probe is ``reprobe_days`` old.
+def _stale_slugs(
+    swept: dict[str, Any],
+    reprobe_days: int,
+    limit: int,
+    *,
+    dormant_after: int = 0,
+    dormant_multiplier: int = 1,
+) -> set[str]:
+    """The ``limit`` most overdue swept slugs, ranked against their own cadence.
 
     A missing, unparseable, or naive ``last_swept`` counts as maximally stale:
     the entry predates the aware-timestamp convention or was written by a broken
     run, and one re-probe is cheap next to leaving a dead board in the scrape
     list indefinitely. The re-probe rewrites the stamp in the current form.
 
-    The oldest-first cap matters because a workspace's stamps are not spread out
-    — one big sweep writes them all on the same day, so an uncapped threshold
-    would re-probe the entire universe at once and then repeat that herd every
+    A board whose ``empty_streak`` has reached ``dormant_after`` is dormant: it
+    has answered with zero postings that many times running, so its cadence
+    stretches by ``dormant_multiplier``. ``dormant_after`` of 0 disables this —
+    a streak is always >= 0, so the threshold must be positive to mean anything.
+
+    Ranking is by due date (``last_swept`` plus that slug's own cadence), not by
+    raw stamp. A dormant board waits six times as long, so its stamp is always
+    the older one, and ranking on the stamp would let dormant boards take every
+    capped slot and starve the boards that actually post. Due-date ordering is
+    identical to stamp ordering when nothing is dormant, since every entry then
+    shares one cadence.
+
+    The cap matters because a workspace's stamps are not spread out — one big
+    sweep writes them all on the same day, so an uncapped threshold would
+    re-probe the entire universe at once and then repeat that herd every
     ``reprobe_days``. Capping spreads retirement over successive sweeps and
     staggers the stamps as a side effect.
     """
-    cutoff = now() - timedelta(days=reprobe_days)
-    # Sorts ahead of any real stamp, so unusable entries are re-probed first.
+    current = now()
+    # Sorts ahead of any real due date, so unusable entries are re-probed first.
     unusable = datetime.min.replace(tzinfo=timezone.utc)
     stale: list[tuple[datetime, str]] = []
     for slug, info in swept.items():
@@ -197,10 +219,16 @@ def _stale_slugs(swept: dict[str, Any], reprobe_days: int, limit: int) -> set[st
             continue
         if last.tzinfo is None:
             stale.append((unusable, slug))
-        elif last <= cutoff:
-            stale.append((last, slug))
+            continue
+        streak = info.get("empty_streak") or 0
+        cadence = reprobe_days
+        if dormant_after > 0 and streak >= dormant_after:
+            cadence = reprobe_days * dormant_multiplier
+        due = last + timedelta(days=cadence)
+        if due <= current:
+            stale.append((due, slug))
     stale.sort(key=lambda entry: entry[0])
-    return {slug for _stamp, slug in stale[:limit]}
+    return {slug for _due, slug in stale[:limit]}
 
 
 def resolve_boards(
@@ -478,6 +506,8 @@ class PlatformSweep:
     swept: int = 0
     matched_new: int = 0
     matched_total: int = 0
+    empty_total: int = 0
+    dormant_total: int = 0
     dead_new: int = 0
     transient: int = 0
 
@@ -561,6 +591,8 @@ def sweep_platform(
         {slug: info for slug, info in swept.items() if slug in universe},
         discovery_cfg.reprobe_days,
         discovery_cfg.max_reprobe_per_sweep,
+        dormant_after=discovery_cfg.dormant_after_empty_sweeps,
+        dormant_multiplier=discovery_cfg.dormant_reprobe_multiplier,
     )
 
     # Stale slugs re-enter an incremental sweep. Without them a board that dies
@@ -611,10 +643,17 @@ def sweep_platform(
     def _record(res: ProbeResult) -> None:
         stamp = now().isoformat()
         if res.outcome == "swept":
+            # The streak counts CONSECUTIVE empty probes, so it has to carry
+            # over from the entry being replaced; one non-empty probe clears it.
+            prior = state.sweep.get(res.slug)
+            prior_streak = (
+                prior.get("empty_streak") or 0 if isinstance(prior, dict) else 0
+            )
             state.sweep[res.slug] = {
                 "last_swept": stamp,
                 "matched": res.matched,
                 "total": res.total,
+                "empty_streak": prior_streak + 1 if res.total == 0 else 0,
             }
             result.swept += 1
             if res.matched > 0:
@@ -627,8 +666,18 @@ def sweep_platform(
                 )
                 if res.slug not in previously_matched:
                     result.matched_new += 1
+            elif res.total == 0:
+                # Nothing listed at all -- the case dormancy acts on. Kept
+                # separate from the no-matching-titles branch because those
+                # two read identically in a log yet mean opposite things.
+                log.debug("[discover/%s] %s: empty board", platform, res.slug)
             else:
-                log.debug("[discover/%s] %s: no matching titles", platform, res.slug)
+                log.debug(
+                    "[discover/%s] %s: no matching titles (%d postings)",
+                    platform,
+                    res.slug,
+                    res.total,
+                )
         elif res.outcome == "dead":
             state.dead[res.slug] = stamp
             state.sweep.pop(res.slug, None)
@@ -674,6 +723,25 @@ def sweep_platform(
 
     result.matched_total = sum(
         1 for info in state.sweep.values() if (info.get("matched") or 0) > 0
+    )
+    # Cache-wide, not this sweep's probes: the operator wants the standing
+    # picture. A missing `total` is unknown, never zero, so entries written
+    # before the field shipped are not counted as empty.
+    result.empty_total = sum(
+        1
+        for info in state.sweep.values()
+        if isinstance(info, dict) and info.get("total") == 0
+    )
+    dormant_after = discovery_cfg.dormant_after_empty_sweeps
+    result.dormant_total = (
+        sum(
+            1
+            for info in state.sweep.values()
+            if isinstance(info, dict)
+            and (info.get("empty_streak") or 0) >= dormant_after
+        )
+        if dormant_after > 0
+        else 0
     )
     return result
 
