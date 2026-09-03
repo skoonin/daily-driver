@@ -1951,8 +1951,11 @@ def test_discover_boards_success_prints_summary(
 
     assert rc == 0
     assert run_mock.call_args.kwargs["full"] is False
-    out = " ".join(capsys.readouterr().out.split())
-    assert "Board discovery sweep" in out
+    captured = capsys.readouterr()
+    out = " ".join(captured.out.split())
+    # The sweep is titled once, on the progress channel; stdout carries the
+    # table alone so a redirect captures data without a heading over it.
+    assert "Board discovery sweep" not in out
     # Cell content, not box glyphs: the row must carry probed, matched, +new,
     # empty and dormant, with a dash for each zero and a + on what this sweep
     # added. Asserting the drawn borders would pin us to a Rich box style.
@@ -1966,9 +1969,83 @@ def test_discover_boards_success_prints_summary(
         "-",
         "-",
     ]
-    assert "Matched, Empty and Dormant are cache totals" in out
     assert "3 slugs known, 1 already swept or dead." in out
-    assert ".dd-config.yaml" in out
+    assert "Matched, Empty and Dormant are cache totals" in out
+    # A clean sweep says nothing further. The standing explanation of what
+    # matched boards are for, and where the knobs live, printed on every run
+    # and is in the generated config template the pointer used to name.
+    assert "Matched boards are scraped by jobs run" not in out
+    assert ".dd-config.yaml" not in out
+
+
+def _sweep_driving_progress(*_args, **kwargs):  # type: ignore[no-untyped-def]
+    """A run_discovery stand-in that drives the progress callback.
+
+    The other discover-boards tests patch ``run_discovery`` with a plain
+    return value, which never invokes the ``progress`` kwarg -- so the CLI's
+    phase bookkeeping is a no-op under them and nothing they assert can see it.
+    """
+    progress = kwargs["progress"]
+    for platform in ("greenhouse", "ashby"):
+        advance = progress(platform, 2)
+        advance()
+        advance()
+    return _discover_summary()
+
+
+def test_discover_boards_marks_every_platform_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under live bars every phase is marked done, so the group reaches N/N.
+
+    The sweep reports per-slug progress and has no per-platform completion
+    hook, so the CLI marks the phases itself; without that no child is ever
+    counted finished and the header sits at 0/N for the whole sweep.
+    """
+    from daily_driver.cli.cli import app
+    from daily_driver.core.console import Console
+    from daily_driver.core.progress import Phase
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    finished: list[str] = []
+    monkeypatch.setattr(
+        Console, "live_progress_enabled", classmethod(lambda cls, **_kw: True)
+    )
+    monkeypatch.setattr(
+        Phase, "done", lambda self, summary=None: finished.append(self._label)
+    )
+
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        side_effect=_sweep_driving_progress,
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 0
+    assert finished == ["greenhouse", "ashby"]
+
+
+def test_discover_boards_stays_quiet_without_live_bars(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No bars, nothing to correct: marking phases done must print nothing.
+
+    ``Phase.done`` advances the group header under a TTY but prints
+    "<platform>: N done" in plain mode -- which is every scheduled run, pipe
+    and --json invocation, and restates the Probed column already in the table.
+    """
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    with patch(
+        "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
+        side_effect=_sweep_driving_progress,
+    ):
+        rc = app(["--workspace", str(ws), "jobs", "discover-boards"])
+
+    assert rc == 0
+    err = " ".join(capsys.readouterr().err.split())
+    assert "done" not in err
 
 
 def test_discover_boards_reports_failures_as_actionable(
@@ -1989,9 +2066,12 @@ def test_discover_boards_reports_failures_as_actionable(
     assert rc == 0
     out = " ".join(capsys.readouterr().out.split())
     assert "greenhouse: 1959 probes failed" in out
-    assert "Rerun with the same flags" in out
-    # A cached board is not re-probed until it ages out, so the flags matter.
-    assert "or under --full" in out
+    assert "rerun to retry them" in out
+    # A transient outcome is never cached, so the slug retries on any plain
+    # sweep. The note must not imply --full or an age-out is needed: that
+    # rule governs boards that were swept successfully.
+    assert "--full" not in out
+    assert "same flags" not in out
 
 
 def test_discover_boards_flags_a_cached_slug_universe(
