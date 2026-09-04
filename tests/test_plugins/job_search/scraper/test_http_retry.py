@@ -8,7 +8,11 @@ import requests
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-from daily_driver.plugins.job_search.scraper.sources._http import _api_get, _api_post
+from daily_driver.plugins.job_search.scraper.sources._http import (
+    _DEFAULT_BACKOFF_SECONDS,
+    _api_get,
+    _api_post,
+)
 
 
 def _fake_response(status: int, headers: dict[str, str] | None = None) -> MagicMock:
@@ -148,6 +152,54 @@ def test_invalid_retry_after_falls_back_to_backoff() -> None:
 
     assert sleeps and sleeps[0] > 0
     assert sleeps[0] != 7.0
+
+
+def test_zero_retry_after_does_not_defeat_the_backoff() -> None:
+    """A Retry-After of 0 must not collapse the wait to nothing.
+
+    Retry-After states the earliest a retry is permitted, never the latest, so
+    honouring a literal 0 spends the whole retry budget inside one millisecond
+    against a server that is actively throttling -- which is a single attempt
+    wearing the costume of four. Ashby's limiter answers this way, and a live
+    sweep logged four attempts on the same second before giving up, failing
+    1,925 of 2,470 boards.
+    """
+    session = MagicMock(spec=requests.Session)
+    session.get.side_effect = [
+        _fake_response(429, headers={"Retry-After": "0"}),
+        _fake_response(429, headers={"Retry-After": "0"}),
+        _fake_response(200),
+    ]
+    sleeps: list[float] = []
+
+    _api_get(
+        session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
+    )
+
+    assert len(sleeps) == 2
+    assert all(seconds > 0 for seconds in sleeps)
+    assert sleeps[0] < sleeps[1]
+
+
+def test_retry_after_shorter_than_backoff_is_floored() -> None:
+    """A sub-backoff Retry-After is raised to our own schedule, not obeyed.
+
+    The header is a lower bound. Retrying later than a server asks is always
+    allowed, and the exponential schedule is what keeps a rate-limit storm
+    from being answered at full speed.
+    """
+    session = MagicMock(spec=requests.Session)
+    session.get.side_effect = [
+        _fake_response(429, headers={"Retry-After": "0.25"}),
+        _fake_response(200),
+    ]
+    sleeps: list[float] = []
+
+    _api_get(
+        session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
+    )
+
+    assert sleeps == [_DEFAULT_BACKOFF_SECONDS]
 
 
 def test_retries_on_503() -> None:

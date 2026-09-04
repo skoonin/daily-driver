@@ -36,6 +36,11 @@ def _http_session(ctx: ScrapeContext) -> requests.Session:
     return session
 
 
+def _backoff_seconds(attempt: int) -> float:
+    """Exponential wait before retry ``attempt``: 1.5s, 3s, 6s, ... capped at 30s."""
+    return min(_DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS)
+
+
 def _retry_after_seconds(resp: requests.Response) -> float | None:
     """Parse Retry-After header (delta-seconds form). Returns None if absent/invalid."""
     raw = resp.headers.get("Retry-After")
@@ -63,8 +68,9 @@ def _api_request(
     """Issue an HTTP request with retry on 429/503; log + return None on failure.
 
     Shared by `_api_get` / `_api_post`. `max_retries` defaults to
-    `scraper.max_retries` from config (3). Honors `Retry-After` when present;
-    otherwise applies exponential backoff (1.5s, 3s, 6s, ... capped at 30s).
+    `scraper.max_retries` from config (3). Backoff is exponential (1.5s, 3s,
+    6s, ... capped at 30s); a `Retry-After` header longer than that is honored
+    instead, but a shorter one does not shorten the wait.
     `json`, when given, is sent as the request body. `headers`, when given,
     are merged onto the session headers for this request only (e.g. the
     browser-like set a login-free LinkedIn page expects). `sleep` is a seam for
@@ -90,15 +96,16 @@ def _api_request(
             last_exc = exc
             if attempt >= retries:
                 break
-            sleep(min(_DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS))
+            sleep(_backoff_seconds(attempt))
             continue
 
         if resp.status_code in _RETRY_STATUS_CODES and attempt < retries:
-            wait = _retry_after_seconds(resp)
-            if wait is None:
-                wait = min(
-                    _DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS
-                )
+            backoff = _backoff_seconds(attempt)
+            # Retry-After is the earliest a retry is allowed, not the latest:
+            # Ashby answers 0, which would spend every attempt inside a single
+            # millisecond against a server that is actively throttling.
+            retry_after = _retry_after_seconds(resp)
+            wait = backoff if retry_after is None else max(retry_after, backoff)
             log.info(
                 "[%s] %s rate-limited (HTTP %d); retrying in %.1fs (attempt %d/%d)",
                 label,
