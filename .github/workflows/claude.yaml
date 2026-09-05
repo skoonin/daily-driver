@@ -30,6 +30,13 @@ jobs:
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
     runs-on: ubuntu-latest
+    # One paid run per PR at a time: GitHub holds one running plus one pending
+    # run per group, and a newer mention replaces the pending one, which caps
+    # cost. Never cancel the running one; a half-finished reply is worse than
+    # a late one.
+    concurrency:
+      group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
     # Reads CC_API_KEY from the dev environment. Note: an environment with
     # required-reviewer or wait-timer protection rules would gate this job,
     # delaying @claude replies until the rule is satisfied.
@@ -38,6 +45,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      # Required even with anthropic_api_key: without an explicit github_token
+      # the action exchanges a GitHub OIDC token for its GitHub App token
+      # (src/github/token.ts at the pinned tag) and fails without this.
       id-token: write
       actions: read # lets Claude read CI results on PRs
     steps:

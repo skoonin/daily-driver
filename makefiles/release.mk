@@ -3,8 +3,10 @@
 .PHONY: build
 build: ## Build sdist + wheel into dist/
 	@rm -rf dist build
-	@.venv/bin/python -m pip install --quiet --upgrade build
-	@.venv/bin/python -m build
+	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)' || \
+		{ echo "ERROR: $(PYTHON) is not a virtualenv; refusing to install build tooling into it. Run 'make setup' first." >&2; exit 1; }
+	@$(PYTHON) -m pip install --quiet --upgrade build
+	@$(PYTHON) -m build
 	@ls -la dist/
 
 .PHONY: release release-ci _release
@@ -35,11 +37,12 @@ _release:
 	@echo ""
 	@echo "[1/6] Verifying release branch and clean working tree..."
 	@branch=$$(git rev-parse --abbrev-ref HEAD); \
-	if [ "$$branch" = "dev" ]; then \
-		echo "ERROR: don't cut a release from the dev trunk (it carries the -dev marker)." >&2; \
-		echo "       Merge dev -> main and run 'make release' from main." >&2; \
-		exit 1; \
-	fi
+	case "$$branch" in \
+		release/*) ;; \
+		*) echo "ERROR: releases are cut from a release/X.Y.Z branch, not from $$branch." >&2; \
+		   echo "       git fetch origin && git checkout -b release/$(VERSION) origin/dev   # then re-run" >&2; \
+		   exit 1 ;; \
+	esac
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "ERROR: working tree is dirty. Commit or stash first." >&2; \
 		git status --short >&2; \
@@ -55,13 +58,12 @@ _release:
 	@$(TOX) -e py311,py312
 	@echo ""
 	@echo "[3/6] Running install smoke test..."
-	@rm -rf /tmp/daily-driver-release-smoke
-	@python3 -m venv /tmp/daily-driver-release-smoke
-	@/tmp/daily-driver-release-smoke/bin/pip install --quiet --upgrade pip
-	@/tmp/daily-driver-release-smoke/bin/pip install --quiet .
-	@/tmp/daily-driver-release-smoke/bin/daily-driver --version
-	@/tmp/daily-driver-release-smoke/bin/python -c "import daily_driver; print('import OK, version:', daily_driver.__version__)"
-	@rm -rf /tmp/daily-driver-release-smoke
+	@( set -e; smoke=$$(mktemp -d); trap 'rm -rf "$$smoke"' EXIT; \
+	   $(PYTHON) -m venv "$$smoke"; \
+	   "$$smoke/bin/pip" install --quiet --upgrade pip; \
+	   "$$smoke/bin/pip" install --quiet .; \
+	   "$$smoke/bin/daily-driver" --version; \
+	   "$$smoke/bin/python" -c "import daily_driver; print('import OK, version:', daily_driver.__version__)" )
 	@echo "  OK: entry point resolves, import works"
 	@echo ""
 	@echo "[4/6] Building sdist + wheel..."
@@ -72,21 +74,21 @@ _release:
 	@echo "  - rewrite CHANGELOG.md: [Unreleased] -> [$(VERSION)] — $$(date +%Y-%m-%d)"
 	@echo "  - bump __version__ to $(VERSION)"
 	@echo "  - commit 'release: v$(VERSION)'"
-	@echo "  - tag v$(VERSION) signed with the changelog section"
+	@echo "  - tag v$(VERSION) annotated with the changelog section"
 	@echo ""
 	@if [ "$(RELEASE_CONFIRM)" = "0" ]; then \
 		echo "  (release-ci: headless mode, skipping confirmation)"; \
 	else \
 		printf "Proceed? [y/N] "; \
-		read ans; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || { echo "Aborted."; exit 1; }; \
+		read -r ans || ans=""; [ "$$ans" = "y" ] || [ "$$ans" = "Y" ] || { echo "Aborted."; exit 1; }; \
 	fi
 	@echo ""
 	@echo "[6/6] Rewriting CHANGELOG, bumping version, committing, tagging..."
-	@.venv/bin/python makefiles/_release_helper.py cut "$(VERSION)" "$$(date +%Y-%m-%d)"
+	@$(PYTHON) makefiles/_release_helper.py cut "$(VERSION)" "$$(date +%Y-%m-%d)"
 	@git add CHANGELOG.md source/daily_driver/__init__.py
 	@git commit -m "release: v$(VERSION)"
-	@tag_msg=$$(.venv/bin/python makefiles/_release_helper.py tag-message "$(VERSION)"); \
-	git tag -a "v$(VERSION)" -m "v$(VERSION)" -m "$$tag_msg"
+	@( set -e; tag_msg=$$($(PYTHON) makefiles/_release_helper.py tag-message "$(VERSION)"); \
+	   git tag -a "v$(VERSION)" -m "v$(VERSION)" -m "$$tag_msg" )
 	@echo ""
 	@echo "  Release v$(VERSION) prepared."
 	@echo "  Next step: make release-push"

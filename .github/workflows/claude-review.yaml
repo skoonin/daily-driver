@@ -21,12 +21,20 @@ jobs:
       github.event.label.name == 'pr-review' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    # Re-labelling while a review is running supersedes it: the newer run
+    # reviews the newer commits, so cancelling the old one saves the cost.
+    concurrency:
+      group: claude-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     # Reads CC_API_KEY from the dev environment. Note: an environment with
     # required-reviewer or wait-timer protection rules would gate this job.
     environment: dev
     permissions:
       contents: read
       pull-requests: write
+      # Required even with anthropic_api_key: without an explicit github_token
+      # the action exchanges a GitHub OIDC token for its GitHub App token
+      # (src/github/token.ts at the pinned tag) and fails without this.
       id-token: write
     steps:
       # fetch-depth: 0 so the reviewers can diff against the PR base branch.
