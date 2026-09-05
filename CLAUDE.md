@@ -23,6 +23,7 @@ errands, project milestones, support tickets, job applications. See
 ```bash
 make setup    # .venv + pip install -e .[dev] + pre-commit hooks
 make test     # full tox envlist (matches CI: lint + type + py311 + py312 + coverage)
+              # needs python3.11 and python3.12 on PATH; tox fails on a missing one
 ```
 
 ## Command surface
@@ -88,6 +89,9 @@ Key conventions:
 - `make test-quick` — py311 only, fast inner loop.
 - `make test-unit` / `test-cli` / `test-e2e` — scoped suites.
 - `make lint` / `make format` / `make type` — black + isort + flake8 + mypy.
+- pre-commit runs black, isort, flake8, pyupgrade, autoflake, the config-template diff, and the pre-commit-hooks hygiene checks (whitespace, end of file, YAML and TOML syntax, debug statements).
+- CI runs black, isort, flake8, mypy, and pytest (which includes a test that diffs the shipped config template). pyupgrade and autoflake have no CI counterpart; mypy has no pre-commit hook.
+- Tests marked `smoke` hit live job-board URLs. pytest `addopts` excludes them and nothing runs them on a schedule; run `pytest -m smoke tests/test_plugins/job_search/scraper/test_e2e_smoke.py` by hand.
 
 Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
 `tests/test_plugins/job_search/` (incl. `scraper/`), `tests/test_gathers/`,
@@ -99,7 +103,7 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
   and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker
   (`pip install 'git+https://github.com/skoonin/daily-driver.git@dev'` to test).
   `main` holds only tagged releases. Cut a release from a `release/X.Y.Z` branch
-  off `dev` (run `make release` there — it refuses to run on `dev`), then PR
+  off `dev` (run `make release` there — it refuses any branch that is not `release/*`), then PR
   `release/X.Y.Z` → `main`; `main` is only ever updated through a `release/*`
   PR, never a direct `dev` → `main` merge. Full flow in `docs/dev/releasing.md`.
 - `make release VERSION=X.Y.Z` — verify release branch + clean tree, run
