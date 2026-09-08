@@ -457,6 +457,50 @@ class TestSweepPlatform:
         assert "flaky-co" not in sweep_state
         assert "flaky-co" not in dead
 
+    def test_transient_reprobe_failure_stays_a_candidate_without_full(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A board failing transiently on its stale re-probe is probed again
+        on the next plain sweep.
+
+        The never-swept half is covered above, by the slug that lands in no
+        cache. Here the entry already exists, so staleness is what has to make
+        the slug a candidate -- and it does, because the failure leaves the
+        stamp where it was and the due date only falls further behind.
+        """
+        _sweep(
+            tmp_path,
+            monkeypatch,
+            ["flaky-co"],
+            {"flaky-co": discovery.ProbeResult("flaky-co", "swept", 2, total=5)},
+        )
+        _age_sweep_stamps(tmp_path, 45)
+        entry_path = tmp_path / "discovery" / "sweep-greenhouse.json"
+        before = json.loads(entry_path.read_text())["swept"]["flaky-co"]
+
+        failed = _sweep(
+            tmp_path,
+            monkeypatch,
+            ["flaky-co"],
+            {"flaky-co": discovery.ProbeResult("flaky-co", "transient")},
+        )
+
+        assert failed.restaled == 1
+        assert failed.transient == 1
+        # Unchanged, stamp included: a transient outcome records nothing.
+        assert json.loads(entry_path.read_text())["swept"]["flaky-co"] == before
+
+        retried = _sweep(
+            tmp_path,
+            monkeypatch,
+            ["flaky-co"],
+            {"flaky-co": discovery.ProbeResult("flaky-co", "swept", 2, total=5)},
+        )
+
+        assert retried.candidates == 1
+        assert retried.restaled == 1
+        assert retried.swept == 1
+
     def test_incremental_skips_swept_and_dead(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
