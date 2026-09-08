@@ -4,6 +4,7 @@ Full fixture set (tmp_workspace, sample_workspace, mock_claude, mock_icalbuddy,
 mock_jobspy) lands later as each layer is ported. For P0, this file only
 ensures PYTHONPATH points at source/ when pytest is invoked directly.
 """
+
 from __future__ import annotations
 
 import logging

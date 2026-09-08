@@ -20,21 +20,23 @@ repos:
     rev: 25.1.0
     hooks:
       - id: black
-        files: ^(source|tests)/
+        # The python-only hooks below alias this as *py_files. YAML resolves an
+        # alias only against an earlier anchor, so keep this block above them.
+        files: &py_files ^(source/|tests/|conftest\.py$)
         language_version: python3
 
   - repo: https://github.com/pycqa/isort
     rev: 6.0.1
     hooks:
       - id: isort
-        files: ^(source|tests)/
+        files: *py_files
         args: ["--profile", "black"]
 
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.2
     hooks:
       - id: pyupgrade
-        files: ^(source|tests)/
+        files: *py_files
         # tracker.py uses typing.List intentionally; the `Tracker.list` method
         # shadows the builtin under `from __future__ import annotations`.
         exclude: ^source/daily_driver/core/tracker\.py$
@@ -44,7 +46,7 @@ repos:
     rev: v2.3.1
     hooks:
       - id: autoflake
-        files: ^(source|tests)/
+        files: *py_files
         args:
           - --remove-all-unused-imports
           - --in-place
@@ -53,7 +55,7 @@ repos:
     rev: 7.3.0
     hooks:
       - id: flake8
-        files: ^(source|tests)/
+        files: *py_files
         additional_dependencies: [Flake8-pyproject>=1.2.3]
 
   - repo: local

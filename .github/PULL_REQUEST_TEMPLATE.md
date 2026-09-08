@@ -14,9 +14,7 @@ Closes #
 
 ## Testing
 
-- [ ] `tox -e lint` passes
-- [ ] `tox -e type` passes
-- [ ] `tox -e py311` passes
+- [ ] `make test` passes (full tox envlist, see `tox.ini`; the same set CI runs)
 - [ ] Manual verification on macOS arm64
 
 ## Checklist

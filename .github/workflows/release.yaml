@@ -12,8 +12,23 @@ jobs:
   build-and-release:
     name: Build and attach to GitHub Release
     runs-on: macos-latest
+    # action-gh-release names the release after github.ref_name, so a dispatch
+    # from a branch would publish a release called "main" or "dev".
+    if: github.ref_type == 'tag'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      # The wheel version comes from __version__, not from the tag, so a tag
+      # pushed onto an un-bumped commit would attach an X.Y.Z.dev0 wheel to a
+      # release labelled vX.Y.Z. Check before spending minutes on the suite.
+      - name: Assert __version__ matches the tag
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(grep '^__version__' source/daily_driver/__init__.py | cut -d'"' -f2)"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::tag $GITHUB_REF_NAME expects __version__ = \"$expected\" but source/daily_driver/__init__.py has \"$actual\"; delete the tag (git push origin :refs/tags/$GITHUB_REF_NAME && git tag -d $GITHUB_REF_NAME), then run 'make release VERSION=$expected' on a release/* branch and push that tag"
+            exit 1
+          fi
+          echo "__version__ $actual matches tag $GITHUB_REF_NAME"
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
@@ -45,6 +60,8 @@ jobs:
             dist/*.tar.gz
           generate_release_notes: true
           draft: false
+          # The assertion above guarantees the tag name and __version__ agree,
+          # so the tag is a faithful proxy for the built version here.
           prerelease: ${{ contains(github.ref_name, 'dev') || contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
 
 # No PyPI publish in v0.1.0 — git+https install is the distribution channel.

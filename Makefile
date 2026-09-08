@@ -1,9 +1,14 @@
 # Daily Driver — Personal productivity assistant
 # Requires Python 3.11+ and macOS (arm64 target for v0.1.0)
 
+# GNU make >= 3.82 runs each recipe in one shell; -e makes a failing line abort
+# the recipe instead of only the last line's status counting. Apple's make 3.81
+# ignores .ONESHELL and .SHELLFLAGS and runs one plain shell per line, so a
+# multi-command line must fail on its own: group it as `( set -e; ...; ... )`
+# rather than chaining with && on a line that is not the recipe's last.
 .ONESHELL:
 SHELL := /bin/bash
-.SHELLFLAGS := -o pipefail -c
+.SHELLFLAGS := -eo pipefail -c
 .DEFAULT_GOAL := help
 
 # Single-source version from source/daily_driver/__init__.py

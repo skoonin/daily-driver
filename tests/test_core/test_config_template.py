@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.resources
 import re
 from typing import Any, get_args, get_origin
 
@@ -263,3 +264,21 @@ def test_untemplated_exclusions_are_actually_skipped():
         assert not _key_appears(
             by_path[excluded], text
         ), f"_UNTEMPLATED path {excluded!r} now renders; drop it from the exclusion list"
+
+
+def test_shipped_template_matches_renderer() -> None:
+    """The checked-in template is what `init` copies into a workspace.
+
+    `make check-config-template` and the pre-commit hook diff it locally, but
+    neither runs in CI; this test closes that gap in every pytest invocation.
+    """
+    shipped = importlib.resources.files("daily_driver.resources.templates").joinpath(
+        ".dd-config.yaml.j2"
+    )
+    assert (
+        shipped.is_file()
+    ), f"{shipped} is missing; check the package-data patterns in pyproject.toml"
+    assert shipped.read_text(encoding="utf-8") == render_config_template(), (
+        "shipped .dd-config.yaml.j2 does not match the models that generate it; "
+        "run 'make config-template' and commit the result"
+    )

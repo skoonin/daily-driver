@@ -15,6 +15,6 @@ install: ## Install daily-driver to user site (refuses inside a venv)
 		echo "Run 'deactivate' first, then re-run 'make install'."; \
 		exit 1; \
 	fi
-	@HOST_PYTHON=$$(bash .ci-tools/detect-python.sh) && \
-		"$$HOST_PYTHON" -m pip install --user "git+file://$(PROJ_DIR)"
+	@( set -e; HOST_PYTHON=$$(bash .ci-tools/detect-python.sh); \
+	   "$$HOST_PYTHON" -m pip install --user "git+file://$(PROJ_DIR)" )
 	@echo "User-site install complete. Add ~/Library/Python/<ver>/bin to PATH if needed."
