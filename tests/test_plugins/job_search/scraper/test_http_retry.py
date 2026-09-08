@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 import requests
 
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from daily_driver.plugins.job_search.scraper.sources import _http
 from daily_driver.plugins.job_search.scraper.sources._http import (
     _DEFAULT_BACKOFF_SECONDS,
     _api_get,
@@ -120,10 +122,22 @@ def test_retries_on_429_then_succeeds() -> None:
     assert resp is not None
     assert session.get.call_count == 3
     assert len(sleeps) == 2
-    assert sleeps[0] < sleeps[1]
+    # Each wait sits in its own jittered band. Comparing the two directly
+    # would be flaky: the bands abut at 3.0s, so a high first draw and a low
+    # second can tie.
+    assert _DEFAULT_BACKOFF_SECONDS <= sleeps[0] <= _DEFAULT_BACKOFF_SECONDS * 2
+    assert _DEFAULT_BACKOFF_SECONDS * 2 <= sleeps[1] <= _DEFAULT_BACKOFF_SECONDS * 4
 
 
-def test_honors_retry_after_header() -> None:
+def test_honors_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A header longer than the backoff survives the floor, then jitters.
+
+    The spread applies to a server-set wait too: workers handed the same header
+    would wake as one burst otherwise, and waiting longer than asked still
+    meets its "no earlier than" contract. Pinned at the top of the band rather
+    than sampled, so the assertion is not probabilistic.
+    """
+    monkeypatch.setattr(_http.random, "uniform", lambda _low, high: high)
     session = MagicMock(spec=requests.Session)
     session.get.side_effect = [
         _fake_response(429, headers={"Retry-After": "7"}),
@@ -135,7 +149,7 @@ def test_honors_retry_after_header() -> None:
         session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
     )
 
-    assert sleeps == [7.0]
+    assert sleeps == [14.0]
 
 
 def test_invalid_retry_after_falls_back_to_backoff() -> None:
@@ -178,7 +192,7 @@ def test_zero_retry_after_does_not_defeat_the_backoff() -> None:
 
     assert len(sleeps) == 2
     assert all(seconds > 0 for seconds in sleeps)
-    assert sleeps[0] < sleeps[1]
+    assert _DEFAULT_BACKOFF_SECONDS <= sleeps[0] <= _DEFAULT_BACKOFF_SECONDS * 2
 
 
 def test_retry_after_shorter_than_backoff_is_floored() -> None:
@@ -199,7 +213,100 @@ def test_retry_after_shorter_than_backoff_is_floored() -> None:
         session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
     )
 
-    assert sleeps == [_DEFAULT_BACKOFF_SECONDS]
+    assert (
+        sleeps and _DEFAULT_BACKOFF_SECONDS <= sleeps[0] <= _DEFAULT_BACKOFF_SECONDS * 2
+    )
+
+
+def test_retry_wait_is_jittered_above_its_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jitter only ever adds, so the floor still holds.
+
+    Pinned at both ends rather than sampled: a real draw makes the assertion
+    probabilistic, and the contract is the band, not any value inside it.
+    """
+    for draw, expected in ((0.0, 1.0), (1.0, 2.0)):
+        monkeypatch.setattr(
+            _http.random, "uniform", lambda _low, high, d=draw: high * d
+        )
+        session = MagicMock(spec=requests.Session)
+        session.get.side_effect = [_fake_response(429), _fake_response(200)]
+        sleeps: list[float] = []
+
+        _api_get(
+            session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
+        )
+
+        assert sleeps == [_DEFAULT_BACKOFF_SECONDS * expected]
+
+
+def test_jitter_near_the_cap_spreads_instead_of_piling_on_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The spread must narrow toward the cap, not clip against it.
+
+    Drawing over the full width and then clipping puts every draw past the
+    headroom onto the cap exactly -- for a 20s wait that is half of them
+    landing on 30.0, which is the lockstep this jitter exists to break, and it
+    arrives on a single response since Retry-After sets the width. Drawing over
+    the headroom instead keeps the result uniform across the band.
+    """
+    monkeypatch.setattr(_http.random, "uniform", lambda _low, high: high / 2)
+    session = MagicMock(spec=requests.Session)
+    session.get.side_effect = [
+        _fake_response(429, headers={"Retry-After": "20"}),
+        _fake_response(200),
+    ]
+    sleeps: list[float] = []
+
+    _api_get(
+        session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
+    )
+
+    # Headroom is 30 - 20 = 10, so the midpoint draw lands at 25, not the cap.
+    assert sleeps == [25.0]
+
+
+def test_jitter_never_pushes_a_wait_past_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Doubling a capped wait would put the total past the cap it promises."""
+    monkeypatch.setattr(_http.random, "uniform", lambda _low, high: high)
+    session = MagicMock(spec=requests.Session)
+    session.get.return_value = _fake_response(429)
+    sleeps: list[float] = []
+
+    _api_get(
+        session,
+        "https://x",
+        _config_with_timeout(),
+        label="t",
+        max_retries=10,
+        sleep=sleeps.append,
+    )
+
+    assert sleeps
+    assert max(sleeps) == _http._MAX_BACKOFF_SECONDS
+
+
+def test_a_retry_after_beyond_the_cap_is_not_clamped_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clamping a long Retry-After to the cap would retry before it allowed."""
+    monkeypatch.setattr(_http.random, "uniform", lambda _low, high: high)
+    session = MagicMock(spec=requests.Session)
+    session.get.side_effect = [
+        _fake_response(429, headers={"Retry-After": "120"}),
+        _fake_response(200),
+    ]
+    sleeps: list[float] = []
+
+    _api_get(
+        session, "https://x", _config_with_timeout(), label="t", sleep=sleeps.append
+    )
+
+    assert sleeps == [120.0]
 
 
 def test_retries_on_503() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -41,6 +42,30 @@ def _backoff_seconds(attempt: int) -> float:
     return min(_DEFAULT_BACKOFF_SECONDS * (2**attempt), _MAX_BACKOFF_SECONDS)
 
 
+def _with_jitter(seconds: float) -> float:
+    """Spread a wait over ``[seconds, 2 * seconds)`` so retries do not convoy.
+
+    The schedule is a pure function of the attempt number, so workers throttled
+    in the same moment would otherwise compute the same wait and re-fire as one
+    burst -- the shape a rate limiter rejects.
+
+    Jitter only ever adds, so the exponential floor holds and a ``Retry-After``
+    is never shortened. A wait at or beyond the cap keeps its own value: it
+    cannot be spread upward without passing the cap, and clamping it down would
+    retry before the server allowed.
+
+    The draw is taken over the remaining headroom rather than the full width
+    and then clipped. Clipping would put every draw past the headroom onto the
+    cap exactly -- for a 20s wait, half of them -- handing concurrent workers
+    the identical value this exists to avoid. ``Retry-After`` sets that width
+    from a single response, so the pile-up needs no accumulated attempts.
+    """
+    if seconds >= _MAX_BACKOFF_SECONDS:
+        return seconds
+    headroom = min(seconds, _MAX_BACKOFF_SECONDS - seconds)
+    return seconds + random.uniform(0, headroom)
+
+
 def _retry_after_seconds(resp: requests.Response) -> float | None:
     """Parse Retry-After header (delta-seconds form). Returns None if absent/invalid."""
     raw = resp.headers.get("Retry-After")
@@ -70,7 +95,8 @@ def _api_request(
     Shared by `_api_get` / `_api_post`. `max_retries` defaults to
     `scraper.max_retries` from config (3). Backoff is exponential (1.5s, 3s,
     6s, ... capped at 30s); a `Retry-After` header longer than that is honored
-    instead, but a shorter one does not shorten the wait.
+    instead, but a shorter one does not shorten the wait. Every wait is then
+    jittered up to double, so workers throttled together do not retry in step.
     `json`, when given, is sent as the request body. `headers`, when given,
     are merged onto the session headers for this request only (e.g. the
     browser-like set a login-free LinkedIn page expects). `sleep` is a seam for
@@ -96,7 +122,7 @@ def _api_request(
             last_exc = exc
             if attempt >= retries:
                 break
-            sleep(_backoff_seconds(attempt))
+            sleep(_with_jitter(_backoff_seconds(attempt)))
             continue
 
         if resp.status_code in _RETRY_STATUS_CODES and attempt < retries:
@@ -105,7 +131,9 @@ def _api_request(
             # Ashby answers 0, which would spend every attempt inside a single
             # millisecond against a server that is actively throttling.
             retry_after = _retry_after_seconds(resp)
-            wait = backoff if retry_after is None else max(retry_after, backoff)
+            wait = _with_jitter(
+                backoff if retry_after is None else max(retry_after, backoff)
+            )
             log.info(
                 "[%s] %s rate-limited (HTTP %d); retrying in %.1fs (attempt %d/%d)",
                 label,
