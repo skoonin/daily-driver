@@ -22,7 +22,7 @@ errands, project milestones, support tickets, job applications. See
 
 ```bash
 make setup    # .venv + pip install -e .[dev] + pre-commit hooks
-make test     # full tox envlist (matches CI: lint + type + py311 + py312 + coverage)
+make test     # full tox envlist (see tox.ini); the same set CI runs
               # needs python3.11 and python3.12 on PATH; tox fails on a missing one
 ```
 

@@ -1,10 +1,16 @@
 ##@ Release
 
-.PHONY: build
-build: ## Build sdist + wheel into dist/
-	@rm -rf dist build
+# ``build`` installs into $(PYTHON), so it needs a virtualenv. ``_release``
+# checks the same thing in step 1 rather than at step 4 where ``build`` runs,
+# so a missing .venv fails in seconds instead of after the full test suite.
+.PHONY: _require-venv
+_require-venv:
 	@$(PYTHON) -c 'import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)' || \
 		{ echo "ERROR: $(PYTHON) is not a virtualenv; refusing to install build tooling into it. Run 'make setup' first." >&2; exit 1; }
+
+.PHONY: build
+build: _require-venv ## Build sdist + wheel into dist/
+	@rm -rf dist build
 	@$(PYTHON) -m pip install --quiet --upgrade build
 	@$(PYTHON) -m build
 	@ls -la dist/
@@ -35,7 +41,7 @@ _release:
 	@echo "  Release v$(VERSION)"
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
-	@echo "[1/6] Verifying release branch and clean working tree..."
+	@echo "[1/6] Verifying release branch, clean working tree, and virtualenv..."
 	@branch=$$(git rev-parse --abbrev-ref HEAD); \
 	case "$$branch" in \
 		release/*) ;; \
@@ -52,7 +58,8 @@ _release:
 		echo "ERROR: tag v$(VERSION) already exists." >&2; \
 		exit 1; \
 	fi
-	@echo "  OK: on $$(git rev-parse --abbrev-ref HEAD), clean tree, tag v$(VERSION) does not exist"
+	@$(MAKE) --no-print-directory _require-venv
+	@echo "  OK: on $$(git rev-parse --abbrev-ref HEAD), clean tree, virtualenv, tag v$(VERSION) does not exist"
 	@echo ""
 	@echo "[2/6] Running test suite on py311 + py312..."
 	@$(TOX) -e py311,py312

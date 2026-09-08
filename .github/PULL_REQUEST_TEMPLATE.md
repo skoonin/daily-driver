@@ -14,7 +14,7 @@ Closes #
 
 ## Testing
 
-- [ ] `make test` passes (lint, type, py311, py312, coverage; the same set CI runs)
+- [ ] `make test` passes (full tox envlist, see `tox.ini`; the same set CI runs)
 - [ ] Manual verification on macOS arm64
 
 ## Checklist

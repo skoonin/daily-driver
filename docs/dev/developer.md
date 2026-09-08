@@ -239,7 +239,7 @@ make test
 | Target | Purpose |
 | --- | --- |
 | `make setup` | venv + editable install + pre-commit hooks |
-| `make test` | Full tox envlist (lint + type + py311 + py312 + coverage), matches CI |
+| `make test` | Full tox envlist (see `tox.ini`), matches CI |
 | `make test-quick` | py311 only — fast inner loop |
 | `make test-unit` / `test-cli` / `test-e2e` | Scoped suites |
 | `make test-cov` | Full suite + coverage report + HTML |
