@@ -983,10 +983,12 @@ def _render_discovery_summary(summary: dict[str, Any]) -> None:
             count(stats["transient"]),
         )
         if stats["transient"]:
-            # No flag caveat: a transient outcome is never recorded, so the
-            # slug stays absent from the swept cache and is a candidate again
-            # on the next plain sweep -- ageing and --full govern boards that
-            # were swept successfully, not these.
+            # No flag caveat, and for both halves of the population: a
+            # transient outcome writes nothing. A slug never swept before
+            # stays absent from the cache. One that failed its re-probe keeps
+            # the entry it already had, stamp included, so it only grows more
+            # overdue and due-date ranking puts it ahead of every board swept
+            # since. Either way the next plain sweep picks it up.
             notes.append(
                 f"{platform}: {stats['transient']} probes failed -- "
                 "rerun to retry them."
