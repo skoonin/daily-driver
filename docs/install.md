@@ -31,11 +31,19 @@ make test
 
 ## Playwright browser install (optional)
 
+When a Playwright source (Apple) is enabled, `daily-driver doctor` flags the missing browser as a WARNING on macOS. Lead with:
+
 ```bash
-playwright install firefox
+daily-driver doctor --fix
 ```
 
-When a Playwright source (Apple) is enabled, `daily-driver doctor` flags the missing browser as a WARNING on macOS, and `doctor --fix` installs it. All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, LinkedIn/Indeed via JobSpy) keep working without Playwright.
+If you need to install manually instead, use the Python interpreter daily-driver runs under rather than a bare `playwright` CLI, which may resolve to the wrong interpreter and browser cache — `doctor`'s own warning prints the exact command, anchored to that interpreter:
+
+```bash
+<path-to-python> -m playwright install firefox
+```
+
+All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, LinkedIn/Indeed via JobSpy) keep working without Playwright.
 
 ## Next
 

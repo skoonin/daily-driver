@@ -166,8 +166,8 @@ daily-driver/
 │   ├── --model {sonnet,opus,haiku}
 │   └── --timeout SECONDS
 ├── scheduler
-│   ├── install
-│   ├── uninstall
+│   ├── install [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label)
+│   ├── uninstall [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label)
 │   └── status [-j, --json]
 ├── voice-update
 │   ├── --from PATH ... (required, repeatable)

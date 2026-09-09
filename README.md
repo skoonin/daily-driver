@@ -60,7 +60,7 @@ plugins:
       hn_who_is_hiring: {}
 ```
 
-2. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental (only slugs never probed):
+2. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental: new slugs, plus boards overdue for re-probe, up to `discovery.max_reprobe_per_sweep` per platform per sweep:
 
 ```bash
 daily-driver jobs discover-boards

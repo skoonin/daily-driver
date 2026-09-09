@@ -314,10 +314,17 @@ class SchedulerConfig(BaseModel):
         description="",
         json_schema_extra={"template_example_model": True},
     )
+    # Explicit template_example rather than template_example_model: discovery
+    # shares the JobSchedule class with `jobs`, whose own field-level
+    # examples (07:00, [sun, wed]) belong to `jobs`. Reusing them here would
+    # render discovery's scaffolded example with jobs's schedule instead of
+    # discovery's real default (23:59, [sat, tue]).
     discovery: JobSchedule | None = Field(
         default=None,
         description="",
-        json_schema_extra={"template_example_model": True},
+        json_schema_extra={
+            "template_example": {"time": "23:59", "days": ["sat", "tue"]}
+        },
     )
 
 

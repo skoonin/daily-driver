@@ -11,10 +11,16 @@ make setup
 make test
 ```
 
-The scraper needs Playwright browsers for Wellfound and Apple sources:
+The scraper needs Playwright browsers for Wellfound and Apple sources. Lead with:
 
 ```bash
-playwright install chromium
+daily-driver doctor --fix
+```
+
+If you need to install manually instead, use the Python interpreter daily-driver runs under rather than a bare `playwright` CLI, which may resolve to the wrong interpreter and browser cache — `doctor`'s own warning prints the exact command, anchored to that interpreter:
+
+```bash
+<path-to-python> -m playwright install chromium
 ```
 
 ## Tests and markers

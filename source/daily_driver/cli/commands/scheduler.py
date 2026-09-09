@@ -28,8 +28,8 @@ def add_parser(
         "jobs",
         nargs="*",
         metavar="<job>",
-        help="Job(s) to install by short name (checkin, day-start, day-end, jobs)"
-        " or full label; default: all configured jobs",
+        help="Job(s) to install by short name (checkin, day-start, day-end, jobs,"
+        " jobs-discover) or full label; default: all configured jobs",
     )
     add_global_flags(p_install)
     p_install.set_defaults(func=_run_install)
@@ -43,8 +43,8 @@ def add_parser(
         "jobs",
         nargs="*",
         metavar="<job>",
-        help="Job(s) to remove by short name (checkin, day-start, day-end, jobs)"
-        " or full label; default: all installed jobs",
+        help="Job(s) to remove by short name (checkin, day-start, day-end, jobs,"
+        " jobs-discover) or full label; default: all installed jobs",
     )
     add_global_flags(p_uninstall)
     p_uninstall.set_defaults(func=_run_uninstall)
