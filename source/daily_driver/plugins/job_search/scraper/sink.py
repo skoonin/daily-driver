@@ -721,6 +721,19 @@ class _JobSink:
                 atomic_write_descriptions(self.csv_path, self._descriptions)
                 self._descriptions_dirty = False
 
+    def mark_degraded(self, reason: str) -> None:
+        """Record that this run's persistence did not proceed cleanly.
+
+        Sticky and shared by every flush path that can fail: a run-ending
+        exit gate checks ``persistence_degraded`` alone, so every failure --
+        a periodic in-loop flush or a one-shot final flush -- must set it
+        through this one place rather than each caller poking the two
+        attributes itself. ``_degraded_reason`` always reflects the most
+        recent failure.
+        """
+        self._degraded_reason = reason
+        self.persistence_degraded = True
+
     def flush_periodic(self) -> None:
         """Best-effort flush for the in-loop resilience hook.
 
@@ -735,9 +748,9 @@ class _JobSink:
         try:
             self.flush()
         except OSError as exc:
-            self._degraded_reason = str(exc)
-            if not self.persistence_degraded:
-                self.persistence_degraded = True
+            already_degraded = self.persistence_degraded
+            self.mark_degraded(str(exc))
+            if not already_degraded:
                 log.warning(
                     "PERSISTENCE failure: periodic save of %s failed (%s); "
                     "enrichment continues in memory and the final save will "
