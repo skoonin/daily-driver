@@ -2084,11 +2084,18 @@ def _run_impl(
         try:
             sink.flush()
         except OSError as exc:
+            # Route through the same sticky persistence_degraded flag the
+            # enrich path uses (set via mark_degraded in flush_periodic)
+            # rather than a parallel flag, so there is one definition of
+            # "this run did not persist cleanly" and one exit gate below
+            # that checks it.
+            sink.mark_degraded(str(exc))
             log.warning(
                 "PERSISTENCE failure: could not save re-sightings to %s (%s)",
                 sink.csv_path,
                 exc,
             )
+            Console.warning(f"could not save re-sightings to {sink.csv_path} ({exc})")
 
     if failed_sources:
         log.error("Scraper failures: %s", ", ".join(failed_sources))
@@ -2098,7 +2105,11 @@ def _run_impl(
     # the data on disk -- exits non-zero so a scripted/scheduled caller treats
     # the run as not-fully-clean and can re-run or alert. The data is persisted;
     # the exit code reports that the run did not proceed normally throughout.
-    if not no_enrich and sink.persistence_degraded:
+    # This also covers a --no-enrich run whose one rewrite (the re-sightings
+    # flush above) failed outright: that flush never routes through
+    # flush_periodic, so it sets the flag itself on failure instead of a
+    # separate signal.
+    if sink.persistence_degraded:
         return 1
 
     return 0

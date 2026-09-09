@@ -2699,6 +2699,73 @@ def test_run_no_enrich_persists_resightings(
     assert "Enrichment" not in err
 
 
+def test_run_no_enrich_flush_failure_exits_nonzero_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The #224 gap: a --no-enrich run whose only sink.flush() (persisting a
+    re-sighting) fails must not report success. It must exit non-zero, like
+    the degraded-then-recovered enriching run does, and the user must see the
+    failure on the console -- not only in a log file at default log level."""
+    from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.jobs_archive.load_archive_dedup",
+        lambda _csv_path: (set(), set(), {}),
+    )
+    csv_path = tmp_path / "jobs.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CANONICAL_HEADER, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(
+            {
+                "Status": "found",
+                "Company": "Acme",
+                "Role": "SRE",
+                "Location": "Remote",
+                "Link": "https://x/1",
+                "Source": "indeed",
+                "Date Found": "2026-06-01",
+                "Date Verified": "2026-06-01",
+            }
+        )
+    monkeypatch.setattr(runner, "today", lambda: date(2026, 7, 3))
+    monkeypatch.setattr(sink_mod, "today", lambda: date(2026, 7, 3))
+
+    rescan = [
+        _scraped("https://x/1", "Acme", description_text="Full body from scrape.")
+    ]
+
+    def fake_scrape(
+        ctx: Any, *_a: Any, on_source_result: Any = None, **_kw: Any
+    ) -> Any:
+        if on_source_result is not None:
+            on_source_result("remoteok", rescan)
+        return rescan, [], [("remoteok", rescan)]
+
+    monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
+
+    def boom_atomic(*_a: Any, **_kw: Any) -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "daily_driver.plugins.job_search.scraper.csv_io.atomic_write_rows",
+        boom_atomic,
+    )
+
+    rc = runner.run(_us_remote_plugin(), tmp_path, tmp_path, no_enrich=True)
+
+    assert rc == 1
+    # The failed flush never touched the file -- the stale Date Verified proves
+    # nothing was persisted, so the run did not silently claim success.
+    rows = _read_csv(csv_path)
+    assert rows[0]["Date Verified"] == "2026-06-01"
+    err = capsys.readouterr().err
+    assert "disk full" in err
+    assert "warning" in err.lower()
+
+
 # ── Source-upgrade preference: board record beats aggregator row ─────────────
 
 
