@@ -37,12 +37,26 @@ daily-driver doctor --reset     # nuke and regenerate .claude/daily-driver/
 
 The workspace version stamp does not match the installed package version. Safe to ignore for minor bumps; `doctor --fix` picks up new shipped commands and agents.
 
+## `Job boards` (WARNING, not ERROR)
+
+An enabled Greenhouse/Ashby/Lever source has no boards pinned in config and an empty (or never-run) `discover-boards` cache, so that platform has nothing to scrape. Run `daily-driver jobs discover-boards` to populate the cache, or pin boards directly under `*_boards` in config.
+
+## `Jobs CSV columns` (OK, not WARNING)
+
+`jobs.csv` carries one or more columns daily-driver's canonical header does not write. Headers are never migrated, so a hand-added column and a column left behind by a rename look identical — this reports informationally rather than as a WARNING, since a column you meant to keep must not raise a row you can never clear. Keep it if it's yours; otherwise delete the column by hand (no automatic migration exists).
+
 ## `jobs` fails on Apple (or another Playwright source)
 
-The Apple careers scraper needs Playwright browsers. On macOS, `daily-driver doctor` flags the missing browser when a Playwright source is enabled, and `doctor --fix` installs it. Or install directly:
+The Apple careers scraper needs Playwright browsers. On macOS, `daily-driver doctor` flags the missing browser when a Playwright source is enabled. Lead with:
 
 ```bash
-playwright install firefox
+daily-driver doctor --fix
+```
+
+If you need to install manually instead, use the Python interpreter daily-driver runs under rather than a bare `playwright` CLI, which may resolve to the wrong interpreter and browser cache — `doctor`'s own warning prints the exact command, anchored to that interpreter:
+
+```bash
+<path-to-python> -m playwright install firefox
 ```
 
 Other sources keep working without Playwright. To restrict a run to

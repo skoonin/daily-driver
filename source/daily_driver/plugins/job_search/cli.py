@@ -251,8 +251,9 @@ def add_parser(
         help=(
             "Sweep the ATS slug universe (Greenhouse + Ashby + Lever) for boards "
             "listing in-scope roles; matched boards are cached for jobs run. "
-            "Incremental after the first sweep (only never-probed slugs); the "
-            "first sweep probes everything and takes tens of minutes"
+            "Incremental after the first sweep (never-probed slugs, plus boards "
+            "overdue for re-probe); the first sweep probes everything and takes "
+            "tens of minutes"
         ),
     )
     p_discover.add_argument(
@@ -261,8 +262,9 @@ def add_parser(
         default=False,
         help=(
             "Re-probe every known slug (except cached-dead ones) instead of "
-            "only slugs never swept, so boards that stopped matching drop out "
-            "of the cache. Takes tens of minutes, like a first sweep"
+            "only never-probed slugs and boards overdue for re-probe, so "
+            "boards that stopped matching drop out of the cache. Takes tens "
+            "of minutes, like a first sweep"
         ),
     )
     p_discover.add_argument(

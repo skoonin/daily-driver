@@ -21,6 +21,10 @@ Single-command release workflow. `make release` (interactive) or `make release-c
 
   (`make release` / `make release-ci` refuse any branch that is not `release/*`; `dev` carries the `-dev` marker, so cut from the `release/X.Y.Z` branch.)
 
+## Branch protection
+
+Merges into `main`, `dev`, and `release/*` are gated by a GitHub ruleset requiring five status checks to pass: `Lint & type check`, `Test (py3.11 on macos-latest)`, `Test (py3.12 on macos-latest)`, and the two `pip install from source` legs (py3.11, py3.12) from `install-smoke.yaml`. An admin merge bypasses the ruleset and skips these checks — use that only knowingly. GitHub matches a status check by the job's `name:`, so renaming a CI job requires updating the ruleset in the same PR.
+
 ## Version source of truth
 
 ```
@@ -103,11 +107,13 @@ On the `dev` trunk, `__version__` carries the next release's `-dev` working mark
 Patch release from a release tag:
 
 ```bash
-git checkout -b hotfix/0.1.1 v0.1.0
+git checkout -b release/X.Y.Z vPREVIOUS.VERSION  # branch from the tagged release being patched
 # apply fix, update [Unreleased] in CHANGELOG, commit
-make release VERSION=0.1.1
+make release VERSION=X.Y.Z
 make release-push
 ```
+
+`make release` refuses any branch that is not `release/*`, so the fix branch must follow that naming even for a hotfix.
 
 Remove a mistakenly pushed tag (before anyone installed from it):
 
@@ -120,12 +126,10 @@ Delete the GitHub Release manually if one was created.
 
 ## Distribution
 
-v0.1.0 ships macOS arm64 only, installed from git:
+Ships macOS arm64 only, installed from git (no PyPI publish):
 
 ```bash
 pip install git+https://github.com/skoonin/daily-driver.git
-pip install git+https://github.com/skoonin/daily-driver.git@v0.1.0
+pip install git+https://github.com/skoonin/daily-driver.git@vX.Y.Z
 pip install 'git+https://github.com/skoonin/daily-driver.git@dev'  # latest in-progress build
 ```
-
-No PyPI publish in v0.1.0.

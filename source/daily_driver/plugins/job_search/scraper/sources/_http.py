@@ -43,7 +43,8 @@ def _backoff_seconds(attempt: int) -> float:
 
 
 def _with_jitter(seconds: float) -> float:
-    """Spread a wait over ``[seconds, 2 * seconds)`` so retries do not convoy.
+    """Spread a wait randomly upward, up to double its length but never past
+    the 30s cap, so retries do not convoy.
 
     The schedule is a pure function of the attempt number, so workers throttled
     in the same moment would otherwise compute the same wait and re-fire as one
@@ -95,8 +96,10 @@ def _api_request(
     Shared by `_api_get` / `_api_post`. `max_retries` defaults to
     `scraper.max_retries` from config (3). Backoff is exponential (1.5s, 3s,
     6s, ... capped at 30s); a `Retry-After` header longer than that is honored
-    instead, but a shorter one does not shorten the wait. Every wait is then
-    jittered up to double, so workers throttled together do not retry in step.
+    instead, but a shorter one does not shorten the wait. Every wait below
+    the 30s cap is then spread randomly upward, up to double its length; a
+    wait already at or beyond the cap is left unchanged, so workers
+    throttled together do not retry in step.
     `json`, when given, is sent as the request body. `headers`, when given,
     are merged onto the session headers for this request only (e.g. the
     browser-like set a login-free LinkedIn page expects). `sleep` is a seam for
