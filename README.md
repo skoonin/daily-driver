@@ -128,4 +128,4 @@ macOS only. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assum
 
 ## License
 
-MIT.
+Apache License 2.0. See [LICENSE](LICENSE).

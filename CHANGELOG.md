@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Changed
+
+- **Daily Driver is now licensed under the Apache License 2.0.** The package metadata declared MIT with no license file behind it, so neither the repository nor a built sdist carried the text it claimed. The full text is now at `LICENSE` and ships in both the wheel and the sdist. Apache 2.0 adds an explicit patent grant and a requirement to state changes, neither of which MIT provides.
+
 ## [1.3.0] — 2026-09-09
 
 ### Added
