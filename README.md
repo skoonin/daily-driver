@@ -39,7 +39,7 @@ Full first-day walkthrough in [docs/usage.md](docs/usage.md). Bare-minimum scaff
 
 The job-search plugin scrapes a configurable set of boards into `jobs.csv`, dedupes against what's already there, and enriches each row (fit, notes, comp) via `claude` or a local Ollama model. It is off by default.
 
-1. Switch job search on. For a new workspace, run `daily-driver init --job-search ~/daily-driver-workspace` (`-j` for short). For an existing workspace, add a `plugins.job_search` block to `.dd-config.yaml` and run `daily-driver doctor --fix`.
+1. Switch job search on. For a new workspace, run `daily-driver init --job-search ~/daily-driver-workspace`. For an existing workspace, add a `plugins.job_search` block to `.dd-config.yaml` and run `daily-driver doctor --fix`.
 
 2. Turn the scraper on with `scraper.enabled: true` and list your sources. Listing a source key enables it (disable with `enabled: false`):
 

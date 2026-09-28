@@ -42,7 +42,6 @@ def add_parser(
         help="Overwrite existing .dd-config.yaml.",
     )
     parser.add_argument(
-        "-j",
         "--job-search",
         action="store_true",
         default=False,

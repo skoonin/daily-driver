@@ -30,7 +30,7 @@ daily-driver/
 ├── init
 │   ├── [path=.]
 │   ├── -f, --force
-│   └── -j, --job-search
+│   └── --job-search
 ├── doctor
 │   ├── --fix
 │   ├── --reset

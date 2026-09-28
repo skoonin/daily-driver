@@ -56,7 +56,7 @@ def test_init_job_search_flag_switches_job_search_on(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
     from daily_driver.plugins import enabled_plugins
 
-    assert app(["init", str(tmp_path), "-j"]) == 0
+    assert app(["init", str(tmp_path), "--job-search"]) == 0
 
     config = load(tmp_path / ".dd-config.yaml")
     assert [plugin.name for plugin in enabled_plugins(config)] == ["job_search"]
@@ -66,13 +66,14 @@ def test_init_job_search_flag_switches_job_search_on(tmp_path: Path) -> None:
     assert "applications by stage" in day_start.read_text()
 
 
-def test_init_job_search_long_flag(tmp_path: Path) -> None:
+def test_init_has_no_short_flag_for_job_search(tmp_path: Path) -> None:
+    """`-j` means `--json` elsewhere in the CLI, so init does not reuse it."""
     from daily_driver.cli.cli import app
-    from daily_driver.plugins import enabled_plugins
 
-    assert app(["init", str(tmp_path), "--job-search"]) == 0
+    with pytest.raises(SystemExit) as exc:
+        app(["init", str(tmp_path), "-j"])
 
-    assert enabled_plugins(load(tmp_path / ".dd-config.yaml"))
+    assert exc.value.code == 2
 
 
 def test_init_job_search_on_existing_config_warns_and_keeps_it(

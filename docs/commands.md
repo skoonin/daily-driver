@@ -34,7 +34,6 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | --- | --- | --- |
 | (global) | `--workspace` | `-w` |
 | `init` | `--force` | `-f` |
-| `init` | `--job-search` | `-j` |
 | `tracker add` | `--category` | `-c` |
 | `tracker add` | `--title` | `-T` |
 | `tracker add` | `--status` | `-s` |
@@ -90,7 +89,7 @@ Capitals are used where a lowercase letter is already taken on the same subparse
 
 ## Workspace lifecycle
 
-### `init [PATH] [-f | --force] [-j | --job-search]`
+### `init [PATH] [-f | --force] [--job-search]`
 
 Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten with a fresh default; the previous copy is kept as `.dd-config.yaml.bak` only while `init` runs and is restored if it fails, so copy any settings you want to keep first. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
 

@@ -19,7 +19,7 @@ cd ~/daily-driver-workspace
 daily-driver doctor
 ```
 
-Job search is off by default. Add `-j` / `--job-search` to `init` to switch it on (see [Jobs](#jobs)).
+Job search is off by default. Add `--job-search` to `init` to switch it on (see [Jobs](#jobs)).
 
 `init` is idempotent — re-running tops up missing files and prints a `Created: ... ; Skipped: ...` summary. It never clobbers `context.md` or `voice-profile.md`. `-f` / `--force` resets `.dd-config.yaml` (the old copy is kept as `.dd-config.yaml.bak`).
 
@@ -135,7 +135,7 @@ The job-search plugin scrapes a configurable set of boards, dedupes against `job
 
 Job search is off by default, and every `jobs` command exits 1 until it is on.
 
-1. Switch it on. For a new workspace, run `daily-driver init -j <path>`. For an existing one, add a `plugins.job_search` block to `.dd-config.yaml`, then run `daily-driver doctor --fix` to add the job sections to the Claude prompts. `context.md` is not rewritten, so add your location preferences and what you look for in a role by hand.
+1. Switch it on. For a new workspace, run `daily-driver init --job-search <path>`. For an existing one, add a `plugins.job_search` block to `.dd-config.yaml`, then run `daily-driver doctor --fix` to add the job sections to the Claude prompts. `context.md` is not rewritten, so add your location preferences and what you look for in a role by hand.
 2. Set `scraper.enabled: true` and list your sources. Minimal:
 
 ```yaml

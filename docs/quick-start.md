@@ -9,7 +9,7 @@ daily-driver init ~/daily-driver-workspace
 cd ~/daily-driver-workspace
 ```
 
-Job search is off by default. To use it, add `-j` / `--job-search`: `daily-driver init -j ~/daily-driver-workspace`. That writes the job settings into `.dd-config.yaml` and the job sections into the Claude prompts.
+Job search is off by default. To use it, add `--job-search`: `daily-driver init --job-search ~/daily-driver-workspace`. That writes the job settings into `.dd-config.yaml` and the job sections into the Claude prompts.
 
 `init` is idempotent. Re-running fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are written only if missing — `-f` / `--force` overwrites `.dd-config.yaml` (keeping the old copy as `.dd-config.yaml.bak`) but never clobbers your edits to the static files.
 

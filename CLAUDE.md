@@ -28,7 +28,7 @@ make test     # full tox envlist (see tox.ini); the same set CI runs
 
 End-user reference: `docs/commands.md`. Short list:
 
-- `daily-driver init <path> [-j | --job-search]` — scaffold a workspace; `-j` switches job search on.
+- `daily-driver init <path> [--job-search]` — scaffold a workspace; `--job-search` switches job search on.
 - `daily-driver doctor [--fix | --reset]` — verify / repair workspace.
 - `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` —
   manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via
