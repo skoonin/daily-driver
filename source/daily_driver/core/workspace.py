@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.resources
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +19,8 @@ _logger = get_logger("workspace")
 _MARKER = ".dd-config.yaml"
 _STATE_DIR = ".daily-driver"
 
-# Fallback used only when the package template cannot be found.
+# Fallback used only when the bundled template fails to render (a missing
+# template raises WorkspaceError instead).
 _MINIMAL_CONFIG_FALLBACK = """\
 # daily-driver workspace configuration
 # Edit this file to configure your workspace.
@@ -32,8 +34,11 @@ tracker:
 """
 
 
-def _render_initial_config() -> str:
+def _render_initial_config(plugins: Collection[str] = ()) -> str:
     """Render the initial .dd-config.yaml from the bundled Jinja2 template.
+
+    `plugins` names the plugins chosen at init; their settings sections are
+    written switched on, and every other plugin's section is left out.
 
     A *missing* packaged template means the wheel is broken (it should always
     ship); that is not a recoverable user condition, so raise WorkspaceError and
@@ -41,9 +46,11 @@ def _render_initial_config() -> str:
     contract check takes for an empty-wheel install, rather than silently
     scaffolding a half-configured workspace. A *render* error (a malformed
     template) still degrades to the minimal fallback, but is surfaced on the
-    terminal (not just the log) so the user knows job-search config is absent.
+    terminal (not just the log) so the user knows the config is incomplete.
     """
     import jinja2
+
+    from daily_driver.core.templating import render_for_plugins
 
     tmpl_traversable = importlib.resources.files(
         "daily_driver.resources.templates"
@@ -56,20 +63,21 @@ def _render_initial_config() -> str:
             "package; the wheel is broken -- reinstall daily-driver"
         ) from exc
     try:
-        env = jinja2.Environment(autoescape=False, keep_trailing_newline=True)
-        return env.from_string(template_text).render()
+        return render_for_plugins(template_text, plugins)
     except jinja2.TemplateError as exc:
-        # The fallback omits the plugins.job_search block, so the workspace will be
-        # missing job-search config -- surface it on the terminal rather than only
-        # logging, since a degraded scaffold fails later (and silently) in `jobs run`.
+        # The fallback has only the required settings and a default block for
+        # each chosen plugin -- surface it on the terminal rather than only
+        # logging, or the user later finds settings missing with no idea why.
         message = (
             f"could not render the bundled config template ({exc}); wrote a "
-            "minimal fallback config -- job-search settings are absent. "
-            "Edit .dd-config.yaml or reinstall daily-driver."
+            "minimal fallback config -- optional settings and plugin options "
+            "are absent. Edit .dd-config.yaml or reinstall daily-driver."
         )
         _logger.warning(message)
         UserConsole.warning(message)
-        return _MINIMAL_CONFIG_FALLBACK
+        # Keep the plugins the user chose switched on, with default settings.
+        chosen = "".join(f"  {name}: {{}}\n" for name in sorted(plugins))
+        return _MINIMAL_CONFIG_FALLBACK + (f"plugins:\n{chosen}" if chosen else "")
 
 
 class WorkspaceError(Exception):
@@ -137,13 +145,16 @@ class Workspace:
         )
 
     @classmethod
-    def init(cls, root: Path) -> Workspace:
-        """Scaffold a new workspace at root; raises if already initialized."""
+    def init(cls, root: Path, plugins: Collection[str] = ()) -> Workspace:
+        """Scaffold a new workspace at root; raises if already initialized.
+
+        `plugins` names the plugins to switch on in the new config.
+        """
         marker = root / _MARKER
         if marker.exists():
             raise WorkspaceError("workspace already initialized")
 
-        marker.write_text(_render_initial_config(), encoding="utf-8")
+        marker.write_text(_render_initial_config(plugins), encoding="utf-8")
 
         state_dir = root / _STATE_DIR
         state_dir.mkdir(exist_ok=True)

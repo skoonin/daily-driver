@@ -18,13 +18,9 @@ from daily_driver.core.config_models import Config
 _PREAMBLE = """\
 # daily-driver workspace configuration
 #
-# Structured settings live here; narrative prose stays in Markdown
-# (context.md, voice-profile.md). The schema is strict (extra="forbid")
-# at every level, so a typo like `tracer:` fails loudly.
-#
-# To enable a commented block, uncomment the header (column 0) AND every
-# nested line together. Uncommenting a lone inner field silently nests it
-# under whichever block is open above, and Pydantic rejects it.
+# Prose about you lives in context.md and voice-profile.md.
+# An unknown or misspelled key is an error.
+# To use a commented block, uncomment its header and every line under it.
 """
 
 
@@ -138,6 +134,10 @@ def _comment_prefix_lines(lines: list[str], indent: str = "") -> list[str]:
         if ln == "":
             out.append("#")
             continue
+        if ln.startswith("{%"):
+            # A plugin gate (see _gated) must stay a bare Jinja tag.
+            out.append(ln)
+            continue
         if ln.startswith(f"{indent}# ") or ln == f"{indent}#":
             out.append(ln)
             continue
@@ -147,6 +147,15 @@ def _comment_prefix_lines(lines: list[str], indent: str = "") -> list[str]:
         else:
             out.append(f"# {ln}")
     return out
+
+
+def _gated(lines: list[str], plugin: str) -> list[str]:
+    """Wrap lines so they render only when `plugin` is chosen at init.
+
+    The tags sit alone on their lines at column 0; the renderer's trim_blocks
+    and lstrip_blocks then remove them without leaving blank lines.
+    """
+    return [f'{{% if "{plugin}" in plugins %}}', *lines, "{% endif %}"]
 
 
 def _render_value(
@@ -428,47 +437,111 @@ def _render_model_body(
         extra = _extra(info)
         if extra.get("template_skip"):
             continue
+        lines: list[str] = []
         # Separate nested sub-blocks (a field whose value is its own model,
         # e.g. each ai.* provider block) with a blank line for readability.
         # Scalars stay grouped; no leading blank before the first field.
         if out and _unwrap_model(info.annotation) is not None:
-            out.append("")
-        if overrides is not None and name in overrides:
-            override_val = overrides[name]
-            sub_cls = _unwrap_model(info.annotation)
-            if sub_cls is not None and isinstance(override_val, dict):
-                lines = [f"{indent}{name}:"] + _render_model_body(
-                    sub_cls, indent + "  ", overrides=override_val
-                )
-            else:
-                # Build a synthetic FieldInfo for value rendering?
-                # Just render directly with helpers, carrying inline_comment.
-                lines = _render_keyed_value(name, override_val, info, indent)
-            description = info.description or ""
-            inline_comment = extra.get("inline_comment")
-            if inline_comment and lines and not lines[0].endswith(":"):
-                lines[0] = f"{lines[0]}  # {inline_comment}"
-            head: list[str] = []
-            if extra.get("block_comment"):
-                head.extend(_wrap_comment(extra["block_comment"], indent=indent))
-            if description:
-                head.extend(_wrap_comment(description, indent=indent))
-            out.extend(head + lines)
-            continue
-        if instance is not None:
-            # Render with the instance's value for this field.
-            value = getattr(instance, name)
-            lines = _render_keyed_value(name, value, info, indent)
-            out.extend(lines)
-            continue
-        out.extend(_render_model_field(name, info, indent))
+            lines.append("")
+        lines.extend(_render_body_field(name, info, indent, instance, overrides))
+        # A field owned by a plugin but living in a core model (e.g.
+        # scheduler.jobs) renders only when that plugin is chosen at init.
+        plugin = extra.get("template_plugin")
+        out.extend(_gated(lines, plugin) if plugin else lines)
     return out
+
+
+def _render_body_field(
+    name: str,
+    info: FieldInfo,
+    indent: str,
+    instance: BaseModel | None,
+    overrides: dict[str, Any] | None,
+) -> list[str]:
+    """Render one field of a model body; see _render_model_body."""
+    extra = _extra(info)
+    if overrides is not None and name in overrides:
+        override_val = overrides[name]
+        sub_cls = _unwrap_model(info.annotation)
+        if sub_cls is not None and isinstance(override_val, dict):
+            lines = [f"{indent}{name}:"] + _render_model_body(
+                sub_cls, indent + "  ", overrides=override_val
+            )
+        else:
+            lines = _render_keyed_value(name, override_val, info, indent)
+        description = info.description or ""
+        inline_comment = extra.get("inline_comment")
+        if inline_comment and lines and not lines[0].endswith(":"):
+            lines[0] = f"{lines[0]}  # {inline_comment}"
+        head: list[str] = []
+        if extra.get("block_comment"):
+            head.extend(_wrap_comment(extra["block_comment"], indent=indent))
+        if description:
+            head.extend(_wrap_comment(description, indent=indent))
+        return head + lines
+    if instance is not None:
+        # Render with the instance's value for this field.
+        return _render_keyed_value(name, getattr(instance, name), info, indent)
+    return _render_model_field(name, info, indent)
+
+
+def _render_plugins_section(key: str) -> list[str]:
+    """The `plugins:` section, holding only the plugins chosen at init.
+
+    Each chosen plugin is written switched on (`enabled: true`) with its other
+    options as commented examples. With no plugin chosen the whole section is
+    left out, so a plain workspace config never mentions plugins.
+    """
+    from daily_driver.plugins import PLUGINS
+
+    body: list[str] = []
+    for plugin in PLUGINS:
+        model = plugin.config_model
+        if model is None:
+            continue
+        label = plugin.name.replace("_", " ").capitalize()
+        enabled = model.model_fields.get("enabled")
+        if enabled is not None:
+            switch = [
+                f"  {plugin.name}:",
+                *_wrap_comment(enabled.description or "", indent="    "),
+                "    enabled: true",
+            ]
+        else:
+            # The block's presence alone switches the plugin on.
+            switch = [f"  {plugin.name}: {{}}"]
+        body.extend(
+            _gated(
+                [
+                    f"  # {label}: `daily-driver {plugin.command_name}`.",
+                    *switch,
+                    # Column-0 `# ` like every other commented block, so an
+                    # option (`#     persona:`) reads differently from its
+                    # explanation (`#     # ...`).
+                    *_comment_prefix_lines(_render_model_body(model, "    ")),
+                ],
+                plugin.name,
+            )
+        )
+    # The separating blank line sits inside the gate so a config with no
+    # plugins does not end in a stray blank line.
+    return [
+        "{% if plugins %}",
+        "",
+        "# Plugins. Uncomment an option to change its default.",
+        f"{key}:",
+        *body,
+        "{% endif %}",
+    ]
 
 
 def render_config_template() -> str:
     chunks: list[str] = [_PREAMBLE]
     first = True
     for name, info in Config.model_fields.items():
+        if _extra(info).get("template_plugins_section"):
+            chunks.extend(_render_plugins_section(name))
+            continue
         rendered = _render_model_field(name, info, indent="")
         if not rendered:
             continue

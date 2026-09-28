@@ -6,6 +6,44 @@ from daily_driver.plugins.job_search import PLUGIN as _job_search
 PLUGINS: tuple[Plugin, ...] = (_job_search,)
 
 
+def enabled_plugins(config: object) -> tuple[Plugin, ...]:
+    """Registered plugins switched on in a workspace config.
+
+    A plugin is on when its ``plugins.<name>`` block exists and does not set
+    ``enabled: false``. A plugin with no config model has no block to opt in
+    with, so it is always on. Every plugin effect (generated files, doctor
+    checks, launchd jobs, CLI commands) is gated on this one answer. ``config``
+    is typed loosely because plugins must not import core's Config.
+    """
+    plugins_cfg = getattr(config, "plugins", None)
+    return tuple(plugin for plugin in PLUGINS if _is_on(plugin, plugins_cfg))
+
+
+def off_reason(name: str) -> str:
+    """The one phrasing for a plugin's command or job refusing to run."""
+    return f"{name.replace('_', ' ')} is off in this workspace"
+
+
+def switch_on_hint(name: str, config: object) -> str:
+    """How to switch plugin `name` on, given the current config.
+
+    A block that sets `enabled: false` gets "remove" rather than "add":
+    pasting a second `plugins:` key would silently replace the whole block,
+    settings included.
+    """
+    block = getattr(getattr(config, "plugins", None), name, None)
+    if block is not None:
+        return f"remove `enabled: false` from `plugins.{name}` in .dd-config.yaml"
+    return f"add `plugins: {{{name}: {{}}}}` to .dd-config.yaml"
+
+
+def _is_on(plugin: Plugin, plugins_cfg: object) -> bool:
+    if plugin.config_model is None:
+        return True
+    block = getattr(plugins_cfg, plugin.name, None)
+    return block is not None and getattr(block, "enabled", True)
+
+
 def _validate_registry(plugins: tuple[Plugin, ...]) -> None:
     """Fail fast at import if a plugin descriptor is malformed.
 

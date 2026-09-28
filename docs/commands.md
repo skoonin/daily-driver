@@ -34,6 +34,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | --- | --- | --- |
 | (global) | `--workspace` | `-w` |
 | `init` | `--force` | `-f` |
+| `init` | `--job-search` | `-j` |
 | `tracker add` | `--category` | `-c` |
 | `tracker add` | `--title` | `-T` |
 | `tracker add` | `--status` | `-s` |
@@ -89,9 +90,11 @@ Capitals are used where a lowercase letter is already taken on the same subparse
 
 ## Workspace lifecycle
 
-### `init [PATH] [-f | --force]`
+### `init [PATH] [-f | --force] [-j | --job-search]`
 
-Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten (the previous contents are preserved as `.dd-config.yaml.bak`). `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
+Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten with a fresh default; the previous copy is kept as `.dd-config.yaml.bak` only while `init` runs and is restored if it fails, so copy any settings you want to keep first. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
+
+Job search is off unless you pass `--job-search`. The flag writes a `plugins.job_search` block with `enabled: true`, adds the job settings to `.dd-config.yaml`, the job sections to the Claude prompts, README and `context.md`. The summary ends with `Job search: on` or `Job search: off`. On an existing workspace without `--force`, `--job-search` leaves `.dd-config.yaml` alone and prints how to switch job search on by hand. `--force` without `--job-search` writes a config with job search off.
 
 ### `doctor [--fix | --reset] [-j | --json]`
 
@@ -195,14 +198,6 @@ Each of these launchers records the id of the session it starts as the workspace
 
 `resume` reattaches to the workspace's most recent Claude session via `claude --resume <uuid>` — the same session pointer a resuming `check-in` uses. Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost: it drops you back into that conversation through the normal launcher path, so the workspace's configured model, agent, and `--add-dir` still apply (unlike a bare `claude -c`). It accepts the shared session flags (`--agent`, `--model`, `--session-name`) but not `--launch` — it is a manual recovery command, not a scheduled one. With no prior session recorded it prints a clear notice instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that ("No conversation found with session ID") and `resume` exits with claude's code — run `day-start` to begin fresh.
 
-### In-session slash commands
-
-These ship to the workspace `.claude/commands/daily-driver/` tree but are not exposed as CLI launchers — invoke them inside an existing Claude session.
-
-| Slash command | Purpose |
-| --- | --- |
-| `/daily-driver:daily-learning` | 15-30 minute self-directed practice session. First run asks what to learn and how, and writes the answer to `<output>/daily-learning/syllabus.md`; later runs work from that syllabus (least-recently-covered topic first) and default to a lens-first teaching style unless the user asked for something else. Appends a short practice log to `<output>/daily-learning/<date>.md`. Offered as an optional step inside `/daily-driver:day-start`; can also be run standalone. |
-
 ## Headless Claude commands
 
 ### `summary --range SPEC`
@@ -231,7 +226,7 @@ Updates `voice-profile.md` from writing samples via headless `claude`. Default `
 
 ## Job search plugin
 
-Requires `plugins.job_search` in `.dd-config.yaml`. See [configuration.md](configuration.md).
+Off by default. Every `jobs` action exits 1 with "job search is off in this workspace" until job search is on: create the workspace with `init --job-search`, or add `plugins: {job_search: {}}` to `.dd-config.yaml` (if it already has a `job_search` block with `enabled: false`, remove that line instead; a second `plugins:` key would replace the block). The message names the step that fits your config. `jobs` works as soon as job search is on; run `doctor --fix` as well to add the job sections to the Claude prompts and README. See [configuration.md](configuration.md#pluginsjob_search).
 
 The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank. Only `found`/`pending` rows are eligible for (re-)enrichment (`jobs run`, `jobs backfill`) — once a row moves to any other status its Fit/Notes/Remote are left alone.
 
@@ -349,7 +344,7 @@ The status channel must not read `Date Verified`: every run re-stamps it to toda
 
 ### `scheduler install`
 
-Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, jobs at 07:00, board discovery at 23:59 on Saturday and Tuesday, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`). Idempotent.
+Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`), and, when job search is on, jobs at 07:00 and board discovery at 23:59 on Saturday and Tuesday. A full install (no job names) also removes the `jobs` and `jobs-discover` agents when job search is off, and lists them under "Removed launchd agents (job search is off)". Naming `jobs` or `jobs-discover` while job search is off is an error that says so. `scheduler status` shows such leftover agents as `yes, job search off`. Idempotent.
 
 Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`, `jobs-discover`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
 

@@ -15,9 +15,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from daily_driver.plugins import PLUGINS
+
+
+class _PluginsBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _present_block_is_on(cls, data: Any) -> Any:
+        # `job_search:` with every option commented out loads as null. The
+        # block is there, so the plugin is on with default settings; only an
+        # absent key (or `enabled: false`) leaves it off.
+        if isinstance(data, dict):
+            return {key: {} if value is None else value for key, value in data.items()}
+        return data
+
 
 _plugin_fields: dict[str, Any] = {}
 for _plugin in PLUGINS:
@@ -25,15 +40,11 @@ for _plugin in PLUGINS:
         continue
     _plugin_fields[_plugin.name] = (
         _plugin.config_model | None,
-        Field(
-            default=None,
-            description="",
-            json_schema_extra={"template_example_model": True},
-        ),
+        Field(default=None, description=""),
     )
 
 PluginsConfig: type[BaseModel] = create_model(
     "PluginsConfig",
-    __config__=ConfigDict(extra="forbid"),
+    __base__=_PluginsBase,
     **_plugin_fields,
 )

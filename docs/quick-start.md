@@ -9,6 +9,8 @@ daily-driver init ~/daily-driver-workspace
 cd ~/daily-driver-workspace
 ```
 
+Job search is off by default. To use it, add `-j` / `--job-search`: `daily-driver init -j ~/daily-driver-workspace`. That writes the job settings into `.dd-config.yaml` and the job sections into the Claude prompts.
+
 `init` is idempotent. Re-running fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are written only if missing — `-f` / `--force` overwrites `.dd-config.yaml` (keeping the old copy as `.dd-config.yaml.bak`) but never clobbers your edits to the static files.
 
 `init` creates:
@@ -19,8 +21,8 @@ cd ~/daily-driver-workspace
 ├── .daily-driver/             # version stamp, SHA-256 manifest, state/ for locks + logs
 ├── .claude/
 │   ├── settings.local.json    # rendered from packaged template
-│   ├── commands/daily-driver/ # managed — regenerated on version drift
-│   └── agents/daily-driver/   # managed — regenerated on version drift
+│   ├── commands/daily-driver/ # managed — regenerated on drift
+│   └── agents/daily-driver/   # managed — regenerated on drift
 ├── context.md                 # your writing context (copied once; yours thereafter)
 └── voice-profile.md           # your writing-style profile (ditto)
 ```
@@ -40,7 +42,7 @@ daily-driver doctor --reset    # force full regenerate
 ## 3. First tracker entry
 
 ```bash
-daily-driver tracker add -c task -T "follow up with recruiter"
+daily-driver tracker add -c task -T "renew passport"
 daily-driver tracker list
 daily-driver status
 ```
@@ -53,7 +55,7 @@ daily-driver status
 daily-driver scheduler install
 ```
 
-Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins and overnight job searches. `daily-driver scheduler uninstall` removes them; `daily-driver scheduler status` lists installed jobs. macOS only.
+Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins, plus overnight job searches when job search is on. `daily-driver scheduler uninstall` removes them; `daily-driver scheduler status` lists installed jobs. macOS only.
 
 ## If something looks off
 
@@ -61,7 +63,7 @@ Re-run the command with `-v` (or `-vv` for full debug traces). Status and log ou
 
 ```bash
 daily-driver doctor -v
-daily-driver jobs run -vv 2>&1 | tee /tmp/jobs-run.log
+daily-driver summary --range 7d -vv 2>&1 | tee /tmp/summary.log
 ```
 
 `-q` does the opposite — errors only — for scheduled or scripted runs where you only care about failures.

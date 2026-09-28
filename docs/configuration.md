@@ -13,7 +13,7 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `daily_driver` | object | `{output_dir: "."}` | |
 | `user_profile` | object | empty | |
 | `recurring_tasks` | list | `[]` | |
-| `scheduler` | object or null | null | Typed per-job launchd cadence (`checkin`, `jobs`) |
+| `scheduler` | object or null | null | Typed per-job launchd cadence (`checkin`; `jobs` and `discovery` when job search is on) |
 | `schedule` | object | empty | day-start / day-end scheduled times + cadence |
 | `tracker` | object | — | **Required** |
 | `gather` | object | empty | |
@@ -21,7 +21,9 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `ai` | object | empty | |
 | `focus` | object | empty | |
 | `calendar` | object | empty | macOS-only daily-plan calendar sync (consumed by `calendar sync`) |
-| `plugins` | object | empty | |
+| `plugins` | object | empty | Optional features. `init` writes this block only for a plugin you choose, e.g. `init --job-search` |
+
+`init` leaves job search settings out of `.dd-config.yaml` unless you pass `--job-search`. The job-only keys (`user_profile.citizenship`, `work_auth`, `seeking_since`, `scheduler.jobs`, `scheduler.discovery`, `ai.claude`, `ai.ollama.max_parallel`) stay valid either way; they only have an effect when job search is on.
 
 ## `daily_driver`
 
@@ -39,9 +41,9 @@ Injected into Claude sessions as context.
 |-----|------|---------|
 | `name` | string or null | null |
 | `timezone` | string or null | null (IANA, e.g. `America/Vancouver`) |
-| `citizenship` | list[string] | `[]` |
-| `work_auth` | dict[string, string] | `{}` |
-| `seeking_since` | date (YYYY-MM-DD) or null | null |
+| `citizenship` | list[string] | `[]` (job search) |
+| `work_auth` | dict[string, string] | `{}` (job search) |
+| `seeking_since` | date (YYYY-MM-DD) or null | null (job search) |
 
 ## `recurring_tasks[]`
 
@@ -146,7 +148,7 @@ plugins:
 
 ## `scheduler`
 
-Per-job launchd cadence for the `check-in`, `jobs`, and board-discovery runs (`day-start` / `day-end` cadence lives in [`schedule`](#schedule) instead). Strictly typed — unknown keys are rejected at config load, not passed through. Times are local wall-clock, 24-hour; **quote them in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00, jobs at 07:00, discovery at 23:59 on Saturday and Tuesday.
+Per-job launchd cadence for the `check-in`, `jobs`, and board-discovery runs (`day-start` / `day-end` cadence lives in [`schedule`](#schedule) instead). Strictly typed — unknown keys are rejected at config load, not passed through. Times are local wall-clock, 24-hour; **quote them in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00. When job search is on, also jobs at 07:00 and discovery at 23:59 on Saturday and Tuesday; when it is off, `jobs` and `discovery` are ignored and a full `scheduler install` removes their agents.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
@@ -217,8 +219,11 @@ macOS-only opt-in for `daily-driver calendar sync`, which writes the day's plan 
 
 ## `plugins.job_search`
 
+Job search is off until this block exists. `init --job-search` writes it with `enabled: true`. To switch job search on in an existing workspace, add the block and run `doctor --fix`; `doctor` reports the change as drift and `--fix` adds the job sections to the Claude prompts and README. `context.md` is yours after `init` and is not rewritten, so add location preferences and fit notes to it by hand. To switch job search off but keep the settings, set `enabled: false`, run `doctor --fix`, then `scheduler install` to remove the jobs agents.
+
 | Key | Type | Default |
 |-----|------|---------|
+| `enabled` | bool | `true` (the block's presence is the opt-in; `false` switches job search off) |
 | `persona` | string or null | null |
 | `roles` | list[string] | `[]` |
 | `domain_keywords` | list[string] | `[]` |
@@ -485,14 +490,14 @@ Generation only touches three paths. Everything else is yours.
 
 | Path | Owner | Behavior on generate |
 | --- | --- | --- |
-| `.claude/commands/daily-driver/` | Daily Driver | Wiped and recopied from package |
-| `.claude/agents/daily-driver/` | Daily Driver | Wiped and recopied from package |
+| `.claude/commands/daily-driver/` | Daily Driver | Rendered from package templates; job sections only when job search is on |
+| `.claude/agents/daily-driver/` | Daily Driver | Rendered from package templates; job sections only when job search is on |
 | `.claude/settings.local.json` | Daily Driver + user merge | Re-rendered from template; user-added top-level keys preserved |
 | `.claude/commands/*.md` (top level, outside `daily-driver/`) | You | Untouched |
 | `.claude/agents/*.md` (top level, outside `daily-driver/`) | You | Untouched |
 | Anything else under `.claude/` | You | Untouched |
 
-User edits to files under `.claude/*/daily-driver/` are detected via SHA-256 manifest and preserved by `doctor --fix` on version drift. `doctor --reset` force-overwrites managed files regardless of edits.
+User edits to files under `.claude/*/daily-driver/` are detected via SHA-256 manifest and preserved by `doctor --fix` on drift (a version change or switching a plugin on or off). `doctor --reset` force-overwrites managed files regardless of edits.
 
 ### Custom Claude commands
 

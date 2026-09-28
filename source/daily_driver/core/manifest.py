@@ -86,6 +86,20 @@ def missing_files(workspace_root: Path, state_dir: Path) -> list[str]:
     return sorted(rel for rel in stored if not (workspace_root / rel).exists())
 
 
+def prune_missing(state_dir: Path, workspace_root: Path) -> None:
+    """Drop entries whose file is absent from disk.
+
+    Only safe at the end of a full generate run: every file still shipped is
+    on disk (just written, or preserved as user-edited), so an absent file is
+    one generate removed (dropped from the package, a --reset wipe). Pruning at
+    any other time would hide a user deletion that doctor should report.
+    """
+    stored = load(state_dir)
+    kept = {rel: sha for rel, sha in stored.items() if (workspace_root / rel).exists()}
+    if kept != stored:
+        save(state_dir, kept)
+
+
 def record(state_dir: Path, workspace_root: Path, paths: list[Path]) -> None:
     """Add or update SHA-256 entries for the given absolute paths, preserving existing entries."""
     stored = load(state_dir)

@@ -1,8 +1,8 @@
-"""Copy package-bundled commands, agents, and settings into the workspace .claude/ tree.
+"""Render package-bundled commands, agents, and settings into the workspace .claude/ tree.
 
-Generation is triggered on version drift or via ignore_drift=True. The version stamp
-is written last so a crash mid-run leaves the stamp stale, ensuring the next invocation
-retries — idempotent by construction.
+Generation is triggered on drift (a new version, or a plugin switched on or off) or
+via ignore_drift=True. The version stamp is written last so a crash mid-run leaves
+the stamp stale, ensuring the next invocation retries — idempotent by construction.
 
 File ownership boundaries — the full package-managed set generate() writes:
   - .claude/commands/daily-driver/*.md and .claude/agents/daily-driver/*.md
@@ -30,6 +30,7 @@ from daily_driver.core import version_stamp
 from daily_driver.core.contract import ENTRIES
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.templating import render_text
 from daily_driver.core.workspace import Workspace
 from daily_driver.plugins._base import PackageDataDir
 
@@ -44,16 +45,16 @@ _CORE_PACKAGE_DATA: tuple[PackageDataDir, ...] = (
 )
 
 
-def _package_data_dirs() -> list[PackageDataDir]:
-    """Core baseline package-data dirs plus every registered plugin's.
+def _package_data_dirs(config: object) -> list[PackageDataDir]:
+    """Core baseline package-data dirs plus those of each plugin that is on.
 
-    PLUGINS is imported lazily here so importing core.generate does not pull in
-    plugin implementation modules at import time.
+    The plugins package is imported lazily here so importing core.generate does
+    not pull in plugin implementation modules at import time.
     """
-    from daily_driver.plugins import PLUGINS
+    from daily_driver.plugins import enabled_plugins
 
     dirs = list(_CORE_PACKAGE_DATA)
-    for plugin in PLUGINS:
+    for plugin in enabled_plugins(config):
         dirs.extend(plugin.package_data_dirs)
     return dirs
 
@@ -81,16 +82,19 @@ def _atomic_write_text(dest: Path, content: str, *, mode: int | None = None) -> 
     os.replace(tmp, dest)
 
 
-def _copy_package_md(
+def _render_package_md(
     pkg_traversable: importlib.resources.abc.Traversable,
     dest_dir: Path,
     *,
     workspace_root: Path,
     state_dir: Path,
     force_overwrite: bool,
+    config: object,
 ) -> tuple[int, list[Path], list[str]]:
-    """Copy *.md files from pkg_traversable into dest_dir.
+    """Render *.md files from pkg_traversable into dest_dir.
 
+    Each file is a Jinja template (see core.templating) rendered against the
+    workspace config, so plugin sections appear only when the plugin is on.
     Returns (count_written, written_paths, skipped_names).
     Skips files where the user has made edits (detected via SHA-256 manifest)
     unless force_overwrite=True.
@@ -123,7 +127,7 @@ def _copy_package_md(
             skipped.append(rel)
             continue
 
-        content = entry.read_text(encoding="utf-8")
+        content = render_text(entry.read_text(encoding="utf-8"), config)
         _atomic_write_text(dest_file, content)
         written.append(dest_file)
         count += 1
@@ -194,22 +198,22 @@ def generate(
         default), user edits are preserved and a warning is logged for each
         skipped file.
 
-    The fast-path skips all work when the stamped version matches the installed
-    version and ignore_drift is False. Otherwise acquires an exclusive lock,
-    re-checks drift inside the lock (double-checked locking), wipes the
-    daily-driver-owned subdirs, copies package data, and writes the version
-    stamp last so a crash mid-run leaves the stamp stale and triggers a retry.
+    The fast-path skips all work when the stamp matches version_stamp.expected()
+    (same version, same plugins on) and ignore_drift is False. Otherwise
+    acquires an exclusive lock, re-checks drift inside the lock (double-checked
+    locking), wipes the daily-driver-owned subdirs, renders package data, and
+    writes the version stamp last so a crash mid-run leaves the stamp stale and
+    triggers a retry.
     """
-    if not ignore_drift and not version_stamp.is_drifted(
-        workspace.state_dir, workspace.version
-    ):
+    stamp = version_stamp.expected(workspace.version, workspace.config)
+    if not ignore_drift and not version_stamp.is_drifted(workspace.state_dir, stamp):
         return None
 
     lock_path = workspace.ephemeral_dir / "generate.lock"
     with file_lock(lock_path):
         # Re-check inside the lock: another process may have generated while we waited.
         if not ignore_drift and not version_stamp.is_drifted(
-            workspace.state_dir, workspace.version
+            workspace.state_dir, stamp
         ):
             return None
 
@@ -224,7 +228,7 @@ def generate(
         # map to the same dest; the per-dest passes below dedupe so a later source
         # does not erase files an earlier one wrote.
         resolved: list[tuple[importlib.resources.abc.Traversable, Path]] = []
-        for data_dir in _package_data_dirs():
+        for data_dir in _package_data_dirs(workspace.config):
             dest_path = Path(data_dir.dest)
             pkg_traversable = importlib.resources.files(
                 data_dir.source_package
@@ -260,12 +264,13 @@ def generate(
         n_preserved = 0
         all_written: list[Path] = []
         for pkg_traversable, dest_dir in resolved:
-            count, paths, skipped = _copy_package_md(
+            count, paths, skipped = _render_package_md(
                 pkg_traversable,
                 dest_dir,
                 workspace_root=workspace.root,
                 state_dir=workspace.state_dir,
                 force_overwrite=force_overwrite,
+                config=workspace.config,
             )
             n_copied += count
             n_preserved += len(skipped)
@@ -288,10 +293,11 @@ def generate(
         n_preserved += len(hook_skipped)
         if hook_paths:
             _manifest.record(workspace.state_dir, workspace.root, hook_paths)
+        _manifest.prune_missing(workspace.state_dir, workspace.root)
 
         # Stamp written last — crash before here = stamp stays stale = redo on next run.
-        version_stamp.write(workspace.state_dir, workspace.version)
-        _logger.info("Version stamp written: %s", workspace.version)
+        version_stamp.write(workspace.state_dir, stamp)
+        _logger.info("Version stamp written: %s", stamp)
 
         return GenerationResult(
             n_written=n_copied + len(entry_paths),
@@ -353,9 +359,7 @@ def _render_contract_entries(
     User-edited files are preserved unless force_overwrite=True.
     """
     import jinja2
-    from jinja2 import Environment, StrictUndefined
 
-    env = Environment(undefined=StrictUndefined)
     written: list[Path] = []
     for entry in ENTRIES:
         # Guard against traversal attacks in case ENTRIES ever gains dynamic sources.
@@ -392,7 +396,7 @@ def _render_contract_entries(
             continue
 
         try:
-            rendered = env.from_string(template_text).render(workspace=workspace)
+            rendered = render_text(template_text, workspace.config, workspace=workspace)
         except jinja2.TemplateError as exc:
             _logger.warning("Failed to render %s: %s — skipping", entry.src, exc)
             continue
@@ -436,7 +440,7 @@ def _copy_hooks(
 ) -> tuple[list[Path], list[str]]:
     """Copy package-managed hook scripts into <workspace>/.claude/hooks/.
 
-    Mirrors _copy_package_md's manifest contract: a hook the user has edited
+    Mirrors _render_package_md's manifest contract: a hook the user has edited
     (detected via SHA-256 manifest) is preserved unless force_overwrite=True.
     Stale hooks absent from the package are reaped the same way as managed .md
     files: force_overwrite wipes the dest for a clean slate, otherwise only

@@ -55,9 +55,9 @@ ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 
 Read the most recent few whose mtimes fall in today's window. Use them together with git commits to infer what was actually worked on since the morning plan.
 
-## 3. Review Application Pipeline
+## 3. Review Tracker
 
-Check for overdue follow-ups and current pipeline state:
+Check for overdue follow-ups and current tracker state:
 
 ```bash
 daily-driver tracker follow-ups --overdue
@@ -73,16 +73,16 @@ Using the gathered data, present:
 
 1. **Current Time vs Remaining Blocks** — Using `current_time` from step 0, show what was planned for this window, what blocks are done/past, and what remains today
 2. **Sessions + Commits Since Last Check-in** — Claude Code sessions and git commits since the session start; use these together to infer what was actually worked on
-3. **Pipeline Status** — Active applications, any responses received, follow-ups due
+3. **Tracker Status** — Active entries, any responses received, follow-ups due{% if "job_search" in plugins %}; for `job` entries, active applications by stage{% endif +%}
 
 ## 5. Interactive Review
 
 For each planned item that was scheduled up to now:
-- Ask: "What is the status of `<tracker-id> - <label>` task?" (planned / in-progress / done / blocked) — `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `job-003`).
+- Ask: "What is the status of `<tracker-id> - <label>` task?" (planned / in-progress / done / blocked) — `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `errand-005`).
 - If the user reports time spent, compare to the planned time block. If actual > planned * 2, flag as an overrun.
 - Note any context switches or unplanned work.
 
-## 6. Application Follow-up Reminders
+## 6. Follow-up Reminders
 
 For each overdue follow-up from step 3, ask: "Follow up on `<tracker-id> - <label>`? It has been N days since last activity." Present as a compact checklist, not prose.
 

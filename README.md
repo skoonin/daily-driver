@@ -1,6 +1,6 @@
 # Daily Driver
 
-Personal productivity assistant. A durable data layer for daily planning, tracking, and job search with a Claude-powered conversational layer on top.
+Personal productivity assistant. A durable data layer for daily planning and tracking, with optional job search, and a Claude-powered conversational layer on top.
 
 ## What it does
 
@@ -10,7 +10,7 @@ Daily Driver keeps the unglamorous parts of a focused workweek out of your head 
 - **Tracker** — YAML-backed list of anything you follow up on (applications, tasks, chores, contacts). Categories are config-driven and extensible via `--extra key=value`.
 - **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
 - **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
-- **Job-board scraper** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, Ashby, Lever, Workable, Workday, LinkedIn/Indeed via JobSpy, Apple), with board auto-discovery for the ATS sources, dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
+- **Job search (optional)** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, Ashby, Lever, Workable, Workday, LinkedIn/Indeed via JobSpy, Apple), with board auto-discovery for the ATS sources, dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
 - **Gather modules** — typed readers for git history and macOS Calendar (icalBuddy).
 - **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
 
@@ -37,9 +37,11 @@ Full first-day walkthrough in [docs/usage.md](docs/usage.md). Bare-minimum scaff
 
 ## Job search quick start
 
-The job-search plugin scrapes a configurable set of boards into `jobs.csv`, dedupes against what's already there, and enriches each row (fit, notes, comp) via `claude` or a local Ollama model.
+The job-search plugin scrapes a configurable set of boards into `jobs.csv`, dedupes against what's already there, and enriches each row (fit, notes, comp) via `claude` or a local Ollama model. It is off by default.
 
-1. Add a `plugins.job_search` block to `.dd-config.yaml` and turn the scraper on with `scraper.enabled: true`. Listing a source key enables it (disable with `enabled: false`):
+1. Switch job search on. For a new workspace, run `daily-driver init --job-search ~/daily-driver-workspace` (`-j` for short). For an existing workspace, add a `plugins.job_search` block to `.dd-config.yaml` and run `daily-driver doctor --fix`.
+
+2. Turn the scraper on with `scraper.enabled: true` and list your sources. Listing a source key enables it (disable with `enabled: false`):
 
 ```yaml
 plugins:
@@ -60,13 +62,13 @@ plugins:
       hn_who_is_hiring: {}
 ```
 
-2. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental: new slugs, plus boards overdue for re-probe, up to `discovery.max_reprobe_per_sweep` per platform per sweep:
+3. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental: new slugs, plus boards overdue for re-probe, up to `discovery.max_reprobe_per_sweep` per platform per sweep:
 
 ```bash
 daily-driver jobs discover-boards
 ```
 
-3. Run the search, then top up any cells a run left empty:
+4. Run the search, then top up any cells a run left empty:
 
 ```bash
 daily-driver jobs run           # scrape + enrich -> jobs.csv
@@ -84,7 +86,7 @@ Full field reference in [configuration.md](docs/configuration.md#pluginsjob_sear
   context.md               # your profile (seeded once, edit freely)
   voice-profile.md         # writing voice (ditto)
   tracker.yaml             # tracker entries (CLI-managed)
-  jobs.csv                 # scraper output (plugin-managed)
+  jobs.csv                 # scraper output (job search only)
   .daily-driver/
     version                # version stamp
     manifest.json          # SHA-256 manifest of managed .claude/ files

@@ -14,9 +14,7 @@ This repo builds the `daily-driver` console command. All workspace state lives
 in a user-scaffolded workspace directory on disk; a companion `claude` session
 owns the conversation.
 
-Jobs search is one plugin. The tracker is designed to hold tasks of any kind:
-errands, project milestones, support tickets, job applications. See
-`docs/dev/developer.md` for product framing and architecture.
+Job search is one plugin, off by default: `init --job-search` (or a `plugins.job_search` block in `.dd-config.yaml`) switches it on. The tracker is designed to hold tasks of any kind: errands, project milestones, support tickets, job applications. See `docs/dev/developer.md` for product framing and architecture.
 
 ## Install for development
 
@@ -30,7 +28,7 @@ make test     # full tox envlist (see tox.ini); the same set CI runs
 
 End-user reference: `docs/commands.md`. Short list:
 
-- `daily-driver init <path>` — scaffold a workspace.
+- `daily-driver init <path> [-j | --job-search]` — scaffold a workspace; `-j` switches job search on.
 - `daily-driver doctor [--fix | --reset]` — verify / repair workspace.
 - `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` —
   manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via
@@ -48,7 +46,7 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
   search the configured job boards, re-enrich empty fields on existing rows,
   promote a row into the tracker, show last-run metadata, archive stale rows, or
-  URL-check row liveness in `jobs.csv`.
+  URL-check row liveness in `jobs.csv`. Exits 1 unless job search is on.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths
   (output, state, daily plan/notes).
 - `daily-driver gather {calendar,git} [--json]` — read
@@ -82,6 +80,13 @@ Key conventions:
   model, scheduled jobs, doctor checks, and package data. `job_search` is the one
   shipped plugin; its config namespace is `plugins.job_search:` in `.dd-config.yaml`.
   The root Config and `PluginsConfig` are both pydantic `extra="forbid"`.
+- **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the
+  one on/off answer: a plugin is on when its `plugins.<name>` block exists and
+  does not set `enabled: false`. Generated prompt sections, package data, doctor
+  checks, launchd jobs, and the plugin's CLI command all ask it. Shipped `.md`
+  files and the config template are Jinja (`core/templating.py`) with
+  `{% if "<name>" in plugins %}` blocks; the version stamp records the plugins
+  on, so switching one is drift that `doctor --fix` applies.
 
 ## Testing
 

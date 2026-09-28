@@ -3,14 +3,27 @@ from __future__ import annotations
 import json
 import logging
 import multiprocessing
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from rich.console import Console
 
 from daily_driver.core import generate, version_stamp
+from daily_driver.plugins._base import PackageDataDir, Plugin
+from daily_driver.plugins.job_search.config import JobSearchPlugin
+
+# Words that only belong in a workspace with job search on.
+JOB_TEXT = re.compile(
+    r"\bjobs?\b|job-\d|cover letter|recruiter|interview|application", re.IGNORECASE
+)
+
+
+def _job_search_on() -> SimpleNamespace:
+    return SimpleNamespace(plugins=SimpleNamespace(job_search=JobSearchPlugin()))
 
 
 # Minimal stand-in for Workspace — avoids the .dd-config.yaml discovery / config-loading
@@ -23,6 +36,7 @@ class _FakeWorkspace:
     version: str
     logger: logging.Logger
     console: Console
+    config: object = None  # no plugins block, so every plugin is off
 
     @property
     def ephemeral_dir(self) -> Path:
@@ -246,6 +260,46 @@ def test_generate_drops_commands_removed_from_package(
         commands_dest / "old-command.md"
     ).exists(), "command dropped in new package snapshot must be wiped on regenerate"
     assert (commands_dest / "new-only.md").exists(), "new command must be copied in"
+
+
+def test_generate_forgets_manifest_entry_for_dropped_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A command dropped from the package leaves no manifest entry behind.
+
+    A lingering entry makes doctor report the file as a missing managed file,
+    a warning that regenerating can never clear.
+    """
+    from daily_driver.core import manifest
+
+    ws = _FakeWorkspace.make(tmp_path, version="1.0.0")
+    fake_pkg_root = tmp_path / "fake-package"
+    fake_pkg_root.mkdir()
+    (fake_pkg_root / "kept.md").write_text("kept", encoding="utf-8")
+    (fake_pkg_root / "dropped.md").write_text("dropped later", encoding="utf-8")
+
+    real_files = generate.importlib.resources.files
+
+    def fake_files(anchor: str):
+        if anchor == "daily_driver.resources.slash_commands":
+
+            class _Stub:
+                def joinpath(self, name: str):
+                    return fake_pkg_root
+
+            return _Stub()
+        return real_files(anchor)
+
+    monkeypatch.setattr(generate.importlib.resources, "files", fake_files)
+
+    generate.generate(ws)
+    assert "commands/daily-driver/dropped.md" in " ".join(manifest.load(ws.state_dir))
+
+    (fake_pkg_root / "dropped.md").unlink()
+    generate.generate(ws, ignore_drift=True)
+
+    assert manifest.missing_files(ws.root, ws.state_dir) == []
+    assert not any("dropped.md" in rel for rel in manifest.load(ws.state_dir))
 
 
 def test_concurrent_invocations_no_corruption(tmp_path: Path) -> None:
@@ -740,7 +794,7 @@ def test_synthetic_plugin_package_data_copied_and_recorded(
     monkeypatch.setattr(
         generate,
         "_package_data_dirs",
-        lambda: [*generate._CORE_PACKAGE_DATA, plugin_dir],
+        lambda config: [*generate._CORE_PACKAGE_DATA, plugin_dir],
     )
 
     real_files = generate.importlib.resources.files
@@ -766,6 +820,59 @@ def test_synthetic_plugin_package_data_copied_and_recorded(
     stored = _manifest.load(ws.state_dir)
     rel = ".claude/commands/fake-plugin/plugin-cmd.md"
     assert rel in stored, "plugin .md must be recorded in the SHA-256 manifest"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_package_data_dirs_include_only_plugins_that_are_on(
+    monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    import daily_driver.plugins as plugins_pkg
+
+    plugin_dir = PackageDataDir("fake.plugin.commands", "commands/fake-plugin")
+    sample = Plugin(
+        name="sample",
+        command_name="sample",
+        command_module="daily_driver.plugins.job_search.cli",
+        command_help="help",
+        config_model=JobSearchPlugin,
+        package_data_dirs=(plugin_dir,),
+    )
+    monkeypatch.setattr(plugins_pkg, "PLUGINS", (sample,))
+    config = SimpleNamespace(
+        plugins=SimpleNamespace(sample=SimpleNamespace(enabled=enabled))
+    )
+
+    assert (plugin_dir in generate._package_data_dirs(config)) is enabled
+
+
+def _generated_text(root: Path) -> dict[str, str]:
+    paths = [*sorted((root / ".claude").rglob("*.md")), root / "README.md"]
+    return {str(p.relative_to(root)): p.read_text(encoding="utf-8") for p in paths}
+
+
+def test_job_search_off_generates_no_job_text(tmp_path: Path) -> None:
+    ws = _FakeWorkspace.make(tmp_path)
+
+    generate.generate(ws)
+
+    for rel, text in _generated_text(tmp_path).items():
+        match = JOB_TEXT.search(text)
+        assert match is None, f"{rel} mentions {match.group(0)!r}"
+
+
+def test_job_search_on_generates_job_sections(tmp_path: Path) -> None:
+    ws = _FakeWorkspace.make(tmp_path)
+    ws.config = _job_search_on()
+
+    generate.generate(ws)
+
+    generated = _generated_text(tmp_path)
+    assert (
+        "applications by stage"
+        in generated[".claude/commands/daily-driver/day-start.md"]
+    )
+    assert "cover letter" in generated[".claude/agents/daily-driver/work-planner.md"]
+    assert "daily-driver jobs run" in generated["README.md"]
 
 
 # ---------------------------------------------------------------------------
@@ -989,7 +1096,7 @@ def test_two_sources_sharing_a_dest_keep_both(
     monkeypatch.setattr(
         generate,
         "_package_data_dirs",
-        lambda: [
+        lambda config: [
             PackageDataDir("fake.core.commands", shared),
             PackageDataDir("fake.plugin.commands", shared),
         ],

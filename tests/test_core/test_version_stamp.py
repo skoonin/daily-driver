@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from daily_driver.core import version_stamp
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 
 
 def test_read_missing_file_returns_none(tmp_path: Path) -> None:
@@ -60,6 +62,33 @@ def test_is_not_drifted_when_version_matches(tmp_path: Path) -> None:
     state_dir.mkdir()
     version_stamp.write(state_dir, "1.0.0")
     assert version_stamp.is_drifted(state_dir, "1.0.0") is False
+
+
+def test_expected_is_bare_version_with_no_plugins_on() -> None:
+    config = SimpleNamespace(plugins=SimpleNamespace(job_search=None))
+    assert version_stamp.expected("1.0.0", config) == "1.0.0"
+
+
+def test_expected_names_the_plugins_on() -> None:
+    config = SimpleNamespace(plugins=SimpleNamespace(job_search=JobSearchPlugin()))
+    assert version_stamp.expected("1.0.0", config) == "1.0.0+job_search"
+
+
+def test_expected_changes_when_a_plugin_is_switched_off() -> None:
+    on = SimpleNamespace(plugins=SimpleNamespace(job_search=JobSearchPlugin()))
+    off = SimpleNamespace(
+        plugins=SimpleNamespace(job_search=JobSearchPlugin(enabled=False))
+    )
+    assert version_stamp.expected("1.0.0", on) != version_stamp.expected("1.0.0", off)
+
+
+def test_split_inverts_expected() -> None:
+    on = SimpleNamespace(plugins=SimpleNamespace(job_search=JobSearchPlugin()))
+    assert version_stamp.split(version_stamp.expected("1.0.0", on)) == (
+        "1.0.0",
+        ["job_search"],
+    )
+    assert version_stamp.split("1.0.0") == ("1.0.0", [])
 
 
 def test_write_overwrites_existing_stamp(tmp_path: Path) -> None:

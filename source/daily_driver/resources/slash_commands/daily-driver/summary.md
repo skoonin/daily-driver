@@ -4,7 +4,7 @@ description: Generate a period summary (standup, review, project context) at con
 ---
 
 Generate a summary of workspace activity over a time range. Use this for
-daily standups, weekly reviews, monthly rollups, interview prep, or any
+daily standups, weekly reviews, monthly rollups, or any
 "what have I done lately on X?" question.
 
 ## Arguments

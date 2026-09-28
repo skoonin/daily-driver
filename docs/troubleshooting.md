@@ -35,7 +35,15 @@ daily-driver doctor --reset     # nuke and regenerate .claude/daily-driver/
 
 ## Workspace drift (WARNING, not ERROR)
 
-The workspace version stamp does not match the installed package version. Safe to ignore for minor bumps; `doctor --fix` picks up new shipped commands and agents.
+The managed files were generated for a different package version, or for a different set of plugins. A plugin switch reads `plugins changed (none -> job_search)`. `doctor --fix` regenerates the files and keeps your edits; after a plugin switch, also run `scheduler install` if you use the scheduler.
+
+## `jobs` says "job search is off in this workspace"
+
+Job search is opt-in. The message says which step fits your config: add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. `jobs` works right away. Run `daily-driver doctor --fix` to add the job sections to the Claude prompts and README. For a new workspace, use `daily-driver init --job-search`.
+
+## Jobs agents still installed after switching job search off
+
+`scheduler status` marks them `yes, job search off`. They keep firing `jobs run`, which exits 1. Run `daily-driver scheduler install` to remove them.
 
 ## `Job boards` (WARNING, not ERROR)
 

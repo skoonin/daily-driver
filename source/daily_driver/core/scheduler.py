@@ -300,21 +300,21 @@ def build_jobs(workspace: Workspace) -> list[ScheduledJob]:
         workspace_root=workspace_root,
         log_paths=lambda name: _log_paths(workspace, name),
     )
-    jobs.extend(_plugin_jobs(ctx))
+    jobs.extend(_plugin_jobs(ctx, workspace))
 
     return jobs
 
 
-def _plugin_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
-    """Collect scheduled jobs each plugin contributes.
+def _plugin_jobs(ctx: SchedulerContext, workspace: Workspace) -> list[ScheduledJob]:
+    """Collect scheduled jobs from each plugin switched on in this workspace.
 
     Plugin builders are resolved by dotted path and imported lazily so core
     never eagerly loads plugin implementation modules at import time.
     """
-    from daily_driver.plugins import PLUGINS
+    from daily_driver.plugins import enabled_plugins
 
     collected: list[ScheduledJob] = []
-    for plugin in PLUGINS:
+    for plugin in enabled_plugins(workspace.config):
         if plugin.scheduled_jobs_builder is None:
             continue
         module_path, _, attr = plugin.scheduled_jobs_builder.rpartition(".")
@@ -328,6 +328,32 @@ def _plugin_managed_labels() -> tuple[str, ...]:
     from daily_driver.plugins import PLUGINS
 
     return tuple(label for plugin in PLUGINS for label in plugin.launchd_labels)
+
+
+def _switched_off_plugin_labels(workspace: Workspace) -> dict[str, str]:
+    """Launchd labels of plugins that are off in this workspace, to plugin name."""
+    from daily_driver.plugins import PLUGINS, enabled_plugins
+
+    enabled = enabled_plugins(workspace.config)
+    return {
+        label: plugin.name
+        for plugin in PLUGINS
+        if plugin not in enabled
+        for label in plugin.launchd_labels
+    }
+
+
+def installed_switched_off_labels(workspace: Workspace) -> list[str]:
+    """Agents still installed for plugins switched off in this workspace.
+
+    They keep firing a command that now refuses to run, until a full
+    `scheduler install` removes them.
+    """
+    return [
+        label
+        for label in _switched_off_plugin_labels(workspace)
+        if launchd_int.plist_path(label).exists()
+    ]
 
 
 def known_labels() -> tuple[str, ...]:
@@ -385,7 +411,8 @@ def install_all(workspace: Workspace, only: Sequence[str] | None = None) -> list
     """Render, write, and load plists for configured jobs.
 
     `only` narrows the install to the named jobs (short names or full labels);
-    None installs every configured job. Idempotent: unloads any existing plist
+    None installs every configured job and removes the agents of every plugin
+    that is switched off. Idempotent: unloads any existing plist
     first, then reinstalls — picks up environment / command-path changes on
     re-run.
 
@@ -396,10 +423,24 @@ def install_all(workspace: Workspace, only: Sequence[str] | None = None) -> list
     except launchd_int.LaunchdUnavailableError as exc:
         raise SchedulerError(str(exc)) from exc
 
+    if only is None:
+        for label in _switched_off_plugin_labels(workspace):
+            launchd_int.unload(label)
+            launchd_int.remove(label)
+            (_state_launchd_dir(workspace) / f"{label}.plist").unlink(missing_ok=True)
+
     jobs = build_jobs(workspace)
     if only is not None:
         wanted = resolve_labels(only)
         built = {job.label for job in jobs}
+        from daily_driver.plugins import off_reason
+
+        switched_off = _switched_off_plugin_labels(workspace)
+        for label in wanted:
+            if label in switched_off:
+                raise SchedulerError(
+                    f"{_short_label(label)}: {off_reason(switched_off[label])}"
+                )
         not_configured = [label for label in wanted if label not in built]
         if not_configured:
             names = ", ".join(_short_label(label) for label in not_configured)
@@ -472,6 +513,7 @@ __all__ = [
     "build_jobs",
     "calendar_entries",
     "install_all",
+    "installed_switched_off_labels",
     "parse_days",
     "parse_hhmm",
     "render_plist",

@@ -1,7 +1,7 @@
 # Daily Driver Workspace
 
 This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace.
-It holds your personal context, task tracker, job search data, and Claude session scaffolding.
+It holds your personal context, task tracker, {% if "job_search" in plugins %}job search data, {% endif %}and Claude session scaffolding.
 
 ## Day-to-day commands
 
@@ -14,12 +14,13 @@ daily-driver day-end          # close-out session and capture learnings
 ## Task tracker
 
 ```
-daily-driver tracker add      # add a task (job, errand, milestone, etc.)
+daily-driver tracker add      # add a task ({% if "job_search" in plugins %}job, {% endif %}errand, milestone, etc.)
 daily-driver tracker list     # list tracked tasks
 daily-driver tracker update   # update status or notes on a task
 daily-driver tracker stats    # summary counts by status/category
 ```
 
+{% if "job_search" in plugins %}
 ## Job search
 
 ```
@@ -28,6 +29,7 @@ daily-driver jobs status      # show last-run metadata per source
 daily-driver jobs prune       # archive stale rows from jobs.csv
 ```
 
+{% endif %}
 ## Status and focus
 
 ```
@@ -46,8 +48,7 @@ daily-driver doctor --reset   # repair drift, overwrite managed files
 
 ## Configuration
 
-Edit `.dd-config.yaml` in this directory to configure categories, job sources,
-daily schedule, and other workspace settings.
+Edit `.dd-config.yaml` in this directory to configure categories, {% if "job_search" in plugins %}job sources, {% endif %}daily schedule, and other workspace settings.
 
 ## Managed files
 

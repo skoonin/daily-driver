@@ -81,6 +81,30 @@ def test_is_user_edited_true_when_sha_differs(tmp_path: Path) -> None:
     assert manifest.is_user_edited(tmp_path, state_dir, "some.md")
 
 
+def test_prune_missing_drops_only_absent_entries(tmp_path: Path) -> None:
+    state_dir = tmp_path / ".daily-driver"
+    (tmp_path / "present.md").write_text("here", encoding="utf-8")
+    manifest.save(state_dir, {"present.md": "aa", "gone.md": "bb"})
+
+    manifest.prune_missing(state_dir, tmp_path)
+
+    assert manifest.load(state_dir) == {"present.md": "aa"}
+
+
+def test_prune_missing_leaves_manifest_untouched_when_nothing_missing(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / ".daily-driver"
+    (tmp_path / "present.md").write_text("here", encoding="utf-8")
+    manifest.save(state_dir, {"present.md": "aa"})
+    before = (state_dir / "manifest.json").stat().st_mtime_ns
+
+    manifest.prune_missing(state_dir, tmp_path)
+
+    assert (state_dir / "manifest.json").stat().st_mtime_ns == before
+    assert manifest.load(state_dir) == {"present.md": "aa"}
+
+
 def test_record_preserves_existing_entries(tmp_path: Path) -> None:
     state_dir = tmp_path / ".daily-driver"
     state_dir.mkdir()

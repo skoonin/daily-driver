@@ -4,7 +4,7 @@ This page explains the mental model behind Daily Driver: what exists on disk, wh
 
 ## What it does
 
-Daily Driver keeps the durable record of your day on disk (tracker, plans, notes, job search) and hands a `claude` session the context it needs to help you plan, check in, and wind down. The program owns the data; Claude is the conversation layer.
+Daily Driver keeps the durable record of your day on disk (tracker, plans, notes, and optionally job search) and hands a `claude` session the context it needs to help you plan, check in, and wind down. The program owns the data; Claude is the conversation layer.
 
 You drive it from one CLI: `daily-driver`. Everything else lives in a workspace directory you scaffold once.
 
@@ -31,7 +31,7 @@ The workspace is a plain directory. All state is in files you can read, edit, an
 | **Tracker** | YAML store for tasks, jobs, errands, contacts, anything. | `tracker {add,list,update,show,delete,prune,stats,follow-ups}` |
 | **Focus** | File-lock toggle that suppresses scheduled check-ins. | `focus {on,off,status}` |
 | **Day cycle** | Interactive `claude` sessions for morning / mid-day / evening. | `day-start`, `check-in`, `day-end` |
-| **Jobs** | Multi-board scraper plus AI enrichment for `jobs.csv`. | `jobs {run,status,prune}` |
+| **Jobs** (optional, `init --job-search`) | Multi-board scraper plus AI enrichment for `jobs.csv`. | `jobs {run,status,prune}` |
 | **Summary** | Headless period summary copied to clipboard. | `summary -r SPEC` |
 | **Voice** | Rewrite `voice-profile.md` from real writing samples. | `voice-update --from PATH` |
 | **Scheduler** | macOS launchd plists for unattended runs. | `scheduler {install,uninstall,status}` |

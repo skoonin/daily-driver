@@ -25,6 +25,7 @@ class _FakeWorkspace:
     version: str
     logger: logging.Logger
     console: Console
+    config: object = None  # no plugins block, so every plugin is off
 
     @property
     def ephemeral_dir(self) -> Path:
@@ -94,12 +95,8 @@ def test_generate_known_command_names_on_disk(tmp_path: Path) -> None:
         "check-in.md",
         "summary.md",
         "voice-update.md",
-        "daily-learning.md",
     }
-    missing = expected - present
-    assert (
-        not missing
-    ), f"expected command files missing from .claude/commands/daily-driver/: {missing}"
+    assert present == expected
 
 
 def test_generate_known_agent_names_on_disk(tmp_path: Path) -> None:

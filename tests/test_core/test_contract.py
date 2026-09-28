@@ -181,6 +181,7 @@ def _fake_workspace(root: Path):
         version: str
         logger: logging.Logger
         console: Console
+        config: object = None  # no plugins block, so every plugin is off
 
         @property
         def ephemeral_dir(self) -> Path:

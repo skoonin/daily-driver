@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 
+from rich.console import Console as RichConsole
+
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 
@@ -29,7 +31,8 @@ def add_parser(
         nargs="*",
         metavar="<job>",
         help="Job(s) to install by short name (checkin, day-start, day-end, jobs,"
-        " jobs-discover) or full label; default: all configured jobs",
+        " jobs-discover) or full label; default: all configured jobs. jobs and"
+        " jobs-discover need job search on",
     )
     add_global_flags(p_install)
     p_install.set_defaults(func=_run_install)
@@ -69,7 +72,11 @@ def add_parser(
 
 
 def _run_install(args: argparse.Namespace) -> int:
-    from daily_driver.core.scheduler import SchedulerError, install_all
+    from daily_driver.core.scheduler import (
+        SchedulerError,
+        install_all,
+        installed_switched_off_labels,
+    )
     from daily_driver.core.workspace import WorkspaceError
 
     console = Console.get_user_console()
@@ -79,11 +86,16 @@ def _run_install(args: argparse.Namespace) -> int:
         Console.error(str(exc))
         return 1
 
+    # Read before installing: a full install removes these agents first.
+    stale = [] if args.jobs else installed_switched_off_labels(workspace)
     try:
         installed = install_all(workspace, only=args.jobs or None)
     except SchedulerError as exc:
         Console.error(str(exc))
         return 1
+    finally:
+        # Whatever happened after the sweep, say what it removed.
+        _print_removed(console, [label for label in stale if not _plist_exists(label)])
 
     if not installed:
         console.print(
@@ -96,6 +108,20 @@ def _run_install(args: argparse.Namespace) -> int:
     for label in installed:
         console.print(f"  • {label}")
     return 0
+
+
+def _plist_exists(label: str) -> bool:
+    from daily_driver.integrations import launchd as launchd_int
+
+    return launchd_int.plist_path(label).exists()
+
+
+def _print_removed(console: RichConsole, labels: list[str]) -> None:
+    if not labels:
+        return
+    console.print("[green]Removed launchd agents (job search is off):[/green]")
+    for label in labels:
+        console.print(f"  • {label}")
 
 
 def _run_uninstall(args: argparse.Namespace) -> int:
@@ -129,7 +155,11 @@ def _run_status(args: argparse.Namespace) -> int:
 
     from rich.table import Table
 
-    from daily_driver.core.scheduler import SchedulerError, build_jobs
+    from daily_driver.core.scheduler import (
+        SchedulerError,
+        build_jobs,
+        installed_switched_off_labels,
+    )
     from daily_driver.core.workspace import WorkspaceError
     from daily_driver.integrations import launchd as launchd_int
 
@@ -146,17 +176,21 @@ def _run_status(args: argparse.Namespace) -> int:
         return 1
 
     state_dir = workspace.ephemeral_dir / "launchd"
+    # Agents of a switched-off plugin are not built any more but may still be
+    # installed and firing; list them so they are not invisible.
+    labels = [(job.label, False) for job in jobs] + [
+        (label, True) for label in installed_switched_off_labels(workspace)
+    ]
     rows = []
-    for job in jobs:
-        plist_path = launchd_int.plist_path(job.label)
-        installed = plist_path.exists()
-        mirrored = (state_dir / f"{job.label}.plist").exists()
+    for label, plugin_off in labels:
+        plist_path = launchd_int.plist_path(label)
         rows.append(
             {
-                "label": job.label,
-                "installed": installed,
-                "state_mirror": mirrored,
+                "label": label,
+                "installed": plist_path.exists(),
+                "state_mirror": (state_dir / f"{label}.plist").exists(),
                 "plist_path": str(plist_path),
+                "plugin_off": plugin_off,
             }
         )
 
@@ -178,8 +212,15 @@ def _run_status(args: argparse.Namespace) -> int:
     table.add_column("Plist path")
     for row in rows:
         marker = "[green]yes[/green]" if row["installed"] else "[dim]no[/dim]"
+        if row["plugin_off"]:
+            marker = "[yellow]yes, job search off[/yellow]"
         table.add_row(str(row["label"]), marker, str(row["plist_path"]))
     console.print(table)
+    if any(row["plugin_off"] for row in rows):
+        console.print(
+            "Run `daily-driver scheduler install` to remove agents of job search,"
+            " which is off in this workspace."
+        )
     return 0
 
 

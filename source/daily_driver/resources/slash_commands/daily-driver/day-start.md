@@ -31,7 +31,7 @@ Resolve the workspace output directory, then Read `context.md` and `voice-profil
 daily-driver paths output
 ```
 
-Read `<output>/context.md` and `<output>/voice-profile.md`. If either file is missing, note it and continue — they are optional. Apply the voice patterns for any written communication drafted during or after this session (cover letters, follow-up emails, recruiter replies).
+Read `<output>/context.md` and `<output>/voice-profile.md`. If either file is missing, note it and continue — they are optional. Apply the voice patterns for any written communication drafted during or after this session (follow-up emails, messages{% if "job_search" in plugins %}, cover letters, recruiter replies{% endif %}).
 
 ## 2. Gather Calendar and Activity
 
@@ -69,9 +69,9 @@ Extract structured carry-forward items from the notes file. Items labeled `BLOCK
 - **STALE** (3+ days): raise directly — "This has been carried N days. Is it still active? Options: schedule it concretely today, defer with a target date, or drop it." Do not silently add it to the plan.
 - **CARRY-OVER**: add to the proposed plan in natural priority position. Do not treat them as lower priority than new items just because they carried over.
 
-## 4. Review Application Pipeline
+## 4. Review Tracker
 
-Check the tracker for follow-ups due and active applications:
+Check the tracker for follow-ups due and active entries:
 
 ```bash
 daily-driver tracker follow-ups --overdue
@@ -112,29 +112,17 @@ If no extra tasks, proceed.
 Using the work-planner agent behavior, present:
 
 1. **Today's Schedule** — Meetings and fixed commitments with time blocks
-2. **Application Pipeline** — Follow-ups due, active applications by stage, new leads to research
+2. **Tracker** — Follow-ups due and active entries that need attention today{% if "job_search" in plugins %}; for `job` entries, active applications by stage and new leads to research{% endif +%}
 3. **Carry-forward** — Structured items from step 3 (BLOCKED, STALE, CARRY-OVER) — includes both work and personal items
 4. **Proposed Plan** — Time-blocked plan starting from `current_time` (step 0), accounting for meetings, personal items, and buffer. Do not schedule work in time that has already passed. All items (work and personal) are plan_items.
 
-Use the required time block format: `- HH:MM - HH:MM | <tracker-id> - <label> - Task description` where `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `job-003`). For items not tied to a tracker entry (personal, ad-hoc), omit the tracker-id segment.
+Use the required time block format: `- HH:MM - HH:MM | <tracker-id> - <label> - Task description` where `<tracker-id>` is the `{category}-NNN` ID from the tracker (e.g. `task-012`, `errand-005`). For items not tied to a tracker entry (personal, ad-hoc), omit the tracker-id segment.
 
 Then ask the user:
 
 - Does this look right?
 - Anything to add or reprioritize?
 - Any known interrupts or blockers today?
-
-## 7.5 Optional: Interview Practice
-
-Before saving the plan, offer interview practice as a short opt-in:
-
-> Want to do interview practice this morning? It's about 15-30 minutes — behavioral STAR, technical fundamentals, or system design depending on the day. (yes / no / skip)
-
-If the user accepts, point them at the slash command rather than chaining inline — it keeps the plan-save flow clean and lets them run it as a focused session:
-
-> Run `/daily-driver:daily-learning` next. When it finishes, come back and we'll save the plan.
-
-If the user declines or skips, continue immediately to step 8. Do not press the question, do not re-prompt. This is a single optional offer, not a multi-step procedure.
 
 ## 8. Save Plan
 

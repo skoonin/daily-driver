@@ -41,21 +41,38 @@ def add_parser(
         default=False,
         help="Overwrite existing .dd-config.yaml.",
     )
+    parser.add_argument(
+        "-j",
+        "--job-search",
+        action="store_true",
+        default=False,
+        help=(
+            "Switch on job search: `daily-driver jobs`, its settings, and the "
+            "job sections of the Claude prompts."
+        ),
+    )
     add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 
 
-def _copy_template(name: str, dest: Path) -> bool:
-    """Write a static template file to dest if absent. Returns True if created."""
+def _seed_template(name: str, dest: Path, config: object) -> bool:
+    """Render a seed template to dest if absent. Returns True if created.
+
+    Seeded files are the user's from then on, so they are rendered once with the
+    plugins on at init time and never regenerated.
+    """
     if dest.exists():
         return False
-    content = (
+    # deferred: core.templating pulls in Jinja2.
+    from daily_driver.core.templating import render_text
+
+    template_text = (
         importlib.resources.files("daily_driver.resources.templates")
         .joinpath(name)
         .read_text(encoding="utf-8")
     )
-    dest.write_text(content, encoding="utf-8")
+    dest.write_text(render_text(template_text, config), encoding="utf-8")
     return True
 
 
@@ -106,12 +123,15 @@ def _format_summary(
     created: list[str],
     skipped: list[str],
     generate_result: object,
+    job_search_off_hint: str | None,
 ) -> str:
     """Render the post-init summary block. Created/Skipped omitted if empty.
 
     `generate_result` is the return value of `core.generate.generate()`:
     None when the version-stamp fast-path skipped all work; a
     GenerationResult with `n_written` / `n_preserved` otherwise.
+    `job_search_off_hint` is None when job search is on, else how to switch
+    it on.
     """
     lines = [f"Initialized workspace at {root}"]
     if created:
@@ -128,6 +148,10 @@ def _format_summary(
             f"  Generated: .claude/*/daily-driver/* ({count} file"
             f"{'s' if count != 1 else ''})"
         )
+    if job_search_off_hint is None:
+        lines.append("  Job search: on")
+    else:
+        lines.append(f"  Job search: off (to switch on, {job_search_off_hint})")
     return "\n".join(lines)
 
 
@@ -140,6 +164,7 @@ def run(args: argparse.Namespace) -> int:
 
     created: list[str] = []
     skipped: list[str] = []
+    plugins = {"job_search"} if args.job_search else set()
 
     backup: Path | None = None
     if marker_existed and args.force:
@@ -163,17 +188,31 @@ def run(args: argparse.Namespace) -> int:
             workspace = Workspace.discover_or_fail(override=root)
             skipped.append(".dd-config.yaml")
         else:
-            workspace = Workspace.init(root)
+            workspace = Workspace.init(root, plugins=plugins)
             created.append(".dd-config.yaml")
     except WorkspaceError as exc:
         _restore_backup()
         Console.error(str(exc))
         return 1
 
-    # Static files: only write when absent, even under --force. Tracking the
-    # write/skip outcome lets us surface "what changed" in the summary.
+    from daily_driver.plugins import enabled_plugins, switch_on_hint
+
+    job_search_on = any(
+        plugin.name == "job_search" for plugin in enabled_plugins(workspace.config)
+    )
+    off_hint = None if job_search_on else switch_on_hint("job_search", workspace.config)
+    if marker_existed and not args.force and args.job_search and off_hint:
+        Console.warning(
+            ".dd-config.yaml already exists, so --job-search did not change it. "
+            f"To switch job search on, {off_hint}, then run "
+            "`daily-driver doctor --fix`."
+        )
+
+    # Seed files (rendered once, then the user's): only write when absent, even
+    # under --force. Tracking the write/skip outcome lets us surface "what
+    # changed" in the summary.
     for name in ("context.md", "voice-profile.md"):
-        if _copy_template(name, root / name):
+        if _seed_template(name, root / name, workspace.config):
             created.append(name)
         else:
             skipped.append(name)
@@ -194,9 +233,9 @@ def run(args: argparse.Namespace) -> int:
     else:
         skipped.append(".gitignore")
 
-    # Idempotence: when re-running without --force on a workspace at the
-    # current version, skip the inner generate work entirely. The version-
-    # stamp fast-path in generate() returns None and no logs fire. With
+    # Idempotence: when re-running without --force on a workspace whose stamp
+    # matches (same version, same plugins on), skip the inner generate work
+    # entirely. The stamp fast-path in generate() returns None and no logs fire. With
     # --force, wipe and rewrite (legacy behavior — user explicitly asked).
     # deferred: core.generate pulls in Jinja2 + pydantic, only needed here.
     from daily_driver.core.generate import generate
@@ -221,6 +260,6 @@ def run(args: argparse.Namespace) -> int:
     # Console.success both suppress under quiet mode, so print straight to the
     # stderr log console (where the summary has always lived) to bypass the gate.
     Console.get_log_console().print(
-        _format_summary(root, created, skipped, result), style="success"
+        _format_summary(root, created, skipped, result, off_hint), style="success"
     )
     return 0

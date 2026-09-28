@@ -60,6 +60,36 @@ def test_shipped_prompt_files_discovered() -> None:
     assert _FILES, f"no shipped prompt files found under {_PROMPT_ROOTS}"
 
 
+_TEMPLATES_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "source"
+    / "daily_driver"
+    / "resources"
+    / "templates"
+)
+_RENDERED_FILES = [
+    *_FILES,
+    _TEMPLATES_DIR / "workspace-readme.md.j2",
+    _TEMPLATES_DIR / "context.md",
+]
+
+
+@pytest.mark.parametrize("path", _RENDERED_FILES, ids=lambda p: p.name)
+def test_inline_block_tag_never_ends_a_line(path: Path) -> None:
+    """trim_blocks eats the newline after a block tag.
+
+    That is right for a tag alone on its line, but a tag ending a line of
+    text would join it to the next line. End such a line with `+%}` instead.
+    """
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = line.strip()
+        if not stripped.endswith("%}") or stripped.endswith("+%}"):
+            continue
+        assert (
+            stripped.startswith("{%") and stripped.count("{%") == 1
+        ), f"{path.name}:{number} ends with an inline block tag; use `+%}}`"
+
+
 @pytest.mark.parametrize(("path", "token"), _PARAMS, ids=lambda v: str(v))
 def test_shipped_prompt_has_no_banned_token(path: Path, token: str) -> None:
     text = path.read_text(encoding="utf-8")

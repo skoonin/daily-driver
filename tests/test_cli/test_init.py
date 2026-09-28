@@ -12,10 +12,13 @@ from daily_driver.cli.commands.init import run
 from daily_driver.core.config import load
 
 
-def _args(path: str, *, force: bool = False) -> argparse.Namespace:
+def _args(
+    path: str, *, force: bool = False, job_search: bool = False
+) -> argparse.Namespace:
     return argparse.Namespace(
         path=path,
         force=force,
+        job_search=job_search,
         verbose=False,
         quiet=False,
         no_color=False,
@@ -37,6 +40,119 @@ def test_init_creates_expected_artifacts(tmp_path: Path) -> None:
     assert (tmp_path / ".claude").is_dir(), ".claude dir must be created"
     assert (tmp_path / "context.md").exists(), "context.md must be seeded"
     assert (tmp_path / "voice-profile.md").exists(), "voice-profile.md must be seeded"
+
+
+def test_init_seeds_workspace_files_without_job_text(tmp_path: Path) -> None:
+    from tests.test_core.test_generate import JOB_TEXT
+
+    run(_args(str(tmp_path)))
+
+    for name in ("context.md", "voice-profile.md", "README.md"):
+        match = JOB_TEXT.search((tmp_path / name).read_text(encoding="utf-8"))
+        assert match is None, f"{name} mentions {match.group(0)!r}"
+
+
+def test_init_job_search_flag_switches_job_search_on(tmp_path: Path) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.plugins import enabled_plugins
+
+    assert app(["init", str(tmp_path), "-j"]) == 0
+
+    config = load(tmp_path / ".dd-config.yaml")
+    assert [plugin.name for plugin in enabled_plugins(config)] == ["job_search"]
+    assert "## Location preferences" in (tmp_path / "context.md").read_text()
+    assert "daily-driver jobs run" in (tmp_path / "README.md").read_text()
+    day_start = tmp_path / ".claude" / "commands" / "daily-driver" / "day-start.md"
+    assert "applications by stage" in day_start.read_text()
+
+
+def test_init_job_search_long_flag(tmp_path: Path) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.plugins import enabled_plugins
+
+    assert app(["init", str(tmp_path), "--job-search"]) == 0
+
+    assert enabled_plugins(load(tmp_path / ".dd-config.yaml"))
+
+
+def test_init_job_search_on_existing_config_warns_and_keeps_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path)))
+    before = (tmp_path / ".dd-config.yaml").read_text()
+    capsys.readouterr()
+
+    assert run(_args(str(tmp_path), job_search=True)) == 0
+
+    assert (tmp_path / ".dd-config.yaml").read_text() == before
+    err = " ".join(capsys.readouterr().err.split())
+    assert "--job-search did not change it" in err
+    assert "`plugins: {job_search: {}}`" in err
+
+
+def test_init_job_search_with_enabled_false_says_to_remove_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path)))
+    config = tmp_path / ".dd-config.yaml"
+    config.write_text(
+        config.read_text() + "\nplugins:\n  job_search: {enabled: false}\n"
+    )
+    capsys.readouterr()
+
+    run(_args(str(tmp_path), job_search=True))
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert "remove `enabled: false`" in err
+    assert "plugins: {job_search: {}}" not in err
+
+
+@pytest.mark.parametrize(
+    ("job_search", "expected"),
+    [
+        (False, "Job search: off (to switch on, add `plugins: {job_search: {}}`"),
+        (True, "Job search: on"),
+    ],
+)
+def test_init_summary_states_job_search(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], job_search: bool, expected: str
+) -> None:
+    run(_args(str(tmp_path), job_search=job_search))
+
+    assert expected in " ".join(capsys.readouterr().err.split())
+
+
+def test_plain_reinit_does_not_warn_about_job_search(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path)))
+    capsys.readouterr()
+
+    run(_args(str(tmp_path)))
+
+    assert "did not change it" not in capsys.readouterr().err
+
+
+def test_init_job_search_on_workspace_already_on_does_not_warn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path), job_search=True))
+    capsys.readouterr()
+
+    assert run(_args(str(tmp_path), job_search=True)) == 0
+
+    captured = capsys.readouterr()
+    assert "did not change it" not in captured.out + captured.err
+
+
+def test_init_force_with_job_search_rewrites_config_on(tmp_path: Path) -> None:
+    from daily_driver.plugins import enabled_plugins
+
+    run(_args(str(tmp_path)))
+
+    assert run(_args(str(tmp_path), force=True, job_search=True)) == 0
+
+    assert enabled_plugins(load(tmp_path / ".dd-config.yaml"))
 
 
 def test_init_creates_nonexistent_target(tmp_path: Path) -> None:
