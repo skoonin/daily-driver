@@ -7,12 +7,12 @@ from pydantic import BaseModel
 
 @dataclass(frozen=True)
 class PackageDataDir:
-    """One package-bundled directory of ``.md`` files copied into the workspace.
+    """One package-bundled directory of ``.md`` files rendered into the workspace.
 
     A plugin (or core) declares where its slash-command / agent markdown lives
     and where it should land under the workspace ``.claude/`` tree. ``generate``
-    walks core's baseline dirs plus every plugin's ``package_data_dirs`` so a
-    plugin shipping slash-commands needs no change to core copy logic.
+    walks core's baseline dirs plus the ``package_data_dirs`` of each plugin
+    switched on, so a plugin shipping slash-commands needs no change to core.
     """
 
     # dotted package holding the .md files (e.g. "daily_driver.resources.slash_commands")
@@ -37,6 +37,9 @@ class Plugin:
     # pydantic BaseModel subclass validating this plugin's config namespace,
     # attached to PluginsConfig. Plain type reference so _base.py imports no
     # plugin implementation (PluginsConfig is built in plugins.config).
+    # With a model the plugin is on only while its block exists and does not
+    # set `enabled: false`; None means there is nothing to opt in with, so the
+    # plugin is always on.
     config_model: type[BaseModel] | None = None
     # Dotted path to ``build_scheduled_jobs(ctx) -> list[ScheduledJob]``,
     # lazily imported by core.scheduler so core never eagerly loads plugin
@@ -49,7 +52,7 @@ class Plugin:
     # imported by core.doctor. None means the plugin contributes no health
     # checks.
     doctor_checks: str | None = None
-    # Package-bundled .md directories this plugin copies into the workspace
-    # .claude/ tree on generate (slash-commands / agents). Empty means the
-    # plugin ships none; core copies only its own baseline dirs.
+    # Package-bundled .md directories this plugin renders into the workspace
+    # .claude/ tree on generate while it is on (slash-commands / agents). Empty
+    # means the plugin ships none; core writes only its own baseline dirs.
     package_data_dirs: tuple[PackageDataDir, ...] = ()

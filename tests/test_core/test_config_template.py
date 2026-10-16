@@ -15,7 +15,10 @@ from daily_driver.core.config_template import (
     _unwrap_model,
     render_config_template,
 )
+from daily_driver.core.templating import render_for_plugins
+from daily_driver.plugins import enabled_plugins
 from daily_driver.plugins.job_search.config import _SOURCE_TOGGLE_TYPES
+from tests.test_core.test_generate import JOB_TEXT
 
 _TOP_KEY_RE = re.compile(r"^# ([a-z_]+):\s*$")
 
@@ -63,36 +66,108 @@ def _commented_top_level_blocks(text: str) -> dict[str, str]:
     return {k: "\n".join(v) for k, v in blocks.items()}
 
 
-def test_render_produces_valid_yaml():
-    text = render_config_template()
-    parsed = yaml.safe_load(_uncommented(text))
+def _workspace_config(*, job_search: bool) -> str:
+    """The .dd-config.yaml `init` writes, with or without --job-search."""
+    return render_for_plugins(
+        render_config_template(), {"job_search"} if job_search else set()
+    )
+
+
+@pytest.mark.parametrize("job_search", [False, True])
+def test_render_validates_against_config_model(job_search: bool) -> None:
+    parsed = yaml.safe_load(_uncommented(_workspace_config(job_search=job_search)))
     assert isinstance(parsed, dict)
+    config = Config.model_validate(parsed)
+    assert bool(enabled_plugins(config)) is job_search
 
 
-def test_render_validates_against_config_model():
-    text = render_config_template()
-    parsed = yaml.safe_load(_uncommented(text))
-    Config.model_validate(parsed)
+def test_config_without_job_search_has_no_job_text() -> None:
+    text = _workspace_config(job_search=False)
+    match = JOB_TEXT.search(text)
+    assert match is None, f"config mentions {match.group(0)!r}"
+
+
+def test_config_with_job_search_carries_every_job_setting() -> None:
+    text = _workspace_config(job_search=True)
+    for key in ("seeking_since", "work_auth", "citizenship", "discovery", "sources"):
+        assert _key_appears(key, text), f"{key} missing from the job search config"
+    assert _key_appears("jobs", text)
+
+
+def test_job_search_options_are_commented_except_enabled() -> None:
+    """Only `enabled: true` is live; options stay examples, not pinned values."""
+    lines = _workspace_config(job_search=True).splitlines()
+    block = lines[lines.index("  job_search:") + 1 :]
+    live = [
+        line for line in block if line.strip() and not line.startswith(("#", "    #"))
+    ]
+    assert live == ["    enabled: true"]
+
+
+@pytest.mark.parametrize("job_search", [False, True])
+def test_workspace_config_has_no_stray_blank_lines(job_search: bool) -> None:
+    assert "\n\n\n" not in _workspace_config(job_search=job_search)
+
+
+def test_job_search_options_validate_when_uncommented() -> None:
+    """Uncommenting every option under `job_search:` still validates."""
+    lines = []
+    in_job_search = False
+    for line in _workspace_config(job_search=True).splitlines():
+        in_job_search = in_job_search or line == "  job_search:"
+        if in_job_search and line.startswith("# "):
+            line = line[len("# ") :]
+        lines.append(line)
+    config = Config.model_validate(yaml.safe_load(_uncommented("\n".join(lines))))
+    assert config.plugins.job_search.persona  # type: ignore[attr-defined]
+
+
+def test_plugins_section_for_model_without_enabled_uses_bare_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config model with no `enabled` field is switched on by `name: {}`."""
+    import daily_driver.plugins as plugins_pkg
+    from daily_driver.core.config_template import _render_plugins_section
+    from daily_driver.plugins._base import Plugin
+
+    class SampleConfig(BaseModel):
+        note: str = ""
+
+    sample = Plugin(
+        name="sample",
+        command_name="sample",
+        command_module="daily_driver.plugins.job_search.cli",
+        command_help="help",
+        config_model=SampleConfig,
+    )
+    monkeypatch.setattr(plugins_pkg, "PLUGINS", (sample,))
+
+    rendered = render_for_plugins(
+        "\n".join(_render_plugins_section("plugins")), {"sample"}
+    )
+
+    assert "  sample: {}" in rendered.splitlines()
+    assert "enabled" not in rendered
 
 
 def test_render_includes_field_descriptions():
     text = render_config_template()
-    assert "Where command output" in text
-    assert "Warn (stderr, one-time) when --status" in text
-    assert "the single source of truth for" in text
+    assert "Where the tracker, notes and other output go" in text
+    assert "Warn when --status is not a usual one" in text
+    assert "is a late start" in text
 
 
 def test_render_marks_optional_blocks_commented():
-    text = render_config_template()
+    text = _workspace_config(job_search=False)
     assert "# user_profile:" in text
-    assert "# plugins:" in text
     assert "# focus:" in text
+    assert "plugins:" not in text
 
 
 def test_render_preserves_preamble():
     text = render_config_template()
     assert text.startswith("# daily-driver workspace configuration")
-    assert 'extra="forbid"' in text
+    assert "An unknown or misspelled key is an error." in text
 
 
 _COMMENTED_BLOCKS = [
@@ -104,12 +179,12 @@ _COMMENTED_BLOCKS = [
     "ai",
     "focus",
     "gather",
-    "plugins",
 ]
 
 
+@pytest.mark.parametrize("job_search", [False, True])
 @pytest.mark.parametrize("block", _COMMENTED_BLOCKS)
-def test_each_commented_block_validates_when_uncommented(block):
+def test_each_commented_block_validates_when_uncommented(block, job_search):
     """Every `template_commented` block must parse + validate on opt-in.
 
     A future contributor adding a typo to `template_example` payloads would
@@ -118,7 +193,7 @@ def test_each_commented_block_validates_when_uncommented(block):
     it through `Config.model_validate` — this catches example-data drift the
     moment someone uncomments a block to use it.
     """
-    text = render_config_template()
+    text = _workspace_config(job_search=job_search)
     blocks = _commented_top_level_blocks(text)
     assert block in blocks, f"no commented block found for {block!r}"
     active = yaml.safe_load(_uncommented(text)) or {}

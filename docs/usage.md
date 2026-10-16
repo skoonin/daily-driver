@@ -19,6 +19,8 @@ cd ~/daily-driver-workspace
 daily-driver doctor
 ```
 
+Job search is off by default. Add `--job-search` to `init` to switch it on (see [Jobs](#jobs)).
+
 `init` is idempotent — re-running tops up missing files and prints a `Created: ... ; Skipped: ...` summary. It never clobbers `context.md` or `voice-profile.md`. `-f` / `--force` resets `.dd-config.yaml` (the old copy is kept as `.dd-config.yaml.bak`).
 
 `doctor` checks contracts and dependencies. WARNINGs exit 0; ERRORs need `doctor --fix` (regenerates managed files, restores deleted ones) or `doctor --reset` (full overwrite).
@@ -125,21 +127,16 @@ Three thin wrappers around `claude` that spawn a workspace-aware session with th
 
 Shared flags: `--session-name NAME`, `--agent NAME` (default `work-planner`), `--model {sonnet,opus,haiku}`. `check-in` adds `--no-resume` to force a fresh session; the default is governed by `claude.resume_check_in`.
 
-### In-session slash commands
-
-These ship to `.claude/commands/daily-driver/` but are not CLI subcommands — invoke them inside a running `claude` session.
-
-| Slash command | What it does |
-|---|---|
-| `/daily-driver:daily-learning` | 15-30 minute self-directed practice session. First run asks what to learn and how, and builds a syllabus from the answer (`<output>/daily-learning/syllabus.md`); later runs work from it and default to a lens-first teaching style unless the user asked for something else. Appends to `<output>/daily-learning/<date>.md`. Offered as an opt-in step inside `/daily-driver:day-start`, or run standalone. |
-
 ## Jobs
 
 The job-search plugin scrapes a configurable set of boards, dedupes against `jobs.csv`, and enriches missing fields (fit, notes, comp) via an AI provider.
 
 ### Enable it
 
-Add a `plugins.job_search` block and set `scraper.enabled: true`. Minimal:
+Job search is off by default, and every `jobs` command exits 1 until it is on.
+
+1. Switch it on. For a new workspace, run `daily-driver init --job-search <path>`. For an existing one, add a `plugins.job_search` block to `.dd-config.yaml`, then run `daily-driver doctor --fix` to add the job sections to the Claude prompts. `context.md` is not rewritten, so add your location preferences and what you look for in a role by hand.
+2. Set `scraper.enabled: true` and list your sources. Minimal:
 
 ```yaml
 plugins:
@@ -284,7 +281,8 @@ Defaults when `scheduler:` is omitted:
 | Job | Time | Action |
 |---|---|---|
 | `checkin` | 11:00, 15:00 | `daily-driver check-in` (skipped while focus is on) |
-| `jobs` | 07:00 | `daily-driver jobs run` |
+| `jobs` | 07:00 (job search only) | `daily-driver jobs run` |
+| `jobs-discover` | 23:59 Sat, Tue (job search only) | `daily-driver jobs discover-boards` |
 | `day-cycle` | `schedule.day_start` / `schedule.day_end` | Morning / evening launchers |
 
 When launchd fires them, `day-start`, `day-end`, and `check-in` each post a clickable desktop notification that opens the session on click (via the launchers' `--launch notify` mode; see [commands.md](commands.md)). launchd cannot open a terminal itself, so the notification is the nudge and the session starts from your own session on click. The `jobs` scrape runs headless.

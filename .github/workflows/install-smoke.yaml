@@ -66,5 +66,25 @@ jobs:
             | python -c "import json,sys; d=json.load(sys.stdin); assert d['data']['entries'][0]['title']=='smoke task', d"
           test -d /tmp/dd-ws/.claude/commands/daily-driver
           test -s /tmp/dd-ws/.claude/settings.local.json
+      # Job search is opt-in: a plain init carries no job config and refuses
+      # `jobs`; `init --job-search` switches it on.
+      - name: Job search stays off without --job-search
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          if grep -q job_search /tmp/dd-ws/.dd-config.yaml; then
+            echo "::error::a plain init wrote job search settings"
+            exit 1
+          fi
+          if daily-driver --workspace /tmp/dd-ws jobs status; then
+            echo "::error::jobs ran in a workspace without job search"
+            exit 1
+          fi
+      - name: Job search workspace smoke (init --job-search + doctor + jobs status)
+        run: |
+          source /tmp/smoke-venv/bin/activate
+          daily-driver init --job-search /tmp/dd-ws-jobs
+          grep -q "^  job_search:" /tmp/dd-ws-jobs/.dd-config.yaml
+          daily-driver --workspace /tmp/dd-ws-jobs doctor
+          daily-driver --workspace /tmp/dd-ws-jobs jobs status
 
 # Linux parity deferred to a future release.

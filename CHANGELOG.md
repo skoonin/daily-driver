@@ -6,7 +6,21 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
+- **Job search is now opt-in.** A new workspace starts without it: no job settings in `.dd-config.yaml`, no job sections in the Claude prompts, README or `context.md`, no job rows in `doctor`, no `jobs` or `jobs-discover` launchd agents, and every `jobs` command exits 1 with a message saying how to switch it on. `daily-driver init --job-search` creates a workspace with job search on. An existing workspace with a `plugins.job_search` block keeps job search on with no edit, even if every option in the block is commented out. The new `plugins.job_search.enabled: false` switches it off and keeps the settings. The `init` summary now ends with `Job search: on` or `off`. Switching job search on or off shows in `doctor` as drift that names the change, and `doctor --fix` applies it. Re-run `scheduler install` to add or remove the jobs agents: it lists the agents it removed, and `scheduler status` flags any still installed while job search is off. (#266)
+
+- **The config file `init` writes is shorter and plainer.** Comments are cut to one line per setting where possible, and settings that only matter to job search are left out unless you pass `--job-search`. A plain config drops from about 400 lines to 118. (#266)
+
+- **The Claude prompts track any kind of task, not only job applications.** The "Application Pipeline" steps in day-start, check-in and day-end are now "Review Tracker", and examples use general tasks. The job wording returns when job search is on. (#266)
+
 - **Daily Driver is now licensed under the Apache License 2.0.** The package metadata declared MIT with no license file behind it, so neither the repository nor a built sdist carried the text it claimed. The full text is now at `LICENSE` and ships in both the wheel and the sdist. Apache 2.0 adds an explicit patent grant and a requirement to state changes, neither of which MIT provides. (#265)
+
+### Removed
+
+- **The `/daily-driver:daily-learning` command is gone,** along with day-start's optional interview-practice step. Your next `doctor --fix` removes the command from the workspace; your notes under `daily-learning/` are left alone. (#266)
+
+### Fixed
+
+- **`doctor` no longer reports a removed managed file as missing forever.** When an upgrade stopped shipping a command, its entry stayed in the workspace manifest, and `doctor` warned about it with no way for `--fix` to clear it. (#266)
 
 ## [1.3.0] — 2026-09-09
 

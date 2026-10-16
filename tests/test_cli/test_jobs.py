@@ -14,13 +14,22 @@ from unittest.mock import patch
 import pytest
 
 
-def _init_workspace(tmp_path: Path, *, scraper_enabled: bool | None = None) -> Path:
-    """Create a workspace. If scraper_enabled is set, inject plugins.job_search."""
+def _init_workspace(
+    tmp_path: Path, *, scraper_enabled: bool | None = None, job_search: bool = True
+) -> Path:
+    """Create a workspace with job search on (unless job_search=False).
+
+    If scraper_enabled is set, the config is replaced by one whose
+    plugins.job_search block sets scraper.enabled.
+    """
     from daily_driver.core.workspace import Workspace
+    from tests.workspaces import enable_job_search
 
     ws_root = tmp_path / "ws"
     ws_root.mkdir(parents=True, exist_ok=True)
     Workspace.init(ws_root)
+    if job_search and scraper_enabled is None:
+        enable_job_search(ws_root)
     if scraper_enabled is not None:
         enabled_str = "true" if scraper_enabled else "false"
         (ws_root / ".dd-config.yaml").write_text(
@@ -103,7 +112,7 @@ def test_jobs_status_help_exits_0() -> None:
 
 
 def test_jobs_run_missing_workspace_exits_1(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
 
@@ -111,22 +120,74 @@ def test_jobs_run_missing_workspace_exits_1(
 
     rc = app(["--workspace", str(tmp_path / "missing"), "jobs", "run"])
 
+    err = capsys.readouterr().err
     assert rc == 1
+    # The workspace error, not the job-search gate's "is off" message.
+    assert "no .dd-config.yaml found" in err
+    assert "is off" not in err
 
 
-def test_jobs_run_no_job_search_exits_1(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "action", ["run", "backfill", "status", "prune", "verify", "discover-boards"]
+)
+def test_jobs_exits_1_when_job_search_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], action: str
 ) -> None:
-    """Fresh workspace with no plugins.job_search config exits 1."""
+    """Every jobs action refuses on a fresh workspace and says how to switch on."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path)
+    ws = _init_workspace(tmp_path, job_search=False)
 
-    rc = app(["--workspace", str(ws), "jobs", "run"])
+    rc = app(["--workspace", str(ws), "jobs", action])
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "plugins.job_search" in captured.err
+    err = " ".join(captured.err.split())
+    assert "job search is off" in err
+    assert "`plugins: {job_search: {}}`" in err
+
+
+def test_following_the_off_message_switches_job_search_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The line the message tells you to add works, pasted as-is."""
+    import re
+
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, job_search=False)
+    app(["--workspace", str(ws), "jobs", "status"])
+    line = re.search(r"add `([^`]+)`", capsys.readouterr().err)
+    assert line is not None
+    config = ws / ".dd-config.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8") + f"\n{line.group(1)}\n", encoding="utf-8"
+    )
+
+    assert app(["--workspace", str(ws), "jobs", "status"]) == 0
+
+
+def test_jobs_with_enabled_false_says_to_remove_it_not_to_add_a_block(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Appending a second `plugins:` would silently drop the block's settings."""
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, job_search=False)
+    config = ws / ".dd-config.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + '\nplugins:\n  job_search:\n    enabled: false\n    persona: "SRE"\n',
+        encoding="utf-8",
+    )
+
+    rc = app(["--workspace", str(ws), "jobs", "status"])
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 1
+    assert "job search is off" in err
+    assert "remove `enabled: false`" in err
+    assert "plugins: {job_search: {}}" not in err
 
 
 def test_jobs_run_scraper_disabled_returns_zero(

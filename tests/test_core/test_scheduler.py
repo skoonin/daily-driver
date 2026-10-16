@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -18,6 +19,7 @@ from rich.console import Console
 
 from daily_driver.core import scheduler
 from daily_driver.core.config_models import SchedulerConfig
+from daily_driver.plugins.job_search.config import JobSearchPlugin
 
 
 @dataclass
@@ -31,6 +33,10 @@ class _FakeSchedule:
 class _FakeConfig:
     scheduler: SchedulerConfig | None = None
     schedule: _FakeSchedule = None  # type: ignore[assignment]
+    # Job search on by default: most tests here exercise the jobs plists.
+    plugins: SimpleNamespace = field(
+        default_factory=lambda: SimpleNamespace(job_search=JobSearchPlugin())
+    )
 
     def __post_init__(self) -> None:
         if self.schedule is None:
@@ -56,19 +62,19 @@ class _FakeWorkspace:
         root: Path,
         scheduler_cfg: dict | None = None,
         schedule: _FakeSchedule | None = None,
+        job_search: bool = True,
     ) -> _FakeWorkspace:
         scheduler_model = (
             SchedulerConfig.model_validate(scheduler_cfg)
             if scheduler_cfg is not None
             else None
         )
-        return cls(
-            root=root,
-            state_dir=root / ".daily-driver",
-            config=_FakeConfig(
-                scheduler=scheduler_model, schedule=schedule or _FakeSchedule()
-            ),
+        config = _FakeConfig(
+            scheduler=scheduler_model, schedule=schedule or _FakeSchedule()
         )
+        if not job_search:
+            config.plugins = SimpleNamespace(job_search=None)
+        return cls(root=root, state_dir=root / ".daily-driver", config=config)
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +89,19 @@ class TestBuildJobs:
         labels = [j.label for j in jobs]
         assert "com.daily-driver.checkin" in labels
         assert "com.daily-driver.jobs" in labels
+
+    def test_job_search_off_builds_no_jobs_plists(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(tmp_path, job_search=False)
+        labels = [j.label for j in scheduler.build_jobs(ws)]
+        assert labels == ["com.daily-driver.checkin"]
+
+    def test_job_search_enabled_false_builds_no_jobs_plists(
+        self, tmp_path: Path
+    ) -> None:
+        ws = _FakeWorkspace.make(tmp_path)
+        ws.config.plugins = SimpleNamespace(job_search=JobSearchPlugin(enabled=False))
+        labels = [j.label for j in scheduler.build_jobs(ws)]
+        assert labels == ["com.daily-driver.checkin"]
 
     def test_user_override_replaces_defaults(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(
@@ -528,6 +547,42 @@ class TestInstallUninstall:
         # Each install triggers unload then load for every job.
         assert calls["unload"].count("com.daily-driver.checkin") == 2
         assert calls["load"].count("com.daily-driver.checkin") == 2
+
+    def test_install_removes_plists_of_switched_off_plugin(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Re-installing after job search is switched off clears its agents."""
+        from daily_driver.integrations import launchd as launchd_int
+
+        monkeypatch.setattr(sys, "platform", "darwin")
+        calls = self._patch_launchd(monkeypatch, tmp_path)
+        scheduler.install_all(_FakeWorkspace.make(tmp_path))
+        # Only the second install's calls matter: the first also unloads the
+        # jobs labels, which would hide a sweep that forgot to.
+        for recorded in calls.values():
+            recorded.clear()
+
+        installed = scheduler.install_all(
+            _FakeWorkspace.make(tmp_path, job_search=False)
+        )
+
+        assert installed == ["com.daily-driver.checkin"]
+        assert set(calls["remove"]) == {
+            "com.daily-driver.jobs",
+            "com.daily-driver.jobs-discover",
+        }
+        # Unload before removing: a deleted plist whose agent is still
+        # loaded keeps firing until logout.
+        assert {"com.daily-driver.jobs", "com.daily-driver.jobs-discover"} <= set(
+            calls["unload"]
+        )
+        agents = launchd_int.launch_agents_dir()
+        assert not (agents / "com.daily-driver.jobs.plist").exists()
+        state_dir = tmp_path / ".daily-driver" / "state" / "launchd"
+        assert not (state_dir / "com.daily-driver.jobs.plist").exists()
+        assert (state_dir / "com.daily-driver.checkin.plist").exists()
 
     def test_uninstall_removes_plists_and_clears_state_dir(
         self,

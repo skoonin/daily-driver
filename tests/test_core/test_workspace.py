@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from daily_driver.core.workspace import Workspace, WorkspaceError
+from daily_driver.plugins import enabled_plugins
 
 _MINIMAL_YAML = """\
 daily_driver:
@@ -30,6 +31,16 @@ def test_init_loads_valid_config(tmp_path):
     ws = Workspace.init(tmp_path)
     assert ws.config.daily_driver.output_dir == "."
     assert "task" in ws.config.tracker.categories
+
+
+def test_init_leaves_job_search_off_by_default(tmp_path):
+    ws = Workspace.init(tmp_path)
+    assert enabled_plugins(ws.config) == ()
+
+
+def test_init_with_job_search_switches_it_on(tmp_path):
+    ws = Workspace.init(tmp_path, plugins={"job_search"})
+    assert [plugin.name for plugin in enabled_plugins(ws.config)] == ["job_search"]
 
 
 def test_init_raises_if_already_initialized(tmp_path):
@@ -81,6 +92,19 @@ def test_init_template_render_error_surfaces_and_falls_back(tmp_path, monkeypatc
         (tmp_path / ".dd-config.yaml").read_text()
     )
     assert any("fallback config" in w for w in warnings)
+
+
+def test_init_template_render_error_keeps_chosen_plugins_on(tmp_path, monkeypatch):
+    import jinja2
+
+    def _boom(*_a, **_kw):
+        raise jinja2.TemplateError("bad template")
+
+    monkeypatch.setattr(jinja2.Environment, "from_string", _boom)
+
+    ws = Workspace.init(tmp_path, plugins={"job_search"})
+
+    assert [plugin.name for plugin in enabled_plugins(ws.config)] == ["job_search"]
 
 
 # ---------------------------------------------------------------------------

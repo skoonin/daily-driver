@@ -33,9 +33,9 @@ Collect today's commits across all repos:
 daily-driver gather git
 ```
 
-## 4. Review Application Pipeline
+## 4. Review Tracker
 
-Check for follow-ups due and application status changes:
+Check for follow-ups due and status changes:
 
 ```bash
 daily-driver tracker follow-ups --overdue
@@ -59,7 +59,7 @@ Read `<output>/context.md` with the Claude Read tool. If it is missing, note it 
 
 Using the work-planner agent behavior, present:
 
-1. **Work Summary** — What was actually done today (applications sent, research, follow-ups, interviews)
+1. **Work Summary** — What was actually done today (tasks finished, research, follow-ups, meetings{% if "job_search" in plugins %}, applications sent, interviews{% endif %})
 2. **Plan vs Actual** — Compare morning plan items to what happened. Assign final status to each plan_item: [done], [in-progress], [blocked], [carry-over], [unplanned], [dropped]
    - Use session data and git activity to infer status for items not covered by the plan
 3. **Unplanned Work** — Things that came up that weren't in the plan
@@ -70,7 +70,7 @@ Using the work-planner agent behavior, present:
    - `blocked`: add with `blocked: true` and `blocked_reason` (ask if not known)
    - `unplanned`: ask user if it should carry forward
    - Personal items (`type: personal`): carry unfinished ones forward as `carry_forward` entries with `type: personal`, same as work items. Ask about any outstanding 3+ days (drop, schedule, or keep carrying?).
-6. **Key Outcomes** — Applications sent, responses received, interviews scheduled, follow-ups completed
+6. **Key Outcomes** — Milestones hit, responses received, follow-ups completed{% if "job_search" in plugins %}; for `job` entries, applications sent and interviews scheduled{% endif +%}
 
 Then ask the user:
 - Anything to add? Blockers, wins, context?

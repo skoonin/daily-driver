@@ -108,7 +108,8 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
     from daily_driver.core import manifest
 
     missing = manifest.missing_files(workspace.root, workspace.state_dir)
-    version_drifted = version_stamp.is_drifted(workspace.state_dir, workspace.version)
+    expected = version_stamp.expected(workspace.version, workspace.config)
+    stamped = version_stamp.read(workspace.state_dir)
 
     if missing:
         n = len(missing)
@@ -119,7 +120,24 @@ def _check_workspace_drift(workspace: Workspace) -> CheckResult:
             detail=f"{n} managed file(s) missing from disk: {preview}",
             fix_hint="Run: daily-driver doctor --fix",
         )
-    if version_drifted:
+    if stamped != expected:
+        if stamped is not None:
+            stamped_version, was = version_stamp.split(stamped)
+            if stamped_version == workspace.version:
+                now = version_stamp.split(expected)[1]
+                return CheckResult(
+                    name="Workspace drift",
+                    status="WARNING",
+                    detail=(
+                        f"plugins changed ({', '.join(was) or 'none'} -> "
+                        f"{', '.join(now) or 'none'}): managed files need "
+                        "regeneration"
+                    ),
+                    fix_hint=(
+                        "Run: daily-driver doctor --fix, then daily-driver "
+                        "scheduler install if you use the scheduler"
+                    ),
+                )
         return CheckResult(
             name="Workspace drift",
             status="WARNING",
@@ -288,17 +306,17 @@ def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
 
 
 def _plugin_checks(workspace: Workspace) -> list[CheckResult]:
-    """Run each plugin's doctor checks.
+    """Run the doctor checks of each plugin switched on in this workspace.
 
     Plugin check functions are resolved by dotted path and imported lazily so
     core never eagerly loads plugin implementation modules at import time.
     """
     import importlib
 
-    from daily_driver.plugins import PLUGINS
+    from daily_driver.plugins import enabled_plugins
 
     results: list[CheckResult] = []
-    for plugin in PLUGINS:
+    for plugin in enabled_plugins(workspace.config):
         if plugin.doctor_checks is None:
             continue
         module_path, _, attr = plugin.doctor_checks.rpartition(".")

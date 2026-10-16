@@ -24,6 +24,7 @@ def _init_workspace(tmp_path: Path) -> Path:
     ns = argparse.Namespace(
         path=str(ws),
         force=False,
+        job_search=False,
         verbose=False,
         quiet=False,
         no_color=False,
@@ -329,8 +330,10 @@ def test_doctor_detects_deleted_managed_file(
     ws = _init_workspace(tmp_path)
     _stamp_workspace(ws)
 
-    victim = ws / ".claude" / "commands" / "daily-driver" / "day-start.md"
-    assert victim.is_file(), "init should have materialized day-start.md"
+    # A hook, not a command: the shipped command count equals MIN_COMMANDS, so
+    # deleting a command is a contract ERROR rather than drift.
+    victim = ws / ".claude" / "hooks" / "hook-current-time.sh"
+    assert victim.is_file(), "init should have materialized the hook"
     victim.unlink()
 
     rc = app(["--workspace", str(ws), "doctor"])
@@ -342,6 +345,73 @@ def test_doctor_detects_deleted_managed_file(
     assert "Workspace drift" in combined
     assert "WARNING" in combined
     assert "missing" in combined.lower()
+
+
+def _plant_jobs_backups(ws: Path) -> None:
+    """Enough jobs.csv snapshots that the job_search doctor warns about them."""
+    backups = ws / "backups"
+    backups.mkdir()
+    for i in range(8):
+        (backups / f"jobs.csv.bak.2026-05-{i:02d}").write_text("x", encoding="utf-8")
+
+
+def test_doctor_skips_job_checks_when_job_search_off(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+    _plant_jobs_backups(ws)
+
+    app(["--workspace", str(ws), "doctor"])
+
+    captured = capsys.readouterr()
+    assert "Jobs backups" not in captured.out + captured.err
+
+
+def test_doctor_runs_job_checks_when_job_search_on(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
+
+    ws = _init_workspace(tmp_path)
+    _stamp_workspace(ws)
+    _plant_jobs_backups(ws)
+    enable_job_search(ws)
+
+    app(["--workspace", str(ws), "doctor"])
+
+    captured = capsys.readouterr()
+    assert "Jobs backups" in captured.out + captured.err
+
+
+def test_switching_job_search_on_is_drift_that_fix_clears(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Generated files depend on which plugins are on, so a switch is drift."""
+    from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
+
+    ws = _init_workspace(tmp_path)
+    capsys.readouterr()
+    enable_job_search(ws)
+
+    app(["--workspace", str(ws), "doctor"])
+    before = capsys.readouterr()
+    app(["--workspace", str(ws), "doctor", "--fix"])
+    capsys.readouterr()
+    app(["--workspace", str(ws), "doctor"])
+    after = capsys.readouterr()
+
+    assert "plugins changed (none -> job_search)" in " ".join(before.out.split())
+    assert "scheduler install" in " ".join(before.out.split())
+    assert "Workspace drift" in after.out
+    assert "plugins changed" not in " ".join(after.out.split())
 
 
 def test_doctor_fix_restores_deleted_managed_file(

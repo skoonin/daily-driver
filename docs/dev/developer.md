@@ -67,7 +67,7 @@ daily_driver/
 3. `cli/_common.py:configure(args)` runs once after parse: it calls `core.logging.configure(verbosity)` (mapping `-q`/`-v`/`-vv` to `ERROR`/`INFO`/`DEBUG`; bare invocation is `WARNING`), then `Console.setup_for_user(quiet, verbose, no_color)`. Both helpers are idempotent — second calls remove the existing counting handler before re-attaching.
 4. Most subcommands call `Workspace.discover_or_fail(override=args.workspace)`. Precedence: `--workspace` flag, upward search for `.dd-config.yaml`, fail with `WorkspaceError`.
 5. `core.config.load()` parses YAML (`safe_load`) and validates against `core.config_models.Config`. Pydantic v2, `extra="forbid"` at every nesting level. Invalid config fails at parse, not mid-command.
-6. `core.version_stamp` compares the workspace's stamped version against `daily_driver.__version__`. On mismatch: `doctor --fix` regenerates; other subcommands proceed without touching the filesystem.
+6. `core.version_stamp` compares the workspace's stamp against `version_stamp.expected(__version__, config)`: the package version plus the names of the plugins switched on (`1.3.0+job_search`). On mismatch (an upgrade, or a plugin switched on or off): `doctor --fix` regenerates; other subcommands proceed without touching the filesystem.
 7. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`: at `-v` or higher the daily_driver logger emits a full `logger.exception()` traceback to stderr; otherwise `Console.error(str(exc))` prints a single-line message. Non-zero exit either way — no tracebacks on happy-path failures.
 
 Scheduled invocations go through the same entry point. `scheduler install` renders a `<job>.plist.j2` Jinja template with workspace-specific paths and calls `launchctl load`. Core jobs render from `resources/launchd/` (e.g. `checkin.plist.j2`); a plugin ships its own template alongside its code (`job_search` renders `plugins/job_search/templates/jobs.plist.j2`). stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
@@ -81,12 +81,15 @@ Scheduled invocations go through the same entry point. `scheduler install` rende
 - the rendered contract root templates (`ENTRIES`, e.g. `README.md`) (manifest-guarded)
 - `.claude/hooks/*.sh` from `resources/templates/hooks/` (manifest-guarded)
 
-Those are the only workspace paths generate touches; all other user files are sacred. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus every registered plugin's `package_data_dirs`.
+Those are the only workspace paths generate touches; all other user files are sacred. Each `PackageDataDir` declares its source package and `.claude/` destination; `generate` walks core's baseline dirs plus the `package_data_dirs` of each plugin switched on.
+
+Every `.md` file and root template is a Jinja template rendered by `core.templating.render_text` with `plugins` set to the names of the plugins on, so `{% if "job_search" in plugins %}` sections appear only in job-search workspaces. The renderer uses `trim_blocks`: a block tag alone on its line disappears cleanly, but a line of text ending in an inline tag must end `{% endif +%}` or it joins the next line (a lint test in `tests/test_core/test_shipped_prompts.py` enforces this). `init` renders `context.md` and `voice-profile.md` the same way, once.
 
 Key invariants:
 
 - **Version stamp written last.** A crash mid-generate leaves the stamp stale; the next invocation re-runs. Idempotent by construction.
-- **SHA-256 manifest guards user edits.** `_copy_package_md` (the `.md` files), `_render_contract_entries` (root templates), and `_copy_hooks` (the `.sh` hooks) all check the manifest before overwriting and record each written file's hash. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` (`force_overwrite=True`) is the nuclear option that overwrites. `settings.local.json` is the exception — it merges rather than being manifest-guarded.
+- **The manifest forgets removed files.** At the end of a run `manifest.prune_missing` drops entries for files that are gone (stale removal, a `--reset` wipe). Every file still shipped was just rewritten, so a missing file is one the package no longer ships; without the prune, `doctor` would report it missing forever.
+- **SHA-256 manifest guards user edits.** `_render_package_md` (the `.md` files), `_render_contract_entries` (root templates), and `_copy_hooks` (the `.sh` hooks) all check the manifest before overwriting and record each written file's hash. A user edit flips the hash; subsequent generates skip that file and log a warning. `doctor --fix` respects this; `doctor --reset` (`force_overwrite=True`) is the nuclear option that overwrites. `settings.local.json` is the exception — it merges rather than being manifest-guarded.
 - **`settings.local.json` merges instead of overwriting.** Package-managed top-level keys are refreshed from the template; user-added top-level keys are preserved.
 - **Concurrency.** Generate acquires an exclusive `generate.lock` under `ephemeral_dir` and re-checks drift inside the lock (double-checked locking).
 
@@ -105,7 +108,7 @@ Key invariants:
 | `.claude/settings.local.json` | exists + valid JSON |
 | `context.md`, `voice-profile.md`, `.gitignore` | file exists |
 | `README.md` (and any other `ENTRIES`) | file exists |
-| `.claude/commands/daily-driver/` | `>= MIN_COMMANDS` (5) `*.md` |
+| `.claude/commands/daily-driver/` | `>= MIN_COMMANDS` (5) `*.md`; core ships exactly 5, so deleting any one is an ERROR |
 | `.claude/agents/daily-driver/` | `>= MIN_AGENTS` (1) `*.md` |
 
 `.claude/commands/user/` and `.claude/agents/user/` are user territory: `init` seeds the dirs but `generate` never writes there, so they are intentionally **excluded** from the contract — `doctor --fix` cannot regenerate user territory and reporting it as ERROR would produce a stuck state.
@@ -202,8 +205,9 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 
 - **Registry.** `plugins/__init__.py` exposes `PLUGINS: tuple[Plugin, ...]`, listed explicitly. `_validate_registry` runs at import and `find_spec`-checks every declared hook module (command, scheduled-jobs builder, doctor checks, package-data sources) so a typo'd path fails at startup, not on first use.
 - **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs copied into the workspace `.claude/` tree).
-- **Core iterates `PLUGINS`.** `core.scheduler`, `core.doctor`, and `core.generate` walk the registry (importing `PLUGINS` lazily inside the function so core stays import-light) and pull each plugin's contribution. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
-- **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`), but the path is exercised by a synthetic-plugin test.
+- **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the one on/off answer: a plugin is on when its `plugins.<name>` block exists and does not set `enabled: false`. `core.scheduler`, `core.doctor`, `core.generate`, `core.version_stamp`, and the plugin-command dispatch in `cli/cli.py` all ask it (importing lazily so core stays import-light). A full `scheduler install` also removes the launchd agents of plugins that are off. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
+- **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) when the plugin is on and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`); its prompt content is `{% if "job_search" in plugins %}` sections inside the core prompts. The path is exercised by a synthetic-plugin test.
+- **Config template.** `core/config_template.py` writes each plugin's `plugins.<name>` section inside a Jinja gate, so `init` only writes it for chosen plugins. A core field that only a plugin uses carries `json_schema_extra={"template_plugin": "<name>"}` (e.g. `scheduler.jobs`) and renders under the same gate.
 
 ## Common mistakes
 

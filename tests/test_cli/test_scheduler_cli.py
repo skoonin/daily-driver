@@ -54,7 +54,28 @@ def test_install_scheduler_exits_0_and_reports_labels(
 
     assert rc == 0
     assert "com.daily-driver.checkin" in combined
+    assert "com.daily-driver.jobs" not in combined
+
+
+def test_install_scheduler_includes_jobs_when_job_search_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
+
+    ws = _init_workspace(tmp_path)
+    enable_job_search(ws)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
+    out = capsys.readouterr()
+    combined = out.out + out.err
+
+    assert rc == 0
     assert "com.daily-driver.jobs" in combined
+    assert "com.daily-driver.jobs-discover" in combined
 
 
 def test_install_scheduler_selective_installs_only_named_job(
@@ -98,8 +119,10 @@ def test_uninstall_scheduler_selective_removes_only_named_job(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
 
     ws = _init_workspace(tmp_path)
+    enable_job_search(ws)
     _patch_launchd(monkeypatch, tmp_path)
 
     app(["--workspace", str(ws), "scheduler", "install"])
@@ -190,8 +213,10 @@ def test_scheduler_status_lists_configured_jobs(
 ) -> None:
     """`scheduler status` prints configured job labels and an installed marker."""
     from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
 
     ws = _init_workspace(tmp_path)
+    enable_job_search(ws)
     _patch_launchd(monkeypatch, tmp_path)
 
     rc = app(["--workspace", str(ws), "scheduler", "status"])
@@ -223,6 +248,184 @@ def test_scheduler_status_json(
     assert payload["schema"] == 1
     labels = {row["label"] for row in payload["data"]}
     assert "com.daily-driver.checkin" in labels
+
+
+def _installed_then_switched_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> Path:
+    """A workspace whose jobs agents were installed before job search went off."""
+    from daily_driver.cli.cli import app
+    from tests.workspaces import disable_job_search, enable_job_search
+
+    ws = _init_workspace(tmp_path)
+    enable_job_search(ws)
+    _patch_launchd(monkeypatch, tmp_path)
+    app(["--workspace", str(ws), "scheduler", "install"])
+    disable_job_search(ws)
+    capsys.readouterr()
+    return ws
+
+
+def test_install_after_switching_job_search_off_reports_removed_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert rc == 0
+    assert "Removed launchd agents (job search is off)" in out
+    assert "com.daily-driver.jobs-discover" in out
+
+
+def test_failed_install_still_reports_agents_it_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The sweep runs before loading; a later load failure must not hide it."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import launchd as launchd_int
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    def failing_load(label: str) -> None:
+        raise launchd_int.LaunchdLoadError(label, 5, "boom")
+
+    monkeypatch.setattr(launchd_int, "load", failing_load)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "Removed launchd agents (job search is off)" in " ".join(
+        captured.out.split()
+    )
+    assert "launchctl load failed" in captured.err
+
+
+def test_install_crash_after_sweep_still_reports_removed_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Any error after the sweep, not only SchedulerError, reports removals."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import launchd as launchd_int
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    def denied(label: str, content: str) -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(launchd_int, "write_plist", denied)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "Removed launchd agents (job search is off)" in " ".join(
+        captured.out.split()
+    )
+    assert "PermissionError" in captured.err
+
+
+def test_install_failing_before_sweep_claims_no_removals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import launchd as launchd_int
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    def not_macos() -> None:
+        raise launchd_int.LaunchdUnavailableError("scheduler is macOS-only")
+
+    monkeypatch.setattr(launchd_int, "require_macos", not_macos)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install"])
+
+    assert rc == 1
+    assert "Removed" not in capsys.readouterr().out
+
+
+def test_named_install_does_not_claim_to_remove_agents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Only a full install sweeps; naming a job leaves the jobs agents alone."""
+    from daily_driver.cli.cli import app
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install", "checkin"])
+
+    assert rc == 0
+    assert "Removed" not in capsys.readouterr().out
+
+
+def test_status_table_flags_agents_left_installed_after_job_search_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    rc = app(["--workspace", str(ws), "scheduler", "status"])
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert rc == 0
+    assert "yes, job search off" in out
+    assert "Run `daily-driver scheduler install` to remove" in out
+
+
+def test_status_lists_agents_left_installed_after_job_search_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    from daily_driver.cli.cli import app
+
+    ws = _installed_then_switched_off(tmp_path, monkeypatch, capsys)
+
+    rc = app(["--workspace", str(ws), "scheduler", "status", "--json"])
+
+    rows = {row["label"]: row for row in json.loads(capsys.readouterr().out)["data"]}
+    assert rc == 0
+    assert rows["com.daily-driver.jobs"]["installed"] is True
+    assert rows["com.daily-driver.jobs"]["plugin_off"] is True
+    assert rows["com.daily-driver.checkin"]["plugin_off"] is False
+
+
+def test_install_named_job_of_switched_off_plugin_names_the_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "install", "jobs"])
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 1
+    assert "jobs: job search is off in this workspace" in err
 
 
 def test_scheduler_bare_action_prints_usage(

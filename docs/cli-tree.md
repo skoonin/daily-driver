@@ -29,7 +29,8 @@ daily-driver/
 │   └── --version
 ├── init
 │   ├── [path=.]
-│   └── -f, --force
+│   ├── -f, --force
+│   └── --job-search
 ├── doctor
 │   ├── --fix
 │   ├── --reset

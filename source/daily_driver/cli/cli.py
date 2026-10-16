@@ -23,7 +23,8 @@ from daily_driver.cli._common import (
 )
 from daily_driver.core.console import Console
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins import PLUGINS
+from daily_driver.plugins import PLUGINS, off_reason, switch_on_hint
+from daily_driver.plugins._base import Plugin
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # Module-path entries must resolve when dispatched — ImportError is a
@@ -84,6 +85,28 @@ _TOP_HELP = {
 _TOP_HELP.update({p.command_name: p.command_help for p in PLUGINS})
 
 _COMMAND_MODULES = {name: module_path for name, module_path in _COMMANDS}
+
+_PLUGINS_BY_COMMAND = {p.command_name: p for p in PLUGINS}
+
+
+def _off_config(args: argparse.Namespace, plugin: Plugin) -> object | None:
+    """The workspace config when it has the plugin off, else None.
+
+    The command stays registered either way: the parser is built before the
+    workspace is known. A workspace that fails to resolve is left to the
+    command itself, which reports that error the usual way.
+    """
+    from daily_driver.cli._common import resolve_workspace
+    from daily_driver.core.workspace import WorkspaceError
+    from daily_driver.plugins import enabled_plugins
+
+    try:
+        workspace = resolve_workspace(args)
+    except WorkspaceError:
+        return None
+    if plugin in enabled_plugins(workspace.config):
+        return None
+    return workspace.config
 
 
 class _CommandModule(Protocol):
@@ -204,6 +227,16 @@ def app(argv: list[str] | None = None) -> int:
         _CommandModule, importlib.import_module(_COMMAND_MODULES[args.cmd])
     )
     try:
+        # Inside the try: a malformed config surfaces through the same error
+        # path as it would from the command itself.
+        plugin = _PLUGINS_BY_COMMAND.get(args.cmd)
+        off_config = _off_config(args, plugin) if plugin is not None else None
+        if plugin is not None and off_config is not None:
+            Console.error(
+                f"{off_reason(plugin.name)}. To switch it on, "
+                f"{switch_on_hint(plugin.name, off_config)}."
+            )
+            return 1
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
         logger = get_logger("cli")
