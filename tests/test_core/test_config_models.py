@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
-
 import pytest
 from pydantic import ValidationError
 
@@ -10,10 +8,8 @@ from daily_driver.core.config_models import (
     DailyDriverConfig,
     InteractiveAIConfig,
     PluginsConfig,
-    RecurringTask,
     TrackerCategoryConfig,
     TrackerConfig,
-    UserProfile,
 )
 from daily_driver.plugins.job_search.config import (
     EnrichmentConfig,
@@ -60,69 +56,6 @@ def test_interactive_ai_config_rejects_provider():
     # model rejects it loudly rather than accepting-and-ignoring it.
     with pytest.raises(ValidationError):
         InteractiveAIConfig(provider="ollama")
-
-
-# ---------------------------------------------------------------------------
-# UserProfile
-# ---------------------------------------------------------------------------
-
-
-def test_user_profile_defaults():
-    m = UserProfile()
-    assert m.name is None
-    assert m.citizenship == []
-    assert m.work_auth == {}
-    assert m.timezone is None
-    assert m.seeking_since is None
-
-
-def test_user_profile_full():
-    m = UserProfile(
-        name="Alice",
-        citizenship=["US", "CA"],
-        work_auth={"US": "citizen"},
-        timezone="America/Vancouver",
-        seeking_since="2026-01-01",
-    )
-    assert m.name == "Alice"
-    assert m.seeking_since == date(2026, 1, 1)
-
-
-def test_user_profile_seeking_since_native_date():
-    # Unquoted YAML loads as a date object — validator must pass it through
-    m = UserProfile(seeking_since=date(2026, 3, 15))
-    assert m.seeking_since == date(2026, 3, 15)
-
-
-# ---------------------------------------------------------------------------
-# RecurringTask
-# ---------------------------------------------------------------------------
-
-
-def test_recurring_task_daily_no_day():
-    m = RecurringTask(name="Standup", cadence="daily")
-    assert m.cadence == "daily"
-    assert m.day is None
-
-
-def test_recurring_task_weekly_with_day():
-    m = RecurringTask(name="Review", cadence="weekly", day="Monday")
-    assert m.day == "Monday"
-
-
-def test_recurring_task_day_rejected_for_daily():
-    with pytest.raises(ValidationError, match="only valid when cadence is 'weekly'"):
-        RecurringTask(name="X", cadence="daily", day="Monday")
-
-
-def test_recurring_task_day_rejected_for_monthly():
-    with pytest.raises(ValidationError):
-        RecurringTask(name="X", cadence="monthly", day="Monday")
-
-
-def test_recurring_task_invalid_cadence():
-    with pytest.raises(ValidationError):
-        RecurringTask(name="X", cadence="hourly")
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +393,6 @@ def test_plugins_config_rejects_unknown_plugin():
 def test_config_minimal_valid():
     m = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
     assert m.daily_driver.output_dir == "."
-    assert m.user_profile.name is None
     assert m.plugins.job_search is None
 
 
@@ -690,26 +622,6 @@ def test_root_config_omitting_ai_block_uses_defaults():
     assert c.ai.provider == "claude"
     assert c.ai.summary.provider is None
     assert EnrichmentConfig().provider is None
-
-
-def test_every_field_has_description():
-    """Each model field must carry a non-None description for codegen."""
-    from pydantic import BaseModel as _BM
-
-    import daily_driver.core.config_models as cm
-
-    failures: list[str] = []
-    for name in dir(cm):
-        obj = getattr(cm, name)
-        if not isinstance(obj, type) or not issubclass(obj, _BM) or obj is _BM:
-            continue
-        for fname, finfo in obj.model_fields.items():
-            extra = dict(finfo.json_schema_extra or {})
-            if extra.get("template_skip"):
-                continue
-            if finfo.description is None:
-                failures.append(f"{obj.__name__}.{fname}")
-    assert not failures, f"missing description: {failures}"
 
 
 # ---------------------------------------------------------------------------

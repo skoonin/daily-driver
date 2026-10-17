@@ -179,6 +179,6 @@ daily-driver/
 │   ├── --model {sonnet,opus,haiku}
 │   └── --timeout SECONDS
 └── help
-    ├── [topic: commands|statuses|categories|sources|dates|cadences]
+    ├── [topic: commands|statuses|categories|sources|dates]
     └── -j, --json
 ```

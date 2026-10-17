@@ -1,6 +1,6 @@
 # Commands
 
-`daily-driver --help` lists every subcommand. `daily-driver <cmd> --help` shows per-command flags. `daily-driver help [TOPIC]` is the in-CLI reference for discoverable values (statuses, categories, sources, date grammar, cadences). This page covers the non-obvious behavior that isn't in `--help`.
+`daily-driver --help` lists every subcommand. `daily-driver <cmd> --help` shows per-command flags. `daily-driver help [TOPIC]` is the in-CLI reference for discoverable values (statuses, categories, sources, date grammar). This page covers the non-obvious behavior that isn't in `--help`.
 
 > For an end-user walkthrough of the daily flow, start with [usage.md](usage.md). For configuration, see [configuration.md](configuration.md).
 
@@ -107,7 +107,7 @@ Tracker dashboard: setup gaps (printed first when present), totals by category/s
 
 ### `help [TOPIC] [-j | --json]`
 
-Reference command — distinct from argparse `--help` (usage). Prints the subcommand list plus discoverable value groups in one place: tracker statuses (recommended + in-use), tracker categories (from `.dd-config.yaml`), scraper sources, date-spec grammar, recurring-task cadences. `TOPIC` filters to a single section: `commands`, `statuses`, `categories`, `sources`, `dates`, `cadences`. `--json` produces a structured payload for tab-completion or scripting.
+Reference command — distinct from argparse `--help` (usage). Prints the subcommand list plus discoverable value groups in one place: tracker statuses (recommended + in-use), tracker categories (from `.dd-config.yaml`), scraper sources, date-spec grammar. `TOPIC` filters to a single section: `commands`, `statuses`, `categories`, `sources`, `dates`. `--json` produces a structured payload for tab-completion or scripting.
 
 `help` is workspace-aware but does not require one; without a workspace, `categories` reports a hint and `statuses.in_use` is empty.
 

@@ -47,13 +47,13 @@ daily-driver tracker list
 
 ## 5. Read Context
 
-Resolve the workspace output directory and Read `context.md` from it:
+Resolve the workspace root and Read `context.md` from it:
 
 ```bash
-daily-driver paths output
+daily-driver paths root
 ```
 
-Read `<output>/context.md` with the Claude Read tool. If it is missing, note it and proceed.
+Read `<root>/context.md` with the Claude Read tool. If it is missing, note it and proceed.
 
 ## 6. Review the Day
 

@@ -94,8 +94,8 @@ Key conventions:
 - `make test-quick` — py311 only, fast inner loop.
 - `make test-unit` / `test-cli` / `test-e2e` — scoped suites.
 - `make lint` / `make format` / `make type` — black + isort + flake8 + mypy.
-- pre-commit runs black, isort, flake8, pyupgrade, autoflake, the config-template diff, and the pre-commit-hooks hygiene checks (whitespace, end of file, YAML and TOML syntax, debug statements).
-- CI runs black, isort, flake8, mypy, and pytest (which includes a test that diffs the shipped config template). pyupgrade and autoflake have no CI counterpart; mypy has no pre-commit hook.
+- pre-commit runs black, isort, flake8, pyupgrade, autoflake, and the pre-commit-hooks hygiene checks (whitespace, end of file, YAML and TOML syntax, debug statements).
+- CI runs black, isort, flake8, mypy, and pytest (which includes tests that validate the shipped config template). pyupgrade and autoflake have no CI counterpart; mypy has no pre-commit hook.
 - Tests marked `smoke` hit live job-board URLs. pytest `addopts` excludes them and nothing runs them on a schedule; run `pytest -m smoke tests/test_plugins/job_search/scraper/test_e2e_smoke.py` by hand.
 
 Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,

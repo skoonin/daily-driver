@@ -220,13 +220,12 @@ def _has_playwright() -> bool:
 
 @contextmanager
 def _playwright_browser(ctx: ScrapeContext) -> Any:
-    """Yield a Playwright Page with a realistic, non-headless browser context.
+    """Yield a Playwright Page with a realistic browser context.
 
-    Non-headless by default -- avoids most bot-detection heuristics on LinkedIn,
-    Indeed, and Wellfound without requiring a logged-in session.
-    Set plugins.job_search.scraper.headless: true in config to run headless.
-    The engine is selectable via plugins.job_search.scraper.browser (firefox
-    default).
+    Runs non-headless unless the scrape orchestrator sets headless for the
+    phase (scrape_all._ctx_with_headless); a visible browser avoids most
+    bot-detection heuristics without a logged-in session. The engine is
+    selectable via plugins.job_search.scraper.browser (firefox default).
     """
     engine = ctx.plugin.scraper.browser
     if not _has_playwright():

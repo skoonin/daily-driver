@@ -1,322 +1,332 @@
-# daily-driver workspace configuration
+# daily-driver settings
 #
-# Prose about you lives in context.md and voice-profile.md.
-# An unknown or misspelled key is an error.
-# To use a commented block, uncomment its header and every line under it.
+# How to edit:
+# - A setting is one word, a colon, and a value, such as "model: sonnet".
+#   Notes are sentences.
+# - A setting that starts with "# " is off. Delete the "# " to turn it on.
+#   Leave the "# " on notes.
+# - A setting indented under a heading (such as "focus:") also needs that
+#   heading turned on.
+# - Some optional settings start with "# " twice, such as "#   # model:".
+#   After you turn on their section, delete the second "# " too.
+# - Keep the spaces at the start of each line. They show what belongs where.
+# - Run `daily-driver doctor` after editing to check for mistakes.
+#
+# Write about yourself and your recurring tasks in context.md, not here.
+# Every setting is described at
+# https://github.com/skoonin/daily-driver/blob/main/docs/configuration.md
 
-# Required: workspace settings.
 daily_driver:
-  # Where the tracker, notes and other output go. Relative to here.
+  # Folder for the tracker, notes, and other files. "." means this folder.
   output_dir: .
 
-# Optional: about you, for Claude prompts.
-# user_profile:
-#   name: ""
-{% if "job_search" in plugins %}
-#   citizenship: []  # ["US", "CA"]
-{% endif %}
-{% if "job_search" in plugins %}
-#   work_auth: {}  # {"US": "citizen", "CA": "PR"}
-{% endif %}
-#   timezone: ""  # "America/Vancouver"
-{% if "job_search" in plugins %}
-#   seeking_since: 2026-04-06  # YYYY-MM-DD when active job search began
-{% endif %}
-
-# Required: tracker settings.
+# Your task list.
 tracker:
+  # Category shown as the default by `daily-driver help categories`.
+  # It must be one of the categories below.
   default_category: task
-  # Warn when --status is not a usual one for its category (usually
-  # open, in-progress, blocked, done, ruled-out). It still saves.
-  # warn_unknown_status: true
-  # More statuses that do not warn.
-  # extra_statuses: [waiting, snoozed]
-  # More statuses that close an entry, added to done, ruled-out,
-  # dropped, rejected and closed. Closed entries get no follow-ups.
-  # terminal_statuses: [cancelled]
+  # Categories, each with the fields a new entry must have.
+  # The fields are title, link, tags, notes, due, next_action, or an --extra
+  # name.
   categories:
     task:
       required: [title]
-    # More categories. `required` lists the fields `tracker add` needs.
     # errand:
     #   required: [title]
     # ticket:
     #   required: [title, link]
+  # Turn this line on to stop warnings for unusual statuses.
+  # Usual statuses: open, in-progress, blocked, done, ruled-out.
+  # warn_unknown_status: false
+  # Your own statuses. These do not cause the warning.
+{% if "job_search" in plugins %}
+  # Job entries still warn: they have their own list of statuses.
+{% endif %}
+  # extra_statuses: [waiting, snoozed]
+  # More statuses that close an entry, added to done, ruled-out, dropped,
+  # rejected, and closed. Closed entries get no follow-ups.
+  # terminal_statuses: [cancelled]
 
-# Optional: repeating tasks, as context for Claude sessions.
-# recurring_tasks:
-#   - name: "Review tracker follow-ups"
-#     cadence: daily            # daily | weekly | monthly
-#     estimated_minutes: 10
-#   - name: "Weekly retro"
-#     cadence: weekly
-#     day: friday            # only valid when cadence is weekly
+# When your day starts and ends. `daily-driver scheduler install` then shows
+# a reminder at each time: click it to start day-start or day-end, or run
+# the command it shows. Clicking needs terminal-notifier; install it with
+# `brew install terminal-notifier`. With this section off, there are no
+# day-start or day-end reminders.
+# A day-start more than 2 hours after day_start is a late start: Claude plans
+# only the rest of the day. With this section off, after 11:00 is late.
+# Times are 24-hour "HH:MM" in quotes.
+# Days are "daily", "weekdays", or a list such as [mon, wed, fri].
+# schedule:
+#   day_start: "08:00"
+#   day_end: "17:30"
+#   days: daily
 
-# Optional: background runs set up by `scheduler install`. day-start
-# and day-end times are in `schedule:` below.
-# Times are HH:MM; `days` is "daily" (default), "weekdays" or a list.
+# More timed runs from `daily-driver scheduler install`. These run at the
+# times shown even while this section is off. To change a part, turn on all
+# of its lines: a part you turn on replaces its times and days completely.
+# Parts you leave off keep these times. Times and days work as in "schedule".
 # scheduler:
+#   # Check-in reminders.
 #   checkin:
-#     times:
-#       - "11:00"
-#       - "15:00"
-#     days: "weekdays"
+#     times: ["11:00", "15:00"]
+#     days: daily
 {% if "job_search" in plugins %}
 #
+#   # Job search (`jobs run`).
 #   jobs:
 #     time: "07:00"
-#     days: [sun, wed]
-{% endif %}
-{% if "job_search" in plugins %}
+#     days: daily
 #
+#   # Search for new company job boards (`jobs discover-boards`).
 #   discovery:
 #     time: "23:59"
 #     days: [sat, tue]
 {% endif %}
 
-# Optional: day-start and day-end times (HH:MM) for scheduled runs.
-# A day-start over 2 hours after `day_start` is a late start.
-# schedule:
-#   day_start: "08:00"
-#   day_end: "17:30"
-#   days: "weekdays"
-
-# Optional: Claude session behavior.
-# claude:
-#   # true makes `check-in` reopen the latest Claude session.
-#   resume_check_in: false
-
-# Optional: AI provider and model per task. Leave out to use Claude.
-# ai:
-#   # Default provider for every task: claude or ollama.
-#   provider: claude
-#   # Default model. It must suit the provider (claude: "sonnet";
-#   # ollama: a tag like "qwen2.5:14b").
-#   # model: sonnet
-#
-#   # The `summary` task.
-#   summary:
-#     # claude or ollama. Unset uses `ai.provider`.
-#     provider: claude
-#     # Model for this task. Unset uses `ai.model`, so set it when
-#     # `ai.model` is set and this task uses the other provider.
-#     # model: sonnet
-#
-#   # The `voice-update` task.
-#   voice_update:
-#     # claude or ollama. Unset uses `ai.provider`.
-#     provider: claude
-#     # Model for this task. Unset uses `ai.model`, so set it when
-#     # `ai.model` is set and this task uses the other provider.
-#     # model: sonnet
-#
-#   # day-start, check-in and day-end. They always use Claude;
-#   # `--model` overrides this.
-#   interactive:
-#     # sonnet, haiku or opus. Unset uses the claude CLI default.
-#     model: sonnet
-{% if "job_search" in plugins %}
-#
-#   # Used when a task runs on claude.
-#   claude:
-#     # Job search enrichment calls at once. 1 runs them one at a time.
-#     max_parallel: 4
-{% endif %}
-#
-#   # Used when a task runs on ollama.
-#   ollama:
-#     endpoint: "http://localhost:11434"
-#     # Seconds per call. Ollama is slower than the Claude API.
-#     timeout: 60
-{% if "job_search" in plugins %}
-#     # Job search enrichment calls at once. 1 runs them one at a time.
-#     max_parallel: 4
-{% endif %}
-
-# Optional: focus mode.
+# Focus mode (`focus on`) pauses check-in reminders.
 # focus:
-#   # Length of `focus on` without `--for` ("25m", "1h", "90m").
+#   # Length when `focus on` has no --for, for example "25m" or "1h".
 #   default_duration: "25m"
 
-# Optional: what `daily-driver gather` reads.
+# check-in continues your last Claude session instead of starting a new one.
+# claude:
+#   resume_check_in: true
+
+# Copies your plan's time blocks into the macOS Calendar app
+# (`calendar sync`).
+# calendar:
+#   sync_enabled: true
+#   # Create this calendar in the Calendar app first.
+#   plan_calendar_name: "Daily Plan"
+
+# Folders that hold your git projects, so Claude can see your recent work.
 # gather:
 #   git:
-#     # Folders that hold your git checkouts.
-#     search_paths:
-#       - "~/git"
+#     search_paths: ["~/git"]
 
-# Optional: copy plan time blocks to a macOS Calendar (`calendar sync`).
-# calendar:
-#   # false makes `calendar sync` do nothing.
-#   sync_enabled: false
-#   # Calendar to write to. It must already exist.
-#   plan_calendar_name: "Daily Plan"
+# Which AI runs each feature. Leave this off to use Claude for everything.
+# Claude models are sonnet, opus, and haiku. Ollama runs AI on your computer;
+# its models have names such as "qwen2.5:14b".
+# To set up Ollama, see
+# https://github.com/skoonin/daily-driver/blob/main/docs/ollama-setup.md
+# ai:
+#   # Which AI runs summary and voice-update, claude or ollama.
+{% if "job_search" in plugins %}
+#   # Job search uses it too, unless set under job_search below.
+{% endif %}
+#   provider: claude
+#   # Model for those features. It must match the provider.
+#   # model: sonnet
+#
+#   # Model for day-start, check-in, and day-end. These always use Claude.
+#   # --model on the command line overrides it.
+#   interactive:
+#     model: sonnet
+#
+#   # Use a different AI for one feature only.
+#   # summary:
+#   #   provider: ollama
+#   #   model: "qwen2.5:14b"
+#   # voice_update:
+#   #   provider: claude
+#   #   model: opus
+#
+#   ollama:
+#     # Address of the Ollama app.
+#     endpoint: "http://localhost:11434"
+#     # Seconds to wait for an answer.
+#     timeout: 60
+{% if "job_search" in plugins %}
+#     # How many job reviews run at the same time.
+#     max_parallel: 4
+#
+#   claude:
+#     # How many job reviews run at the same time.
+#     max_parallel: 4
+{% endif %}
 {% if plugins %}
 
-# Plugins. Uncomment an option to change its default.
+# Add-ons. Only "enabled" is on; turn on any other setting to change it.
 plugins:
 {% if "job_search" in plugins %}
-  # Job search: `daily-driver jobs`.
+  # Job search: `daily-driver jobs`. Found jobs go to jobs.csv.
   job_search:
     # false turns job search off and keeps these settings.
     enabled: true
+#     # Who you are as a candidate. The AI uses it to score each job.
 #     persona: "Senior SRE / Platform Engineer"
-#     roles: []  # ["SRE", "Platform Engineer"]
-#     domain_keywords: []  # ["kubernetes", "observability"]
-#     seniority_keywords: []  # ["senior", "staff", "principal"]
+#     # Job titles to keep. "*" matches anything; a leading "!" rules a
+#     # title out.
+#     roles: []  # for example ["SRE", "Platform Engineer", "!Manager"]
+#     # A title is also kept when it has a word from each list below.
+#     # Left empty, built-in SRE and infrastructure words are used; listing
+#     # words replaces them.
+#     domain_keywords: []  # for example ["kubernetes", "observability"]
+#     seniority_keywords: []  # for example ["senior", "staff", "principal"]
 #
 #     locations:
+#       # Your city. The AI uses it to score each job. Left out, it is
+#       # Vancouver, BC.
 #       home_city: "Vancouver, BC"
+#       # Keep remote jobs.
 #       remote: true
-#       # true keeps remote roles from any country. false keeps only those
-#       # in `countries` or naming no country.
-#       remote_unlisted_countries: false
-#       # Country code: allowed cities. An empty list allows the whole country.
+#       # Countries to search, by 2-letter code, each with a list of cities.
+#       # [] means the whole country; listing cities keeps only those.
 #       countries:
 #         CA: [Vancouver, Victoria]
 #         US: []
+#       # true keeps remote jobs from any country, not only those above.
+#       remote_unlisted_countries: false
 #
 #     scraper:
-#       # true lets `jobs run` scrape. Off by default.
-#       enabled: false
-#       # Retries after HTTP 429 or 503. 0 disables.
-#       max_retries: 3
-#       # Skip hn_jobs postings older than this. 0 disables.
+#       # Turns on `jobs run`. It finds nothing while this is off.
+#       enabled: true
+#       # Search words for LinkedIn, Indeed, and Apple. Left empty, they
+#       # come from roles.
+#       search_terms: []  # for example ["SRE", "Platform Engineer"]
+#       # Skip Hacker News job posts (hn_jobs below) older than this many
+#       # days. 0 means no limit.
 #       max_age_days: 30
-#       # User-Agent sent by the HTTP scrapers.
-#       user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
-#       # Words ignored in company names when finding duplicates.
-#       # Replaces the built-in list (inc, ltd, gmbh, labs, ...).
-#       company_noise_words: []  # ["inc", "ltd", "labs"]
-#       # Seconds per source request.
-#       timeout: 30
-#       # Search terms for LinkedIn, Indeed and Apple. Unset builds them
-#       # from `roles`.
-#       search_terms: null
-#       # Sources scraped at the same time.
-#       parallel_workers: 8
-#       # Result pages read per Apple search term.
+#       # Result pages read per Apple search.
 #       max_pages: 3
-#       # Browser for Apple: firefox, chromium or webkit. Install it with
-#       # `playwright install <browser>`.
+#       # Seconds to wait for a site.
+#       timeout: 30
+#       # Retries when a site is busy. 0 means no retries.
+#       max_retries: 3
+#       # Sites searched at the same time.
+#       parallel_workers: 8
+#       # Browser for Apple: firefox, chromium, or webkit.
+#       # Install it once with `playwright install firefox`.
 #       browser: firefox
+#       # How daily-driver identifies itself to job sites.
+#       user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0"
+#       # Words ignored when matching the same company from two sites.
+#       # Left empty, a built-in list is used (inc, llc, ltd, corp, gmbh,
+#       # labs, technologies, and more); listing words replaces it.
+#       company_noise_words: []  # for example ["inc", "ltd", "labs"]
 #
-#     # AI pass that scores fit and writes Notes. Costs API calls.
+#     # AI review of each new job: one AI call per job.
 #     enrichment:
-#       # claude or ollama. Unset uses `ai.provider`.
-#       provider: claude
-#       # Model for enrichment. Unset uses `ai.model`.
-#       # model: sonnet
-#
-#       # The fit and notes pass (one call per job).
-#       fit_notes:
-#         # claude or ollama. Unset uses `enrichment.provider`.
-#         provider: claude
-#         # Model for this pass. Unset uses `enrichment.model`, so set it
-#         # when that model is for the other provider.
-#         # model: sonnet
-#       # Seconds before one AI call is abandoned.
-#       enrich_timeout: 30
 #       # Score each job 1-10 for fit.
 #       enrich_fit: true
-#       # One-line Notes summary (stack, remote, red flags).
+#       # Add a one-line note: tech stack, remote, red flags.
 #       enrich_notes: true
-#       # Mark jobs remote, hybrid or onsite.
+#       # Label each job remote, hybrid, or onsite.
 #       enrich_is_remote: true
-#       # Most AI calls per run. Limits cost.
+#       # Most jobs reviewed per run.
 #       max_enrich_fit: 50
-#       # Words of each posting sent to the AI.
-#       max_description_words: 2000
-#       # With `backfill --force-update`, skip rows enriched in the last N
-#       # hours. 0 redoes every row; `missing` does only unenriched rows.
-#       force_recook_cooldown_hours: 24
-#       # Seconds between posting page fetches.
-#       detail_delay_seconds: 0.5
-#       # Questions asked of each posting. Each adds "Label: answer" to Notes.
+#       # Your own questions, answered for each job in its note.
 #       criteria:
 #         - label: Sponsorship
 #           assess: "Does the role offer visa sponsorship?"
+#       # AI for job reviews: claude or ollama, and its model. Left out, the
+#       # ai section decides.
+#       # provider: claude
+#       # model: sonnet
+#       # fit_notes also sets the AI for job reviews, and wins over the two
+#       # lines above.
+#       # fit_notes:
+#       #   provider: ollama
+#       #   model: "qwen2.5:7b"
+#       # Seconds before one review gives up.
+#       enrich_timeout: 30
+#       # Words of each posting the AI reads. Pay and visa details are often
+#       # near the end, so a low number can miss them.
+#       max_description_words: 2000
+#       # With `jobs backfill --force-update`, skip jobs reviewed within
+#       # this many hours. 0 redoes all; "missing" does only unreviewed jobs.
+#       force_recook_cooldown_hours: 24
+#       # Seconds to pause between job page downloads.
+#       detail_delay_seconds: 0.5
 #
-#     # `jobs verify`: closes postings that are gone.
+#     # `jobs verify`: closes saved jobs that are no longer posted.
 #     verify:
-#       # Re-check a posting's link after this many days.
+#       # Re-check a job's link after this many days.
 #       reverify_days: 7
-#       # Close postings with no checkable link after this many days.
+#       # Close jobs with no link to check (Indeed, Hacker News) after this
+#       # many days.
 #       unverified_age_days: 30
 #
-#     # `jobs discover-boards`: finds company job boards.
+#     # `jobs discover-boards`: finds company job boards with matching jobs.
 #     discovery:
 #       # Re-check a known board after this many days.
 #       reprobe_days: 30
-#       # Most boards re-checked per sweep, most overdue first.
+#       # Most boards re-checked per run.
 #       max_reprobe_per_sweep: 500
-#       # Share of a platform's boards that must fail to report it degraded.
+#       # Report a site as failing when this share of its boards fail
+#       # (0.25 = 25%).
 #       degraded_failure_ratio: 0.25
-#       # Empty checks in a row before a board is checked less often. 0 disables.
+#       # Re-check a board less often after this many empty checks in a row.
+#       # 0 turns this off.
 #       dormant_after_empty_sweeps: 2
-#       # A dormant board is re-checked every reprobe_days x this.
+#       # How much less often: 6 turns every 30 days into every 180.
 #       dormant_reprobe_multiplier: 6
+#
+#     # Sites to search. Only sites listed here run; true or false turns
+#     # a site on or off.
 #     sources:
-#
-#       # Only listed sources run. Inside a source, a key left out
-#       # uses its default.
-#       remoteok:            # remoteok.com
-#         enabled: false
-#         # Tags searched as well as the main feed.
-#         remoteok_tags: [devops, kubernetes, aws]
-#       weworkremotely:            # weworkremotely.com
-#         enabled: false
-#         # Categories to read, e.g. "devops-sysadmin". This source needs one.
-#         wwr_categories: []
-#       hn_who_is_hiring:            # HN monthly "Who is hiring?" thread
-#         enabled: false
-#         hn_max_posts: 500
-#       hn_jobs:            # HN jobs (YC companies)
-#         enabled: false
-#         hn_max_posts: 500
-#       greenhouse:            # Greenhouse boards
-#         enabled: false
-#         # Boards always scraped: <slug> in boards.greenhouse.io/<slug>.
-#         greenhouse_boards: []
-#         # Boards never scraped. Case matters.
-#         exclude_boards: []
-#       ashby:            # Ashby boards
-#         enabled: false
-#         # Boards always scraped: <slug> in jobs.ashbyhq.com/<slug>. Case matters.
-#         ashby_boards: []
-#         # Boards never scraped. Case matters.
-#         exclude_boards: []
-#       lever:            # Lever boards
-#         enabled: false
-#         # Boards always scraped: <slug> in jobs.lever.co/<slug>.
-#         lever_boards: []
-#         # Boards never scraped. Case matters.
-#         exclude_boards: []
-#       workable:            # Workable accounts
-#         enabled: false
-#         # Accounts scraped: <slug> in apply.workable.com/<slug>.
-#         workable_accounts: []
-#       workday:            # Workday careers sites
-#         enabled: false
-#         # Sites as <tenant>.<host>.myworkdayjobs.com/<site>. `company` sets the name.
-#         workday_boards:
-#         - tenant: companyh
-#           host: wd5
-#           site: companyhcareers
-#           company: "Company H"
-#
-#       # Needs a browser: `playwright install`.
-#       apple: false            # jobs.apple.com
 #       linkedin:
 #         enabled: true
+#         # Results per search.
 #         results_wanted_per_query: 50
+#         # Skip jobs older than this many hours (168 = 7 days).
 #         hours_old: 168
+#         # Most city-by-city searches per run.
 #         max_city_queries: 40
-#       indeed:            # `country` sets the regional site
+#       indeed:
 #         enabled: true
 #         results_wanted_per_query: 50
 #         hours_old: 168
-#         country: USA
 #         max_city_queries: 40
+#         # Indeed site to use when one of your countries has no Indeed site.
+#         country: USA
+#       # jobs.apple.com. Needs the browser set under scraper above.
+#       apple: false
+#       # Hacker News monthly "Who is hiring?" thread.
+#       hn_who_is_hiring:
+#         enabled: false
+#         # Most posts read.
+#         hn_max_posts: 500
+#       # Hacker News job posts from Y Combinator companies.
+#       hn_jobs:
+#         enabled: false
+#         hn_max_posts: 500
+#       # remoteok.com. Tags add matching jobs to the main feed.
+#       remoteok:
+#         enabled: false
+#         remoteok_tags: [devops, kubernetes, aws]
+#       # weworkremotely.com. Needs at least one category.
+#       weworkremotely:
+#         enabled: false
+#         wwr_categories: [devops-sysadmin]
+#       # Company job boards on Greenhouse, Ashby, and Lever. Name a company
+#       # as it appears in its board link, for example "acme" for
+#       # boards.greenhouse.io/acme. Boards found by `jobs discover-boards`
+#       # are added too. exclude_boards blocks a board; spell it exactly,
+#       # capitals included.
+#       greenhouse:
+#         enabled: false
+#         greenhouse_boards: []  # boards.greenhouse.io/<name>
+#         exclude_boards: []
+#       ashby:
+#         enabled: false
+#         ashby_boards: []  # jobs.ashbyhq.com/<name>
+#         exclude_boards: []
+#       lever:
+#         enabled: false
+#         lever_boards: []  # jobs.lever.co/<name>
+#         exclude_boards: []
+#       # Company job boards on Workable.
+#       workable:
+#         enabled: false
+#         workable_accounts: []  # apply.workable.com/<name>
+#       # Workday sites, from links such as acme.wd5.myworkdayjobs.com/careers.
+#       workday:
+#         enabled: false
+#         workday_boards:
+#           - tenant: acme
+#             host: wd5
+#             site: careers
+#             company: "Acme"  # name shown in jobs.csv
 {% endif %}
 {% endif %}

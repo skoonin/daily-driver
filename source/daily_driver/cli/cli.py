@@ -239,10 +239,16 @@ def app(argv: list[str] | None = None) -> int:
             return 1
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
+        from daily_driver.core.config import ConfigError
+
         logger = get_logger("cli")
         _write_error_log(args, exc)
         if (getattr(args, "verbose", 0) or 0) >= 1:
             logger.exception("unhandled error in %r", args.cmd)
+        elif isinstance(exc, ConfigError):
+            # The message already says what to change; a class name would only
+            # make it read like a crash.
+            Console.error(str(exc))
         else:
             Console.error(f"{type(exc).__name__}: {exc}")
             cause = exc.__cause__

@@ -6,57 +6,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-# Shared so the toggle field and the sources-block template comment stay in sync.
-_WWR_CATEGORIES_DESC = (
-    'Categories to read, e.g. "devops-sysadmin". This source needs one.'
-)
-# Greenhouse, Ashby and Lever pins are scraped in addition to the boards
-# `jobs discover-boards` finds.
-_GREENHOUSE_BOARDS_DESC = (
-    "Boards always scraped: <slug> in boards.greenhouse.io/<slug>."
-)
-_ASHBY_BOARDS_DESC = (
-    "Boards always scraped: <slug> in jobs.ashbyhq.com/<slug>. Case matters."
-)
-_LEVER_BOARDS_DESC = "Boards always scraped: <slug> in jobs.lever.co/<slug>."
-_EXCLUDE_BOARDS_DESC = "Boards never scraped. Case matters."
-_WORKABLE_ACCOUNTS_DESC = "Accounts scraped: <slug> in apply.workable.com/<slug>."
-_WORKDAY_BOARDS_DESC = (
-    "Sites as <tenant>.<host>.myworkdayjobs.com/<site>. `company` sets the name."
-)
-# The newest-100 feed is thin for any one role; tags surface relevant
-# postings. An unknown tag returns the plain feed, which is deduped.
-_REMOTEOK_TAGS_DESC = "Tags searched as well as the main feed."
-
 
 class Locations(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    home_city: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "Vancouver, BC"},
-    )
-    remote: bool = Field(
-        default=False,
-        description="",
-        json_schema_extra={"template_example": True},
-    )
-    remote_unlisted_countries: bool = Field(
-        default=False,
-        description=(
-            "true keeps remote roles from any country. false keeps only those\n"
-            "in `countries` or naming no country."
-        ),
-        json_schema_extra={"template_example": False},
-    )
-    countries: dict[str, list[str]] = Field(
-        default={},
-        description="Country code: allowed cities. An empty list allows the whole country.",
-        json_schema_extra={
-            "template_example": {"CA": ["Vancouver", "Victoria"], "US": []}
-        },
-    )
+    home_city: str | None = None
+    remote: bool = False
+    remote_unlisted_countries: bool = False
+    countries: dict[str, list[str]] = {}
 
     @field_validator("countries")
     @classmethod
@@ -75,13 +32,15 @@ class SourceToggle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = Field(default=True, description="")
+    enabled: bool = True
 
 
 class RemoteOkToggle(SourceToggle):
     """RemoteOK source toggle plus its per-source tag slug list."""
 
-    remoteok_tags: list[str] = Field(default=[], description=_REMOTEOK_TAGS_DESC)
+    # The newest-100 feed is thin for any one role; tags surface relevant
+    # postings. An unknown tag returns the plain feed, which is deduped.
+    remoteok_tags: list[str] = []
 
     @field_validator("remoteok_tags")
     @classmethod
@@ -102,38 +61,36 @@ class RemoteOkToggle(SourceToggle):
 class WeWorkRemotelyToggle(SourceToggle):
     """WeWorkRemotely source toggle plus its per-source category list."""
 
-    wwr_categories: list[str] = Field(default=[], description=_WWR_CATEGORIES_DESC)
+    wwr_categories: list[str] = []
 
 
+# Greenhouse, Ashby and Lever pins are scraped in addition to the boards
+# `jobs discover-boards` finds.
 class GreenhouseToggle(SourceToggle):
     """Greenhouse source toggle plus its pinned/excluded board slug lists."""
 
-    greenhouse_boards: list[str] = Field(
-        default=[], description=_GREENHOUSE_BOARDS_DESC
-    )
-    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
+    greenhouse_boards: list[str] = []
+    exclude_boards: list[str] = []
 
 
 class AshbyToggle(SourceToggle):
     """AshbyHQ source toggle plus its pinned/excluded board slug lists."""
 
-    ashby_boards: list[str] = Field(default=[], description=_ASHBY_BOARDS_DESC)
-    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
+    ashby_boards: list[str] = []
+    exclude_boards: list[str] = []
 
 
 class LeverToggle(SourceToggle):
     """Lever source toggle plus its pinned/excluded board slug lists."""
 
-    lever_boards: list[str] = Field(default=[], description=_LEVER_BOARDS_DESC)
-    exclude_boards: list[str] = Field(default=[], description=_EXCLUDE_BOARDS_DESC)
+    lever_boards: list[str] = []
+    exclude_boards: list[str] = []
 
 
 class WorkableToggle(SourceToggle):
     """Workable source toggle plus its per-source account slug list."""
 
-    workable_accounts: list[str] = Field(
-        default=[], description=_WORKABLE_ACCOUNTS_DESC
-    )
+    workable_accounts: list[str] = []
 
 
 class WorkdayBoard(BaseModel):
@@ -148,21 +105,16 @@ class WorkdayBoard(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    tenant: str = Field(description="The <tenant> in <tenant>.<host>.myworkdayjobs.com")
-    host: str = Field(description="The <host> data-center segment, e.g. wd5")
-    site: str = Field(description="The careers-site path segment, e.g. companyhcareers")
-    company: str | None = Field(
-        default=None,
-        description="Display name for the company; defaults to the title-cased tenant.",
-    )
+    tenant: str
+    host: str
+    site: str
+    company: str | None = None
 
 
 class WorkdayToggle(SourceToggle):
     """Workday source toggle plus its per-source list of careers sites."""
 
-    workday_boards: list[WorkdayBoard] = Field(
-        default=[], description=_WORKDAY_BOARDS_DESC
-    )
+    workday_boards: list[WorkdayBoard] = []
 
 
 class HackerNewsToggle(SourceToggle):
@@ -172,14 +124,7 @@ class HackerNewsToggle(SourceToggle):
     `hn_max_posts` cap.
     """
 
-    hn_max_posts: int = Field(default=500, description="")
-
-
-# Each city in locations.countries gets its own search, so a local posting
-# competes with its own city rather than the whole country. The cap bounds
-# request volume: a throttled site returns nothing rather than an error.
-# Skipped cities are reported, never dropped silently.
-_MAX_CITY_QUERIES_DESC = "Most per-city searches in one run."
+    hn_max_posts: int = 500
 
 
 class LinkedInToggle(SourceToggle):
@@ -191,9 +136,14 @@ class LinkedInToggle(SourceToggle):
     ``country`` knob here.
     """
 
-    results_wanted_per_query: int = Field(default=50, description="")
-    hours_old: int = Field(default=168, description="")
-    max_city_queries: int = Field(default=40, description=_MAX_CITY_QUERIES_DESC)
+    results_wanted_per_query: int = 50
+    hours_old: int = 168
+    # Each city in locations.countries gets its own search per search term, so
+    # a local posting competes with its own city rather than the whole
+    # country. The cap counts those searches and bounds request volume: a
+    # throttled site returns nothing rather than an error. The run log reports
+    # how many searches the cap skipped. Same for Indeed.
+    max_city_queries: int = 40
 
 
 class IndeedToggle(SourceToggle):
@@ -204,10 +154,10 @@ class IndeedToggle(SourceToggle):
     fallback used when a configured ISO country code is not in JobSpy's enum.
     """
 
-    results_wanted_per_query: int = Field(default=50, description="")
-    hours_old: int = Field(default=168, description="")
-    country: str = Field(default="USA", description="")
-    max_city_queries: int = Field(default=40, description=_MAX_CITY_QUERIES_DESC)
+    results_wanted_per_query: int = 50
+    hours_old: int = 168
+    country: str = "USA"
+    max_city_queries: int = 40
 
 
 # Maps a source key to the SourceToggle subclass that carries its per-source
@@ -232,68 +182,27 @@ class ScraperConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = Field(
-        default=False, description="true lets `jobs run` scrape. Off by default."
-    )
+    enabled: bool = False
     # Honors Retry-After, else exponential backoff (1.5s, 3s, 6s, ... up to 30s).
-    max_retries: int = Field(
-        default=3,
-        description="Retries after HTTP 429 or 503. 0 disables.",
-    )
+    max_retries: int = 3
     # hn_jobs searches 17k+ posts of history; other sources are recent anyway.
-    max_age_days: int = Field(
-        default=30,
-        description="Skip hn_jobs postings older than this. 0 disables.",
-    )
-    user_agent: str = Field(
-        default=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) "
-            "Gecko/20100101 Firefox/128.0"
-        ),
-        description="User-Agent sent by the HTTP scrapers.",
+    max_age_days: int = 30
+    user_agent: str = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) "
+        "Gecko/20100101 Firefox/128.0"
     )
     # Board sources name a company after its board slug, so dropping these
     # words lets a `foosystems` board row match an aggregator's `Foo Systems
     # Inc.`. The stored Company value never changes.
-    company_noise_words: list[str] = Field(
-        default=[],
-        description=(
-            "Words ignored in company names when finding duplicates.\n"
-            "Replaces the built-in list (inc, ltd, gmbh, labs, ...)."
-        ),
-        json_schema_extra={"inline_comment": '["inc", "ltd", "labs"]'},
-    )
-    timeout: int = Field(
-        default=30,
-        description="Seconds per source request.",
-    )
-    search_terms: list[str] | None = Field(
-        default=None,
-        description=(
-            "Search terms for LinkedIn, Indeed and Apple. Unset builds them\n"
-            "from `roles`."
-        ),
-    )
+    company_noise_words: list[str] = []
+    timeout: int = 30
+    search_terms: list[str] | None = None
     # Overridden per scrape phase by the orchestrator (_ctx_with_headless), so a
-    # user value has no effect; deliberately kept out of the generated template.
-    headless: bool = Field(
-        default=False, description="", json_schema_extra={"template_skip": True}
-    )
-    parallel_workers: int = Field(
-        default=8,
-        description="Sources scraped at the same time.",
-    )
-    max_pages: int = Field(
-        default=3,
-        description="Result pages read per Apple search term.",
-    )
-    browser: Literal["firefox", "chromium", "webkit"] = Field(
-        default="firefox",
-        description=(
-            "Browser for Apple: firefox, chromium or webkit. Install it with\n"
-            "`playwright install <browser>`."
-        ),
-    )
+    # user value has no effect; deliberately left out of the config template.
+    headless: bool = False
+    parallel_workers: int = 8
+    max_pages: int = 3
+    browser: Literal["firefox", "chromium", "webkit"] = "firefox"
 
 
 class Criterion(BaseModel):
@@ -305,8 +214,8 @@ class Criterion(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    label: str = Field(description="")
-    assess: str = Field(description="")
+    label: str
+    assess: str
 
     @field_validator("label", "assess")
     @classmethod
@@ -334,19 +243,8 @@ class PhaseRoute(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] | None = Field(
-        default=None,
-        description="claude or ollama. Unset uses `enrichment.provider`.",
-        json_schema_extra={"template_example": "claude"},
-    )
-    model: str | None = Field(
-        default=None,
-        description=(
-            "Model for this pass. Unset uses `enrichment.model`, so set it\n"
-            "when that model is for the other provider."
-        ),
-        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
-    )
+    provider: Literal["claude", "ollama"] | None = None
+    model: str | None = None
 
 
 class EnrichmentConfig(BaseModel):
@@ -362,55 +260,22 @@ class EnrichmentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] | None = Field(
-        default=None,
-        description="claude or ollama. Unset uses `ai.provider`.",
-        json_schema_extra={"template_example": "claude"},
-    )
-    model: str | None = Field(
-        default=None,
-        description="Model for enrichment. Unset uses `ai.model`.",
-        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
-    )
-    fit_notes: PhaseRoute = Field(
-        default=PhaseRoute(),
-        description="The fit and notes pass (one call per job).",
-    )
-    enrich_timeout: int = Field(
-        default=30,
-        description="Seconds before one AI call is abandoned.",
-    )
-    enrich_fit: bool = Field(
-        default=True,
-        description="Score each job 1-10 for fit.",
-    )
-    enrich_notes: bool = Field(
-        default=True,
-        description="One-line Notes summary (stack, remote, red flags).",
-    )
-    enrich_is_remote: bool = Field(
-        default=True,
-        description="Mark jobs remote, hybrid or onsite.",
-    )
-    max_enrich_fit: int = Field(
-        default=50,
-        description="Most AI calls per run. Limits cost.",
-    )
+    provider: Literal["claude", "ollama"] | None = None
+    model: str | None = None
+    fit_notes: PhaseRoute = PhaseRoute()
+    enrich_timeout: int = 30
+    enrich_fit: bool = True
+    enrich_notes: bool = True
+    enrich_is_remote: bool = True
+    max_enrich_fit: int = 50
     # Pay, visa and EEO text usually sits at the end of a long posting, so a
     # low cap hides it from the criteria questions.
     max_description_words: int = Field(
         default=2000,
         ge=100,
-        description="Words of each posting sent to the AI.",
     )
     # Lets an interrupted `backfill --force-update` resume where it stopped.
-    force_recook_cooldown_hours: int | Literal["missing"] = Field(
-        default=24,
-        description=(
-            "With `backfill --force-update`, skip rows enriched in the last N\n"
-            "hours. 0 redoes every row; `missing` does only unenriched rows."
-        ),
-    )
+    force_recook_cooldown_hours: int | Literal["missing"] = 24
 
     @field_validator("force_recook_cooldown_hours")
     @classmethod
@@ -419,22 +284,8 @@ class EnrichmentConfig(BaseModel):
             raise ValueError("force_recook_cooldown_hours must be >= 0 or 'missing'")
         return v
 
-    detail_delay_seconds: float = Field(
-        default=0.5,
-        description="Seconds between posting page fetches.",
-    )
-    criteria: list[Criterion] = Field(
-        default=[],
-        description='Questions asked of each posting. Each adds "Label: answer" to Notes.',
-        json_schema_extra={
-            "template_example": [
-                {
-                    "label": "Sponsorship",
-                    "assess": "Does the role offer visa sponsorship?",
-                }
-            ]
-        },
-    )
+    detail_delay_seconds: float = 0.5
+    criteria: list[Criterion] = []
 
     @field_validator("criteria")
     @classmethod
@@ -453,16 +304,10 @@ class VerifyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Age is counted from Date Verified, else Date Found.
-    reverify_days: int = Field(
-        default=7,
-        description="Re-check a posting's link after this many days.",
-    )
+    reverify_days: int = 7
     # For rows with no checkable URL (Indeed's bot wall, HN permalinks).
     # Generous by design: a posting found again reopens loudly.
-    unverified_age_days: int = Field(
-        default=30,
-        description="Close postings with no checkable link after this many days.",
-    )
+    unverified_age_days: int = 30
 
     @field_validator("reverify_days", "unverified_age_days")
     @classmethod
@@ -480,39 +325,24 @@ class DiscoveryConfig(BaseModel):
     # Without re-probing, an incremental sweep only probes new slugs, so a
     # board that dies after being matched stays in the scrape list until a
     # --full sweep.
-    reprobe_days: int = Field(
-        default=30,
-        description="Re-check a known board after this many days.",
-    )
+    reprobe_days: int = 30
     # One sweep stamps every board on the same day, so an uncapped threshold
     # would re-probe the whole universe at once, every reprobe_days. Ranking
     # is by lateness against each board's own cadence, so dormant boards
     # cannot take every slot on the strength of an older timestamp.
-    max_reprobe_per_sweep: int = Field(
-        default=500,
-        description="Most boards re-checked per sweep, most overdue first.",
-    )
+    max_reprobe_per_sweep: int = 500
     # Below the ratio the run logs the success rate instead: a few
     # permanently-gone 404s are not an outage, and a warning on every run
     # trains the reader to ignore it.
-    degraded_failure_ratio: float = Field(
-        default=0.25,
-        description="Share of a platform's boards that must fail to report it degraded.",
-    )
+    degraded_failure_ratio: float = 0.25
     # A board that lists nothing has likely moved ATS; one listing jobs you
     # don't match is alive and keeps the normal cadence. One non-empty probe
     # resets the streak.
-    dormant_after_empty_sweeps: int = Field(
-        default=2,
-        description="Empty checks in a row before a board is checked less often. 0 disables.",
-    )
+    dormant_after_empty_sweeps: int = 2
     # Dormancy defers a re-probe, never cancels it: --full still re-probes
     # every dormant board, and a pinned board is always scraped. 1 keeps the
     # normal cadence but still reports dormant boards.
-    dormant_reprobe_multiplier: int = Field(
-        default=6,
-        description="A dormant board is re-checked every reprobe_days x this.",
-    )
+    dormant_reprobe_multiplier: int = 6
 
     @field_validator("reprobe_days", "max_reprobe_per_sweep")
     @classmethod
@@ -550,147 +380,19 @@ class JobSearchPlugin(BaseModel):
 
     # Defaults on: having the block at all is the opt-in, so existing configs
     # keep working. `enabled: false` switches job search off and keeps settings.
-    enabled: bool = Field(
-        default=True,
-        description="false turns job search off and keeps these settings.",
-        # The plugins section writes `enabled: true` itself, uncommented.
-        json_schema_extra={"template_skip": True},
-    )
-    persona: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "Senior SRE / Platform Engineer"},
-    )
-    roles: list[str] = Field(
-        default=[],
-        description="",
-        json_schema_extra={"inline_comment": '["SRE", "Platform Engineer"]'},
-    )
-    domain_keywords: list[str] = Field(
-        default=[],
-        description="",
-        json_schema_extra={"inline_comment": '["kubernetes", "observability"]'},
-    )
-    seniority_keywords: list[str] = Field(
-        default=[],
-        description="",
-        json_schema_extra={"inline_comment": '["senior", "staff", "principal"]'},
-    )
-    locations: Locations | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example_model": True},
-    )
-    scraper: ScraperConfig = Field(
-        default=ScraperConfig(),
-        description="",
-    )
-    enrichment: EnrichmentConfig = Field(
-        default=EnrichmentConfig(),
-        description="AI pass that scores fit and writes Notes. Costs API calls.",
-    )
+    enabled: bool = True
+    persona: str | None = None
+    roles: list[str] = []
+    domain_keywords: list[str] = []
+    seniority_keywords: list[str] = []
+    locations: Locations | None = None
+    scraper: ScraperConfig = ScraperConfig()
+    enrichment: EnrichmentConfig = EnrichmentConfig()
     # Board-backed rows are verified by board diff on every run instead.
-    verify: VerifyConfig = Field(
-        default=VerifyConfig(),
-        description="`jobs verify`: closes postings that are gone.",
-    )
-    discovery: DiscoveryConfig = Field(
-        default=DiscoveryConfig(),
-        description="`jobs discover-boards`: finds company job boards.",
-    )
+    verify: VerifyConfig = VerifyConfig()
+    discovery: DiscoveryConfig = DiscoveryConfig()
     sources: dict[str, SourceToggle] = Field(
         default_factory=dict,
-        description="",
-        json_schema_extra={
-            "template_example": {
-                "remoteok": {
-                    "enabled": False,
-                    "remoteok_tags": ["devops", "kubernetes", "aws"],
-                },
-                "weworkremotely": {"enabled": False, "wwr_categories": []},
-                "hn_who_is_hiring": {"enabled": False, "hn_max_posts": 500},
-                "hn_jobs": {"enabled": False, "hn_max_posts": 500},
-                "greenhouse": {
-                    "enabled": False,
-                    "greenhouse_boards": [],
-                    "exclude_boards": [],
-                },
-                "ashby": {
-                    "enabled": False,
-                    "ashby_boards": [],
-                    "exclude_boards": [],
-                },
-                "lever": {
-                    "enabled": False,
-                    "lever_boards": [],
-                    "exclude_boards": [],
-                },
-                "workable": {"enabled": False, "workable_accounts": []},
-                "workday": {
-                    "enabled": False,
-                    "workday_boards": [
-                        {
-                            "tenant": "companyh",
-                            "host": "wd5",
-                            "site": "companyhcareers",
-                            "company": "Company H",
-                        }
-                    ],
-                },
-                "apple": False,
-                "linkedin": {
-                    "enabled": True,
-                    "results_wanted_per_query": 50,
-                    "hours_old": 168,
-                    "max_city_queries": 40,
-                },
-                "indeed": {
-                    "enabled": True,
-                    "results_wanted_per_query": 50,
-                    "hours_old": 168,
-                    "country": "USA",
-                    "max_city_queries": 40,
-                },
-            },
-            "template_example_field_comments": {
-                "remoteok": {"remoteok_tags": _REMOTEOK_TAGS_DESC},
-                "weworkremotely": {"wwr_categories": _WWR_CATEGORIES_DESC},
-                "greenhouse": {
-                    "greenhouse_boards": _GREENHOUSE_BOARDS_DESC,
-                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
-                },
-                "ashby": {
-                    "ashby_boards": _ASHBY_BOARDS_DESC,
-                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
-                },
-                "lever": {
-                    "lever_boards": _LEVER_BOARDS_DESC,
-                    "exclude_boards": _EXCLUDE_BOARDS_DESC,
-                },
-                "workable": {"workable_accounts": _WORKABLE_ACCOUNTS_DESC},
-                "workday": {"workday_boards": _WORKDAY_BOARDS_DESC},
-            },
-            "template_example_inline_comments": {
-                "remoteok": "remoteok.com",
-                "weworkremotely": "weworkremotely.com",
-                "hn_who_is_hiring": 'HN monthly "Who is hiring?" thread',
-                "hn_jobs": "HN jobs (YC companies)",
-                "greenhouse": "Greenhouse boards",
-                "ashby": "Ashby boards",
-                "lever": "Lever boards",
-                "workable": "Workable accounts",
-                "workday": "Workday careers sites",
-                "apple": "jobs.apple.com",
-                "indeed": "`country` sets the regional site",
-            },
-            "template_example_block_comments": {
-                "remoteok": (
-                    "Only listed sources run. Inside a source, a key left out\n"
-                    "uses its default."
-                ),
-                "apple": "Needs a browser: `playwright install`.",
-            },
-        },
     )
 
     @field_validator("sources", mode="before")

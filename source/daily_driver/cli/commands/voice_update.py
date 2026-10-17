@@ -132,7 +132,7 @@ def run(args: argparse.Namespace) -> int:
         workspace.config.ai, task="voice_update", cli_model=args.model
     )
 
-    profile_path = workspace.output_dir / "voice-profile.md"
+    profile_path = workspace.root / "voice-profile.md"
     # Read once for prompt context only; the authoritative merge base is re-read
     # under the lock after the model call (L1), so a concurrent write landing
     # during the up-to-timeout model call is not clobbered.

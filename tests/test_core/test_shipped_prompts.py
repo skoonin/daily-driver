@@ -39,6 +39,10 @@ BANNED_TOKENS = (
     "ensure-daily-dir",
     "gather sessions",
     "gather notes",
+    # context.md and voice-profile.md live at the workspace root, not under
+    # output_dir; reading them from there misses them when output_dir is not ".".
+    "<output>/context.md",
+    "<output>/voice-profile.md",
 )
 
 
