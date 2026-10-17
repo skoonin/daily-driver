@@ -196,7 +196,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 ### Requires a fork
 
 - New core subcommand — static `_COMMANDS` table in `cli/cli.py`; no runtime discovery.
-- New config fields — Pydantic model in `core.config_models`. `extra="forbid"` is strict.
+- New config fields — Pydantic model in `core.config_models`, plus a commented line in `resources/templates/.dd-config.yaml.j2`. `extra="forbid"` is strict.
 - New plugin — see [extending.md](extending.md) and "Plugins" below.
 
 ### Plugins
@@ -207,7 +207,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 - **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs copied into the workspace `.claude/` tree).
 - **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the one on/off answer: a plugin is on when its `plugins.<name>` block exists and does not set `enabled: false`. `core.scheduler`, `core.doctor`, `core.generate`, `core.version_stamp`, and the plugin-command dispatch in `cli/cli.py` all ask it (importing lazily so core stays import-light). A full `scheduler install` also removes the launchd agents of plugins that are off. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
 - **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) when the plugin is on and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`); its prompt content is `{% if "job_search" in plugins %}` sections inside the core prompts. The path is exercised by a synthetic-plugin test.
-- **Config template.** `core/config_template.py` writes each plugin's `plugins.<name>` section inside a Jinja gate, so `init` only writes it for chosen plugins. A core field that only a plugin uses carries `json_schema_extra={"template_plugin": "<name>"}` (e.g. `scheduler.jobs`) and renders under the same gate.
+- **Config template.** `resources/templates/.dd-config.yaml.j2` is hand-written for users. Each plugin's `plugins.<name>` section, and any core setting only that plugin uses (e.g. `scheduler.jobs`), sits inside a `{% if "<name>" in plugins %}` block, so `init` writes it only for chosen plugins. `tests/test_core/test_config_template.py` fails when a model field is missing from its path in the template, a job-only setting shows without job search, or an example does not validate. A field left out of the template on purpose goes in that test's `_UNTEMPLATED` set with a reason.
 
 ## Common mistakes
 

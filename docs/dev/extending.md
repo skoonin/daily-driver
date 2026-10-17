@@ -220,19 +220,19 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
 OPTIONAL `config.py` — the `config_model`.
 A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so an unknown key fails validation).
 
-A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists, and `init` writes that block only for plugins the user chooses. A plugin with no config model is always on. Add `enabled: bool = Field(default=True, json_schema_extra={"template_skip": True})` to let users switch the plugin off without deleting its settings; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
+A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists, and `init` writes that block only for plugins the user chooses. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and write `enabled: true` as the one live line of the plugin's block in `.dd-config.yaml.j2`; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
 
 ```python
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class RemindersPlugin(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    items: list[str] = Field(default=[], description="Home-maintenance reminders")
-    at: str | None = Field(default=None, description="Daily fire time, HH:MM")
+    items: list[str] = []  # home-maintenance reminders
+    at: str | None = None  # daily fire time, HH:MM
 ```
 
 OPTIONAL `doctor.py` — the `doctor_checks` hook returns `list[CheckResult]`:
@@ -299,7 +299,7 @@ Core stays import-light: it imports `PLUGINS` lazily inside the functions that i
 - [ ] Added to `PLUGINS` in `plugins/__init__.py`
 - [ ] `config_model` is a `BaseModel`; tests in `tests/test_plugins/<name>/`
 - [ ] Plugin-specific text in shipped prompts sits inside `{% if "<name>" in plugins %}` blocks
-- [ ] A core config field only this plugin uses carries `json_schema_extra={"template_plugin": "<name>"}`
+- [ ] Its settings are in `.dd-config.yaml.j2` inside a `{% if "<name>" in plugins %}` block, with any core setting only this plugin uses. `tests/test_core/test_config_template.py` checks the gating for job search only; extend it for the new plugin
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`
 
 ### Plugin or tracker category?

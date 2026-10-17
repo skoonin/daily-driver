@@ -1,6 +1,6 @@
 """Behavior-coverage guard for every config knob.
 
-`test_config_template.py` proves every pydantic field RENDERS in the generated
+`test_config_template.py` proves every pydantic field APPEARS in the shipped
 config template. This complement proves every *leaf* knob's BEHAVIOR is
 exercised by — or deliberately excluded from — the test suite, so a knob can
 never ship silently untested.
@@ -56,36 +56,13 @@ _SCHEMA_TEST_MODULES = frozenset(
 # --- The behavior-exclusion ledger -----------------------------------------
 #
 # Each entry is a leaf knob dotted path with NO unit-testable behavior in a
-# functional (non-schema) test module:
-#
-#   * prompt-only context — surfaced verbatim into a Claude prompt via the
-#     rendered config; the program never branches on it. Asserting "the value
-#     reached the prompt" would only re-test the config loader / template
-#     renderer (already covered by test_config_template.py + the freshness
-#     hook), not any behavior of this knob.
-#   * validator-only — the knob's only behavior is a pydantic cross-field
-#     validator, which lives in (the excluded) test_config_models.py.
+# functional (non-schema) test module, e.g. a knob whose only behavior is a
+# pydantic cross-field validator, which lives in (the excluded)
+# test_config_models.py.
 #
 # A knob with real, functional behavior does NOT belong here — write a focused
 # test instead. Keep each reason to one line.
-_BEHAVIOR_UNTESTED: dict[str, str] = {
-    # user_profile.* is pure prompt context: no core/cli/plugin code branches
-    # on it; it is rendered into the config and surfaced to Claude as-is.
-    "user_profile.name": "prompt-only context; no Python consumer",
-    "user_profile.citizenship": "prompt-only context; no Python consumer",
-    "user_profile.work_auth": "prompt-only context; no Python consumer",
-    "user_profile.timezone": "prompt-only context; no Python consumer",
-    "user_profile.seeking_since": "prompt-only context; no Python consumer",
-    # recurring_tasks rows are surfaced into day-start planning prompts.
-    # name / estimated_minutes are pure prompt data; cadence / day carry only a
-    # cross-field validator (covered in the excluded test_config_models.py).
-    "recurring_tasks.name": "prompt-only planning context; no Python consumer",
-    "recurring_tasks.estimated_minutes": (
-        "prompt-only planning context; no Python consumer"
-    ),
-    "recurring_tasks.cadence": "validator-only; covered in test_config_models.py",
-    "recurring_tasks.day": "validator-only; covered in test_config_models.py",
-}
+_BEHAVIOR_UNTESTED: dict[str, str] = {}
 
 # The budget cap (max_enrich_fit) is NOT in the ledger: its behavior is covered
 # in test_typed_enrichers.py (config-default vs 0=no-calls), and the
@@ -96,14 +73,6 @@ _BEHAVIOR_UNTESTED: dict[str, str] = {
 # in production, test_playwright_browser.py asserts the flag reaches the launch
 # call, so it is genuinely behavior-referenced.
 
-# Keys that string-attribution cannot pin to one knob: model duplicates (e.g.
-# `model`, `timeout`, `enabled`) plus common Python identifiers (`day`, `name`,
-# `timezone`) that appear in unrelated code (datetime.day, dt.timezone.utc,
-# response["name"], ...). For these the ledger-honesty check below can't assert
-# "not referenced" — it would flag a false positive — so those ledger entries
-# lean on test_behavior_ledger_paths_are_real_leaf_knobs instead.
-_AMBIGUOUS_EXTRA_KEYS = frozenset({"day", "timezone"})
-
 
 def _leaf_knobs() -> list[tuple[str, str]]:
     """Return (dotted_path, yaml_key) for every leaf field in the model tree.
@@ -111,10 +80,10 @@ def _leaf_knobs() -> list[tuple[str, str]]:
     A leaf is a field no other field nests under (i.e. not a model container).
     """
     fields = _walk_fields(Config, "")
-    all_paths = {dotted for dotted, _k, _s in fields}
+    all_paths = {dotted for dotted, _key in fields}
     leaves: list[tuple[str, str]] = []
     seen_paths: set[str] = set()
-    for dotted, key, _skip in fields:
+    for dotted, key in fields:
         if dotted in seen_paths:
             continue
         seen_paths.add(dotted)
@@ -196,12 +165,13 @@ def test_behavior_ledger_entries_are_not_behavior_referenced() -> None:
     If someone later writes a real behavior test for a ledgered knob (so its key
     now appears in a construction form), this turns red — forcing the stale
     "untestable" entry out of the ledger instead of silently masking the new
-    coverage. Keys that string-attribution cannot pin to one knob (model
-    duplicates + common identifiers) are skipped: a false "referenced" there
-    would fail spuriously, so those entries rely on the real-leaf check above.
+    coverage. Keys carried by more than one knob (`model`, `timeout`,
+    `enabled`, ...) cannot be pinned to one knob by string search, so they are
+    skipped: a false "referenced" there would fail spuriously, and those
+    entries rely on the real-leaf check above.
     """
     text = _behavior_text()
-    unattributable = _shared_keys() | _AMBIGUOUS_EXTRA_KEYS
+    unattributable = _shared_keys()
     leftover = sorted(
         dotted
         for dotted, key in _leaf_knobs()

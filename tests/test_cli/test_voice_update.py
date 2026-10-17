@@ -240,7 +240,7 @@ def test_voice_update_append_calls_claude_headless(
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
-    # voice-profile.md in output_dir
+    # voice-profile.md at the workspace root
     profile_path = ws / "voice-profile.md"
     profile_path.write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
 
@@ -780,3 +780,31 @@ def test_voice_update_write_failure_exits_1(
     captured = capsys.readouterr()
     assert rc == 1
     assert "original left unchanged" in captured.err.lower()
+
+
+def test_voice_update_writes_profile_at_workspace_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The profile lives at the workspace root, where init, status and the
+    prompts look for it, even when output_dir points elsewhere."""
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import claude_cli, clipboard
+
+    ws = _init_workspace(tmp_path)
+    cfg = ws / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace("output_dir: .", "output_dir: out"),
+        encoding="utf-8",
+    )
+    sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
+    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Replaced\n")
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+
+    rc = app(
+        ["--workspace", str(ws), "voice-update", "--from", str(sample), "--replace"]
+    )
+
+    assert rc == 0
+    assert (ws / "voice-profile.md").read_text(encoding="utf-8") == "# Replaced\n"
+    assert not (ws / "out" / "voice-profile.md").exists()

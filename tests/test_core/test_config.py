@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from daily_driver.core.config import load
+from daily_driver.core.config import ConfigError, load
 
 # ---------------------------------------------------------------------------
 # Valid round-trips
@@ -97,3 +97,69 @@ def test_load_rejects_unknown_top_level_key(tmp_path):
     with pytest.raises(ValidationError) as excinfo:
         load(cfg_file)
     assert "tracer" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Removed settings
+# ---------------------------------------------------------------------------
+
+_TRACKER = "tracker:\n  categories:\n    task: {required: [title]}\n"
+
+
+@pytest.mark.parametrize(
+    ("block", "fix"),
+    [
+        ("user_profile:\n  name: A\n", "context.md"),
+        ("recurring_tasks:\n  - {name: x, cadence: daily}\n", "## Recurring Tasks"),
+    ],
+)
+def test_load_names_removed_setting_and_its_fix(tmp_path, block, fix):
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(_TRACKER + block, encoding="utf-8")
+    with pytest.raises(ConfigError) as excinfo:
+        load(cfg_file)
+    message = str(excinfo.value)
+    assert block.split(":")[0] in message
+    assert fix in message
+    assert str(cfg_file) in message
+
+
+def test_load_reports_every_removed_setting_at_once(tmp_path):
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        _TRACKER + "user_profile: {}\nrecurring_tasks: []\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load(cfg_file)
+    assert "user_profile" in str(excinfo.value)
+    assert "recurring_tasks" in str(excinfo.value)
+
+
+def test_load_reports_removed_and_other_problems_together(tmp_path):
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        _TRACKER + "user_profile: {}\nfocus: {bogus: 1}\n", encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load(cfg_file)
+    assert "user_profile" in str(excinfo.value)
+    assert "focus.bogus" in str(excinfo.value)
+
+
+def test_cli_shows_removed_setting_fix(tmp_path, capsys):
+    from daily_driver.cli.cli import app
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
+        encoding="utf-8",
+    )
+    rc = app(["--workspace", str(tmp_path), "tracker", "list"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "user_profile" in err
+    assert "context.md" in err
+    assert "Extra inputs are not permitted" not in err
+    assert "ConfigError" not in err

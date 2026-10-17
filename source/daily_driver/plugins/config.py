@@ -40,7 +40,7 @@ for _plugin in PLUGINS:
         continue
     _plugin_fields[_plugin.name] = (
         _plugin.config_model | None,
-        Field(default=None, description=""),
+        Field(default=None),
     )
 
 PluginsConfig: type[BaseModel] = create_model(

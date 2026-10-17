@@ -61,7 +61,6 @@ def test_help_full_no_args_prints_sections(
         "categories",
         "sources",
         "dates",
-        "cadences",
     ):
         assert section in out.lower()
 
@@ -75,7 +74,7 @@ def test_help_full_json_shape(
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == 1
     data = payload["data"]
-    for key in ("commands", "statuses", "categories", "sources", "dates", "cadences"):
+    for key in ("commands", "statuses", "categories", "sources", "dates"):
         assert key in data, f"missing top-level key: {key}"
 
 
@@ -172,16 +171,6 @@ def test_help_dates_lists_grammar(
     tokens = data["dates"]["tokens"]
     for t in ("today", "yesterday", "week", "month", "year", "Nd", "YYYY-MM-DD"):
         assert t in tokens
-
-
-def test_help_cadences_lists_options(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    Workspace.init(tmp_path)
-    rc = app(["--workspace", str(tmp_path), "help", "cadences", "--json"])
-    assert rc == 0
-    data = json.loads(capsys.readouterr().out)["data"]
-    assert set(data["cadences"]) >= {"daily", "weekly", "monthly"}
 
 
 def test_help_commands_lists_top_level_subcommands(
@@ -289,3 +278,20 @@ def test_help_unknown_topic_exits_2(
     with pytest.raises(SystemExit) as exc:
         app(["help", "bogus-topic"])
     assert exc.value.code == 2
+
+
+def test_help_works_with_removed_config_setting(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`help` is the discovery surface; an outdated config must not block it."""
+    Workspace.init(tmp_path)
+    cfg = tmp_path / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
+        encoding="utf-8",
+    )
+    rc = app(["--workspace", str(tmp_path), "help", "dates"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "today" in captured.out
+    assert "daily-driver doctor" in captured.err

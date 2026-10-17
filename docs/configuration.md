@@ -11,8 +11,6 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
 | `daily_driver` | object | `{output_dir: "."}` | |
-| `user_profile` | object | empty | |
-| `recurring_tasks` | list | `[]` | |
 | `scheduler` | object or null | null | Typed per-job launchd cadence (`checkin`; `jobs` and `discovery` when job search is on) |
 | `schedule` | object | empty | day-start / day-end scheduled times + cadence |
 | `tracker` | object | — | **Required** |
@@ -23,7 +21,9 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `calendar` | object | empty | macOS-only daily-plan calendar sync (consumed by `calendar sync`) |
 | `plugins` | object | empty | Optional features. `init` writes this block only for a plugin you choose, e.g. `init --job-search` |
 
-`init` leaves job search settings out of `.dd-config.yaml` unless you pass `--job-search`. The job-only keys (`user_profile.citizenship`, `work_auth`, `seeking_since`, `scheduler.jobs`, `scheduler.discovery`, `ai.claude`, `ai.ollama.max_parallel`) stay valid either way; they only have an effect when job search is on.
+`init` leaves job search settings out of `.dd-config.yaml` unless you pass `--job-search`. The job-only keys (`scheduler.jobs`, `scheduler.discovery`, `ai.claude`, `ai.ollama.max_parallel`) stay valid either way; they only have an effect when job search is on.
+
+Your background and recurring tasks go in `context.md`, not here. day-start reads it, and its `## Recurring Tasks` section feeds the daily plan.
 
 ## `daily_driver`
 
@@ -32,27 +32,6 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 | `output_dir` | string | `.` (relative to workspace root) |
 
 Rotated `jobs.csv` backups land in `<output_dir>/backups/` with UTC ISO-8601 timestamps (e.g. `jobs.csv.bak.2026-05-13T05-45-00Z`). `doctor` flags accumulated backups there.
-
-## `user_profile`
-
-Injected into Claude sessions as context.
-
-| Key | Type | Default |
-|-----|------|---------|
-| `name` | string or null | null |
-| `timezone` | string or null | null (IANA, e.g. `America/Vancouver`) |
-| `citizenship` | list[string] | `[]` (job search) |
-| `work_auth` | dict[string, string] | `{}` (job search) |
-| `seeking_since` | date (YYYY-MM-DD) or null | null (job search) |
-
-## `recurring_tasks[]`
-
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `name` | string | yes | |
-| `cadence` | `daily`\|`weekly`\|`monthly` | yes | |
-| `estimated_minutes` | int or null | no | |
-| `day` | string or null | no | Only valid with `cadence: weekly` |
 
 ## `tracker` (required)
 
@@ -440,13 +419,6 @@ Fuller example for a job-search workspace:
 ```yaml
 daily_driver:
   output_dir: output
-
-user_profile:
-  name: Alex Smith
-  timezone: America/Vancouver
-  citizenship: [US, CA]
-  work_auth: {US: citizen, CA: citizen}
-  seeking_since: 2026-04-01
 
 tracker:
   default_category: task

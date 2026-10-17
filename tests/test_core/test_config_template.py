@@ -1,26 +1,55 @@
+"""Checks on the shipped `.dd-config.yaml.j2` that `init` renders into a workspace.
+
+The template is hand-written for people editing it. These tests keep it honest
+against the pydantic models: it parses, every example validates when turned on,
+every setting in the model tree appears in it at its own path, and job search
+settings and text appear only when job search is on.
+"""
+
 from __future__ import annotations
 
 import importlib.resources
 import re
-from typing import Any, get_args, get_origin
+from typing import Any, cast, get_args, get_origin
 
 import pytest
 import yaml
 from pydantic import BaseModel
-from pydantic.fields import FieldInfo
 
 from daily_driver.core.config_models import Config
-from daily_driver.core.config_template import (
-    _extra,
-    _unwrap_model,
-    render_config_template,
-)
 from daily_driver.core.templating import render_for_plugins
 from daily_driver.plugins import enabled_plugins
 from daily_driver.plugins.job_search.config import _SOURCE_TOGGLE_TYPES
+from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
 from tests.test_core.test_generate import JOB_TEXT
 
-_TOP_KEY_RE = re.compile(r"^# ([a-z_]+):\s*$")
+# A line whose content, once every leading "# " is removed, is a YAML key:
+# `key:`, `- key:`, or a two-letter country code such as `CA:`.
+_SETTING_RE = re.compile(r"^ *(?:- )?(?:[a-z_][a-z0-9_]*|[A-Z]{2}):(?:\s|$)")
+_COMMENT_MARKER_RE = re.compile(r"^( *)# ?(.*)$")
+
+
+def _shipped_template() -> str:
+    shipped = importlib.resources.files("daily_driver.resources.templates").joinpath(
+        ".dd-config.yaml.j2"
+    )
+    assert (
+        shipped.is_file()
+    ), f"{shipped} is missing; check the package-data patterns in pyproject.toml"
+    return shipped.read_text(encoding="utf-8")
+
+
+def _workspace_config(*, job_search: bool) -> str:
+    """The .dd-config.yaml `init` writes, with or without --job-search."""
+    return render_for_plugins(
+        _shipped_template(), {"job_search"} if job_search else set()
+    )
+
+
+def _every_setting_config(*, job_search: bool) -> Config:
+    """The rendered config with every commented setting turned on."""
+    text = _every_setting_on(_workspace_config(job_search=job_search))
+    return Config.model_validate(yaml.safe_load(_uncommented(text)))
 
 
 def _uncommented(text: str) -> str:
@@ -37,40 +66,19 @@ def _uncommented(text: str) -> str:
     return "\n".join(out)
 
 
-def _commented_top_level_blocks(text: str) -> dict[str, str]:
-    """Extract `# key:` ... commented blocks keyed by top-level field name.
+def _every_setting_on(text: str) -> str:
+    """Turn on every commented setting, however deeply commented.
 
-    Returns the block body with leading `# `/`#` stripped from every line, so
-    the returned YAML is what the user would have after uncommenting.
+    Prose comments stay comments; only lines that are settings once their
+    `# ` markers are removed get uncommented.
     """
-    blocks: dict[str, list[str]] = {}
-    current: list[str] | None = None
+    out = []
     for line in text.splitlines():
-        m = _TOP_KEY_RE.match(line)
-        if m:
-            current = [f"{m.group(1)}:"]
-            blocks[m.group(1)] = current
-            continue
-        if current is None:
-            continue
-        if not line.startswith("#"):
-            current = None
-            continue
-        # Strip leading "# " (or "#" on bare-comment separator lines like "#").
-        if line.startswith("# "):
-            current.append(line[2:])
-        elif line == "#":
-            current.append("")
-        else:
-            current = None
-    return {k: "\n".join(v) for k, v in blocks.items()}
-
-
-def _workspace_config(*, job_search: bool) -> str:
-    """The .dd-config.yaml `init` writes, with or without --job-search."""
-    return render_for_plugins(
-        render_config_template(), {"job_search"} if job_search else set()
-    )
+        candidate = line
+        while match := _COMMENT_MARKER_RE.match(candidate):
+            candidate = match.group(1) + match.group(2)
+        out.append(candidate if _SETTING_RE.match(candidate) else line)
+    return "\n".join(out)
 
 
 @pytest.mark.parametrize("job_search", [False, True])
@@ -79,19 +87,22 @@ def test_render_validates_against_config_model(job_search: bool) -> None:
     assert isinstance(parsed, dict)
     config = Config.model_validate(parsed)
     assert bool(enabled_plugins(config)) is job_search
+    assert config.tracker.categories["task"].required == ["title"]
+
+
+@pytest.mark.parametrize("job_search", [False, True])
+def test_every_setting_validates_when_turned_on(job_search: bool) -> None:
+    """Every example, including nested optional ones, is valid config."""
+    config = _every_setting_config(job_search=job_search)
+    assert config.ai.summary.provider == "ollama"
+    if job_search:
+        assert config.plugins.job_search.persona  # type: ignore[attr-defined]
 
 
 def test_config_without_job_search_has_no_job_text() -> None:
     text = _workspace_config(job_search=False)
     match = JOB_TEXT.search(text)
     assert match is None, f"config mentions {match.group(0)!r}"
-
-
-def test_config_with_job_search_carries_every_job_setting() -> None:
-    text = _workspace_config(job_search=True)
-    for key in ("seeking_since", "work_auth", "citizenship", "discovery", "sources"):
-        assert _key_appears(key, text), f"{key} missing from the job search config"
-    assert _key_appears("jobs", text)
 
 
 def test_job_search_options_are_commented_except_enabled() -> None:
@@ -109,127 +120,58 @@ def test_workspace_config_has_no_stray_blank_lines(job_search: bool) -> None:
     assert "\n\n\n" not in _workspace_config(job_search=job_search)
 
 
-def test_job_search_options_validate_when_uncommented() -> None:
-    """Uncommenting every option under `job_search:` still validates."""
-    lines = []
-    in_job_search = False
-    for line in _workspace_config(job_search=True).splitlines():
-        in_job_search = in_job_search or line == "  job_search:"
-        if in_job_search and line.startswith("# "):
-            line = line[len("# ") :]
-        lines.append(line)
-    config = Config.model_validate(yaml.safe_load(_uncommented("\n".join(lines))))
-    assert config.plugins.job_search.persona  # type: ignore[attr-defined]
-
-
-def test_plugins_section_for_model_without_enabled_uses_bare_block(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A config model with no `enabled` field is switched on by `name: {}`."""
-    import daily_driver.plugins as plugins_pkg
-    from daily_driver.core.config_template import _render_plugins_section
-    from daily_driver.plugins._base import Plugin
-
-    class SampleConfig(BaseModel):
-        note: str = ""
-
-    sample = Plugin(
-        name="sample",
-        command_name="sample",
-        command_module="daily_driver.plugins.job_search.cli",
-        command_help="help",
-        config_model=SampleConfig,
-    )
-    monkeypatch.setattr(plugins_pkg, "PLUGINS", (sample,))
-
-    rendered = render_for_plugins(
-        "\n".join(_render_plugins_section("plugins")), {"sample"}
-    )
-
-    assert "  sample: {}" in rendered.splitlines()
-    assert "enabled" not in rendered
-
-
-def test_render_includes_field_descriptions():
-    text = render_config_template()
-    assert "Where the tracker, notes and other output go" in text
-    assert "Warn when --status is not a usual one" in text
-    assert "is a late start" in text
-
-
 def test_render_marks_optional_blocks_commented():
     text = _workspace_config(job_search=False)
-    assert "# user_profile:" in text
+    assert "# schedule:" in text
     assert "# focus:" in text
     assert "plugins:" not in text
 
 
-def test_render_preserves_preamble():
-    text = render_config_template()
-    assert text.startswith("# daily-driver workspace configuration")
-    assert "An unknown or misspelled key is an error." in text
-
-
-_COMMENTED_BLOCKS = [
-    "user_profile",
-    "recurring_tasks",
-    "scheduler",
-    "schedule",
-    "claude",
-    "ai",
-    "focus",
-    "gather",
-]
-
-
-@pytest.mark.parametrize("job_search", [False, True])
-@pytest.mark.parametrize("block", _COMMENTED_BLOCKS)
-def test_each_commented_block_validates_when_uncommented(block, job_search):
-    """Every `template_commented` block must parse + validate on opt-in.
-
-    A future contributor adding a typo to `template_example` payloads would
-    slip past `_uncommented` (which strips comments wholesale). Walk each
-    commented block, uncomment it, merge with the required minimum, and run
-    it through `Config.model_validate` — this catches example-data drift the
-    moment someone uncomments a block to use it.
-    """
-    text = _workspace_config(job_search=job_search)
-    blocks = _commented_top_level_blocks(text)
-    assert block in blocks, f"no commented block found for {block!r}"
-    active = yaml.safe_load(_uncommented(text)) or {}
-    payload = yaml.safe_load(blocks[block])
-    assert (
-        isinstance(payload, dict) and block in payload
-    ), f"{block!r} did not round-trip cleanly through uncomment+parse"
-    merged = {**active, **payload}
-    Config.model_validate(merged)
-
-
-# --- Completeness: every model field must render into the template ---------
+# --- Completeness: every model field appears in the template ----------------
 #
-# The freshness hook (`make check-config-template`) proves the checked-in
-# template matches the generator. This complement proves the GENERATOR walks
-# every field of the pydantic model tree — a field the generator silently
-# skips would be undocumented forever and the freshness hook would never
-# notice (the generator and the file would agree on the same omission).
-#
-# Deliberately untemplated fields go in _UNTEMPLATED below WITH a reason.
-# A field missing WITHOUT a defensible reason is a generator/model bug: fix
-# the model's json_schema_extra (or the generator) so it renders, then
-# regenerate the template — do not paper over it here.
+# A setting missing from the template is invisible to anyone editing their
+# config. Each field must appear at its own dotted path once every commented
+# setting is turned on. A field left out on purpose goes in _UNTEMPLATED WITH a
+# reason; anything else missing means the template needs a line for it.
 _UNTEMPLATED: frozenset[str] = frozenset(
     {
         # Overridden per scrape phase by the orchestrator (_ctx_with_headless);
-        # a user value has no effect, so it carries template_skip in the model
-        # and is deliberately kept out of the generated template.
+        # a user value has no effect.
         "plugins.job_search.scraper.headless",
     }
 )
 
+# Core settings that only matter to job search, so the template writes them
+# only when job search is on.
+_JOB_SEARCH_ONLY: frozenset[str] = frozenset(
+    {
+        "ai.claude",
+        "ai.claude.max_parallel",
+        "ai.ollama.max_parallel",
+        "scheduler.jobs",
+        "scheduler.jobs.days",
+        "scheduler.jobs.time",
+        "scheduler.discovery",
+        "scheduler.discovery.days",
+        "scheduler.discovery.time",
+    }
+)
 
-def _yaml_key(name: str, info: FieldInfo) -> str:
-    """The YAML key a field renders under: its alias if set, else its name."""
-    return info.alias or name
+
+def _is_model_type(annotation: Any) -> bool:
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+
+
+def _unwrap_model(annotation: Any) -> type[BaseModel] | None:
+    """Return the model class of a `Model` or `Model | None` annotation."""
+    if _is_model_type(annotation):
+        return cast("type[BaseModel]", annotation)
+    if get_origin(annotation) in (None, list, dict):
+        return None
+    non_none = [arg for arg in get_args(annotation) if arg is not type(None)]
+    if len(non_none) == 1 and _is_model_type(non_none[0]):
+        return cast("type[BaseModel]", non_none[0])
+    return None
 
 
 def _model_of_container(annotation: Any) -> type[BaseModel] | None:
@@ -243,10 +185,8 @@ def _model_of_container(annotation: Any) -> type[BaseModel] | None:
     return None
 
 
-def _walk_fields(
-    model_cls: type[BaseModel], prefix: str
-) -> list[tuple[str, str, bool]]:
-    """Collect (dotted_path, yaml_key, template_skip) for every field below model_cls.
+def _walk_fields(model_cls: type[BaseModel], prefix: str) -> list[tuple[str, str]]:
+    """Collect (dotted_path, yaml_key) for every field below model_cls.
 
     Recurses through nested models, Optional[Model], list[Model], and
     dict[str, Model]. For dict[str, SourceToggle] the registered toggle
@@ -254,12 +194,10 @@ def _walk_fields(
     SourceToggle, so each subclass is walked too — the source-key dict is the
     closest thing this schema has to a discriminated union of models.
     """
-    collected: list[tuple[str, str, bool]] = []
+    collected: list[tuple[str, str]] = []
     for name, info in model_cls.model_fields.items():
-        key = _yaml_key(name, info)
-        dotted = f"{prefix}.{key}" if prefix else key
-        skip = bool(_extra(info).get("template_skip"))
-        collected.append((dotted, key, skip))
+        dotted = f"{prefix}.{name}" if prefix else name
+        collected.append((dotted, name))
 
         sub = _unwrap_model(info.annotation)
         if sub is not None:
@@ -270,10 +208,6 @@ def _walk_fields(
         if element is None:
             continue
         collected.extend(_walk_fields(element, dotted))
-        # dict[str, SourceToggle]: also walk the per-source subclasses whose
-        # extra knobs (wwr_categories, greenhouse_boards, country, ...) only
-        # reach the template via the source example data. The source-key dict
-        # is the closest this schema has to a discriminated union of models.
         if any(
             issubclass(toggle_cls, element)
             for toggle_cls in _SOURCE_TOGGLE_TYPES.values()
@@ -283,77 +217,92 @@ def _walk_fields(
     return collected
 
 
-def _key_appears(yaml_key: str, text: str) -> bool:
-    """True if yaml_key appears as a YAML mapping key somewhere in the template.
+def _set_paths(value: Any, prefix: str) -> set[str]:
+    """Dotted paths of every field set in a validated config.
 
-    Matches `key:` as a key token (optionally indented, optionally inside a
-    commented line, optionally after a `- ` list marker), not as a substring
-    of a longer identifier. Leaf-key matching is intentional: a key shared by
-    two blocks (e.g. `max_parallel` under ai.claude and ai.ollama) need only
-    appear once. The freshness hook + per-block validate tests guard the
-    deeper "rendered in the right place with valid data" property.
+    Uses the same path shape as _walk_fields: list items and dict values add no
+    path segment, so `tracker.categories.<name>.required` is
+    `tracker.categories.required`. A setting shared by two dict values counts
+    once; test_template_sets_every_setting_of_every_job_source covers sources.
     """
-    pattern = re.compile(
-        rf"^[ #\t]*(?:- )?{re.escape(yaml_key)}:(?:\s|$)", re.MULTILINE
-    )
-    return bool(pattern.search(text))
+    if isinstance(value, BaseModel):
+        paths: set[str] = set()
+        for name in value.model_fields_set:
+            dotted = f"{prefix}.{name}" if prefix else name
+            paths.add(dotted)
+            paths |= _set_paths(getattr(value, name), dotted)
+        return paths
+    if isinstance(value, dict):
+        return set().union(*(_set_paths(item, prefix) for item in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_set_paths(item, prefix) for item in value))
+    return set()
+
+
+def _expected_paths() -> set[str]:
+    return {dotted for dotted, _key in _walk_fields(Config, "")} - _UNTEMPLATED
+
+
+def _is_plugin_path(dotted: str) -> bool:
+    return dotted == "plugins" or dotted.startswith("plugins.")
 
 
 def test_template_renders_every_config_field():
-    """Every field in the Config model tree renders into the template.
+    """Every field in the Config model tree appears in the template.
 
-    RED contract: introduce a model field (or a nested-model field) the
-    generator's walk does not reach and this fails, naming the dotted path —
-    before the omission can ship as a silently undocumented setting.
+    RED contract: add a model field without a template line, or delete a
+    template line, and this fails, naming the dotted path.
     """
-    text = render_config_template()
-    fields = _walk_fields(Config, "")
+    set_paths = _set_paths(_every_setting_config(job_search=True), "")
+    missing = sorted(_expected_paths() - set_paths)
+    assert not missing, "config fields absent from the template: " + ", ".join(missing)
 
-    # _UNTEMPLATED is the single explicit ledger of omissions. A field whose
-    # key is absent from the template — whether via `template_skip` or any
-    # other reason — must be listed there with a justifying comment, so a
-    # contributor cannot bury a setting by skipping it without a paper trail.
-    missing = sorted(
-        dotted
-        for dotted, key, _skip in fields
-        if dotted not in _UNTEMPLATED and not _key_appears(key, text)
+
+def test_job_search_settings_appear_only_with_job_search():
+    """Without job search, exactly the job-only settings are left out."""
+    set_paths = _set_paths(_every_setting_config(job_search=False), "")
+    expected = _expected_paths()
+    missing = expected - set_paths
+    job_only = {path for path in expected if _is_plugin_path(path)} | _JOB_SEARCH_ONLY
+    assert missing == job_only, (
+        f"leaked into the plain config: {sorted(job_only - missing)}; "
+        f"missing from it: {sorted(missing - job_only)}"
     )
-    assert not missing, "config fields absent from generated template: " + ", ".join(
+
+
+def test_template_lists_every_job_source():
+    config = _every_setting_config(job_search=True)
+    sources = config.plugins.job_search.sources  # type: ignore[attr-defined]
+    assert set(sources) == set(SCRAPERS)
+
+
+def test_template_sets_every_setting_of_every_job_source():
+    """Each source shows all of its own settings.
+
+    _set_paths merges sources that share a setting name (linkedin and indeed
+    both have hours_old), so this checks each source on its own.
+    """
+    config = _every_setting_config(job_search=True)
+    sources = config.plugins.job_search.sources  # type: ignore[attr-defined]
+    missing = sorted(
+        f"{key}.{name}"
+        for key, toggle in sources.items()
+        for name in type(toggle).model_fields
+        if name not in toggle.model_fields_set
+    )
+    assert not missing, "source settings absent from the template: " + ", ".join(
         missing
     )
 
 
 def test_untemplated_exclusions_are_actually_skipped():
-    """Each _UNTEMPLATED entry must be a real field the generator omits.
-
-    Keeps the exclusion list honest: a path that no longer exists, or one the
-    generator now renders, should be removed rather than masking coverage.
-    """
-    fields = _walk_fields(Config, "")
-    by_path = {dotted: key for dotted, key, _skip in fields}
-    text = render_config_template()
+    """Each _UNTEMPLATED entry must be a real field the template omits."""
+    all_paths = {dotted for dotted, _key in _walk_fields(Config, "")}
+    set_paths = _set_paths(_every_setting_config(job_search=True), "")
     for excluded in _UNTEMPLATED:
         assert (
-            excluded in by_path
+            excluded in all_paths
         ), f"_UNTEMPLATED path {excluded!r} is not a real field"
-        assert not _key_appears(
-            by_path[excluded], text
-        ), f"_UNTEMPLATED path {excluded!r} now renders; drop it from the exclusion list"
-
-
-def test_shipped_template_matches_renderer() -> None:
-    """The checked-in template is what `init` copies into a workspace.
-
-    `make check-config-template` and the pre-commit hook diff it locally, but
-    neither runs in CI; this test closes that gap in every pytest invocation.
-    """
-    shipped = importlib.resources.files("daily_driver.resources.templates").joinpath(
-        ".dd-config.yaml.j2"
-    )
-    assert (
-        shipped.is_file()
-    ), f"{shipped} is missing; check the package-data patterns in pyproject.toml"
-    assert shipped.read_text(encoding="utf-8") == render_config_template(), (
-        "shipped .dd-config.yaml.j2 does not match the models that generate it; "
-        "run 'make config-template' and commit the result"
-    )
+        assert (
+            excluded not in set_paths
+        ), f"_UNTEMPLATED path {excluded!r} now appears; drop it from the exclusion list"

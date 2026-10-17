@@ -268,7 +268,6 @@ Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` validate
 | `categories` | Categories defined in `tracker.categories` |
 | `sources` | Job-board sources known to the scraper |
 | `dates` | Date-spec grammar |
-| `cadences` | Valid `recurring_tasks[].cadence` values |
 
 `daily-driver help -j` emits a structured payload for scripts or completion. No topic prints all sections. This is distinct from argparse `--help`, which only shows flag usage.
 

@@ -8,7 +8,9 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 - **Job search is now opt-in.** A new workspace starts without it: no job settings in `.dd-config.yaml`, no job sections in the Claude prompts, README or `context.md`, no job rows in `doctor`, no `jobs` or `jobs-discover` launchd agents, and every `jobs` command exits 1 with a message saying how to switch it on. `daily-driver init --job-search` creates a workspace with job search on. An existing workspace with a `plugins.job_search` block keeps job search on with no edit, even if every option in the block is commented out. The new `plugins.job_search.enabled: false` switches it off and keeps the settings. The `init` summary now ends with `Job search: on` or `off`. Switching job search on or off shows in `doctor` as drift that names the change, and `doctor --fix` applies it. Re-run `scheduler install` to add or remove the jobs agents: it lists the agents it removed, and `scheduler status` flags any still installed while job search is off. (#266)
 
-- **The config file `init` writes is shorter and plainer.** Comments are cut to one line per setting where possible, and settings that only matter to job search are left out unless you pass `--job-search`. A plain config drops from about 400 lines to 118. (#266)
+- **The config file `init` writes is shorter and plainer.** Comments are cut to one line per setting where possible, and settings that only matter to job search are left out unless you pass `--job-search`. A plain config drops from about 400 lines to 120. (#266)
+
+- **The comments in a new `.dd-config.yaml` are written for people, not developers.** Each setting has one plain-language line that says what it does and which command uses it. The header explains how to turn a setting on and to run `doctor` after editing. Examples now show values you would use: turning on `calendar` turns on sync, and turning on `claude` makes check-in resume your last session. The `scheduler` section now says that `scheduler install` sets up check-in reminders at 11:00 and 15:00 even while the section is off. Existing workspaces keep their config; run `daily-driver init` in an empty folder to see the new file. (#269)
 
 - **The Claude prompts track any kind of task, not only job applications.** The "Application Pipeline" steps in day-start, check-in and day-end are now "Review Tracker", and examples use general tasks. The job wording returns when job search is on. (#266)
 
@@ -16,9 +18,13 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Removed
 
+- **The `user_profile` and `recurring_tasks` config settings are gone.** Nothing read them: day-start takes your background and recurring tasks from `context.md`. A config that still has either block stops every command except `help` with a message that names the block, says where its content goes now, and lists any other problem in the file: delete the block and move anything you need into `context.md`. New workspaces get an empty `## Recurring Tasks` section in `context.md`. `help cadences` is gone with them. (#269)
+
 - **The `/daily-driver:daily-learning` command is gone,** along with day-start's optional interview-practice step. Your next `doctor --fix` removes the command from the workspace; your notes under `daily-learning/` are left alone. (#266)
 
 ### Fixed
+
+- **day-start, day-end and `voice-update` now find `context.md` and `voice-profile.md` when `output_dir` is not `.`.** `init` writes both files to the workspace folder, where `status` checks them, but day-start, day-end and the work-planner agent read them from the output folder, and `voice-update` wrote the profile there. So planning ran without your background or recurring tasks, and the profile `init` made was never used. All of them now use the workspace folder. Run `doctor --fix` to update the day-start and day-end commands and the work-planner agent in an existing workspace. If you set `output_dir` and ran `voice-update`, move anything you want from `<output_dir>/voice-profile.md` into `voice-profile.md` in the workspace folder. (#269)
 
 - **`doctor` no longer reports a removed managed file as missing forever.** When an upgrade stopped shipping a command, its entry stayed in the workspace manifest, and `doctor` warned about it with no way for `--fix` to clear it. (#266)
 

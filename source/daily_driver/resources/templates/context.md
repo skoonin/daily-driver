@@ -7,8 +7,9 @@ settings live in `.dd-config.yaml`.
 This file is read in full and injected into each job-fit evaluation during
 `daily-driver jobs run`, so the fit score and notes reflect your real
 background — not just the one-line persona in `.dd-config.yaml`. Keep the
-sections below filled in and current. Trim anything that won't help judge fit;
-the whole file rides every enrichment call.
+sections below filled in, current, and short: every job review sends the whole
+file to the AI. day-start and day-end read it too, so keep Current focus and
+Recurring Tasks even though they don't help judge fit.
 {% endif %}
 
 ## About me
@@ -31,3 +32,7 @@ and any visa constraints. Drives the location-fit part of the score.)
 ## Current focus
 
 (What you're working on or prioritizing this quarter/month.)
+
+## Recurring Tasks
+
+(Tasks that repeat, one per line. day-start adds each one to your plan.)

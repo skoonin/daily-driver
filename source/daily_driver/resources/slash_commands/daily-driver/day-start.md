@@ -25,13 +25,13 @@ Read the YAML at that path. If the file is missing or `late_day` is unset, treat
 
 ## 1. Gather Context
 
-Resolve the workspace output directory, then Read `context.md` and `voice-profile.md` from it using the Claude Read tool:
+Resolve the workspace root, then Read `context.md` and `voice-profile.md` from it using the Claude Read tool:
 
 ```bash
-daily-driver paths output
+daily-driver paths root
 ```
 
-Read `<output>/context.md` and `<output>/voice-profile.md`. If either file is missing, note it and continue — they are optional. Apply the voice patterns for any written communication drafted during or after this session (follow-up emails, messages{% if "job_search" in plugins %}, cover letters, recruiter replies{% endif %}).
+Read `<root>/context.md` and `<root>/voice-profile.md`. If either file is missing, note it and continue — they are optional. Apply the voice patterns for any written communication drafted during or after this session (follow-up emails, messages{% if "job_search" in plugins %}, cover letters, recruiter replies{% endif %}).
 
 ## 2. Gather Calendar and Activity
 

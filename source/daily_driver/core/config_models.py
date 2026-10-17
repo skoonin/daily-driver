@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,137 +15,25 @@ from daily_driver.plugins.config import PluginsConfig
 class DailyDriverConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    output_dir: str = Field(
-        default=".",
-        description="Where the tracker, notes and other output go. Relative to here.",
-    )
-
-
-class UserProfile(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": ""},
-    )
-    citizenship: list[str] = Field(
-        default=[],
-        description="",
-        json_schema_extra={
-            "inline_comment": '["US", "CA"]',
-            "template_plugin": "job_search",
-        },
-    )
-    work_auth: dict[str, str] = Field(
-        default={},
-        description="",
-        json_schema_extra={
-            "inline_comment": '{"US": "citizen", "CA": "PR"}',
-            "template_plugin": "job_search",
-        },
-    )
-    timezone: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example": "",
-            "inline_comment": '"America/Vancouver"',
-        },
-    )
-    seeking_since: date | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example": date(2026, 4, 6),  # type: ignore[dict-item]
-            "inline_comment": "YYYY-MM-DD when active job search began",
-            "template_plugin": "job_search",
-        },
-    )
-
-    @field_validator("seeking_since", mode="before")
-    @classmethod
-    def _coerce_seeking_since(cls, v: Any) -> Any:
-        if isinstance(v, str):
-            return date.fromisoformat(v)
-        return v
-
-
-class RecurringTask(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(description="")
-    cadence: Literal["daily", "weekly", "monthly"] = Field(
-        description="",
-        json_schema_extra={"inline_comment": "daily | weekly | monthly"},
-    )
-    estimated_minutes: int | None = Field(default=None, description="")
-    day: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"inline_comment": "only valid when cadence is weekly"},
-    )
-
-    @model_validator(mode="after")
-    def _day_only_for_weekly(self) -> RecurringTask:
-        if self.day is not None and self.cadence != "weekly":
-            raise ValueError(
-                f"'day' is only valid when cadence is 'weekly', got '{self.cadence}'"
-            )
-        return self
+    output_dir: str = "."
 
 
 class TrackerCategoryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    required: list[str] = Field(default=[], description="")
+    required: list[str] = []
 
 
 class TrackerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    default_category: str = Field(default="task", description="")
-    warn_unknown_status: bool = Field(
-        default=True,
-        description=(
-            "Warn when --status is not a usual one for its category (usually\n"
-            "open, in-progress, blocked, done, ruled-out). It still saves."
-        ),
-        json_schema_extra={"template_commented": True},
-    )
-    extra_statuses: list[str] = Field(
-        default=[],
-        description="More statuses that do not warn.",
-        json_schema_extra={
-            "template_commented": True,
-            "template_example": ["waiting", "snoozed"],
-        },
-    )
-    terminal_statuses: list[str] = Field(
-        default=[],
-        description=(
-            "More statuses that close an entry, added to done, ruled-out,\n"
-            "dropped, rejected and closed. Closed entries get no follow-ups."
-        ),
-        json_schema_extra={
-            "template_commented": True,
-            "template_example": ["cancelled"],
-        },
-    )
-    categories: dict[str, TrackerCategoryConfig] = Field(
-        default={"task": TrackerCategoryConfig(required=["title"])},
-        description="",
-        json_schema_extra={
-            "trailing_comment": (
-                "More categories. `required` lists the fields `tracker add` needs.\n"
-                "errand:\n"
-                "  required: [title]\n"
-                "ticket:\n"
-                "  required: [title, link]"
-            ),
-            "trailing_comment_indent": 2,
-        },
-    )
+    default_category: str = "task"
+    warn_unknown_status: bool = True
+    extra_statuses: list[str] = []
+    terminal_statuses: list[str] = []
+    categories: dict[str, TrackerCategoryConfig] = {
+        "task": TrackerCategoryConfig(required=["title"])
+    }
 
     @model_validator(mode="after")
     def _default_category_in_categories(self) -> TrackerConfig:
@@ -207,21 +94,9 @@ class ScheduleConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    day_start: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "08:00", "template_quote": True},
-    )
-    day_end: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "17:30", "template_quote": True},
-    )
-    days: str | list[str] = Field(
-        default="daily",
-        description="",
-        json_schema_extra={"template_example": "weekdays", "template_quote": True},
-    )
+    day_start: str | None = None
+    day_end: str | None = None
+    days: str | list[str] = "daily"
 
     @field_validator("day_start", "day_end", mode="before")
     @classmethod
@@ -247,17 +122,8 @@ class CheckinSchedule(BaseModel):
 
     times: list[str] = Field(
         default_factory=list,
-        description="",
-        json_schema_extra={
-            "template_example": ["11:00", "15:00"],
-            "template_block_list": True,
-        },
     )
-    days: str | list[str] = Field(
-        default="daily",
-        description="",
-        json_schema_extra={"template_example": "weekdays", "template_quote": True},
-    )
+    days: str | list[str] = "daily"
 
     @field_validator("days", mode="before")
     @classmethod
@@ -268,16 +134,8 @@ class CheckinSchedule(BaseModel):
 class JobSchedule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    time: str | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example": "07:00", "template_quote": True},
-    )
-    days: str | list[str] = Field(
-        default="daily",
-        description="",
-        json_schema_extra={"template_example": ["sun", "wed"]},
-    )
+    time: str | None = None
+    days: str | list[str] = "daily"
 
     @field_validator("days", mode="before")
     @classmethod
@@ -302,32 +160,9 @@ class SchedulerConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    checkin: CheckinSchedule | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={"template_example_model": True},
-    )
-    jobs: JobSchedule | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example_model": True,
-            "template_plugin": "job_search",
-        },
-    )
-    # Explicit template_example rather than template_example_model: discovery
-    # shares the JobSchedule class with `jobs`, whose own field-level
-    # examples (07:00, [sun, wed]) belong to `jobs`. Reusing them here would
-    # render discovery's scaffolded example with jobs's schedule instead of
-    # discovery's real default (23:59, [sat, tue]).
-    discovery: JobSchedule | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_example": {"time": "23:59", "days": ["sat", "tue"]},
-            "template_plugin": "job_search",
-        },
-    )
+    checkin: CheckinSchedule | None = None
+    jobs: JobSchedule | None = None
+    discovery: JobSchedule | None = None
 
 
 class ClaudeConfig(BaseModel):
@@ -335,10 +170,7 @@ class ClaudeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    resume_check_in: bool = Field(
-        default=False,
-        description="true makes `check-in` reopen the latest Claude session.",
-    )
+    resume_check_in: bool = False
 
 
 class AITaskConfig(BaseModel):
@@ -346,21 +178,10 @@ class AITaskConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] | None = Field(
-        default=None,
-        description="claude or ollama. Unset uses `ai.provider`.",
-        json_schema_extra={"template_example": "claude"},
-    )
+    provider: Literal["claude", "ollama"] | None = None
     # Provider and model resolve separately (ai_provider.resolve_route), so an
     # inherited `ai.model` meant for the other provider fails at call time.
-    model: str | None = Field(
-        default=None,
-        description=(
-            "Model for this task. Unset uses `ai.model`, so set it when\n"
-            "`ai.model` is set and this task uses the other provider."
-        ),
-        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
-    )
+    model: str | None = None
 
 
 class OllamaConfig(BaseModel):
@@ -368,16 +189,11 @@ class OllamaConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    endpoint: str = Field(default="http://localhost:11434", description="")
-    timeout: int = Field(
-        default=60,
-        description="Seconds per call. Ollama is slower than the Claude API.",
-    )
+    endpoint: str = "http://localhost:11434"
+    timeout: int = 60
     max_parallel: int = Field(
         default=4,
         ge=1,
-        description="Job search enrichment calls at once. 1 runs them one at a time.",
-        json_schema_extra={"template_plugin": "job_search"},
     )
 
 
@@ -393,13 +209,7 @@ class InteractiveAIConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str | None = Field(
-        default=None,
-        description="sonnet, haiku or opus. Unset uses the claude CLI default.",
-        # Rendered active (not commented) as the block's sole field, so the
-        # generated example parses as a mapping rather than an empty key.
-        json_schema_extra={"template_example": "sonnet"},
-    )
+    model: str | None = None
 
 
 class ClaudeProviderConfig(BaseModel):
@@ -417,7 +227,6 @@ class ClaudeProviderConfig(BaseModel):
         # Kept modest: claude is a rate-limited API reached through a CLI
         # subprocess per call, so wide fan-out trades throughput for throttling
         # and process overhead rather than the RAM ceiling ollama hits.
-        description="Job search enrichment calls at once. 1 runs them one at a time.",
     )
 
 
@@ -437,86 +246,40 @@ class AIConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] = Field(
-        default="claude",
-        description="Default provider for every task: claude or ollama.",
-    )
-    model: str | None = Field(
-        default=None,
-        description=(
-            'Default model. It must suit the provider (claude: "sonnet";\n'
-            'ollama: a tag like "qwen2.5:14b").'
-        ),
-        json_schema_extra={"template_commented": True, "template_example": "sonnet"},
-    )
-    summary: AITaskConfig = Field(
-        default=AITaskConfig(), description="The `summary` task."
-    )
-    voice_update: AITaskConfig = Field(
-        default=AITaskConfig(),
-        description="The `voice-update` task.",
-    )
-    interactive: InteractiveAIConfig = Field(
-        default=InteractiveAIConfig(),
-        description=(
-            "day-start, check-in and day-end. They always use Claude;\n"
-            "`--model` overrides this."
-        ),
-    )
+    provider: Literal["claude", "ollama"] = "claude"
+    model: str | None = None
+    summary: AITaskConfig = AITaskConfig()
+    voice_update: AITaskConfig = AITaskConfig()
+    interactive: InteractiveAIConfig = InteractiveAIConfig()
     # Only job search enrichment reads this block (its sole setting is
     # max_parallel), so a plain workspace config leaves it out.
-    claude: ClaudeProviderConfig = Field(
-        default=ClaudeProviderConfig(),
-        description="Used when a task runs on claude.",
-        json_schema_extra={"template_plugin": "job_search"},
-    )
-    ollama: OllamaConfig = Field(
-        default=OllamaConfig(),
-        description="Used when a task runs on ollama.",
-    )
+    claude: ClaudeProviderConfig = ClaudeProviderConfig()
+    ollama: OllamaConfig = OllamaConfig()
 
 
 class FocusConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    default_duration: str = Field(
-        default="25m",
-        description='Length of `focus on` without `--for` ("25m", "1h", "90m").',
-        json_schema_extra={"template_quote": True},
-    )
+    default_duration: str = "25m"
 
 
 class GatherGitConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    search_paths: list[Path] = Field(
-        default=[],
-        description="Folders that hold your git checkouts.",
-        json_schema_extra={
-            "template_example": ["~/git"],
-            "template_block_list": True,
-        },
-    )
+    search_paths: list[Path] = []
 
 
 class GatherConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    git: GatherGitConfig = Field(default=GatherGitConfig(), description="")
+    git: GatherGitConfig = GatherGitConfig()
 
 
 class CalendarConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sync_enabled: bool = Field(
-        default=False,
-        description="false makes `calendar sync` do nothing.",
-    )
-    plan_calendar_name: str = Field(
-        default="Daily Plan",
-        description="Calendar to write to. It must already exist.",
-        json_schema_extra={"template_quote": True},
-    )
+    sync_enabled: bool = False
+    plan_calendar_name: str = "Daily Plan"
 
 
 class Config(BaseModel):
@@ -533,131 +296,23 @@ class Config(BaseModel):
       ``daily-driver tracker add --extra key=value``), not a root config key.
     - Per-category required fields and custom categories:
       ``tracker.categories.<name>``.
-    - Narrative / free-form user context: ``voice-profile.md`` in the
-      workspace, not the YAML config.
+    - Narrative / free-form user context, including recurring tasks:
+      ``context.md`` and ``voice-profile.md`` in the workspace, not the YAML
+      config.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    daily_driver: DailyDriverConfig = Field(
-        default=DailyDriverConfig(),
-        description="",
-        json_schema_extra={"block_comment": "Required: workspace settings."},
-    )
-    user_profile: UserProfile = Field(
-        default=UserProfile(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": "Optional: about you, for Claude prompts.",
-        },
-    )
-    tracker: TrackerConfig = Field(
-        description="",
-        json_schema_extra={
-            "block_comment": "Required: tracker settings.",
-            "template_default": TrackerConfig(  # type: ignore[dict-item]
-                categories={"task": TrackerCategoryConfig(required=["title"])}
-            ),
-        },
-    )
-    recurring_tasks: list[RecurringTask] = Field(
-        default=[],
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": "Optional: repeating tasks, as context for Claude sessions.",
-            "template_example": [
-                {
-                    "name": "Review tracker follow-ups",
-                    "cadence": "daily",
-                    "estimated_minutes": 10,
-                },
-                {
-                    "name": "Weekly retro",
-                    "cadence": "weekly",
-                    "day": "friday",
-                },
-            ],
-            "template_example_inline_comments_by_index": {
-                0: {"cadence": "daily | weekly | monthly"},  # type: ignore[dict-item]
-                1: {"day": "only valid when cadence is weekly"},  # type: ignore[dict-item]
-            },
-        },
-    )
-    scheduler: SchedulerConfig | None = Field(
-        default=None,
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": (
-                "Optional: background runs set up by `scheduler install`. day-start\n"
-                "and day-end times are in `schedule:` below.\n"
-                'Times are HH:MM; `days` is "daily" (default), "weekdays" or a list.'
-            ),
-            "template_example_model": True,
-        },
-    )
-    schedule: ScheduleConfig = Field(
-        default=ScheduleConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": (
-                "Optional: day-start and day-end times (HH:MM) for scheduled runs.\n"
-                "A day-start over 2 hours after `day_start` is a late start."
-            ),
-        },
-    )
-    claude: ClaudeConfig = Field(
-        default=ClaudeConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": "Optional: Claude session behavior.",
-        },
-    )
-    ai: AIConfig = Field(
-        default=AIConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": (
-                "Optional: AI provider and model per task. Leave out to use Claude."
-            ),
-        },
-    )
-    focus: FocusConfig = Field(
-        default=FocusConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": "Optional: focus mode.",
-        },
-    )
-    gather: GatherConfig = Field(
-        default=GatherConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": "Optional: what `daily-driver gather` reads.",
-        },
-    )
-    calendar: CalendarConfig = Field(
-        default=CalendarConfig(),
-        description="",
-        json_schema_extra={
-            "template_commented": True,
-            "block_comment": (
-                "Optional: copy plan time blocks to a macOS Calendar (`calendar sync`)."
-            ),
-        },
-    )
-    plugins: PluginsConfig = Field(
-        default=PluginsConfig(),
-        description="",
-        json_schema_extra={"template_plugins_section": True},
-    )
+    daily_driver: DailyDriverConfig = DailyDriverConfig()
+    tracker: TrackerConfig
+    scheduler: SchedulerConfig | None = None
+    schedule: ScheduleConfig = ScheduleConfig()
+    claude: ClaudeConfig = ClaudeConfig()
+    ai: AIConfig = AIConfig()
+    focus: FocusConfig = FocusConfig()
+    gather: GatherConfig = GatherConfig()
+    calendar: CalendarConfig = CalendarConfig()
+    plugins: PluginsConfig = PluginsConfig()
 
     @field_validator("plugins", mode="before")
     @classmethod

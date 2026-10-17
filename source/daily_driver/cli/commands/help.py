@@ -3,7 +3,7 @@
 Distinct from argparse `--help` (usage). This command surfaces the value
 groups callers actually need to discover at the prompt: tracker statuses
 (recommended + in-use), tracker categories (from config), scraper sources,
-date-spec grammar, and recurring-task cadences.
+and date-spec grammar.
 
 `--json` produces a structured payload for scripting / tab-completion
 generators. Topic filtering (`help statuses`, etc.) keeps interactive use
@@ -23,7 +23,7 @@ from daily_driver.core.console import Console
 # Topic names accepted by `help <topic>`. Order is the rendering order in
 # the full reference, so keep it grouped: commands first (most-used surface),
 # then value groups by frequency.
-_TOPICS = ("commands", "statuses", "categories", "sources", "dates", "cadences")
+_TOPICS = ("commands", "statuses", "categories", "sources", "dates")
 
 # Static grammar — these don't change per-workspace, and the consumers list
 # is hand-curated so users see which flag accepts each token.
@@ -48,9 +48,6 @@ _DATE_CONSUMERS = (
     "gather git --since/--until",
     "summary --range",
 )
-
-_CADENCES = ("daily", "weekly", "monthly")
-_CADENCE_CONSUMERS = ("recurring_tasks[].cadence (in .dd-config.yaml)",)
 
 
 def add_parser(
@@ -90,13 +87,23 @@ def _resolve_workspace(args: argparse.Namespace) -> Any | None:
     """Return a Workspace if discoverable, else None.
 
     `help` must work without a workspace — it's the discovery surface that
-    new users hit first. Failure to find one is informational, not fatal.
+    new users hit first. Failure to find one is informational, not fatal, and
+    so is a config that still has a removed setting: `help` warns and shows
+    the values it would show without a workspace. Other config errors still
+    stop it.
     """
+    from daily_driver.core.config import ConfigError
     from daily_driver.core.workspace import WorkspaceError
 
     try:
         return resolve_workspace(args)
     except WorkspaceError:
+        return None
+    except ConfigError:
+        Console.warning(
+            ".dd-config.yaml needs an edit; run `daily-driver doctor` to see it. "
+            "Showing values without your workspace."
+        )
         return None
 
 
@@ -159,13 +166,6 @@ def _dates() -> dict[str, Any]:
     }
 
 
-def _cadences() -> dict[str, Any]:
-    return {
-        "values": list(_CADENCES),
-        "consumers": list(_CADENCE_CONSUMERS),
-    }
-
-
 def _commands() -> list[dict[str, str]]:
     """Return the top-level subcommand list with a one-line summary each.
 
@@ -203,7 +203,6 @@ def _build_payload(workspace: Any | None) -> dict[str, Any]:
         "categories": _categories(workspace),
         "sources": _sources(),
         "dates": _dates(),
-        "cadences": _cadences()["values"],
     }
 
 
@@ -224,7 +223,6 @@ _TOPIC_HEADERS = {
     "categories": "[bold]Categories[/bold] (consumer: tracker add --category):",
     "sources": "[bold]Sources[/bold] (consumer: jobs run --sources):",
     "dates": "[bold]Dates[/bold] (date-spec grammar):",
-    "cadences": "[bold]Cadences[/bold] (consumer: recurring_tasks[].cadence):",
 }
 
 
@@ -282,9 +280,6 @@ def _render_topic(
         d = payload["dates"]
         console.print(f"{indent}tokens:    {', '.join(d['tokens'])}")
         console.print(f"{indent}consumers: {', '.join(d['consumers'])}")
-
-    elif topic == "cadences":
-        console.print(f"{indent}{', '.join(payload['cadences'])}")
 
 
 def _render_full(console: RichConsole, payload: dict[str, Any]) -> None:
