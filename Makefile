@@ -35,6 +35,9 @@ PIP := $(PYTHON) -m pip
 # with a local .venv that VS Code may auto-activate over the main repo's.
 TOX := $(shell command -v tox 2>/dev/null || echo .venv/bin/tox)
 
+# pipx detection for `make install`; empty when pipx is not on PATH.
+PIPX := $(shell command -v pipx 2>/dev/null)
+
 PROJ_DIR := $(shell pwd)
 
 include makefiles/clean.mk
