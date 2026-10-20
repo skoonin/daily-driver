@@ -11,12 +11,17 @@ Two shapes: pure-Python (argparse + `core/`) and Claude-launcher (spawn a nested
 Create `source/daily_driver/cli/commands/ping.py`:
 
 ```python
+"""ping subcommand: print pong."""
+
 from __future__ import annotations
 import argparse
+
+from daily_driver.cli._common import add_global_flags
 
 def add_parser(subparsers, parents):
     parser = subparsers.add_parser("ping", parents=parents, help="Print pong.")
     parser.add_argument("--loud", action="store_true")
+    add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
 
@@ -25,13 +30,14 @@ def run(args: argparse.Namespace) -> int:
     return 0
 ```
 
-Register in `_COMMANDS` in `cli/cli.py`:
+Register in `_CORE_COMMANDS` in `cli/cli.py` (`_COMMANDS` is built from it and the plugin commands), and add a one-line summary to `_TOP_HELP`. The top-level `--help` reads `_TOP_HELP` without importing the module. A command missing from it breaks every other `daily-driver` invocation with `KeyError`; the command itself still runs:
 
 ```python
-("ping", "daily_driver.cli.commands.ping"),
+("ping", "daily_driver.cli.commands.ping"),  # in _CORE_COMMANDS
+"ping": "Print pong.",                       # in _TOP_HELP
 ```
 
-CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`.
+CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`. The first line of the module docstring is the summary that `daily-driver help commands` shows; without a docstring it shows "(no description)".
 
 ### Claude launcher
 
@@ -40,6 +46,8 @@ Create the shipped slash-command file at `source/daily_driver/resources/slash_co
 Create `source/daily_driver/cli/commands/review.py`. Wire the parser by hand and call `launch_fresh_and_record` from `_claude_session` — it mints a `--session-id` and records it as the workspace's most-recent session so `resume` can reattach later (see `day_end.py` for the canonical shape):
 
 ```python
+"""review subcommand: interactive review session via claude."""
+
 from __future__ import annotations
 import argparse
 
@@ -93,8 +101,8 @@ To reattach to an existing session instead of starting fresh, call `reattach_or_
 
 ### Checklist
 
-- [ ] `add_parser` + `run` implemented
-- [ ] Registered in `_COMMANDS`
+- [ ] `add_parser` + `run` implemented, with a one-line module docstring
+- [ ] Registered in `_CORE_COMMANDS` and `_TOP_HELP`
 - [ ] Test in `tests/test_cli/`; core logic test in `tests/test_core/`
 - [ ] Entry in `docs/commands.md`
 - [ ] `[Unreleased]` note in `CHANGELOG.md`
@@ -143,9 +151,12 @@ PLUGIN = Plugin(
 `cli.py` — the `command_module` hook (`add_parser` + `run`, same shape as a core subcommand):
 
 ```python
+"""reminders subcommand: list the configured home-maintenance reminders."""
+
 from __future__ import annotations
 
 import argparse
+import sys
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 
@@ -169,6 +180,9 @@ def _run_list(args, workspace):
 
 
 def run(args):
+    if args.func is run:  # bare "reminders": no action chosen
+        print("usage: daily-driver reminders list", file=sys.stderr)
+        return 2
     return args.func(args, resolve_workspace(args))
 ```
 
@@ -220,7 +234,7 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
 OPTIONAL `config.py` — the `config_model`.
 A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so an unknown key fails validation).
 
-A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists, and `init` writes that block only for plugins the user chooses. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and write `enabled: true` as the one live line of the plugin's block in `.dd-config.yaml.j2`; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
+A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists. `init` writes a plugin's block only for plugins it is told to switch on: `cli/commands/init.py` builds `plugins = {"job_search"} if args.job_search else set()`, so a new plugin needs its own flag there, or users add the block by hand. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and write `enabled: true` as the one live line of the plugin's block in `.dd-config.yaml.j2`; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
 
 ```python
 from __future__ import annotations
@@ -300,6 +314,7 @@ Core stays import-light: it imports `PLUGINS` lazily inside the functions that i
 - [ ] `config_model` is a `BaseModel`; tests in `tests/test_plugins/<name>/`
 - [ ] Plugin-specific text in shipped prompts sits inside `{% if "<name>" in plugins %}` blocks
 - [ ] Its settings are in `.dd-config.yaml.j2` inside a `{% if "<name>" in plugins %}` block, with any core setting only this plugin uses. `tests/test_core/test_config_template.py` checks the gating for job search only; extend it for the new plugin
+- [ ] (Optional) an `init` flag in `cli/commands/init.py` that adds the plugin to the `plugins` set passed to `Workspace.init`
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`
 
 ### Plugin or tracker category?
@@ -318,9 +333,11 @@ scrape_<name>(ctx: ScrapeContext) → list[dict]
 run_all_scrapers:
     phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 8)
     phase 2 — Playwright sources serial (memory + bot-detection)
+    ↓ as each source finishes
+_JobSink.append_source: dedup (URL + company+role key) → location filter → lift to EnrichedJob → append_jobs_typed (flock-guarded)
     ↓
-merge + dedup (URL + company+role key) → filter → enrich_job_details (HTML/JSON-LD)
-    → enrich_fit_and_notes (headless claude, optional) → append_jobs_typed (flock-guarded)
+enrichment waves, in place on the sink's rows:
+    enrich_job_details (HTML/JSON-LD) → enrich_fit_and_notes (headless claude, optional) → _JobSink.flush (atomic rewrite of jobs.csv)
 ```
 
 Phase assignment is code-driven: a source listed in `scraper.scrape_all._PLAYWRIGHT_SOURCES` routes to phase 2. (`SourceToggle` is `extra="forbid"`, so there is no `type:` config knob for this.)
@@ -335,9 +352,9 @@ def scrape_<name>(ctx: ScrapeContext) -> list[dict]:
     source as failed."""
 ```
 
-Required keys per returned dict: `company`, `role`, `location`, `url`, `source`, `date_found` (ISO). Optional (empty string if absent): `comp`, `notes`.
+Required keys per returned dict: `company`, `role`, `url`, `source`. A new row without a `url` is dropped (it cannot be deduped on later runs). Set `location` and `date_found` (a `YYYY-MM-DD` string) too; they default to empty and today. Optional: `comp` (display string), `description_text`, and `origin_country` (country code used as the country fallback when the location text names none). Other keys, including `notes`, are ignored: fit and notes come from enrichment.
 
-Do not normalize in the scraper. `NormalizedJob.from_raw` downstream handles lowercasing country codes, stripping trailing slashes, ISO-coercing dates.
+Do not normalize in the scraper. `rows._enriched_from_scraped` coerces the date (an invalid or missing one becomes today), validates the dict through `RawScrapedJob`, and runs `NormalizedJob.from_raw`, which strips remote suffixes from the role and splits `source` into its canonical id and board slug. `normalize_location` and `detect_remote` then turn the raw location and role text into a country-first `location` and a `remote` value.
 
 ### Register
 
@@ -348,12 +365,14 @@ SCRAPERS: dict[str, Callable[[ScrapeContext], list[dict]]] = {
 }
 ```
 
+Also declare the source in `SOURCE_CAPABILITIES` in `sources/__init__.py` (`SourceCapability(enumeration=..., verify=...)`) and list it under `plugins.job_search.sources` in `.dd-config.yaml.j2`; tests fail without both. A source with its own options needs a `SourceToggle` subclass in `_SOURCE_TOGGLE_TYPES` (`plugins/job_search/config.py`).
+
 ### Fixtures (non-negotiable)
 
-Network calls in tests are forbidden. For each source, commit:
+Network calls in tests are forbidden. For each source, commit a representative payload:
 
-- `tests/fixtures/scraper/<name>/index.html` (or `.json`) — representative listing page
-- `tests/fixtures/scraper/<name>/detail-<id>.html` — at least one detail page if the source enriches
+- `tests/fixtures/scraper/<name>/sample.json` (or `sample.xml`) — a representative listing response, as `apple/` and `weworkremotely/` do; small API responses can be built inline in the test, as `test_greenhouse.py` does
+- a detail page too, if the source enriches
 
 Monkeypatch the HTTP client or Playwright context to return fixture bytes; assert on the returned dict shape.
 
@@ -365,7 +384,7 @@ Monkeypatch the HTTP client or Playwright context to return fixture bytes; asser
 
 **Write a native scraper** when:
 
-- The source has a public API (Greenhouse, Lever, Ashby) — function is `requests.get(api_url)` + field mapping. Prefer this.
+- The source has a public API (Greenhouse, Lever, Ashby) — function is `_api_get(session, api_url, ctx, label=...)` from `sources/_http.py` (shared retry, backoff, and jitter) + field mapping. Prefer this.
 - The source serves JSON-LD `JobPosting` in HTML — parse the `<script type="application/ld+json">` tag. More stable than CSS selectors.
 - The source needs custom auth or flow that JobSpy cannot express.
 
@@ -373,11 +392,12 @@ Do not write CSS-selector scrapers against rendered pages unless the API and JSO
 
 ### Checklist
 
-- [ ] `tests/test_scraper/test_<name>.py` — fixture-backed happy path
+- [ ] `tests/test_plugins/job_search/scraper/test_<name>.py` — fixture-backed happy path
 - [ ] Skips missing/malformed postings without raising
 - [ ] Returns empty or partial list on 5xx / timeout
 - [ ] No live network (grep for `requests.get`, `httpx.get`, `sync_playwright` in test output)
-- [ ] `SCRAPERS` dict updated
+- [ ] `SCRAPERS` and `SOURCE_CAPABILITIES` updated (`sources/__init__.py`)
+- [ ] Source and its options added to `.dd-config.yaml.j2` under `plugins.job_search.sources`
 - [ ] Source entry in `docs/commands.md` or `docs/configuration.md` (whichever is nearer to user usage)
 - [ ] Playwright / API-key needs noted in `docs/troubleshooting.md` if any
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`

@@ -2,7 +2,7 @@
 
 All workspace configuration lives in `.dd-config.yaml` at the workspace root. Validated by Pydantic on every command invocation; `extra="forbid"` on every model means unknown keys fail loudly.
 
-Authoritative schema: `source/daily_driver/core/config_models.py`.
+Authoritative schema: `source/daily_driver/core/config_models.py`; the job search settings are in `source/daily_driver/plugins/job_search/config.py`.
 
 > For the end-user flow that exercises these settings, see [usage.md](usage.md). For Ollama provider setup, see [ollama-setup.md](ollama-setup.md).
 
@@ -23,7 +23,7 @@ Authoritative schema: `source/daily_driver/core/config_models.py`.
 
 `init` leaves job search settings out of `.dd-config.yaml` unless you pass `--job-search`. The job-only keys (`scheduler.jobs`, `scheduler.discovery`, `ai.claude`, `ai.ollama.max_parallel`) stay valid either way; they only have an effect when job search is on.
 
-Your background and recurring tasks go in `context.md`, not here. day-start reads it, and its `## Recurring Tasks` section feeds the daily plan.
+Your background and recurring tasks go in `context.md`, not here. day-start reads it, and its `## Recurring Tasks` section feeds the daily plan. A config that contains `user_profile` or `recurring_tasks` fails to load: every command except `help` stops with a message that names the block and says where its content goes. Delete the block and move anything you need into `context.md`.
 
 ## `daily_driver`
 
@@ -38,12 +38,12 @@ Rotated `jobs.csv` backups land in `<output_dir>/backups/` with UTC ISO-8601 tim
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
 | `default_category` | string | `task` | Must be a key in `categories` |
-| `categories` | dict[string, object] | `{}` | Each category: `{required: [field, ...]}` |
+| `categories` | dict[string, object] | `{task: {required: [title]}}` | Each category: `{required: [field, ...]}` |
 | `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, pending, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
 | `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
 | `terminal_statuses` | list[string] | `[]` | Extra terminal (closing) status values, merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled-detection and `tracker follow-ups`, so a custom closing state like `cancelled` won't linger as a false positive. The built-in terminal statuses cannot be removed; values are normalized like other statuses (case-folded, underscores/spaces → hyphens). |
 
-`required` values are the flags accepted by `tracker add`: `title`, `link`, `note`, `next_action`, `due`, `status`, `tags`.
+`required` values are entry fields: `title`, `link`, `notes`, `next_action`, `due`, `status`, `tags`, or the name of an `--extra` key. `--note` fills `notes`.
 
 ## `ai`
 
@@ -167,7 +167,7 @@ Controls `claude` CLI session behavior for interactive launchers.
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `resume_check_in` | bool | false | When true, `check-in` resumes the prior day-start session instead of starting fresh |
+| `resume_check_in` | bool | false | When true, `check-in` resumes the workspace's most recent Claude session (from `day-start`, `day-end`, or `check-in`) instead of starting fresh |
 
 ## `gather`
 
@@ -198,7 +198,7 @@ macOS-only opt-in for `daily-driver calendar sync`, which writes the day's plan 
 
 ## `plugins.job_search`
 
-Job search is off until this block exists. `init --job-search` writes it with `enabled: true`. To switch job search on in an existing workspace, add the block and run `doctor --fix`; `doctor` reports the change as drift and `--fix` adds the job sections to the Claude prompts and README. `context.md` is yours after `init` and is not rewritten, so add location preferences and fit notes to it by hand. To switch job search off but keep the settings, set `enabled: false`, run `doctor --fix`, then `scheduler install` to remove the jobs agents.
+Job search is off until this block exists. `init --job-search` writes it with `enabled: true` and leaves `scraper.enabled` and `sources` commented out; `jobs run` needs both `scraper.enabled: true` and at least one entry under `sources`. `context.md` is yours after `init` and is not rewritten, so add location preferences and fit notes to it by hand. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it).
 
 | Key | Type | Default |
 |-----|------|---------|
@@ -211,11 +211,10 @@ Job search is off until this block exists. `init --job-search` writes it with `e
 | `scraper` | object | see `ScraperConfig` below |
 | `enrichment` | object | see `EnrichmentConfig` below |
 | `verify` | object | see `VerifyConfig` below |
+| `discovery` | object | see `DiscoveryConfig` below |
 | `sources` | dict[string, object] | `{}` (keyed by source id) |
 
-Compensation is display-only: the scraper writes whatever amount it finds to the
-`Comp` column and never filters on it. Location (countries) is the only
-filter that removes jobs. Seniority filtering is driven by `seniority_keywords`.
+Compensation is display-only: the scraper writes whatever amount it finds to the `Comp` column and never filters on it. Only the title match (below) and the location filter (countries) remove jobs. Seniority filtering is driven by `seniority_keywords`.
 
 Role matching is two-tier: a title is kept if it matches a configured `role` (tier 1) or carries both a `domain_keywords` and a `seniority_keywords` term (tier 2). Each list defaults to `[]`, but an empty `domain_keywords` or `seniority_keywords` falls back to a built-in infrastructure/SRE keyword set (`sre`, `platform engineer`, `devops`, ...; `senior`, `staff`, `principal`, ...). So a workspace that never sets these still matches senior infra titles via tier 2 — a non-infra search must populate `domain_keywords` and `seniority_keywords` explicitly. An empty `roles` has no such fallback: tier 1 simply matches nothing.
 
@@ -223,7 +222,7 @@ Role matching is two-tier: a title is kept if it matches a configured `role` (ti
 
 | Key | Type | Default |
 |-----|------|---------|
-| `home_city` | string or null | null |
+| `home_city` | string or null | null (scoring uses `Vancouver, BC` when unset) |
 | `remote` | bool | false |
 | `remote_unlisted_countries` | bool | false |
 | `countries` | dict[string, list[string]] | `{}` |
@@ -248,6 +247,8 @@ Transport / retry knobs shared by every source.
 | `parallel_workers` | int | 8 |
 | `max_pages` | int | 3 |
 | `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
+
+`enabled` must be `true` for `jobs run` to scrape. While it is `false`, the run prints `Scraper disabled` and exits 0.
 
 `company_noise_words` replaces the shipped list of words dropped from a company name when rows are compared for duplicates — legal suffixes (`inc`, `ltd`, `gmbh`, ...) and generic tails (`labs`, `technologies`, ...). Board sources name a company after their board slug, so this is what lets a `foosystems` board row match an aggregator's `Foo Systems Inc.` and win the source upgrade. Comparison only: the stored Company value is never rewritten. An empty list keeps the shipped words.
 
@@ -376,7 +377,7 @@ city search.
 sources:
   weworkremotely:
     enabled: true
-    wwr_categories: [devops, sysadmin]
+    wwr_categories: [devops-sysadmin]
   greenhouse:
     enabled: true
     greenhouse_boards: [company-a, company-b]  # pins: always scraped
@@ -458,18 +459,15 @@ plugins:
 
 ### `.claude/` ownership
 
-Generation only touches three paths. Everything else is yours.
+Generation touches five paths. Everything else is yours. Edits are detected with a SHA-256 manifest. `doctor --fix` and `init` regenerate the managed files after a version upgrade or after you switch a plugin on or off. `doctor --fix` also regenerates them when a managed file is missing or a contract check fails, such as an invalid `.claude/settings.local.json`. `doctor --reset` and `init --force` always rewrite them.
 
-| Path | Owner | Behavior on generate |
+| Path | `doctor --fix` and `init` | `doctor --reset` and `init --force` |
 | --- | --- | --- |
-| `.claude/commands/daily-driver/` | Daily Driver | Rendered from package templates; job sections only when job search is on |
-| `.claude/agents/daily-driver/` | Daily Driver | Rendered from package templates; job sections only when job search is on |
-| `.claude/settings.local.json` | Daily Driver + user merge | Re-rendered from template; user-added top-level keys preserved |
-| `.claude/commands/*.md` (top level, outside `daily-driver/`) | You | Untouched |
-| `.claude/agents/*.md` (top level, outside `daily-driver/`) | You | Untouched |
-| Anything else under `.claude/` | You | Untouched |
-
-User edits to files under `.claude/*/daily-driver/` are detected via SHA-256 manifest and preserved by `doctor --fix` on drift (a version change or switching a plugin on or off). `doctor --reset` force-overwrites managed files regardless of edits.
+| `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/` | Rendered from package templates, with job sections only when job search is on. Shipped files you edited are kept. A `.md` file you added is deleted. A file that an older version shipped is deleted unless you edited it. | Wiped and rewritten: your edits and every file you added are lost |
+| `.claude/hooks/` | Copied from the package. The keep and delete rules in the row above apply, with `.sh` in place of `.md`. | Wiped and rewritten |
+| `README.md` (workspace root) | Rendered from a package template, with job sections only when job search is on. Your edits are kept. | Overwritten |
+| `.claude/settings.local.json` | Rewritten from the package template, then the top-level keys you added are put back. The shipped `permissions`, `hooks`, and `metadata` blocks are replaced, so entries you added inside them are lost, including the allow rules Claude Code saves when you tell it not to ask again. If the file is not valid JSON, it is saved as `settings.local.json.invalid` and replaced, so none of your keys are kept. | The same |
+| `.claude/commands/user/`, `.claude/agents/user/`, top-level `.claude/commands/*.md` and `.claude/agents/*.md`, anything else under `.claude/` | Never touched | Never touched |
 
 ### Custom Claude commands
 
@@ -483,18 +481,13 @@ Place a markdown file at `.claude/agents/my-reviewer.md`. Invoke with `claude --
 
 The launchers invoke the namespaced commands directly — `daily-driver day-start` runs `/daily-driver:day-start`, which maps to `.claude/commands/daily-driver/day-start.md`. To change what a launcher runs, you must edit that managed file in place.
 
-Be aware of how `doctor` treats your edits:
-
-- `doctor --fix` preserves them. Edits are detected via the SHA-256 manifest, so version drift will not clobber a file you have changed.
-- `doctor --reset` overwrites them. It force-rewrites every managed file under `.claude/*/daily-driver/` from the shipped package data, discarding your customizations.
-
-So a customization here is durable against routine repair but lost on a reset. Keep an out-of-tree copy of any command you have edited if you want to restore it after `--reset`.
+`doctor --fix` keeps your edits; `doctor --reset` and `init --force` overwrite them (see [`.claude/` ownership](#claude-ownership)). Keep a copy outside the workspace of any command you edit if you want to restore it after a reset.
 
 Copying the file up one level (`.claude/commands/day-start.md`) does not override the launcher: that path is a separate, unnamespaced command (`/day-start`) that doctor never touches, but the launchers keep invoking the namespaced `/daily-driver:day-start`. Use a top-level copy only for commands you invoke by hand inside a session.
 
 ### Custom tracker categories
 
-Categories are config-driven; no code changes needed. Edit `.dd-config.yaml`:
+Categories are free-form: any name works with `-c`. List one under `tracker.categories` to require fields on it. Edit `.dd-config.yaml`:
 
 ```yaml
 tracker:
@@ -509,7 +502,7 @@ Any fields passed via `tracker add --extra key=value` land in the entry's `extra
 
 ### Context and voice profile
 
-`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. They are injected into Claude sessions launched by `day-start`, `check-in`, `day-end`, and `summary`. `voice-update --from PATH` rewrites `voice-profile.md` from writing samples via headless `claude`.
+`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. `day-start` reads both files, `day-end` reads `context.md`, and the work-planner agent reads `voice-profile.md` before it drafts a message. With job search on, `jobs run` and `jobs backfill` also send `context.md` to the fit review. `voice-update --from PATH` rewrites `voice-profile.md` from writing samples via headless `claude`.
 
 ## See also
 

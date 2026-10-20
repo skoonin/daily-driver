@@ -1,8 +1,10 @@
 # Ollama setup
 
-Route headless AI tasks (job_search enrichment, summary) to a local [Ollama](https://ollama.com) server instead of the `claude` CLI. Local models are free, have no rate limits, and run entirely on your machine — a good fit for high-volume tasks like `jobs backfill`.
+Route headless AI tasks (job_search enrichment, summary, voice-update) to a local [Ollama](https://ollama.com) server instead of the `claude` CLI. Local models are free, have no rate limits, and run entirely on your machine — a good fit for high-volume tasks like `jobs backfill`.
 
 Interactive launchers (`day-start`, `check-in`, `day-end`) always use `claude`. They depend on session resume, agents, and workspace context Ollama does not provide.
+
+The `plugins.job_search` block below also switches job search on. To route only `summary` or `voice-update` to Ollama, leave that block out and set `ai.summary` or `ai.voice_update` instead.
 
 ## Install and run
 
@@ -66,6 +68,8 @@ Expect a parseable object: `{"fit": 9, "notes": "..."}`. If `jq` can't parse the
 
 ## Config block
 
+Merge these keys into your existing `ai:` and `plugins:` blocks; a second top-level `plugins:` or `ai:` key replaces the first, with no error.
+
 ```yaml
 # .dd-config.yaml
 ai:
@@ -126,7 +130,7 @@ OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_C
 - `OLLAMA_KV_CACHE_TYPE=q8_0` — roughly halves KV-cache memory with minimal quality cost; the lever that makes `NUM_PARALLEL > 1` fit on one machine.
 - `OLLAMA_MAX_LOADED_MODELS=1` — single-model use; avoid evicting the enrichment model.
 
-If the server is down during a scheduled run, enrichment calls fail and are counted, the scrape itself still completes and appends its rows, and a later `jobs backfill` fills the gaps.
+If the server is down when a run starts, `jobs run` skips the first fit / notes pass with one warning. It still appends the scraped rows to `jobs.csv`. The backlog pass still tries older unscored rows and counts each failure. This run's new rows are tried again only when the Apple source runs and adds rows. If the server stops during the run, the calls that fail are counted the same way. `jobs backfill` fills the `found` and `pending` rows that were left blank.
 
 ## Doctor output reference
 
@@ -136,7 +140,7 @@ If the server is down during a scheduled run, enrichment calls fail and are coun
 | Server not running | `WARNING` | `Start the server: ollama serve` |
 | Model not pulled | `WARNING` | `Pull the model: ollama pull <model>` |
 
-When enrichment routes to ollama, the `Enrichment provider` row reports reachability and model presence. With `ai.ollama.max_parallel > 1`, an `Ollama NUM_PARALLEL` row reminds you to set the matching server-side `OLLAMA_NUM_PARALLEL` (the API can't report it). The core `AI providers` row covers the summary task on the same basis. None of these rows appear on the default claude path.
+When enrichment routes to ollama, the `Enrichment provider` row reports reachability and model presence. With `ai.ollama.max_parallel > 1`, an `Ollama NUM_PARALLEL` row reminds you to set the matching server-side `OLLAMA_NUM_PARALLEL` (the API can't report it). The core `AI providers` row covers the `summary` and `voice-update` tasks on the same basis. None of these rows appear on the default claude path.
 
 ## Troubleshooting
 
@@ -148,12 +152,12 @@ When enrichment routes to ollama, the `Enrichment provider` row reports reachabi
 
   Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or returned an empty string. `-v` alone gives startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
 - **`connection refused on 11434`** — `ollama serve` not running.
-- **`LLM enrichment skipped this run`** — `jobs run` pings ollama once at the start of enrichment; if the server is unreachable or the model is not pulled, it skips the fit / notes pass (one warning naming the endpoint or model) instead of burning a per-call timeout on every job. Detail pages still run. Start the server (or `ollama pull <model>`), then `jobs backfill` to fill the empty rows.
+- **`LLM enrichment skipped this run`** — `jobs run` checks ollama once at the start of enrichment. If the server is unreachable or the model is not pulled, it skips the first fit / notes pass instead of waiting for a timeout on every job. It logs one warning that names the endpoint or model. Later passes can still call ollama and count each failed call (see [Tuning](#tuning)). Detail pages still run. Start the server (or `ollama pull <model>`), then run `jobs backfill` to fill the empty rows.
 - **First request is slow** — Ollama loads the model into RAM on demand; subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep it warm between sessions.
 - **Output quality below claude path** — try a larger model, or keep `summary` on claude and route only enrichment to ollama.
 - **Tune resource use (optional)** — see [Tuning](#tuning) for the server-side environment variables. The client-side counterpart is `ai.ollama.max_parallel` (default 4); raise it only after raising server-side `OLLAMA_NUM_PARALLEL`, or set it to `1` for serial enrichment.
 - **Ctrl-C during a long backfill** — first press shows `Stopping — waiting for N companies still being enriched...`. The command finishes in-flight model calls (up to `ai.ollama.timeout` each), saves partial progress, and exits. A second Ctrl-C force-quits and loses what's in progress.
-- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` drops a timestamped backup before mutating `jobs.csv`, and `daily-driver doctor` warns once you have more than 5. Keep the 2-3 most recent and delete the rest with `rm <output_dir>/jobs.csv.bak.*`.
+- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` drops a timestamped backup before mutating `jobs.csv`, and `daily-driver doctor` warns once you have more than 5. Keep the 3 most recent and delete the rest: `(cd "<output_dir>/backups" && ls -1r jobs.csv.bak.* | tail -n +4 | xargs rm)`. Give the full path; `~` is not expanded inside the quotes.
 
 ## See also
 

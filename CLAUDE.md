@@ -19,9 +19,9 @@ Job search is one plugin, off by default: `init --job-search` (or a `plugins.job
 ## Install for development
 
 ```bash
-make setup    # .venv + pip install -e .[dev] + pre-commit hooks
-make test     # full tox envlist (see tox.ini); the same set CI runs
-              # needs python3.11 and python3.12 on PATH; tox fails on a missing one
+make setup-dev  # .venv + pip install -e .[dev] + pre-commit hooks
+make test       # full tox envlist (see tox.ini); the same set CI runs
+                # needs python3.11 and python3.12 on PATH; tox fails on a missing one
 ```
 
 ## Command surface
@@ -30,17 +30,14 @@ End-user reference: `docs/commands.md`. Short list:
 
 - `daily-driver init <path> [--job-search]` — scaffold a workspace; `--job-search` switches job search on.
 - `daily-driver doctor [--fix | --reset]` — verify / repair workspace.
-- `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` —
-  manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via
-  a config-driven category system.
+- `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` — manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via free-form categories (`tracker.categories` adds required fields).
 - `daily-driver status` — dashboard table (Rich or JSON).
 - `daily-driver focus {on,off,status}` — flock-backed check-in suppression.
 - `daily-driver day-start | day-end | check-in` — interactive Claude-session
   launchers (read-only scaffold + `claude --add-dir workspace`).
 - `daily-driver resume` — reattach to the workspace's most recent Claude session
   (`claude --resume <uuid>`) when a launcher tab is closed or lost.
-- `daily-driver summary --range SPEC` — headless period summary via `claude`;
-  prints to stdout and copies to clipboard.
+- `daily-driver summary --range SPEC` — headless period summary via `claude` (or Ollama when `ai.summary.provider: ollama`); prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — headless rewrite of
   `voice-profile.md` from writing samples.
 - `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
@@ -53,13 +50,12 @@ End-user reference: `docs/commands.md`. Short list:
   external state for downstream commands.
 - `daily-driver scheduler {install,uninstall,status}` — macOS launchd
   plist install / remove / inspection.
+- `daily-driver calendar sync` — write today's plan time blocks to a local macOS Calendar (needs `calendar.sync_enabled: true`).
+- `daily-driver help [commands|statuses|categories|sources|dates]` — reference for subcommands and discoverable values.
 
 ## Architecture
 
-All code lives under `source/daily_driver/`. Read `docs/dev/developer.md` for the
-architecture map, runtime flow, init contract, generate lifecycle, and
-extensibility rules. Recipes for adding subcommands or scraper sources live
-in `docs/dev/extending.md`. Release workflow is in `docs/dev/releasing.md`.
+All code lives under `source/daily_driver/`. Read `docs/dev/developer.md` for the architecture map, runtime flow, init contract, generate lifecycle, and extensibility rules. Recipes for adding subcommands, plugins, or scraper sources live in `docs/dev/extending.md`. Release workflow is in `docs/dev/releasing.md`.
 
 Key conventions:
 
@@ -69,10 +65,7 @@ Key conventions:
   `launchctl` — tests monkeypatch one spot, not many.
 - **Workspace writes are flock-guarded.** `core.locking.file_lock` wraps
   `fcntl.flock` for YAML reads + writes and the focus lock.
-- **`.claude/*/daily-driver/` is package-managed.** Generated from wheel
-  package-data on `init` and on version drift. `doctor --fix` preserves
-  user-edited managed files (SHA-256 manifest); `doctor --reset` overwrites.
-  Top-level `.claude/commands/` and `.claude/agents/` are user territory.
+- **These paths are package-managed:** `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`. Generated from wheel package-data on `init` and on version drift. `doctor --fix` preserves user-edited managed files (SHA-256 manifest) but deletes `.md` files you add to the commands and agents directories and `.sh` files you add to hooks. `doctor --reset` wipes and rewrites those directories and overwrites the workspace `README.md`. Top-level `.claude/commands/` and `.claude/agents/` are user territory. Full rule: `docs/configuration.md` (`.claude/` ownership).
 - **Plugins are a real boundary.** Each plugin lives under
   `source/daily_driver/plugins/<name>/` and exposes a `PLUGIN` (`plugins/_base.py`
   `Plugin` dataclass) registered in the static `plugins.PLUGINS` tuple — no runtime
@@ -104,13 +97,7 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
 
 ## Release
 
-- **Branches:** `dev` is the integration trunk — feature branches cut off `dev`
-  and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker
-  (`pip install 'git+https://github.com/skoonin/daily-driver.git@dev'` to test).
-  `main` holds only tagged releases. Cut a release from a `release/X.Y.Z` branch
-  off `dev` (run `make release` there — it refuses any branch that is not `release/*`), then PR
-  `release/X.Y.Z` → `main`; `main` is only ever updated through a `release/*`
-  PR, never a direct `dev` → `main` merge. Full flow in `docs/dev/releasing.md`.
+- **Branches:** `dev` is the integration trunk — feature branches cut off `dev` and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker (`pip install 'git+https://github.com/skoonin/daily-driver.git@dev'` to test). `main` holds only tagged releases. Cut a release from a `release/X.Y.Z` branch off `dev` (run `make release` there — it refuses any branch that is not `release/*`), then fast-forward `main` to the tag with `git push origin vX.Y.Z^{commit}:refs/heads/main`. An optional `release/X.Y.Z` → `main` pull request is for visibility only: do not merge it with a GitHub merge button, because a merge commit leaves `main` off the tag and a rebase or squash merge rewrites the commit hash. After the tag reaches `main`, fast-forward `dev` to the tag and bump its `-dev` marker. `main` is only ever updated by a release fast-forward, never a direct `dev` → `main` merge. Full flow in `docs/dev/releasing.md`.
 - `make release VERSION=X.Y.Z` — verify release branch + clean tree, run
   py311+py312, run install smoke, build wheel/sdist, rewrite CHANGELOG
   `[Unreleased]` → `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.

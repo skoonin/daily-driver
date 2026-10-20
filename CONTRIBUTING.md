@@ -1,31 +1,23 @@
 # Contributing to Daily Driver
 
-Daily Driver is v0.1.0 alpha; internal surface is churning. Dev workflow below is stable. All docs live under `docs/` — see [docs/dev/developer.md](docs/dev/developer.md) for architecture, [docs/dev/extending.md](docs/dev/extending.md) for subcommand/scraper recipes, and [docs/dev/releasing.md](docs/dev/releasing.md) for releases.
+Daily Driver is alpha software (see the `Development Status` classifier in `pyproject.toml`); the internal surface is churning. Dev workflow below is stable. All docs live under `docs/` — see [docs/dev/developer.md](docs/dev/developer.md) for architecture, [docs/dev/extending.md](docs/dev/extending.md) for subcommand, plugin, and scraper recipes, and [docs/dev/releasing.md](docs/dev/releasing.md) for releases.
 
 ## Setup
 
 ```bash
 git clone https://github.com/skoonin/daily-driver.git
 cd daily-driver
-make setup
+make setup-dev
 make test
 ```
 
-The scraper needs Playwright browsers for Wellfound and Apple sources. Lead with:
+`make setup-dev` creates `.venv`, installs the package in editable mode with dev extras, and installs the pre-commit hooks (`make setup` does only the first two). `make test` runs the full tox envlist and needs `python3.11` and `python3.12` on PATH; `make test-quick` needs only `python3.11`.
 
-```bash
-daily-driver doctor --fix
-```
-
-If you need to install manually instead, use the Python interpreter daily-driver runs under rather than a bare `playwright` CLI, which may resolve to the wrong interpreter and browser cache — `doctor`'s own warning prints the exact command, anchored to that interpreter:
-
-```bash
-<path-to-python> -m playwright install chromium
-```
+With job search on and the Apple source enabled, the scraper needs a Playwright browser (Firefox by default; set `plugins.job_search.scraper.browser` to change it). Run `daily-driver doctor --fix`; for a manual install, see [docs/install.md](docs/install.md#playwright-browser-install-optional).
 
 ## Tests and markers
 
-Markers are declared in `pyproject.toml`. Skip with `-m "not <marker>"`.
+Markers are declared in `pyproject.toml`. Skip with `-m "not <marker>"`. A `-m` on the command line replaces the default `-m 'not smoke'` from `addopts`, which would run the live-URL smoke tests, so write `-m "not smoke and not <marker>"`.
 
 | Marker | Purpose |
 |--------|---------|
@@ -38,18 +30,19 @@ Markers are declared in `pyproject.toml`. Skip with `-m "not <marker>"`.
 | `needs_jobspy` | Requires `python-jobspy` |
 | `needs_browser` | Requires a Playwright browser |
 | `slow` | Long-running |
+| `smoke` | Hits live job-board URLs; off by default (`pytest -m smoke`) |
 
-**Spawn-worker PYTHONPATH:** the root `conftest.py` exports `PYTHONPATH` so multiprocessing spawn workers (used by some gather tests) can resolve the `tests.*` package. Do not remove this — it is a known constraint of the spawn start method. A cryptic `ModuleNotFoundError: No module named 'tests'` in a subprocess is the symptom.
+**Spawn-worker PYTHONPATH:** the root `conftest.py` exports `PYTHONPATH` so multiprocessing spawn workers (used by the file-lock tests) can resolve the `tests.*` package. Do not remove this — it is a known constraint of the spawn start method. A cryptic `ModuleNotFoundError: No module named 'tests'` in a subprocess is the symptom.
 
 ## Style and tooling
 
-All configured in `pyproject.toml`, enforced by pre-commit:
+All configured in `pyproject.toml`. black, isort, and flake8 run in pre-commit and in Continuous Integration (CI); mypy runs in CI and through `make type` (it has no pre-commit hook). Install the hooks with `make setup-dev`.
 
 | Tool | Config |
 |------|--------|
 | black | line-length 88, target-version py311 |
 | isort | profile black, line-length 88 |
-| flake8 | max-line-length 160, ignores E203/E501/W503 |
+| flake8 | max-line-length 88, ignores E203/E501/W503 |
 | mypy | strict, `source/` on path, pydantic plugin enabled |
 
 Public functions need type hints. Public APIs need Google-style docstrings (document parameters, returns, and raised exceptions). `TODO` comments require a ticket reference (e.g., `TODO(DD-123):`); bare TODOs get rejected in review.
@@ -68,3 +61,7 @@ Plans, notes, analysis files live under `.claude/` at the repo root (gitignored)
 ## Questions and bugs
 
 <https://github.com/skoonin/daily-driver/issues>. For Claude-orchestration questions, include the command, workspace layout, and redacted `-v` output.
+
+## License
+
+Contributions are licensed under the Apache License 2.0; see [LICENSE](LICENSE).

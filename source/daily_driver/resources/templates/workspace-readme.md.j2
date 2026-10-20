@@ -24,9 +24,13 @@ daily-driver tracker stats    # summary counts by status/category
 ## Job search
 
 ```
-daily-driver jobs run         # run configured job board scrapers
-daily-driver jobs status      # show last-run metadata per source
-daily-driver jobs prune       # archive stale rows from jobs.csv
+daily-driver jobs run              # run configured job board scrapers
+daily-driver jobs discover-boards  # find Greenhouse, Ashby, and Lever boards that list your roles
+daily-driver jobs backfill         # fill empty fields in jobs.csv rows
+daily-driver jobs promote          # copy a jobs.csv row into the tracker
+daily-driver jobs status           # show last-run metadata per source
+daily-driver jobs prune            # archive stale rows from jobs.csv
+daily-driver jobs verify           # close saved jobs that are no longer posted
 ```
 
 {% endif %}
@@ -52,9 +56,12 @@ Edit `.dd-config.yaml` in this directory to configure categories, {% if "job_sea
 
 ## Managed files
 
-Files under `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/`
-are package-managed. They are updated automatically on version upgrades.
-`doctor --fix` preserves your edits; `doctor --reset` overwrites them with
-fresh copies from the installed package.
+Files under `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/hooks/` are package-managed. After a version upgrade, `doctor` reports drift, and `doctor --fix` refreshes them:
+
+- It keeps your edits to shipped files.
+- It deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Put your own commands in `.claude/commands/user/`.
+- It replaces the allow rules saved in `.claude/settings.local.json`.
+
+`doctor --reset` wipes those directories and rewrites them from the installed package, so your edits and added files there are lost.
 
 This `README.md` is also package-managed and follows the same lifecycle.

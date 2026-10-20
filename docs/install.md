@@ -7,9 +7,11 @@ macOS arm64 only. Intel Mac likely works but is untested. Linux is on the roadma
 | Requirement | Notes |
 |-------------|-------|
 | Python 3.11+ | 3.12 recommended |
-| `claude` CLI on `$PATH` | Required for `day-start`, `day-end`, `check-in`, `summary`, `voice-update`. See [Anthropic install docs](https://docs.anthropic.com/en/docs/claude-code/install). |
+| `claude` CLI on `$PATH` | Required for `day-start`, `day-end`, `check-in`, `summary`, `voice-update`. See [Anthropic install docs](https://code.claude.com/docs/en/install). |
 | macOS CLI tools | `pbcopy`, `osascript`, `launchctl` — ship with macOS |
-| Playwright browser binaries | Optional; needed only for the Apple careers scraper |
+| `icalBuddy` | Optional; reads macOS Calendar for `gather calendar` and `day-start`. Install with `brew install ical-buddy`, then allow your terminal to read Calendar. |
+| `terminal-notifier` | Optional; makes scheduled check-in, day-start, and day-end notifications clickable. Install with `brew install terminal-notifier`. |
+| Playwright browser binaries | Optional; job search only, and only for the Apple careers scraper |
 
 Do not install into the system Python. Both Homebrew Python and pyenv work. Homebrew replaces Python on `brew upgrade`; if the minor version shifts, your venv breaks. pyenv pins the interpreter independently.
 
@@ -25,9 +27,11 @@ daily-driver --version
 ```bash
 git clone https://github.com/skoonin/daily-driver.git
 cd daily-driver
-make setup         # creates .venv, installs .[dev], installs pre-commit hooks
+make setup-dev     # creates .venv, installs .[dev], and installs pre-commit hooks
 make test
 ```
+
+`make setup` does the same without the pre-commit hooks.
 
 ## Playwright browser install (optional)
 
@@ -43,7 +47,7 @@ If you need to install manually instead, use the Python interpreter daily-driver
 <path-to-python> -m playwright install firefox
 ```
 
-All other sources (Greenhouse, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, LinkedIn/Indeed via JobSpy) keep working without Playwright.
+All other sources (Greenhouse, Ashby, Lever, Workable, Workday, RemoteOK, WWR, HN Who's Hiring, HN YC-funded jobs, LinkedIn/Indeed via JobSpy) keep working without Playwright.
 
 ## Next
 
@@ -57,7 +61,13 @@ pip install --upgrade git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
-On the next command invocation, Daily Driver detects version-stamp drift and regenerates `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/settings.local.json`. Anything outside those three paths is untouched.
+After an upgrade, `daily-driver doctor` reports `Workspace drift` as a WARNING. Run `daily-driver doctor --fix` to regenerate the managed files:
+
+- Kept: your edits to shipped files.
+- Deleted: `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`.
+- Replaced: the `permissions`, `hooks`, and `metadata` blocks in `.claude/settings.local.json`, including allow rules Claude Code saved.
+
+See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
 
 ### Breaking config changes
 
@@ -69,7 +79,7 @@ On the next command invocation, Daily Driver detects version-stamp drift and reg
 daily-driver doctor --reset
 ```
 
-Wipes the managed `.claude/daily-driver/` subdirs, recopies from the installed package, and rewrites the version stamp.
+`doctor --reset` and `init --force` wipe the managed directories (`.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/hooks/`) and recopy them from the package, so your edits and every file you added there are lost. `init --force` also resets `.dd-config.yaml`.
 
 ### Scheduler after upgrade
 
@@ -79,7 +89,7 @@ Wipes the managed `.claude/daily-driver/` subdirs, recopies from the installed p
 
 ```bash
 pip install 'git+https://github.com/skoonin/daily-driver.git@vX.Y.Z'
-daily-driver doctor --reset
+daily-driver doctor --fix
 ```
 
 Version stamps compare by equality, not ordering; downgrade and upgrade are handled identically.

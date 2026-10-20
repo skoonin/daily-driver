@@ -1,6 +1,6 @@
 # Quick start
 
-Minimal checklist to scaffold a workspace, verify health, and make a first entry. For the end-to-end daily flow (day-start, check-in, day-end, jobs, summary), read [usage.md](usage.md) next.
+Minimal checklist to scaffold a workspace, verify health, and make a first entry. For the end-to-end daily flow (day-start, check-in, day-end, summary, and optional job search), read [usage.md](usage.md) next.
 
 ## 1. Initialize
 
@@ -9,9 +9,9 @@ daily-driver init ~/daily-driver-workspace
 cd ~/daily-driver-workspace
 ```
 
-Job search is off by default. To use it, add `--job-search`: `daily-driver init --job-search ~/daily-driver-workspace`. That writes the job settings into `.dd-config.yaml` and the job sections into the Claude prompts.
+Job search is off by default. To use it on a new workspace, add `--job-search`: `daily-driver init --job-search ~/daily-driver-workspace`. That adds a `plugins.job_search` block to `.dd-config.yaml` (only `enabled: true` is on; the rest are commented examples) and the job sections to the Claude prompts. Without `--force`, `--job-search` on an existing workspace changes nothing, and `init` prints what to add; see [Jobs](usage.md#jobs).
 
-`init` is idempotent. Re-running fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are written only if missing — `-f` / `--force` overwrites `.dd-config.yaml` (keeping the old copy as `.dd-config.yaml.bak`) but never clobbers your edits to the static files.
+`init` is idempotent. Re-running fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are written only if missing. `-f` / `--force` replaces `.dd-config.yaml` with a fresh default and rewrites the managed files, so copy any settings you want to keep first; it never overwrites the static files. See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
 
 `init` creates:
 
@@ -21,23 +21,26 @@ Job search is off by default. To use it, add `--job-search`: `daily-driver init 
 ├── .daily-driver/             # version stamp, SHA-256 manifest, state/ for locks + logs
 ├── .claude/
 │   ├── settings.local.json    # rendered from packaged template
+│   ├── hooks/                 # managed — regenerated on drift
 │   ├── commands/daily-driver/ # managed — regenerated on drift
-│   └── agents/daily-driver/   # managed — regenerated on drift
-├── context.md                 # your writing context (copied once; yours thereafter)
+│   ├── commands/user/         # yours — never touched
+│   ├── agents/daily-driver/   # managed — regenerated on drift
+│   └── agents/user/           # yours — never touched
+├── README.md                  # managed — command reference for this workspace
+├── .gitignore                 # copied once; yours thereafter
+├── context.md                 # your background and recurring tasks (copied once; yours thereafter)
 └── voice-profile.md           # your writing-style profile (ditto)
 ```
-
-The `.claude/*/daily-driver/` subdirs are package-managed. Top-level entries under `.claude/commands/` and `.claude/agents/` are yours and never touched. See [Customization](configuration.md#customization).
 
 ## 2. Health check
 
 ```bash
 daily-driver doctor
 daily-driver doctor --fix      # regenerate if drifted; restore deleted managed files
-daily-driver doctor --reset    # force full regenerate
+daily-driver doctor --reset    # overwrite all managed files, including your edits
 ```
 
-`--fix` and `--reset` are mutually exclusive. ERROR rows exit non-zero; WARNING rows exit 0. `--fix` restores managed files you may have deleted under `.claude/*/daily-driver/`.
+`--fix` and `--reset` are mutually exclusive. ERROR rows exit non-zero; WARNING rows exit 0. `--fix` restores managed files you may have deleted from `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`.
 
 ## 3. First tracker entry
 
@@ -55,7 +58,7 @@ daily-driver status
 daily-driver scheduler install
 ```
 
-Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins, plus overnight job searches when job search is on. `daily-driver scheduler uninstall` removes them; `daily-driver scheduler status` lists installed jobs. macOS only.
+Renders launchd plists into `~/Library/LaunchAgents/` for check-in reminders at 11:00 and 15:00; for the other jobs and times see [usage.md](usage.md#scheduler-macos). `daily-driver scheduler uninstall` removes them; `daily-driver scheduler status` lists configured jobs and whether each is installed. macOS only.
 
 ## If something looks off
 
