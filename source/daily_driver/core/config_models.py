@@ -148,7 +148,9 @@ class SchedulerConfig(BaseModel):
 
     HH:MM strings, 24-hour clock; validated at `scheduler install` time by
     `scheduler._parse_hhmm`. Each job's `days` narrows which days it fires
-    ("daily" default, "weekdays", or a list of day names). `day_start` /
+    ("daily", "weekdays", or a list of day names). A line left unset takes its
+    value from resources/templates/scheduler.default.yaml, not from the field
+    default here (`scheduler._merge_scheduler_config`). `day_start` /
     `day_end` cadence lives separately in `ScheduleConfig` (the single source
     of truth for those two jobs).
 

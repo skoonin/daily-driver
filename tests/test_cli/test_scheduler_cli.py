@@ -441,3 +441,28 @@ def test_scheduler_bare_action_prints_usage(
     captured = capsys.readouterr()
     assert rc == 2
     assert "scheduler" in captured.err
+
+
+@pytest.mark.parametrize("command", ["install", "status"])
+def test_no_scheduled_runs_says_where_to_set_a_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+    cfg = ws / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + "scheduler:\n  checkin:\n    times: []\n",
+        encoding="utf-8",
+    )
+
+    rc = app(["--workspace", str(ws), "scheduler", command])
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert rc == 0
+    assert "No scheduler jobs configured." in out
+    assert "Set a time under `schedule:` or `scheduler:`" in out
