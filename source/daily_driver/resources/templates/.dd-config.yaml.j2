@@ -62,9 +62,15 @@ tracker:
 #   days: daily
 
 # More timed runs from `daily-driver scheduler install`. These run at the
-# times shown even while this section is off. To change a part, turn on all
-# of its lines: a part you turn on replaces its times and days completely.
-# Parts you leave off keep these times. Times and days work as in "schedule".
+# times shown even while this section is off. To change one, turn on its line
+# and the headings above it. Lines you leave off keep the times shown.
+# To stop check-in reminders, turn on "times" and set it to [].
+{% if "job_search" in plugins %}
+# To stop a job search run, turn on its "time" and set it to null.
+{% endif %}
+# Times and days work as in "schedule".
+# Run `daily-driver scheduler install` again after changing any time here or
+# in "schedule".
 # scheduler:
 #   # Check-in reminders.
 #   checkin:

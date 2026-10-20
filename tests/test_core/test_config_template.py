@@ -16,7 +16,7 @@ import pytest
 import yaml
 from pydantic import BaseModel
 
-from daily_driver.core.config_models import Config
+from daily_driver.core.config_models import Config, SchedulerConfig
 from daily_driver.core.templating import render_for_plugins
 from daily_driver.plugins import enabled_plugins
 from daily_driver.plugins.job_search.config import _SOURCE_TOGGLE_TYPES
@@ -97,6 +97,17 @@ def test_every_setting_validates_when_turned_on(job_search: bool) -> None:
     assert config.ai.summary.provider == "ollama"
     if job_search:
         assert config.plugins.job_search.persona  # type: ignore[attr-defined]
+
+
+def test_template_scheduler_times_match_the_defaults() -> None:
+    """The times the template shows are the ones that run when it is off."""
+    defaults = yaml.safe_load(
+        importlib.resources.files("daily_driver.resources.templates")
+        .joinpath("scheduler.default.yaml")
+        .read_text(encoding="utf-8")
+    )
+    shown = _every_setting_config(job_search=True).scheduler
+    assert shown == SchedulerConfig.model_validate(defaults)
 
 
 def test_config_without_job_search_has_no_job_text() -> None:

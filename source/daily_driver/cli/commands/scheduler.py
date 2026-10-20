@@ -100,7 +100,8 @@ def _run_install(args: argparse.Namespace) -> int:
     if not installed:
         console.print(
             "[yellow]No scheduler jobs configured.[/yellow]"
-            " Add a `scheduler:` block to .dd-config.yaml to enable."
+            " Set a time under `schedule:` or `scheduler:` in .dd-config.yaml"
+            " to add one."
         )
         return 0
 
@@ -202,7 +203,8 @@ def _run_status(args: argparse.Namespace) -> int:
     if not rows:
         console.print(
             "[dim]No scheduler jobs configured.[/dim]"
-            " Add a `scheduler:` block to .dd-config.yaml to enable."
+            " Set a time under `schedule:` or `scheduler:` in .dd-config.yaml"
+            " to add one."
         )
         return 0
 
