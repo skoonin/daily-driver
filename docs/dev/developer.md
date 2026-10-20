@@ -267,11 +267,7 @@ See [releasing.md](releasing.md) for the release workflow and [extending.md](ext
 Calendar events. It needs three things to return data:
 
 1. **Binary on PATH.** `brew install ical-buddy`. Check with `which icalBuddy`.
-2. **Calendar access for the terminal.** macOS gates Calendar access per
-   parent process. Open *System Settings -> Privacy & Security -> Calendars*
-   and toggle on the terminal you launch `daily-driver` from (Terminal,
-   iTerm2, VS Code, etc.). The first run after granting access may require
-   restarting the terminal.
+2. **Calendar access for the terminal.** macOS gates Calendar access per parent process. Open *System Settings -> Privacy & Security -> Calendars* and toggle on the terminal you launch `daily-driver` from (for example Terminal or iTerm2). The first run after granting access may require restarting the terminal. Known issue: this step may not be enough in the Visual Studio Code (VS Code) terminal on recent macOS, and a tested fix is not available yet; see [troubleshooting.md](../troubleshooting.md#calendar-events-are-missing-in-vs-code).
 3. **icalBuddy config file** (optional but recommended). Without one, icalBuddy reads all calendars, including spammy subscribed ones. Create `~/.icalBuddyConfig.plist` to scope the calendars. Minimal example:
 
    ```bash

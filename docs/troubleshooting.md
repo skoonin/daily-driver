@@ -104,6 +104,15 @@ When launchd fires `day-start` or `day-end`, it cannot open a terminal itself �
 - The first click triggers macOS's one-time Automation prompt — grant it under **System Settings > Privacy & Security > Automation** (allow control of iTerm2 / Terminal).
 - Check `launchd-day-start.err` / `launchd-day-end.err` if no notification appears at all.
 
+## Calendar events are missing in VS Code
+
+Daily Driver reads your calendar with icalBuddy. On recent versions of macOS, icalBuddy can fail when you run it in the built-in terminal of Visual Studio Code (VS Code). The cause is a macOS permission problem that involves VS Code. A tested fix is not available yet.
+
+- Daily Driver skips your calendar events and prints a `WARNING` line that contains `calendar: icalBuddy exited` or `calendar: icalbuddy timed out`.
+- Everything else works. Your list, planning, check-ins, and summaries do not need the calendar.
+- To confirm the cause, run `icalBuddy calendars` in the Terminal app and in the VS Code terminal. If it lists your calendars in one and fails in the other, the terminal app is the cause.
+- The usual setup step is to allow your terminal app under **System Settings > Privacy & Security > Calendars**. For VS Code, this step may not be enough.
+
 ## Tracker locks / "file in use"
 
 A crash does not leave the tracker locked: the operating system releases the lock when the process exits. If a command waits on the tracker, another daily-driver process holds `.daily-driver/state/tracker.lock`. Find it and stop it:
@@ -128,12 +137,7 @@ rm .daily-driver/state/focus.lock
 
 ## `daily-driver` not on PATH after install
 
-If you installed with `pip install --user`, confirm the user scripts directory is on PATH:
-
-```bash
-python3 -m site --user-base
-# On macOS, usually ~/Library/Python/3.11 — append /bin to get the scripts dir
-```
+pipx puts the `daily-driver` command in `~/.local/bin`. Run `pipx ensurepath`, then open a new terminal window.
 
 ## Pydantic import error
 
@@ -144,8 +148,7 @@ ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
 A version mismatch between `pydantic` and `pydantic-core`. Fix it with:
 
 ```bash
-pip install --force-reinstall pydantic pydantic-core
-pip install -e .
+pipx reinstall --python python3.12 daily-driver
 ```
 
 ## Ollama provider issues

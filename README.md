@@ -1,145 +1,128 @@
 # Daily Driver
 
-Personal productivity assistant. A durable data layer for daily planning and tracking, with optional job search, and a Claude-powered conversational layer on top.
+Plan your morning, check in at midday, and review in the evening. You chat with Claude, and Daily Driver remembers the rest and can summarize what you've done over time. All data is saved locally.
 
-## What it does
+## How you use it
 
-Daily Driver keeps the unglamorous parts of a focused workweek out of your head and in structured files:
+You use Daily Driver by chatting with Claude. Claude manages your data for you: it adds and updates items in your list and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
 
-- **Workspace** — one directory holds plans, notes, tracker, config. `daily-driver init .` scaffolds it.
-- **Tracker** — YAML-backed list of anything you follow up on (tasks, errands, project milestones, contacts, job applications). Categories are free-form: list one under `tracker.categories` to require fields on it, and attach your own fields with `--extra key=value`.
-- **Day cycle** — `day-start`, `check-in`, and `day-end` open a Claude session that plans your day from the tracker, calendar, and recent commits, checks progress at mid-day, and winds the day down. `context.md` holds your background and recurring tasks.
-- **Focus mode** — file-locked toggle that suppresses scheduled check-ins.
-- **Status dashboard** — totals, stalled items, last week of activity as a Rich table (or JSON).
-- **Summary and voice** — `summary` writes a period summary and copies it to the clipboard; `voice-update` builds `voice-profile.md` from your own writing so drafts sound like you.
-- **Scheduler** — `scheduler install` sets up macOS launchd reminders for check-ins, and for day-start and day-end once you set their times. With job search on, it also schedules the job scrape and board discovery.
-- **Job search (optional)** — multi-source scrape (RemoteOK, WeWorkRemotely, HN Who's Hiring, HN YC-funded jobs, Greenhouse, Ashby, Lever, Workable, Workday, LinkedIn/Indeed via JobSpy, Apple), with board auto-discovery (Greenhouse, Ashby, Lever), dedup, filter, and AI-driven enrichment via `claude` or a local Ollama model.
-- **Gather modules** — typed readers for git history and macOS Calendar (icalBuddy).
-- **Integrations** — thin subprocess bridges to `claude`, `pbcopy`, `launchctl`.
+| When | Start the chat | What happens |
+| --- | --- | --- |
+| Morning | `daily-driver day-start` | Claude reviews your list, and your calendar if you connect it, and helps you plan the day. |
+| Midday | `daily-driver check-in` | Tell Claude what you finished or what is stuck. It updates your list and adjusts the plan. |
+| Evening | `daily-driver day-end` | Claude compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
+
+Things you can say in a chat:
+
+- "Help me plan today. I have a dentist appointment at 3 pm."
+- "Add my open Jira tickets to my list, then help me plan today."
+- "I finished the passport renewal. The bank form is blocked until Monday."
+- "What should I focus on first?"
+- "Summarize what I got done this month."
+- "Draft a status update for my manager from my Jira tickets and what I finished this week."
+
+If you close a chat by accident, run `daily-driver resume` to reopen the most recent one.
+
+## Connect your other tools
+
+Each chat runs in Claude Code, so it can use the integrations you already set up there. These are also called Model Context Protocol (MCP) servers. With the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Set them up once in Claude Code, and every chat can use them.
+
+## What you need
+
+- **A Mac.** Daily Driver is built for Macs with Apple silicon. Intel Macs probably work but are untested. Windows and Linux are not supported.
+- **Homebrew**, an app installer for macOS. See [brew.sh](https://brew.sh).
+- **pipx**, a tool that installs Python programs. It installs Daily Driver in its own folder, so Daily Driver does not change other Python programs.
+- **Claude Code**, installed and signed in. Every chat runs through it.
+- **Optional: icalBuddy**, a small tool that lets Daily Driver read your calendar. Reading the calendar can fail in the built-in terminal of Visual Studio Code (VS Code) on recent versions of macOS. See [Troubleshooting](docs/troubleshooting.md#calendar-events-are-missing-in-vs-code).
 
 ## Install
 
-Requires Python 3.11+ and macOS. See [docs/install.md](docs/install.md) for the full prerequisites and Playwright notes.
+```bash
+brew install pipx python@3.12
+pipx ensurepath
+```
+
+Open a new terminal window, then install Daily Driver:
 
 ```bash
-pip install git+https://github.com/skoonin/daily-driver.git
+pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
-## Quick start
+The last command prints the version number if the install worked. The [install guide](docs/install.md) covers upgrades and optional tools.
 
-```bash
-daily-driver init ~/daily-driver-workspace
-cd ~/daily-driver-workspace
-daily-driver doctor
-daily-driver tracker add --category task --title "Renew passport"
-daily-driver status
-```
+## Get started
 
-Full first-day walkthrough in [docs/usage.md](docs/usage.md). Bare-minimum scaffold steps in [docs/quick-start.md](docs/quick-start.md).
+1. Create your workspace. This is the folder where Daily Driver keeps your data:
 
-## Job search quick start
+   ```bash
+   daily-driver init ~/daily-driver-workspace
+   cd ~/daily-driver-workspace
+   ```
 
-The job-search plugin scrapes a configurable set of boards into `jobs.csv`, dedupes against what's already there, and enriches each row (fit, notes, comp) via `claude` or a local Ollama model. It is off by default.
+2. Check the setup. Each line shows OK or what to fix:
 
-1. Switch job search on. For a new workspace, run `daily-driver init --job-search ~/daily-driver-workspace`. For an existing workspace, add a `plugins.job_search` block to `.dd-config.yaml` and run `daily-driver doctor --fix`. If you use the scheduler, run `daily-driver scheduler install` afterwards to add the `jobs` and `jobs-discover` agents.
+   ```bash
+   daily-driver doctor
+   ```
 
-2. Turn the scraper on with `scraper.enabled: true` and list your sources. If `init --job-search` already wrote a `plugins.job_search` block, merge these settings into it; a second `plugins:` key replaces the first. Listing a source key enables it (disable with `enabled: false`):
+3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day.
 
-```yaml
-plugins:
-  job_search:
-    persona: "Senior SRE, IC-track only"
-    seniority_keywords: [senior, staff, principal]
-    locations:
-      remote: true
-      # ISO code -> city allow-list; [] = whole country, cities = only those
-      countries: {US: [], CA: [Vancouver, Victoria]}
-    scraper:
-      enabled: true
-    sources:
-      greenhouse: {enabled: true, greenhouse_boards: [company-a, company-b]}
-      ashby:      {enabled: true}   # boards come from discover-boards below
-      lever:      {enabled: true}   # ditto
-      remoteok:   {remoteok_tags: [devops, kubernetes, aws]}
-      hn_who_is_hiring: {}
-```
+4. Start your first chat. Tell Claude what you work on and what is due, and ask it to add your tasks to your list:
 
-3. Discover which Greenhouse / Ashby / Lever boards list your roles. This sweeps the ATS slug universe and caches the matches for every later `jobs run` — the first sweep probes everything and takes tens of minutes; later sweeps are incremental: new slugs, plus boards overdue for re-probe, up to `discovery.max_reprobe_per_sweep` per platform per sweep:
+   ```bash
+   daily-driver day-start
+   ```
 
-```bash
-daily-driver jobs discover-boards
-```
+Run the commands from inside your workspace folder, or add `--workspace ~/daily-driver-workspace` to run them from anywhere. The [daily guide](docs/usage.md) walks through a full day.
 
-4. Run the search, then top up any cells a run left empty:
+## Optional extras
 
-```bash
-daily-driver jobs run           # scrape + enrich -> jobs.csv
-daily-driver jobs backfill      # re-enrich empty cells from an earlier run
-daily-driver jobs status        # last-run metadata + row counts
-```
+- **Reminders.** Run `daily-driver scheduler install` to get a check-in reminder at 11:00 and 15:00. Click the reminder to open the chat. Clicking needs one optional tool; see the [install guide](docs/install.md).
+- **Job search.** Daily Driver can search the job sites you choose, remove duplicates, and score how well each job fits you. Turn it on with `--job-search` when you create a workspace. The [guide](docs/usage.md#jobs) also shows how to add it to an existing workspace.
+- **Local AI.** Run some AI tasks on your own computer with Ollama instead of Claude. See [Local AI setup](docs/ollama-setup.md).
 
-Full field reference in [configuration.md](docs/configuration.md#pluginsjob_search); the complete command set, source list, and AI-provider choice in [usage.md](docs/usage.md#jobs).
+## Commands you can run yourself
 
-## Workspace layout
+Claude runs these for you in a chat. You can also run them yourself:
 
-```
-<workspace>/
-  .dd-config.yaml          # workspace marker + structured config
-  context.md               # your background and recurring tasks (seeded once, edit freely)
-  voice-profile.md         # writing voice (ditto)
-  README.md                # command reference for this workspace (package-managed)
-  .gitignore               # seeded once, yours after that
-  tracker.yaml             # tracker entries (CLI-managed)
-  jobs.csv                 # scraper output (job search only)
-  .daily-driver/
-    version                # version stamp
-    manifest.json          # SHA-256 manifest of managed files
-    state/                 # ephemeral: locks, logs
-  .claude/
-    settings.local.json    # Claude settings (shipped blocks refreshed, your top-level keys kept)
-    hooks/                 # shipped hooks (regenerated on drift)
-    commands/daily-driver/ # shipped slash commands (regenerated on drift)
-    agents/daily-driver/   # shipped agents (ditto)
-    commands/user/         # your custom commands (untouched)
-    agents/user/           # your custom agents (untouched)
-    commands/*.md          # your custom commands (untouched)
-    agents/*.md            # your custom agents (untouched)
-  <YYYY>/<MM>/             # daily plans + notes
-```
-
-`tracker.yaml`, `jobs.csv`, and the `<YYYY>/<MM>/` directories live in `output_dir` (default `.`, the workspace directory). `context.md` and `voice-profile.md` always live in the workspace directory.
-
-Workspace discovery walks up from CWD looking for `.dd-config.yaml`. Override with `--workspace PATH`.
-
-## Documentation
-
-Full index: [docs/README.md](docs/README.md).
-
-**Users** — start with [quick-start.md](docs/quick-start.md) to scaffold, then [usage.md](docs/usage.md) for the daily flow. Read [concepts.md](docs/concepts.md) once for the mental model.
-
-**Developers** — start with [docs/dev/developer.md](docs/dev/developer.md).
-
-| Doc | What it covers |
+| Command | What it does |
 | --- | --- |
-| [install.md](docs/install.md) | Prerequisites, upgrade, and Playwright setup |
-| [concepts.md](docs/concepts.md) | Mental model: workspace layout, surfaces, design decisions |
-| [quick-start.md](docs/quick-start.md) | Minimal scaffold checklist |
-| [usage.md](docs/usage.md) | End-to-end daily flow with worked examples |
-| [commands.md](docs/commands.md) | Every subcommand and non-obvious flags |
-| [cli-tree.md](docs/cli-tree.md) | At-a-glance command tree |
-| [configuration.md](docs/configuration.md) | `.dd-config.yaml` schema and customization |
-| [ollama-setup.md](docs/ollama-setup.md) | Local LLM provider for enrichment/summary |
-| [troubleshooting.md](docs/troubleshooting.md) | Failure modes and recovery |
-| [dev/developer.md](docs/dev/developer.md) | Architecture, runtime flow, init contract |
-| [dev/extending.md](docs/dev/extending.md) | Adding subcommands, plugins, and scraper sources |
-| [dev/releasing.md](docs/dev/releasing.md) | Release workflow, semver, CHANGELOG |
+| `daily-driver status` | Shows totals, items with no update in 14 days, and your activity over the last 7 days. |
+| `daily-driver tracker list` | Shows your list. |
+| `daily-driver tracker add --category task --title "Call the dentist"` | Adds an item to your list. |
+| `daily-driver summary --range 7d` | Summarizes the last 7 days and copies the summary to your clipboard. |
+| `daily-driver focus on` | Pauses check-in reminders for 25 minutes. Add `--for 2h` for longer. |
+| `daily-driver voice-update --from <file>` | Learns your writing style from samples, so drafts sound like you. |
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup and commit conventions.
+## Your workspace
 
-## Platform
+Your workspace is a normal folder on your Mac. Daily Driver has no server and does not send usage data anywhere. These are the files you will use most:
 
-macOS only. `pbcopy`, `icalBuddy`, AppleScript, and `launchd` integrations assume macOS. Linux is on the roadmap.
+| File | What it is |
+| --- | --- |
+| `context.md` | About you: your work, goals, and routines. Claude reads it. |
+| `voice-profile.md` | Your writing style. Daily Driver builds it from your writing samples. |
+| `.dd-config.yaml` | Your settings. |
+| `tracker.yaml` | Your list. Claude keeps it up to date, so you rarely need to open it. |
+| Folders named by year and month | Your daily plans and notes. Claude writes them. |
+
+Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone unless a guide tells you otherwise. [How it works](docs/concepts.md) has details.
+
+## Learn more
+
+| Guide | What you will find |
+| --- | --- |
+| [Install](docs/install.md) | Requirements, upgrades, and optional tools |
+| [Quick start](docs/quick-start.md) | A short checklist to set up your workspace |
+| [Daily guide](docs/usage.md) | A full walkthrough of a day with Daily Driver |
+| [How it works](docs/concepts.md) | The ideas behind the workspace, tracker, and AI chats |
+| [Commands](docs/commands.md) | Every command and option, plus a [command tree](docs/cli-tree.md) |
+| [Settings](docs/configuration.md) | Every setting in your settings file |
+| [Local AI setup](docs/ollama-setup.md) | Run some AI tasks on your own computer |
+| [Troubleshooting](docs/troubleshooting.md) | Fixes for common problems |
+
+**Developers:** see the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

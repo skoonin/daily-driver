@@ -1,86 +1,37 @@
-# Ollama setup
+# Local AI setup
 
-Route headless AI tasks (job_search enrichment, summary, voice-update) to a local [Ollama](https://ollama.com) server instead of the `claude` CLI. Local models are free, have no rate limits, and run entirely on your machine — a good fit for high-volume tasks like `jobs backfill`.
+Ollama is a free app that runs AI models on your own computer. Daily Driver can use it instead of Claude for three features: job review in job search, `summary`, and `voice-update`. Local models have no rate limits, which suits high-volume work such as `jobs backfill`. Their answers can be weaker than Claude's. You do not need this page to use Daily Driver.
 
-Interactive launchers (`day-start`, `check-in`, `day-end`) always use `claude`. They depend on session resume, agents, and workspace context Ollama does not provide.
+Your daily chats (`day-start`, `check-in`, and `day-end`) always use Claude.
 
-The `plugins.job_search` block below also switches job search on. To route only `summary` or `voice-update` to Ollama, leave that block out and set `ai.summary` or `ai.voice_update` instead.
-
-## Install and run
-
-The `ollama` binary comes from either Homebrew (`brew install ollama`) or the <https://ollama.com/download> installer — both give you `ollama serve`. Pick one way to run the server:
-
-1. **Direct (recommended for tuning and experiments).** `OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m ollama serve` — environment variables inline, immediate effect, no service manager. It dies when the terminal closes, so a scheduled `jobs run` won't find it; use one of the always-on options below for unattended runs.
-2. **Homebrew service (always-on, launchd-managed).** `brew services start ollama`. Environment variables are not picked up from your shell — set them with `launchctl setenv` (or in the service plist) and restart the service.
-3. **macOS app (always-on, auto-start, auto-update).** Installs a menu-bar app that starts at login. Set environment variables with `launchctl setenv` and restart the app for them to take effect.
-
-All three listen on `http://localhost:11434`.
+The job review settings turn job search on. To use Ollama only for `summary` and `voice-update`, use the second settings block and leave out `plugins.job_search`.
 
 ## Steps
 
-| # | Step | Command | Notes |
-|---|------|---------|-------|
-| 1 | Install + run the server | see [Install and run](#install-and-run) | Listens on `http://localhost:11434` |
-| 2 | Pull a model | `ollama pull qwen2.5:14b` | ~9 GB. See model table below |
-| 3 | Verify | `ollama list` | The model should appear in the output |
-| 4 | Edit `.dd-config.yaml` | See [config block](#config-block) | Sets `plugins.job_search.enrichment.provider: ollama` |
-| 5 | Confirm | `daily-driver doctor` | The `Enrichment provider` row should report `OK` |
-| 6 | Smoke test | `daily-driver jobs backfill` | Populates fit / notes via ollama |
+| # | Step | Command or action |
+| --- | --- | --- |
+| 1 | Install the Ollama app. | Download it from <https://ollama.com/download> and open it. If it asks to install the `ollama` command, allow it. |
+| 2 | Leave the app running. | The app runs the server and starts again at login. |
+| 3 | Download a model. It is about 9 gigabytes (GB). | `ollama pull qwen2.5:14b` |
+| 4 | Check that the model is there. | `ollama list` |
+| 5 | Add the settings from [Settings to add](#settings-to-add) to `.dd-config.yaml`. | |
+| 6 | Check that Daily Driver can reach Ollama. | `daily-driver doctor`. The row for your feature must show `OK`. |
+| 7 | Try it. | `daily-driver jobs backfill` for job review, or `daily-driver summary -r today` for `summary`. |
 
-## Test the model
+## Settings to add
 
-Verify the pulled model actually generates before wiring it into daily-driver. Three quick checks, fastest to most representative:
+Merge these settings into your existing `ai:` and `plugins:` sections. If a file has two `ai:` or two `plugins:` sections, the second one replaces the first without an error.
 
-**1. CLI smoke test** — confirms the model loads and produces output:
-
-```
-ollama run qwen2.5:14b "In one sentence, what does Company A build?"
-```
-
-Expect a single-sentence answer. First invocation is slow (model loads into RAM); subsequent runs are fast.
-
-**2. HTTP API test** — confirms the server answers a plain-text generate call over HTTP:
-
-```
-curl -s http://localhost:11434/api/generate \
-  -d '{
-    "model": "qwen2.5:14b",
-    "prompt": "Answer in one line, no preamble: What does Company A build? (max 12 words)",
-    "stream": false
-  }' | jq -r .response
-```
-
-You should see a short line back. An empty `response` or an `error` field means the model loaded but rejected the prompt — try a different model.
-
-**3. JSON-mode test** — the call shape for structured enrichment (`enrich_fit_and_notes`). The `"format": "json"` flag forces valid JSON:
-
-```
-curl -s http://localhost:11434/api/generate \
-  -d '{
-    "model": "qwen2.5:14b",
-    "prompt": "Return only valid JSON: {\"fit\": <int 1-10>, \"notes\": \"<one sentence max 15 words>\"}\nJob: Staff SRE at Company A, Remote Canada, $180k-$220k USD.",
-    "stream": false,
-    "format": "json"
-  }' | jq -r .response | jq .
-```
-
-Expect a parseable object: `{"fit": 9, "notes": "..."}`. If `jq` can't parse the inner `.response`, the model is drifting on JSON output — pick a stronger one from the [model table](#model-picks-64-gb-m-series) (qwen2.5 and phi4 are the most reliable).
-
-## Config block
-
-Merge these keys into your existing `ai:` and `plugins:` blocks; a second top-level `plugins:` or `ai:` key replaces the first, with no error.
+For job review. This turns job search on:
 
 ```yaml
-# .dd-config.yaml
 ai:
-  # summary stays on claude by default; uncomment to route it through ollama too:
-  # summary:
-  #   provider: ollama
-  #   model: qwen2.5:14b
   ollama:
     endpoint: http://localhost:11434
     timeout: 60
-    # max_parallel: 4   # default; raise after raising server-side OLLAMA_NUM_PARALLEL
+    # How many job reviews run at the same time. The default is 4.
+    # Raise it only after you raise OLLAMA_NUM_PARALLEL on the server.
+    # max_parallel: 4
 plugins:
   job_search:
     enrichment:
@@ -88,78 +39,100 @@ plugins:
       model: qwen2.5:14b
 ```
 
-Enrichment routing (`provider` / `model`) lives under `plugins.job_search.enrichment`; the shared `ai.ollama:` connection block (endpoint, timeout, max_parallel) stays in the core `ai:` block. Omitting the `ai:` block keeps summary on claude. If you have a pre-split config using `ai.enrichment`, move that routing to the plugin — `ai.enrichment` is now rejected (see [configuration.md](configuration.md#ai) for the before/after).
+For `summary` and `voice-update`:
 
-## Model picks (64 GB M-series)
-
-| Model | Size | Best for |
-|-------|------|----------|
-| `qwen2.5:14b` | ~9 GB | Default — balanced quality + throughput |
-| `phi4` | ~9 GB | Strong reasoning at the same size |
-| `llama3.2:3b` | ~2 GB | Faster iteration; lower quality |
-| `qwen2.5:32b` | ~20 GB | Higher quality if RAM permits |
-
-Expect ~10-15 tokens/sec on a 14B model. A 50-job `jobs backfill` finishes in a few minutes.
-
-> **RAM caveat for `max_parallel > 1`.** Each parallel call holds its own KV cache, which scales with model size and context length. Default `max_parallel: 4` with a 14 GB model can drive ~50 GB peak RAM under load. On a 32 GB Mac drop to `max_parallel: 2`, set `OLLAMA_KV_CACHE_TYPE=q8_0` (see [Tuning](#tuning)), or pick `llama3.2:3b`. `daily-driver doctor` shows the configured value; tune in `.dd-config.yaml`.
-
-## Tuning
-
-These are Ollama server-side environment variables (set them per [Install and run](#install-and-run)), not daily-driver config. The effective context-window default (`OLLAMA_CONTEXT_LENGTH`) depends on the machine — commonly 4k, scaling toward 32k/256k with available VRAM — and prompts past it are silently truncated. daily-driver guards against that by sending a per-request `num_ctx` sized to each prompt (estimated tokens plus output headroom, floored at 4096 and capped at 16384), so enrichment prompts are not cut off even when the server default is small.
-
-- `OLLAMA_NUM_PARALLEL` — parallel requests the model serves at once (default 1). Required RAM scales by parallel × context, so this is the main memory lever. Example: `OLLAMA_NUM_PARALLEL=4`.
-- `OLLAMA_CONTEXT_LENGTH` — server default context window (machine-dependent, often 4k). daily-driver overrides it per request via `num_ctx`, so you rarely need to raise this for enrichment. Example: `OLLAMA_CONTEXT_LENGTH=8192`.
-- `OLLAMA_KEEP_ALIVE` — how long a model stays resident after a request (default `5m`). A per-request `keep_alive` overrides it. Raise it so the model survives between enrichment bursts and scheduled runs without reload stalls. Example: `OLLAMA_KEEP_ALIVE=30m`.
-- `OLLAMA_MAX_QUEUE` — requests queued before the server returns 503 (default 512). Relevant only at very wide fan-out. Example: `OLLAMA_MAX_QUEUE=512`.
-- `OLLAMA_FLASH_ATTENTION` — set to `1` to enable Flash Attention, which lowers memory growth as context grows. Example: `OLLAMA_FLASH_ATTENTION=1`.
-- `OLLAMA_KV_CACHE_TYPE` — KV-cache quantization (default `f16`). `q8_0` roughly halves KV-cache memory with minimal quality loss (requires Flash Attention). Example: `OLLAMA_KV_CACHE_TYPE=q8_0`.
-
-Other server knobs (`OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_HOST`, `OLLAMA_MODELS`, `OLLAMA_DEBUG`, ...) exist but are not relevant to single-user enrichment; see the [Ollama FAQ](https://github.com/ollama/ollama/blob/main/docs/faq.mdx).
-
-### Recommended settings
-
-For this tool's use case — one user, a single enrichment model, bursty parallel calls during `jobs run` — start the server directly with:
-
-```
-OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_MAX_LOADED_MODELS=1 ollama serve
+```yaml
+ai:
+  summary:
+    provider: ollama
+    model: qwen2.5:14b
+  voice_update:
+    provider: ollama
+    model: qwen2.5:14b
 ```
 
-- `OLLAMA_NUM_PARALLEL=4` — match `ai.ollama.max_parallel`. If you leave it at the default 1, set `ai.ollama.max_parallel: 1` instead so enrichment runs serial rather than queueing against the timeout.
-- `OLLAMA_KEEP_ALIVE=30m` — keep the model warm across enrichment bursts and check-in-scheduled runs; avoids a cold reload each time.
-- `OLLAMA_FLASH_ATTENTION=1` — lower memory at larger contexts.
-- `OLLAMA_KV_CACHE_TYPE=q8_0` — roughly halves KV-cache memory with minimal quality cost; the lever that makes `NUM_PARALLEL > 1` fit on one machine.
-- `OLLAMA_MAX_LOADED_MODELS=1` — single-model use; avoid evicting the enrichment model.
+Job review settings go under `plugins.job_search.enrichment`. The shared Ollama settings, `endpoint`, `timeout`, and `max_parallel`, go under `ai.ollama`. Leave out `ai` to keep `summary` on Claude. For every `ai` setting, see [Settings](configuration.md#ai).
 
-If the server is down when a run starts, `jobs run` skips the first fit / notes pass with one warning. It still appends the scraped rows to `jobs.csv`. The backlog pass still tries older unscored rows and counts each failure. This run's new rows are tried again only when the Apple source runs and adds rows. If the server stops during the run, the calls that fail are counted the same way. `jobs backfill` fills the `found` and `pending` rows that were left blank.
+## Choose a model
 
-## Doctor output reference
+| Model | Download size | Best for |
+| --- | --- | --- |
+| `qwen2.5:14b` | about 9 GB | The default. A good balance of quality and speed. |
+| `phi4` | about 9 GB | Strong reasoning at the same size. |
+| `llama3.2:3b` | about 2 GB | Faster. Lower quality. |
+| `qwen2.5:32b` | about 20 GB | Higher quality. Needs more memory. |
+
+On an Apple silicon Mac with 64 GB of memory, a 50-job `jobs backfill` finishes in a few minutes.
+
+Each parallel request uses extra memory. With `max_parallel: 4` and the `qwen2.5:14b` model, peak use can reach about 50 GB. On a Mac with 32 GB of memory, set `ai.ollama.max_parallel: 2`, or choose `llama3.2:3b`. You can also use the memory-saving settings in [Tuning](#tuning). `daily-driver doctor` shows the value you set.
+
+## Check the model
+
+Run the model once to see that it answers:
+
+```bash
+ollama run qwen2.5:14b "Say hello in one short sentence."
+```
+
+Expect one short sentence. The first run is slow because the model loads into memory. Later runs are fast.
+
+## What `doctor` shows
 
 | State | Status | Hint |
-|-------|--------|------|
-| Reachable + model present | `OK` | — |
+| --- | --- | --- |
+| Reachable, and the model is there | `OK` | none |
 | Server not running | `WARNING` | `Start the server: ollama serve` |
-| Model not pulled | `WARNING` | `Pull the model: ollama pull <model>` |
+| Model not downloaded | `WARNING` | `Pull the model: ollama pull <model>` |
 
-When enrichment routes to ollama, the `Enrichment provider` row reports reachability and model presence. With `ai.ollama.max_parallel > 1`, an `Ollama NUM_PARALLEL` row reminds you to set the matching server-side `OLLAMA_NUM_PARALLEL` (the API can't report it). The core `AI providers` row covers the `summary` and `voice-update` tasks on the same basis. None of these rows appear on the default claude path.
+Which row shows depends on the feature. `Enrichment provider` is for job review. `AI providers` is for `summary` and `voice-update`. When job review uses Ollama and `ai.ollama.max_parallel` is above 1, an `Ollama NUM_PARALLEL` row reminds you to set the same number on the server. Daily Driver cannot read that number from Ollama. No Ollama row appears while every feature uses Claude.
 
 ## Troubleshooting
 
-- **Start with `-vv`.** Per-job enrichment traces (prompt sent, raw response, parsed fit/notes, whether each field was actually written) are at DEBUG level. Re-run with `-vv` when a backfill "succeeds" but cells stay empty:
+- **`Ollama not reachable` or `connection refused`.** The Ollama server is not running. Open the Ollama app, or run `ollama serve`.
+- **`enrichment skipped this run`.** `jobs run` checks Ollama once, at the start of the job review. If the server is not running or the model is not downloaded, `jobs run` skips the review of new jobs. It prints one warning that names the address or the model. The new jobs are still saved to `jobs.csv`. Start the server, or run `ollama pull <model>`. Then run `jobs backfill` to fill the empty cells.
+- **Cells stay empty after `jobs backfill`.** Run it again with `-vv`. See [Start with -v or -vv](troubleshooting.md#start-with--v-or--vv).
+- **The first request is slow.** Ollama loads the model into memory when it first needs it. Later requests are fast. Raise `OLLAMA_KEEP_ALIVE` to keep the model in memory longer. See [Tuning](#tuning).
+- **Answers are weaker than Claude's.** Try a larger model. Or keep `summary` on Claude and use Ollama only for job review.
+- **Ctrl-C during a long `jobs backfill`.** Press it once to stop. The run prints `Stopping` and waits for the model calls in progress, up to `ai.ollama.timeout` seconds each. It then saves your progress and exits. A second Ctrl-C quits at once and loses the work in progress.
+- **Many `jobs.csv.bak.*` files.** See [Settings](configuration.md#daily_driver) for where they are and when `doctor` warns.
 
-  ```bash
-  daily-driver jobs backfill -vv 2>&1 | tee /tmp/backfill.log
-  ```
+## Advanced
 
-  Look for `[enrich-fit-notes] <company>: pre fit=... -> got fit=... (wrote_fit=False ...)` lines — these reveal cases where the model returned a value but the column already had one, or returned an empty string. `-v` alone gives startup and end-of-pass totals (`enriching up to N jobs`, `done: X enriched, Y failed`) without per-row spam.
-- **`connection refused on 11434`** — `ollama serve` not running.
-- **`LLM enrichment skipped this run`** — `jobs run` checks ollama once at the start of enrichment. If the server is unreachable or the model is not pulled, it skips the first fit / notes pass instead of waiting for a timeout on every job. It logs one warning that names the endpoint or model. Later passes can still call ollama and count each failed call (see [Tuning](#tuning)). Detail pages still run. Start the server (or `ollama pull <model>`), then run `jobs backfill` to fill the empty rows.
-- **First request is slow** — Ollama loads the model into RAM on demand; subsequent requests are fast. Tune `OLLAMA_KEEP_ALIVE` to keep it warm between sessions.
-- **Output quality below claude path** — try a larger model, or keep `summary` on claude and route only enrichment to ollama.
-- **Tune resource use (optional)** — see [Tuning](#tuning) for the server-side environment variables. The client-side counterpart is `ai.ollama.max_parallel` (default 4); raise it only after raising server-side `OLLAMA_NUM_PARALLEL`, or set it to `1` for serial enrichment.
-- **Ctrl-C during a long backfill** — first press shows `Stopping — waiting for N companies still being enriched...`. The command finishes in-flight model calls (up to `ai.ollama.timeout` each), saves partial progress, and exits. A second Ctrl-C force-quits and loses what's in progress.
-- **Old `jobs.csv.bak.*` files piling up** — each `jobs backfill` drops a timestamped backup before mutating `jobs.csv`, and `daily-driver doctor` warns once you have more than 5. Keep the 3 most recent and delete the rest: `(cd "<output_dir>/backups" && ls -1r jobs.csv.bak.* | tail -n +4 | xargs rm)`. Give the full path; `~` is not expanded inside the quotes.
+### Other ways to run the server
+
+- Terminal. Run `ollama serve` and leave the terminal open. The server stops when you close the terminal, so a scheduled `jobs run` cannot reach it. Use this way to try settings.
+- Homebrew service. Run `brew install ollama`, then `brew services start ollama`. The server stays on. It does not read settings from your terminal. Set them with `launchctl setenv`, then restart the service.
+
+Every way listens on `http://localhost:11434`.
+
+### Tuning
+
+These settings belong to the Ollama server, not to Daily Driver.
+
+| Setting | What it does | Suggested value |
+| --- | --- | --- |
+| `OLLAMA_NUM_PARALLEL` | Number of requests the model answers at the same time. More requests use more memory. The default is 1. | `4`. Match `ai.ollama.max_parallel`. |
+| `OLLAMA_KEEP_ALIVE` | How long the model stays in memory after a request. The default is 5 minutes. | `30m` |
+| `OLLAMA_FLASH_ATTENTION` and `OLLAMA_KV_CACHE_TYPE` | Together they cut the memory that each request holds while it runs by about half, with little loss in quality. | `1` and `q8_0` |
+
+For the Ollama app, run one `launchctl setenv` command for each setting, then restart the app:
+
+```bash
+launchctl setenv OLLAMA_NUM_PARALLEL 4
+launchctl setenv OLLAMA_KEEP_ALIVE 30m
+launchctl setenv OLLAMA_FLASH_ATTENTION 1
+launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0
+```
+
+If you run the server in a terminal, put the settings in front of `ollama serve`:
+
+```bash
+OLLAMA_NUM_PARALLEL=4 OLLAMA_KEEP_ALIVE=30m OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 ollama serve
+```
+
+If you leave `OLLAMA_NUM_PARALLEL` at its default of 1, set `ai.ollama.max_parallel: 1`. Then job reviews run one at a time and do not wait for each other. For other settings, see the Ollama frequently asked questions (FAQ) at <https://github.com/ollama/ollama/blob/main/docs/faq.mdx>.
 
 ## See also
 
-- [usage.md](usage.md#choosing-an-ai-provider) — when to pick claude vs ollama.
-- [configuration.md](configuration.md#ai) — full `ai:` block reference.
+- [usage.md](usage.md#choosing-an-ai-provider): when to pick Claude or Ollama.
+- [Settings](configuration.md#ai): every `ai` setting.

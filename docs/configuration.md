@@ -1,99 +1,255 @@
-# Configuration
+# Settings
 
-All workspace configuration lives in `.dd-config.yaml` at the workspace root. Validated by Pydantic on every command invocation; `extra="forbid"` on every model means unknown keys fail loudly.
+Your settings live in `.dd-config.yaml` in your workspace folder. Most people change only a few of them, such as reminder times and task categories. Claude handles your list, plans, and notes in your chats, so those need no settings.
 
-Authoritative schema: `source/daily_driver/core/config_models.py`; the job search settings are in `source/daily_driver/plugins/job_search/config.py`.
+Most commands check this file each time they run. If a setting name is not known, the command stops and prints that name.
 
-> For the end-user flow that exercises these settings, see [usage.md](usage.md). For Ollama provider setup, see [ollama-setup.md](ollama-setup.md).
+How to edit the file:
 
-## Top-level keys
+- In the file that `init` creates, a line that starts with `# ` is off. Delete the `# ` to turn it on.
+- Keep the spaces at the start of each line. They show which section a setting belongs to.
+- Write times in quotes, for example `"08:30"`. Without quotes, a time such as `11:00` can be read as a number, and the setting may be rejected.
+- Use each section name once. If a name appears twice, the second section replaces the first without an error.
+- Run `daily-driver doctor` after you edit the file. It reports mistakes.
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `daily_driver` | object | `{output_dir: "."}` | |
-| `scheduler` | object or null | null | Typed per-job launchd cadence (`checkin`; `jobs` and `discovery` when job search is on) |
-| `schedule` | object | empty | day-start / day-end scheduled times + cadence |
-| `tracker` | object | — | **Required** |
-| `gather` | object | empty | |
-| `claude` | object | empty | |
-| `ai` | object | empty | |
-| `focus` | object | empty | |
-| `calendar` | object | empty | macOS-only daily-plan calendar sync (consumed by `calendar sync`) |
-| `plugins` | object | empty | Optional features. `init` writes this block only for a plugin you choose, e.g. `init --job-search` |
+For the daily flow, see [usage.md](usage.md). To run AI on your own computer, see [Local AI setup](ollama-setup.md).
 
-`init` leaves job search settings out of `.dd-config.yaml` unless you pass `--job-search`. The job-only keys (`scheduler.jobs`, `scheduler.discovery`, `ai.claude`, `ai.ollama.max_parallel`) stay valid either way; they only have an effect when job search is on.
+## Sections
 
-Your background and recurring tasks go in `context.md`, not here. day-start reads it, and its `## Recurring Tasks` section feeds the daily plan. A config that contains `user_profile` or `recurring_tasks` fails to load: every command except `help` stops with a message that names the block and says where its content goes. Delete the block and move anything you need into `context.md`.
+| Section | What it controls |
+| --- | --- |
+| [`tracker`](#tracker) | Your list: categories and statuses. Required. |
+| [`schedule`](#schedule) | Times of the day-start and day-end reminders |
+| [`scheduler`](#scheduler) | Times of check-in reminders and job runs |
+| [`focus`](#focus) | Default length of focus mode |
+| [`claude`](#claude) | How `check-in` starts its chat |
+| [`gather`](#gather) | Folders that hold your git projects |
+| [`calendar`](#calendar) | Copy of your plan time blocks into the macOS Calendar app |
+| [`daily_driver`](#daily_driver) | Folder for your data files |
+| [`ai`](#ai) | Which AI runs each feature: Claude or Ollama |
+| [`plugins`](#pluginsjob_search) | Optional features. Job search is the only one |
+
+Claude reads `context.md` when it plans your day. Put your background there, and list tasks that repeat under `## Recurring Tasks`. Do not put them in this file.
+
+Some settings matter only when job search is on: `scheduler.jobs`, `scheduler.discovery`, `ai.claude`, and `ai.ollama.max_parallel`. With job search off, they are allowed but do nothing.
+
+## `tracker`
+
+Your list of tasks. Claude adds and updates entries for you in your chats. These settings choose your categories and which statuses are expected. This section is required.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `default_category` | The category that `daily-driver help categories` shows as the default. It must be one of your `categories`. | `task` |
+| `categories` | Your categories. Each one lists the fields that a new entry must have. | `task`, with `title` required |
+| `warn_unknown_status` | Shows a one-line warning when you set an unusual status. Set to `false` to turn the warning off. | `true` |
+| `extra_statuses` | Your own statuses. They never cause the warning. They do not apply to `job` entries. | none |
+| `terminal_statuses` | Your own statuses that close an entry. Closed entries get no follow-ups and are not reported as stalled. | none |
+
+A category's `required` list can name these fields: `title`, `link`, `notes`, `next_action`, `due`, `status`, `tags`, or the name of an `--extra` key. The option `--note` fills `notes`. To add a category, see [Custom tracker categories](#custom-tracker-categories).
+
+Statuses:
+
+- Usual statuses are `open`, `in-progress`, `blocked`, `done`, and `ruled-out`.
+- Entries in the `job` category use `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, and `closed`.
+- The statuses `done`, `ruled-out`, `dropped`, `rejected`, and `closed` always close an entry.
+- The warning ignores capital letters, spaces, and underscores. `Ruled_Out` counts as `ruled-out`.
+
+## `schedule`
+
+The times of your day-start and day-end reminders. At each time, `scheduler install` adds a reminder. Click it to open the chat. Without `terminal-notifier`, the reminder shows the command to run. Install the tool with `brew install terminal-notifier`.
+
+A day-start that begins more than 2 hours after `day_start` counts as a late start, and Claude plans only the rest of the day. With `day_start` unset, a start after 11:00 counts as late.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `day_start` | Time of the day-start reminder, in quotes, such as `"08:00"`. | none (no reminder) |
+| `day_end` | Time of the day-end reminder, in quotes, such as `"17:30"`. | none (no reminder) |
+| `days` | Days of both reminders: `daily`, `weekdays`, or a list of day names such as `[mon, wed, fri]`. | `daily` |
+
+Run `daily-driver scheduler install` after you change these settings.
+
+## `scheduler`
+
+Sets the times of the check-in reminders and, with job search on, the job runs. `daily-driver scheduler install` adds them to the macOS background scheduler. When this section is missing, these defaults apply:
+
+| Run | Default time |
+| --- | --- |
+| Check-in reminders | 11:00 and 15:00, every day |
+| Job search run (`jobs run`), job search only | 07:00, every day |
+| Board search (`jobs discover-boards`), job search only | 23:59 on Saturday and Tuesday |
+
+A board is a company's job page on a hiring site such as Greenhouse, Ashby, or Lever.
+
+| Setting | What it does |
+| --- | --- |
+| `checkin.times` | Times of the check-in reminders, such as `["10:30", "15:00"]`. |
+| `checkin.days` | Days of the check-in reminders. |
+| `jobs.time` | Time of `jobs run`. |
+| `jobs.days` | Days of `jobs run`. |
+| `discovery.time` | Time of `jobs discover-boards`. |
+| `discovery.days` | Days of `jobs discover-boards`. |
+
+Rules:
+
+- Times use the 24-hour clock in your local time. Write them in quotes.
+- `days` is `daily`, `weekdays`, or a list of day names such as `[sun, wed]`. Day names can be short or full, in any case.
+- In a part you set, each line you leave out keeps its default. For example, `checkin: {days: weekdays}` keeps the 11:00 and 15:00 check-ins and runs them on weekdays only.
+- To stop a run, clear its time: `checkin: {times: []}`, `jobs: {time: null}`, or `discovery: {time: null}`. Setting a whole part to `null` or `{}` does not stop it.
+- Run `daily-driver scheduler install` after every change.
+- With job search off, `jobs` and `discovery` do nothing. A full `scheduler install` removes their background jobs.
+- Schedule `discovery` before `jobs`, for example the evening before. If a board search is skipped, `jobs run` uses the board list from the last one.
+
+```yaml
+scheduler:
+  checkin:   {times: ["10:30", "15:00"], days: weekdays}
+  jobs:      {time: "23:59", days: [sun, wed]}
+  discovery: {time: "23:59", days: [sat, tue]}
+```
+
+## `focus`
+
+Focus mode pauses check-in reminders. Turn it on with `daily-driver focus on`.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `default_duration` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, or a number of minutes. | `25m` |
+
+## `claude`
+
+Controls how `check-in` starts its Claude chat.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `resume_check_in` | `true`: `check-in` continues the most recent chat in this workspace, from `day-start`, `day-end`, or `check-in`. `false`: `check-in` starts a new chat. | `false` |
+
+## `gather`
+
+Claude reads your recent git commits when it runs `day-start`, `check-in`, and `day-end`. This section tells it where to look.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `git.search_paths` | Folders that hold your git projects. Use a full path or start with `~`, for example `~/git`. Daily Driver searches inside each folder, including subfolders. While the list is empty, it scans only the current folder. | none |
+
+## `calendar`
+
+When this is on, `day-start` copies the time blocks of your plan into the macOS Calendar app. A time block is a time range such as `09:00-10:30`. You can also run `daily-driver calendar sync` yourself. This works on macOS only and is off by default.
+
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `sync_enabled` | `true` turns on `calendar sync`. While `false`, `calendar sync` does nothing. | `false` |
+| `plan_calendar_name` | Name of the calendar to write to. Create this calendar in the Calendar app first. If it is missing, `calendar sync` does nothing and prints a notice. | `Daily Plan` |
 
 ## `daily_driver`
 
-| Key | Type | Default |
-|-----|------|---------|
-| `output_dir` | string | `.` (relative to workspace root) |
+The folder for your data files.
 
-Rotated `jobs.csv` backups land in `<output_dir>/backups/` with UTC ISO-8601 timestamps (e.g. `jobs.csv.bak.2026-05-13T05-45-00Z`). `doctor` flags accumulated backups there.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `output_dir` | Folder for the tracker, notes, and other files. A relative path starts in the workspace folder. | `.` (the workspace folder) |
 
-## `tracker` (required)
+`jobs backfill` saves a copy of `jobs.csv` in `<output_dir>/backups/` before it changes the file. The name ends with the date and time in Coordinated Universal Time (UTC), for example `jobs.csv.bak.2026-05-13T05-45-00-123456Z`. `doctor` warns when more than 5 copies exist.
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `default_category` | string | `task` | Must be a key in `categories` |
-| `categories` | dict[string, object] | `{task: {required: [title]}}` | Each category: `{required: [field, ...]}` |
-| `warn_unknown_status` | bool | `true` | Print a one-line stderr nudge when `tracker add`/`update` sets a status outside the category-aware recommended set and not already used elsewhere. Status spelling is normalized first (case-folded, underscores/spaces → hyphens), so `Ruled_Out` matches `ruled-out`. `job` category → `found, pending, skipped, applied, interviewing, rejected, dropped, closed`. All other categories → `open, in-progress, blocked, done, ruled-out` plus any `extra_statuses`. Set `false` to silence. |
-| `extra_statuses` | list[string] | `[]` | Extra status values added to the (non-`job`) recommended set; values here never trigger the `warn_unknown_status` nudge. |
-| `terminal_statuses` | list[string] | `[]` | Extra terminal (closing) status values, merged with the built-ins (`done`, `ruled-out`, `dropped`, `rejected`, `closed`). Entries in any terminal status are excluded from `status` stalled-detection and `tracker follow-ups`, so a custom closing state like `cancelled` won't linger as a false positive. The built-in terminal statuses cannot be removed; values are normalized like other statuses (case-folded, underscores/spaces → hyphens). |
+## Customization
 
-`required` values are entry fields: `title`, `link`, `notes`, `next_action`, `due`, `status`, `tags`, or the name of an `--extra` key. `--note` fills `notes`.
+### Custom tracker categories
+
+Categories are free-form. You or Claude can use any category name. List a category under `tracker.categories` only to require fields on it:
+
+```yaml
+tracker:
+  default_category: task
+  categories:
+    task:    {required: [title]}
+    ticket:  {required: [title]}
+    contact: {required: [title]}
+```
+
+Fields that you add with `tracker add --extra key=value` are saved with the entry. They need no setting.
+
+### Context and voice profile
+
+`init` creates `context.md` and `voice-profile.md` in your workspace folder once. After that they are yours: edit them freely.
+
+| File | What it holds | Who reads it |
+| --- | --- | --- |
+| `context.md` | Your background, goals, and routines. Tasks that repeat go under `## Recurring Tasks`. | Claude, in `day-start` and `day-end`. With job search on, the job review also reads it. |
+| `voice-profile.md` | Your writing style. | Claude, before it drafts a message for you. |
+
+`daily-driver voice-update --from <file>` rebuilds `voice-profile.md` from your writing samples.
+
+### Custom Claude commands and agents
+
+- Commands: put a markdown file at `.claude/commands/my-command.md`. Start a chat with `claude --add-dir <workspace>`, then type `/my-command`.
+- Agents: put a markdown file at `.claude/agents/my-reviewer.md`. Start it with `claude --agent my-reviewer`.
+
+Keep your own files outside the `daily-driver` folders. See [`.claude/` ownership](#claude-ownership).
+
+### Change a shipped command
+
+`daily-driver day-start` runs the command in `.claude/commands/daily-driver/day-start.md`. To change what `day-start` does, edit that file. `doctor --fix` keeps your edit. `doctor --reset` and `init --force` replace the file, so keep a copy outside the workspace.
+
+A file with the same name one level up, `.claude/commands/day-start.md`, does not change `day-start`. It is a separate command that you start by hand with `/day-start`.
+
+### `.claude/` ownership
+
+Daily Driver manages five paths in your workspace: the `daily-driver` folders in `.claude/commands/` and `.claude/agents/`, `.claude/hooks/`, `README.md`, and `.claude/settings.local.json`. `doctor --fix` and `init` rewrite them after an upgrade and after you switch job search on or off. `doctor --fix` also rewrites them when a managed file is missing or invalid. `doctor --reset` and `init --force` always rewrite them. Everything else is yours.
+
+| Path | `doctor --fix` and `init`, when they rewrite | `doctor --reset` and `init --force` |
+| --- | --- | --- |
+| `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` | Keep your edits to shipped files. Delete `.md` files you added. Delete a file that an older version shipped, unless you edited it. | Wipe the folders and write them again. You lose your edits and every file you added. |
+| `.claude/hooks/` | The same rules, with `.sh` files in place of `.md` files. | Wipe the folder and write it again. You lose your edits and every file you added. |
+| `README.md` in the workspace folder | Keeps your edits. | Overwrites the file. |
+| `.claude/settings.local.json` | Keeps top-level settings you added. Replaces the shipped `$schema`, `permissions`, `hooks`, and `metadata` blocks, which removes allow rules that Claude Code saved. | The same. |
+| `.claude/commands/user/`, `.claude/agents/user/`, top-level `.claude/commands/*.md` and `.claude/agents/*.md`, and everything else | Never changed. | Never changed. |
+
+If `settings.local.json` has a format error, Daily Driver saves it as `settings.local.json.invalid` and writes a new file.
+
+Allow rules that Claude Code saves in `.claude/settings.local.json` are lost when Daily Driver rewrites the file. Put your own allow rules in `~/.claude/settings.json` instead.
 
 ## `ai`
 
-Routes every **routable** AI task to either the `claude` CLI or a local [Ollama](https://ollama.com) server, and holds the shared `claude:` / `ollama:` provider-connection blocks. The routable tasks are the headless `summary` (`ai.summary`), `voice-update` (`ai.voice_update`), and the job_search plugin's enrichment pass (`plugins.job_search.enrichment.fit_notes`). The shared provider blocks are consulted by whichever provider a task resolves to.
+Chooses which AI runs each feature: Claude or Ollama. Leave this section out to use Claude for everything. Ollama runs AI models on your own computer. For setup, see [Local AI setup](ollama-setup.md).
 
-**Routable vs. interactive.** Only the headless tasks above route through a provider. The interactive launchers (`day-start`, `check-in`, `day-end`) always use the `claude` CLI directly — they rely on Claude Code session / agent / workspace-context features Ollama has no equivalent for — so the `ai` block's provider routing does not affect them. They do honor one model-only knob, `ai.interactive.model`, as the default claude model (a `--model` flag still wins). The block is model-only by design — there is no `provider` field, so setting `ai.interactive.provider` is rejected at config-load rather than silently ignored — and it deliberately does not inherit the global `ai.model`, which may name an ollama tag the claude CLI cannot run.
+| Feature | Set its AI with | Commands |
+| --- | --- | --- |
+| Summary | `ai.summary` | `summary` |
+| Voice update | `ai.voice_update` | `voice-update` |
+| Job review | `plugins.job_search.enrichment` | `jobs run`, `jobs backfill` |
+| Daily chats | Always Claude. `ai.interactive.model` sets the model. | `day-start`, `check-in`, `day-end` |
 
-### Resolution chain
+Each feature picks its provider (`claude` or `ollama`) and its model separately. For each one, the first of these that has a value wins:
 
-For each routable task, `provider` and `model` are resolved **independently**, most-specific to most-general:
+1. The `--model` option on the command, where the command has one.
+2. The feature's own setting, such as `ai.summary` or `plugins.job_search.enrichment.fit_notes`.
+3. For job review only, the `plugins.job_search.enrichment` settings.
+4. The `provider` and `model` of the `ai` section.
+5. For the provider, `claude`. For the model, the provider's own default.
 
-```
-task / phase override  →  domain default  →  global ai default  →  hardcoded "claude"
-```
+Set `ai.provider: ollama` once to use Ollama everywhere. Then set `ai.summary: { provider: claude }` to keep summaries on Claude.
 
-- Core tasks: `ai.<task>` (e.g. `ai.summary`, `ai.voice_update`) → `ai` global → `claude`.
-- Enrichment phase: `plugins.job_search.enrichment.fit_notes` → `enrichment` (domain) → `ai` global → `claude`.
-- A CLI `--model` flag (where the command offers one, e.g. `summary --model`) outranks all config.
+Claude model names are `sonnet`, `opus`, and `haiku`. For Ollama, use the name of any model you downloaded, such as `qwen2.5:14b`. A model name must fit its provider. A Claude name on an Ollama feature makes that feature report an error when it runs.
 
-Because provider and model walk apart, you can set `ai.provider: ollama` once to send the whole app to Ollama, then pin a single task back to claude with `ai.summary: { provider: claude }`. Or keep everything on claude and just set `ai.summary.model: sonnet` — the model is honored on the claude path too.
+`day-start`, `check-in`, and `day-end` always use Claude. Only `ai.interactive.model` changes their model. The global `ai.model` does not apply to them.
 
-The per-task and per-phase `provider` defaults are **unset** (the resolver supplies `claude` as the terminal fallback), so the global `ai.provider` is never shadowed by a leftover per-task default. Omitting the whole `ai` block still resolves every task to `claude`, exactly as before.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `provider` | AI for every feature with no setting of its own: `claude` or `ollama`. | `claude` |
+| `model` | Model for those features. Left out, the provider picks its own. | none |
+| `summary.provider`, `summary.model` | AI for `summary`. | the two rows above |
+| `voice_update.provider`, `voice_update.model` | AI for `voice-update`. | the two rows above |
+| `interactive.model` | Claude model for `day-start`, `check-in`, and `day-end`. The `--model` option on the command wins. | Claude's own default |
+| `claude.max_parallel` | Job reviews that run at the same time on Claude. `1` runs one at a time. Job search only. | `4` |
+| `ollama.endpoint` | Address of the Ollama app. | `http://localhost:11434` |
+| `ollama.timeout` | Seconds to wait for an answer. | `60` |
+| `ollama.max_parallel` | Job reviews that run at the same time on Ollama. `1` runs one at a time. Job search only. See [Local AI setup](ollama-setup.md) for memory limits. | `4` |
 
-Default (omitting the block entirely): `claude` for every routable task. Existing workspaces using the old `ai.enrichment` block must move that routing under `plugins.job_search.enrichment` (see the migration note below) — `ai.enrichment` is now rejected.
+`max_parallel` changes speed only. It does not change how many jobs are reviewed (`max_enrich_fit`) or the time limit for one call.
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `provider` | `claude` \| `ollama` | `claude` | Global default provider for all routable tasks; the terminal fallback of the chain |
-| `model` | string or null | null | Global default model when no task/domain block names one |
-| `summary.provider` | `claude` \| `ollama` \| null | null (→ claude) | Per-task override for `summary --range` |
-| `summary.model` | string or null | null | Provider-specific identifier for `summary` |
-| `voice_update.provider` | `claude` \| `ollama` \| null | null (→ claude) | Per-task override for `voice-update` |
-| `voice_update.model` | string or null | null | Provider-specific identifier for `voice-update` |
-| `interactive.model` | string or null | null | Default claude model for the interactive launchers (`day-start`, `day-end`, `check-in`). Model-only block — these are claude-only, so there is no `provider` field (setting `interactive.provider` is a config error), and it never falls back to the global `ai.model` (which may name an ollama tag). A `--model` flag on the command wins |
-| `claude.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment when the active provider is claude. Applies to both `jobs run` and `jobs backfill`. Set to 1 to force serial. Kept modest — claude is rate-limited and runs one CLI subprocess per call, so wide fan-out invites throttling |
-| `ollama.endpoint` | string | `http://localhost:11434` | Consulted only when a task is routed to ollama |
-| `ollama.timeout` | int (seconds) | 60 | Per-request timeout for ollama |
-| `ollama.max_parallel` | int (≥1) | 4 | Worker threads for parallel enrichment. Applies to both `jobs run` and `jobs backfill`. Set to 1 to force serial; mirrors Ollama's server-side `OLLAMA_NUM_PARALLEL`. See [ollama-setup.md](ollama-setup.md) for RAM caveats |
-
-Model identifiers are provider-specific. For `claude`: `sonnet`, `opus`, `haiku`. For `ollama`: any pulled tag (e.g. `qwen2.5:14b`, `phi4`, `llama3.2:3b`). `null` lets each provider pick its own default. Because `provider` and `model` resolve independently, a model you set applies whichever provider a task lands on — don't leave a claude model (e.g. `sonnet`) on a task you route to `ollama`, or vice versa; the mismatch fails loudly at call time rather than silently.
-
-`max_parallel` raises enrichment throughput only — it does not change the `plugins.job_search.enrichment.max_enrich_*` budgets (which still cap how many jobs get enriched) or the per-call timeout.
-
-See [`docs/ollama-setup.md`](ollama-setup.md) for installation, tuning, and the `doctor` reachability check.
-
-Example: send the whole app to a local model by default, but pin the higher-stakes tasks back to claude. Provider and model resolve independently down the chain:
+Example: use Ollama by default, but keep summaries and voice updates on Claude. The `plugins` part turns job search on.
 
 ```yaml
 ai:
-  provider: ollama            # global default for all routable tasks
+  provider: ollama            # AI for every feature without its own setting
   model: qwen2.5:14b
   summary: { provider: claude, model: sonnet }
   voice_update: { provider: claude }
@@ -103,201 +259,117 @@ ai:
 plugins:
   job_search:
     enrichment:
-      provider: ollama        # domain default for the enrichment pass
+      provider: ollama        # AI for job review
       model: phi4
-      fit_notes: { provider: claude, model: sonnet }   # stronger for scoring
+      fit_notes: { provider: claude, model: sonnet }   # the fit and notes call uses Claude
 ```
-
-Migration from the pre-split config — the routing moved off `ai:` onto the plugin:
-
-```yaml
-# Before (rejected):
-ai:
-  enrichment:
-    provider: ollama
-    model: qwen2.5:14b
-
-# After:
-plugins:
-  job_search:
-    enrichment:
-      provider: ollama
-      model: qwen2.5:14b
-```
-
-## `scheduler`
-
-Per-job launchd cadence for the `check-in`, `jobs`, and board-discovery runs (`day-start` / `day-end` cadence lives in [`schedule`](#schedule) instead). Strictly typed — unknown keys are rejected at config load, not passed through. Times are local wall-clock, 24-hour; **quote them in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML. Defaults (when `scheduler` is omitted): check-in at 11:00 and 15:00. When job search is on, also jobs at 07:00 and discovery at 23:59 on Saturday and Tuesday; when it is off, `jobs` and `discovery` are ignored and a full `scheduler install` removes their agents.
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `checkin.times` | list[string] (HH:MM) | `[]` | Check-in firing times |
-| `checkin.days` | cadence | `daily` | Which days check-in fires (see below) |
-| `jobs.time` | string (HH:MM) or null | null | Single `jobs run` firing time |
-| `jobs.days` | cadence | `daily` | Which days the jobs run fires |
-| `discovery.time` | string (HH:MM) or null | null | Single `jobs discover-boards` firing time |
-| `discovery.days` | cadence | `daily` | Which days the board sweep fires |
-
-Discovery is its own launchd agent rather than a step inside the scrape. The board universe turns over far more slowly than postings do, so sweeping as often as scraping is wasted work; launchd takes a single command, so chaining the two would need a wrapper script; and a sweep that hangs must not block the scrape. Schedule it to land the day before a scrape. If a sweep is skipped the scrape simply uses the previous board list.
-
-To stop a job being installed, clear its time (`discovery: {time: null}`), not the whole block. Setting a block to `null` is indistinguishable from omitting it, so the packaged default applies and the job is still installed. This holds for `checkin` and `jobs` too.
-
-The `days` field on every schedule block is a **cadence**: `daily` (default), `weekdays`, or an explicit list of day names — three-letter or full, any case (e.g. `[sun, wed]`). An empty list is rejected; omit the key (or use `daily`) to fire every day. Re-run `scheduler install` after changing any of these to rewrite the plists.
-
-```yaml
-scheduler:
-  checkin:   {times: ["10:30", "15:00"], days: weekdays}
-  jobs:      {time: "23:59", days: [sun, wed]}
-  discovery: {time: "23:59", days: [sat, tue]}
-```
-
-## `schedule`
-
-Scheduled times for `day-start` and `day-end` (HH:MM, 24-hour). When set, `scheduler install` creates launchd jobs for those commands. Also drives `is_late_day` evaluation in day-start prompts. **Quote times in YAML** — bare `HH:MM` is parsed as a base-60 integer by PyYAML.
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `day_start` | string (HH:MM) or null | null | |
-| `day_end` | string (HH:MM) or null | null | |
-| `days` | cadence | `daily` | Which days both day-start and day-end fire — `daily`, `weekdays`, or a list of day names (as in [`scheduler`](#scheduler)) |
-
-## `claude`
-
-Controls `claude` CLI session behavior for interactive launchers.
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `resume_check_in` | bool | false | When true, `check-in` resumes the workspace's most recent Claude session (from `day-start`, `day-end`, or `check-in`) instead of starting fresh |
-
-## `gather`
-
-Controls what `daily-driver gather <kind>` reads from external sources.
-
-### `gather.git`
-
-| Key | Type | Default |
-|-----|------|---------|
-| `search_paths` | list[path] | `[]` |
-
-Directories to scan recursively for git checkouts. Paths may be absolute or tilde-prefixed (e.g. `~/git`).
-
-## `focus`
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `default_duration` | string | `25m` | Fallback for `focus on` when `--for` is omitted. Accepts `30m`, `2h`, `1h30m`, or bare minutes. |
-
-## `calendar`
-
-macOS-only opt-in for `daily-driver calendar sync`, which writes the day's plan time blocks (the `HH:MM-HH:MM` `time_block` entries in the daily plan) into a local Calendar.app calendar. Omitting the block leaves sync a clean no-op.
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `sync_enabled` | bool | false | Opt-in switch for `calendar sync`. While false, sync is a no-op on every platform. macOS-only; ignored on other hosts. |
-| `plan_calendar_name` | string | `Daily Plan` | Name of the local macOS calendar to write plan time blocks into. The calendar must already exist in Calendar.app — sync degrades to a clean no-op if it is missing. |
 
 ## `plugins.job_search`
 
-Job search is off until this block exists. `init --job-search` writes it with `enabled: true` and leaves `scraper.enabled` and `sources` commented out; `jobs run` needs both `scraper.enabled: true` and at least one entry under `sources`. `context.md` is yours after `init` and is not rewritten, so add location preferences and fit notes to it by hand. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it).
+Job search finds jobs on the sites you choose, removes duplicates, and scores how well each job fits you. It is off until this section exists. `init --job-search` writes the section. `jobs run` also needs `scraper.enabled: true` and at least one entry under `sources`. `context.md` is not rewritten after `init`. Add your location preferences and what you look for in a role to it by hand. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it).
 
-| Key | Type | Default |
-|-----|------|---------|
-| `enabled` | bool | `true` (the block's presence is the opt-in; `false` switches job search off) |
-| `persona` | string or null | null |
-| `roles` | list[string] | `[]` |
-| `domain_keywords` | list[string] | `[]` |
-| `seniority_keywords` | list[string] | `[]` |
-| `locations` | object or null | null |
-| `scraper` | object | see `ScraperConfig` below |
-| `enrichment` | object | see `EnrichmentConfig` below |
-| `verify` | object | see `VerifyConfig` below |
-| `discovery` | object | see `DiscoveryConfig` below |
-| `sources` | dict[string, object] | `{}` (keyed by source id) |
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `enabled` | Job search is on while this section exists. `false` turns it off and keeps your settings. | `true` |
+| `persona` | Who you are as a candidate. The AI uses it to score each job. Left out, it scores jobs for a site reliability, platform, or infrastructure engineer. | none |
+| `roles` | Job titles to keep. `*` matches any text. A leading `!` removes titles. See [Which jobs are kept](#which-jobs-are-kept). | none |
+| `domain_keywords` | Words for your field. See [Which jobs are kept](#which-jobs-are-kept). | built-in list |
+| `seniority_keywords` | Words for your level, such as `senior`. See [Which jobs are kept](#which-jobs-are-kept). | built-in list |
+| `locations` | Which places to keep. See [`locations`](#locations). | keep all places |
+| `scraper` | How Daily Driver reads job sites. See [`scraper`](#scraper). | see below |
+| `enrichment` | The AI review of each new job. See [`enrichment`](#enrichment). | see below |
+| `verify` | When `jobs verify` checks saved jobs. See [`verify`](#verify). | see below |
+| `discovery` | How `jobs discover-boards` works. See [`discovery`](#discovery). | see below |
+| `sources` | The sites to search. See [`sources`](#sources). | none |
 
-Compensation is display-only: the scraper writes whatever amount it finds to the `Comp` column and never filters on it. Only the title match (below) and the location filter (countries) remove jobs. Seniority filtering is driven by `seniority_keywords`.
+### Which jobs are kept
 
-Role matching is two-tier: a title is kept if it matches a configured `role` (tier 1) or carries both a `domain_keywords` and a `seniority_keywords` term (tier 2). Each list defaults to `[]`, but an empty `domain_keywords` or `seniority_keywords` falls back to a built-in infrastructure/SRE keyword set (`sre`, `platform engineer`, `devops`, ...; `senior`, `staff`, `principal`, ...). So a workspace that never sets these still matches senior infra titles via tier 2 — a non-infra search must populate `domain_keywords` and `seniority_keywords` explicitly. An empty `roles` has no such fallback: tier 1 simply matches nothing.
+Only the job title and the location remove jobs. Pay is shown only: Daily Driver writes any pay it finds to the `Comp` column and never removes a job for its pay.
+
+A job title is kept when one of these is true:
+
+- It contains one of your `roles`. Matching ignores capital letters. A `*` matches any text.
+- It contains one word from `domain_keywords` and one word from `seniority_keywords`.
+
+A title that matches a role that starts with `!` is always removed, for example `"!Manager"`.
+
+If `domain_keywords` or `seniority_keywords` is empty, a built-in list is used instead. The built-in lists hold site reliability and infrastructure words, such as `sre` and `devops`, and level words, such as `senior` and `staff`. If you search for another kind of job, fill in both lists. An empty `roles` list matches no title by itself, but the two keyword lists can still keep a title.
 
 ### `locations`
 
-| Key | Type | Default |
-|-----|------|---------|
-| `home_city` | string or null | null (scoring uses `Vancouver, BC` when unset) |
-| `remote` | bool | false |
-| `remote_unlisted_countries` | bool | false |
-| `countries` | dict[string, list[string]] | `{}` |
+Chooses which places to keep. With no `locations` section, no job is removed for its place.
 
-`countries` maps an ISO country code to a city allow-list, e.g. `{CA: [Vancouver, Victoria], US: []}`. An empty list accepts jobs anywhere in that country; a non-empty list accepts only jobs whose location names one of the cities (matched whole-word against the scraped location string — real ATS strings usually name the city without the country, so a listed city stands alone, and conversely the bare country name does not pass for a city-narrowed country). Cities are matched literally, so use the spelling the boards use (e.g. `Montréal` if that is how postings render it). Note the asymmetry at the top level: an empty city list accepts a whole country, but an empty `countries: {}` map accepts NO country — only remote jobs survive the filter, and only when `remote: true`. Blank city entries are rejected at config load. This replaced the flat `countries: [CA, US]` list with no migration: wrap each code as a map key with `[]` to keep whole-country behavior.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `home_city` | Your city. The AI uses it to score each job. Set it to your own city. Left out, it is `Vancouver, BC`. | none |
+| `remote` | `true` keeps remote jobs. | `false` |
+| `remote_unlisted_countries` | `true` keeps remote jobs from any country, not only those in `countries`. | `false` |
+| `countries` | The countries to keep, each with a list of cities. | none |
 
-`remote: true` accepts remote jobs. By default remote is scoped to the countries in `countries`: a remote job that names a country not in the map is dropped, while one that names a configured country — or names no country at all (a bare "Remote" or a city-only location) — passes. Remote scoping keys off the country codes, independent of the per-country city narrowing (which applies to onsite/hybrid roles), so a remote job in a city-narrowed country still passes. Set `remote_unlisted_countries: true` to accept remote jobs from any country (the previous country-blind behavior).
+`countries` maps a two-letter country code to a list of cities, for example `{CA: [Vancouver, Victoria], US: []}`.
 
-### `scraper` (`ScraperConfig`)
+- `[]` keeps jobs from anywhere in that country.
+- A list of cities keeps only jobs whose location names one of those cities. The country name does not have to appear.
+- A job that names only the country does not match a country that has a city list.
+- Write each city as job boards write it, for example `Montréal`. A blank city name is an error.
+- An empty `countries: {}` keeps no onsite job. Only remote jobs stay, and only when `remote: true`.
 
-Transport / retry knobs shared by every source.
+By default, a remote job stays when its location names a country from `countries`, or names no country, such as `Remote`. City lists do not apply to remote jobs. A remote job that names another country is removed. Set `remote_unlisted_countries: true` to keep it.
 
-| Key | Type | Default |
-|-----|------|---------|
-| `enabled` | bool | false |
-| `max_retries` | int | 3 |
-| `max_age_days` | int | 30 |
-| `user_agent` | string | Firefox/128 UA |
-| `company_noise_words` | list[string] | `[]` (shipped list) |
-| `timeout` | int | 30 |
-| `search_terms` | list[string] or null | null |
-| `parallel_workers` | int | 8 |
-| `max_pages` | int | 3 |
-| `browser` | `firefox` \| `chromium` \| `webkit` | firefox |
+### `scraper`
 
-`enabled` must be `true` for `jobs run` to scrape. While it is `false`, the run prints `Scraper disabled` and exits 0.
+How Daily Driver reads job sites. These settings apply to every source.
 
-`company_noise_words` replaces the shipped list of words dropped from a company name when rows are compared for duplicates — legal suffixes (`inc`, `ltd`, `gmbh`, ...) and generic tails (`labs`, `technologies`, ...). Board sources name a company after their board slug, so this is what lets a `foosystems` board row match an aggregator's `Foo Systems Inc.` and win the source upgrade. Comparison only: the stored Company value is never rewritten. An empty list keeps the shipped words.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `enabled` | Turns on `jobs run`. While `false`, `jobs run` finds nothing and prints `Scraper disabled`. | `false` |
+| `search_terms` | Search words for LinkedIn, Indeed, and Apple. Left empty, they come from `roles`. | none |
+| `max_age_days` | Skips Hacker News job posts (`hn_jobs`) older than this many days. `0` means no limit. | `30` |
+| `max_pages` | Result pages read for each Apple search. | `3` |
+| `timeout` | Seconds to wait for a site. | `30` |
+| `max_retries` | Retries when a site is busy. `0` means no retries. | `3` |
+| `parallel_workers` | Sites searched at the same time. | `8` |
+| `browser` | Browser for the Apple source: `firefox`, `chromium`, or `webkit`. | `firefox` |
+| `user_agent` | How Daily Driver names itself to job sites. The default looks like Firefox 128. | a Firefox 128 name |
+| `company_noise_words` | Words ignored when Daily Driver decides that two jobs come from the same company. | built-in list |
 
-`headless` is not user-configurable. The field exists on the model but is overridden per scrape phase, so a value set in `.dd-config.yaml` has no effect; it is intentionally omitted from the generated config scaffold.
+`browser` is the browser that Daily Driver opens for the Apple source. `doctor` checks that it is installed, and `daily-driver doctor --fix` installs it.
 
-`browser` selects the Playwright engine for browser-driven sources (Apple). The
-chosen engine must be installed first (`playwright install <engine>`); `doctor`
-checks for the configured engine and `doctor --fix` installs it.
+`company_noise_words` are words such as `inc`, `ltd`, and `labs`. Leave the list empty to use the built-in list. If you list words, your list replaces the built-in list. The company name saved in `jobs.csv` does not change.
 
-### `enrichment` (`EnrichmentConfig`)
+### `enrichment`
 
-Sibling block of `scraper` under `job_search`. Knobs for the post-scrape enrichment pass (comp, fit, notes), plus the AI provider routing for that pass. The provider/model live here (enrichment is plugin-specific); the shared connection/tuning lives in the core `ai.claude:` / `ai.ollama:` blocks.
+Enrichment is the AI review of each new job. It adds a fit score, a short note, and a remote, hybrid, or onsite label. It uses one AI call for each job.
 
-Enrichment runs a single routable LLM pass, `fit_notes` (fit score, notes, remote judgment, and criteria, one call per job). The `provider` / `model` directly on `enrichment` are the **domain default**; the optional `fit_notes` block overrides per pass. It follows the resolution chain `phase override → enrichment domain → ai global → claude` (see [`ai`](#ai) above).
+The review also reads `context.md` from your workspace folder. Your experience and preferences in that file change the fit score and the notes. Without the file, the score uses only the role, company, and location.
 
-The fit/notes pass also reads `context.md` from the workspace root, if present, and uses it in every fit evaluation — so the fit score weighs how well your actual experience matches the role, and the location-fit and notes reflect your real preferences. Without a `context.md`, fit falls back to scoring on role/company/location alone. The file is sent as the provider system prompt (built once per run, identical across jobs): on the `claude` path it is prompt-cached server-side and processed once per run rather than re-sent per job; on the `ollama` path there is no such cache, so `jobs run` logs a one-line token-cost estimate when `context.md` is large.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `provider` | AI for job review: `claude` or `ollama`. Left out, the `ai` section decides. | none |
+| `model` | Model for job review, such as `sonnet` or `qwen2.5:14b`. Left out, the provider picks its own. | none |
+| `fit_notes.provider`, `fit_notes.model` | AI for the fit and notes call. They win over the two rows above. | none |
+| `enrich_fit` | Scores each job from 1 to 10 for fit. Set to `false` to turn off the whole job review, including the note, the remote label, and `criteria`. | `true` |
+| `enrich_notes` | Adds a one-line note that explains the score: the main match or mismatch, and the location fit. Set to `false` to turn off the whole job review, the same as `enrich_fit`. | `true` |
+| `enrich_is_remote` | Labels each job `remote`, `hybrid`, or `onsite`. It uses the same AI call. | `true` |
+| `max_enrich_fit` | Most jobs reviewed per run. | `50` |
+| `enrich_timeout` | Seconds before one review gives up. | `30` |
+| `detail_delay_seconds` | Seconds to pause between job page downloads. | `0.5` |
+| `max_description_words` | Words of each posting that the AI reads. The minimum is 100. Pay and visa details are often near the end, so a low number can miss them. | `2000` |
+| `force_recook_cooldown_hours` | With `jobs backfill --force-update`, skips jobs reviewed within this many hours, so an interrupted run can continue. `0` reviews all jobs again. `missing` reviews only jobs with no review yet. `--cooldown-hours` overrides it for one run. | `24` |
+| `criteria` | Your own questions about each job. See [`criteria`](#criteria). | none |
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `provider` | `claude` \| `ollama` \| null | null (→ claude) | Domain default backend for the enrichment pass |
-| `model` | string or null | null | Domain default model (e.g. `sonnet`, `qwen2.5:14b`) |
-| `fit_notes.provider` / `fit_notes.model` | as above | null | Override for the fit/notes pass only |
-| `enrich_timeout` | int | 30 | |
-| `enrich_fit` | bool | true | |
-| `enrich_notes` | bool | true | |
-| `enrich_is_remote` | bool | true | Judge each job `remote`/`hybrid`/`onsite` during the fit/notes pass (no extra LLM call) |
-| `max_enrich_fit` | int | 50 | |
-| `max_description_words` | int | 2000 | Word cap on the description sent to the fit/notes LLM call (min 100). Comp/visa/EEO text usually sits at the end of long postings, so a low cap hides it from the criteria assessment |
-| `force_recook_cooldown_hours` | int or `missing` | 24 | Under `jobs backfill --force-update`, skip rows enriched within the last N hours so an interrupted force-update resumes instead of restarting. `0` disables the cooldown (re-enrich every active row); `missing` re-enriches only rows with no enrichment timestamp yet. Overridable per run with `--cooldown-hours` |
-| `detail_delay_seconds` | float | 0.5 | |
-| `criteria` | list of `{label, assess}` | `[]` | |
+For `provider` and `model`, see the order in [`ai`](#ai).
 
-#### `criteria` — the criteria scanner
+#### `criteria`
 
-A list of extra things to assess in each job description. The scanner rides
-the existing fit/notes enrichment call (no additional LLM requests): each
-criterion adds one instruction to that prompt, and a meaningful answer is
-appended to the job's **Notes** column as a `Label: value` segment.
+`criteria` lists your own questions about a job. For each job, the AI answers each question from the job post. A useful answer is added to the job's Notes column as `Label: answer`. Nothing is added when the post does not say. Questions do not add AI calls. Each label must be different.
 
-| Key | Type | Notes |
-|-----|------|-------|
-| `label` | string | Column-style prefix shown in Notes (e.g. `Sponsorship`) |
-| `assess` | string | Natural-language instruction the LLM reasons about, not a keyword match — so negation and polarity survive ("Does the role offer visa sponsorship?") |
+| Setting | What it does |
+| --- | --- |
+| `label` | Short name shown in Notes, for example `Sponsorship`. |
+| `assess` | The question, in plain words, for example `Does the role offer visa sponsorship?` |
 
-The scanner is quiet by default: when the description is silent on a
-criterion, the LLM answers `unknown` and nothing is appended. So a job with
-`notes: "Kubernetes shop"` and a meaningful sponsorship answer becomes
-`Kubernetes shop | Sponsorship: Yes, H-1B`; a job that says nothing about
-sponsorship keeps `Kubernetes shop` unchanged.
+A job with the note `Kubernetes shop` and a sponsorship answer of `Yes, H-1B` gets the note `Kubernetes shop | Sponsorship: Yes, H-1B`. A job that says nothing about sponsorship keeps `Kubernetes shop`.
 
 ```yaml
 enrichment:
@@ -308,70 +380,68 @@ enrichment:
       assess: Is a US security clearance required?
 ```
 
-### `verify` (`VerifyConfig`)
+### `verify`
 
-Sibling block of `scraper` under `job_search`. Thresholds for the `jobs verify` liveness pass (url-check plus an age fallback; see [commands.md](commands.md)).
+`jobs verify` closes saved jobs that are no longer posted. See [commands.md](commands.md) for the command. The age of a job counts from the `Date Verified` column, or from `Date Found` when `Date Verified` is empty.
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `reverify_days` | int (≥1) | 7 | Re-check a row's URL when its last affirmative liveness evidence (Date Verified, else Date Found) is at least this many days old |
-| `unverified_age_days` | int (≥1) | 30 | Rows with no URL to check (Indeed's bot wall, HN comment permalinks) close as age-unverified once their last affirmative liveness evidence is this many days old |
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `reverify_days` | Checks a job's link again after this many days. The minimum is 1. | `7` |
+| `unverified_age_days` | Closes jobs that have no link to check (Indeed, Hacker News) after this many days. The minimum is 1. | `30` |
 
-### `discovery` (`DiscoveryConfig`)
+### `discovery`
 
-Sibling block of `scraper` under `job_search`. Controls the `jobs discover-boards` sweep and how board failures are reported.
+`jobs discover-boards` finds company job boards that list jobs matching your roles. One run is a sweep. Later sweeps check known boards again. These settings control how often, and how failures are reported.
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `reprobe_days` | int (≥1) | 30 | Re-probe an already-swept board slug when its last probe is at least this many days old. Without this an incremental sweep only probes new slugs, so a board that dies after being matched stays in the scrape list until a `--full` sweep |
-| `max_reprobe_per_sweep` | int (≥1) | 500 | Cap on stale boards re-probed per sweep, most-overdue first — ranked by how late each board is against its own cadence, so a dormant board cannot take every slot on the strength of its older timestamp. One sweep stamps every slug on the same day, so without a cap the whole universe would come due at once and repeat every `reprobe_days` |
-| `degraded_failure_ratio` | float (0-1] | 0.25 | Share of a platform's boards that must fail before the source is reported degraded. Below it the run logs the success rate instead |
-| `dormant_after_empty_sweeps` | int (≥0) | 2 | Consecutive probes finding zero postings before a board's re-probe cadence stretches. A board listing nothing has likely moved ATS; one listing jobs you don't match is alive and keeps the normal cadence. One non-empty probe resets the streak. `0` disables dormancy |
-| `dormant_reprobe_multiplier` | int (≥1) | 6 | Multiplier on `reprobe_days` for a dormant board, so 30 days becomes 180. Dormancy defers a re-probe, never cancels it. `1` keeps the normal cadence but still reports dormant boards; to turn the feature off use `dormant_after_empty_sweeps: 0` |
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `reprobe_days` | Checks a known board again after this many days. The minimum is 1. | `30` |
+| `max_reprobe_per_sweep` | Most boards checked again per sweep. The most overdue boards go first. The minimum is 1. | `500` |
+| `degraded_failure_ratio` | A site is reported as failing when this share of its boards fail. `0.25` means 25%. The value must be above 0 and at most 1. | `0.25` |
+| `dormant_after_empty_sweeps` | A board that lists no jobs this many checks in a row is checked less often. `0` turns this off. | `2` |
+| `dormant_reprobe_multiplier` | How much less often. With `6`, a 30-day check becomes a 180-day check. `1` keeps the normal timing. | `6` |
 
-### `sources` (`dict[str, SourceToggle]`)
+### `sources`
 
-Sibling block of `scraper` under `job_search`. A dict whose keys are source identifiers and whose values are per-source toggles. Bool values coerce to `{enabled: <bool>}`. Per-source knobs live on the matching `SourceToggle` subclass, so each source owns its own configuration:
+The sites to search. Only sources listed here run. Each source has `enabled` (`true` or `false`). A source with settings but no `enabled` line is on. A short form also works: `apple: true`.
 
-| Source key | Toggle | Per-source knob (default) |
-|-----------|--------|---------------------------|
-| `remoteok` | `RemoteOkToggle` | `remoteok_tags` (`[]`) |
-| `weworkremotely` | `WeWorkRemotelyToggle` | `wwr_categories` (`[]`) |
-| `greenhouse` | `GreenhouseToggle` | `greenhouse_boards` (`[]`), `exclude_boards` (`[]`) |
-| `ashby` | `AshbyToggle` | `ashby_boards` (`[]`), `exclude_boards` (`[]`) |
-| `lever` | `LeverToggle` | `lever_boards` (`[]`), `exclude_boards` (`[]`) |
-| `workable` | `WorkableToggle` | `workable_accounts` (`[]`) |
-| `workday` | `WorkdayToggle` | `workday_boards` (`[]`) |
-| `hn_who_is_hiring`, `hn_jobs` | `HackerNewsToggle` | `hn_max_posts` (`500`) |
-| `linkedin` | `LinkedInToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `max_city_queries` (`40`) |
-| `indeed` | `IndeedToggle` | `results_wanted_per_query` (`50`), `hours_old` (`168`), `country` (`USA`), `max_city_queries` (`40`) |
-| any other | `SourceToggle` | (enable/disable only) |
+`daily-driver jobs run --list-sources` (or `daily-driver help sources`) prints the sources that exist.
 
-For `greenhouse`, `ashby`, and `lever`, the `*_boards` lists are pins: those boards are always enumerated, even when a `jobs discover-boards` sweep found no matching roles on them (rows still pass the role filter — pinning only guarantees the board is fetched). Each run scrapes the union of the pins and the discovery matched cache, minus `exclude_boards`, which trumps both.
+| Source | Settings (default) |
+| --- | --- |
+| `remoteok` | `remoteok_tags` (none) |
+| `weworkremotely` | `wwr_categories` (none). It finds nothing until you list a category. |
+| `greenhouse` | `greenhouse_boards` (none), `exclude_boards` (none) |
+| `ashby` | `ashby_boards` (none), `exclude_boards` (none) |
+| `lever` | `lever_boards` (none), `exclude_boards` (none) |
+| `workable` | `workable_accounts` (none) |
+| `workday` | `workday_boards` (none) |
+| `hn_who_is_hiring`, `hn_jobs` | `hn_max_posts` (500) |
+| `linkedin` | `results_wanted_per_query` (50), `hours_old` (168), `max_city_queries` (40) |
+| `indeed` | `results_wanted_per_query` (50), `hours_old` (168), `max_city_queries` (40), `country` (`USA`) |
+| `apple` | On or off only. It needs the browser set in `scraper.browser`. |
 
-`linkedin` and `indeed` are the two site-named sources fetched via the
-`python-jobspy` library (an implementation detail). Their query knobs:
+Notes on the board sources:
 
-| Key | Type | Default | On |
-|-----|------|---------|----|
-| `results_wanted_per_query` | int | 50 | both |
-| `hours_old` | int | 168 (7 days) | both |
-| `country` | string | `USA` | indeed only |
-| `max_city_queries` | int | 40 | both |
+- `greenhouse_boards`, `ashby_boards`, and `lever_boards` pin boards. Daily Driver always reads a pinned board, even when `jobs discover-boards` found no matching jobs there. Jobs from a pinned board must still match your roles.
+- Each run reads your pinned boards and the boards found by `jobs discover-boards`, minus `exclude_boards`. `exclude_boards` wins over both. Spell its entries exactly, capitals included.
+- Ashby board names are case-sensitive.
+- Name a board as it appears in its link: `boards.greenhouse.io/<name>` for Greenhouse, `jobs.ashbyhq.com/<name>` for Ashby, `jobs.lever.co/<name>` for Lever, and `apply.workable.com/<name>` for Workable.
+- A `workday_boards` entry names the three parts of a Workday link such as `companyh.wd5.myworkdayjobs.com/companyhcareers`: `tenant` (`companyh`), `host` (`wd5`), and `site` (`companyhcareers`). `company` is an optional display name. Left out, it is the tenant name in title case.
+- `wwr_categories` entries are the category names in WeWorkRemotely feed links such as `weworkremotely.com/categories/remote-<category>-jobs`.
 
-`country` sets Indeed's regional host and is the fallback used when a configured
-country code is not one the scraper recognizes. LinkedIn takes no country
-parameter, so it has no `country` knob.
+LinkedIn and Indeed settings:
 
-Each search runs once per country, then once per city named in
-`locations.countries`. A country-wide search ranks a city's postings against the
-whole country's under the `results_wanted_per_query` cap, so a local role can be
-listed and still never come back; giving the city its own query makes it compete
-only with its own city. `max_city_queries` bounds those extra searches as a
-precaution: a throttled site returns an empty result rather than an error, so
-an unbounded number of searches could quietly return nothing. Skipped cities
-are reported in the run output. A country mapped to an empty city list adds no
-city search.
+| Setting | What it does | Default |
+| --- | --- | --- |
+| `results_wanted_per_query` | Results per search. | `50` |
+| `hours_old` | Skips jobs older than this many hours. `168` is 7 days. | `168` |
+| `max_city_queries` | Most city-by-city searches per run. | `40` |
+| `country` | Indeed only. The Indeed site to use when one of your countries has no Indeed site. LinkedIn has no `country` setting. | `USA` |
+
+Each search runs once for each country. It runs again for each city you list in `locations.countries`, so a local job competes only with jobs from its own city. `max_city_queries` is the most city searches in one run, for LinkedIn and for Indeed separately. The run output says how many city searches it skipped. A country with an empty city list adds no city search.
+
+LinkedIn and Indeed run as separate searches. A failure in one does not stop the other. Glassdoor and Google Jobs are not available.
 
 ```yaml
 sources:
@@ -380,20 +450,19 @@ sources:
     wwr_categories: [devops-sysadmin]
   greenhouse:
     enabled: true
-    greenhouse_boards: [company-a, company-b]  # pins: always scraped
-    exclude_boards: []  # blocklist: never scraped, even when discovery matches them
+    greenhouse_boards: [company-a, company-b]  # always read
+    exclude_boards: []                         # never read, even when discovery finds them
   ashby:
     enabled: true
-    ashby_boards: [company-d, company-e]  # slugs are case-sensitive (e.g. CompanyF)
+    ashby_boards: [company-d, company-e]
   lever:
     enabled: true
-    lever_boards: [company-g]  # the <slug> in jobs.lever.co/<slug>
+    lever_boards: [company-g]
   workable:
     enabled: true
-    workable_accounts: [huggingface]  # the <slug> in apply.workable.com/<slug>
+    workable_accounts: [huggingface]
   workday:
     enabled: true
-    # Each board names the 3 parts of a Workday URL; `company` is optional.
     workday_boards:
       - {tenant: companyh, host: wd5, site: companyhcareers, company: Company H}
   linkedin:
@@ -407,15 +476,9 @@ sources:
     country: USA
 ```
 
-When `linkedin` and `indeed` are both enabled, each is fetched separately, under
-its own progress row, with its own retry and failure isolation — so a slow or
-failing LinkedIn scrape never blocks or fails the fast Indeed one. The live
-progress row and the `Source` column are site-named. (Glassdoor and Google for
-Jobs are excluded: broken or unsupported upstream.)
+### Job search example
 
-## Example
-
-Fuller example for a job-search workspace:
+A fuller example for a job search workspace:
 
 ```yaml
 daily_driver:
@@ -435,8 +498,8 @@ scheduler:
 
 plugins:
   job_search:
-    persona: "Senior SRE, IC-track only"
-    seniority_keywords: [senior, staff, principal]
+    persona: "Experienced project coordinator, open to remote roles"
+    roles: ["Project Coordinator", "Program Coordinator", "!Intern"]
     locations:
       home_city: Vancouver, BC
       remote: true
@@ -455,58 +518,8 @@ plugins:
         greenhouse_boards: [company-a, company-b, company-c]
 ```
 
-## Customization
-
-### `.claude/` ownership
-
-Generation touches five paths. Everything else is yours. Edits are detected with a SHA-256 manifest. `doctor --fix` and `init` regenerate the managed files after a version upgrade or after you switch a plugin on or off. `doctor --fix` also regenerates them when a managed file is missing or a contract check fails, such as an invalid `.claude/settings.local.json`. `doctor --reset` and `init --force` always rewrite them.
-
-| Path | `doctor --fix` and `init` | `doctor --reset` and `init --force` |
-| --- | --- | --- |
-| `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/` | Rendered from package templates, with job sections only when job search is on. Shipped files you edited are kept. A `.md` file you added is deleted. A file that an older version shipped is deleted unless you edited it. | Wiped and rewritten: your edits and every file you added are lost |
-| `.claude/hooks/` | Copied from the package. The keep and delete rules in the row above apply, with `.sh` in place of `.md`. | Wiped and rewritten |
-| `README.md` (workspace root) | Rendered from a package template, with job sections only when job search is on. Your edits are kept. | Overwritten |
-| `.claude/settings.local.json` | Rewritten from the package template, then the top-level keys you added are put back. The shipped `permissions`, `hooks`, and `metadata` blocks are replaced, so entries you added inside them are lost, including the allow rules Claude Code saves when you tell it not to ask again. If the file is not valid JSON, it is saved as `settings.local.json.invalid` and replaced, so none of your keys are kept. | The same |
-| `.claude/commands/user/`, `.claude/agents/user/`, top-level `.claude/commands/*.md` and `.claude/agents/*.md`, anything else under `.claude/` | Never touched | Never touched |
-
-### Custom Claude commands
-
-Place a markdown file at `.claude/commands/my-command.md` (any path outside `daily-driver/`). Invoke with `/my-command` inside any `claude` session launched with `--add-dir <workspace>`.
-
-### Custom Claude agents
-
-Place a markdown file at `.claude/agents/my-reviewer.md`. Invoke with `claude --agent my-reviewer ...`.
-
-### Customize a shipped command
-
-The launchers invoke the namespaced commands directly — `daily-driver day-start` runs `/daily-driver:day-start`, which maps to `.claude/commands/daily-driver/day-start.md`. To change what a launcher runs, you must edit that managed file in place.
-
-`doctor --fix` keeps your edits; `doctor --reset` and `init --force` overwrite them (see [`.claude/` ownership](#claude-ownership)). Keep a copy outside the workspace of any command you edit if you want to restore it after a reset.
-
-Copying the file up one level (`.claude/commands/day-start.md`) does not override the launcher: that path is a separate, unnamespaced command (`/day-start`) that doctor never touches, but the launchers keep invoking the namespaced `/daily-driver:day-start`. Use a top-level copy only for commands you invoke by hand inside a session.
-
-### Custom tracker categories
-
-Categories are free-form: any name works with `-c`. List one under `tracker.categories` to require fields on it. Edit `.dd-config.yaml`:
-
-```yaml
-tracker:
-  default_category: task
-  categories:
-    task:    {required: [title]}
-    ticket:  {required: [title]}
-    contact: {required: [title]}
-```
-
-Any fields passed via `tracker add --extra key=value` land in the entry's `extras:` block without schema changes.
-
-### Context and voice profile
-
-`context.md` and `voice-profile.md` in the workspace root are copied once on `init` and are yours thereafter — edit freely. `day-start` reads both files, `day-end` reads `context.md`, and the work-planner agent reads `voice-profile.md` before it drafts a message. With job search on, `jobs run` and `jobs backfill` also send `context.md` to the fit review. `voice-update --from PATH` rewrites `voice-profile.md` from writing samples via headless `claude`.
-
 ## See also
 
-- [usage.md](usage.md) — the daily flow that exercises these settings.
-- [ollama-setup.md](ollama-setup.md) — local-LLM provider walkthrough.
-- [commands.md](commands.md) — subcommand flag reference.
-- [dev/extending.md](dev/extending.md) — adding scraper sources or new subcommands.
+- [usage.md](usage.md): the daily flow.
+- [Local AI setup](ollama-setup.md): run some AI tasks on your own computer.
+- [commands.md](commands.md): every command and option.

@@ -1,156 +1,141 @@
-# Using Daily Driver
+# Daily guide
 
-End-to-end guide to the daily flow and the surfaces you touch most: tracker, focus, jobs, day-cycle launchers, summary, voice, and scheduler.
+How to use Daily Driver each day. You chat with Claude, and Claude keeps your list (the tracker), plans, and notes. This guide covers the daily chats, your list, focus mode, job search, summaries, your writing voice, and the scheduler.
 
-- Mental model and workspace layout: [concepts.md](concepts.md)
-- Installation: [install.md](install.md)
-- Config syntax: [configuration.md](configuration.md)
-- Per-flag detail: [commands.md](commands.md)
+- Set up your workspace first: [Quick start](quick-start.md)
+- What the parts are and how they fit together: [How it works](concepts.md)
 
-## First day
+## Daily sessions
 
-A walkthrough you can run end-to-end the first time.
+After the [quick start](quick-start.md), use three chats with Claude each day. Type each command in the Terminal app, inside your workspace folder. Claude manages your data for you: it adds and updates items in your list and writes your plans and notes.
 
-### 1. Scaffold the workspace
+| When | Start the chat | What happens |
+| --- | --- | --- |
+| Morning | `daily-driver day-start` | Claude reviews your list, and your calendar if you connect it, and helps you plan the day. |
+| Midday | `daily-driver check-in` | Tell Claude what you finished or what is stuck. It updates your list and adjusts the plan. |
+| Evening | `daily-driver day-end` | Claude compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
 
-```bash
-daily-driver init ~/daily-driver-workspace
-cd ~/daily-driver-workspace
-daily-driver doctor
-```
+To connect your calendar, see [Calendar access](install.md#calendar-access-optional).
 
-Job search is off by default. Add `--job-search` to `init` to switch it on (see [Jobs](#jobs)).
+Each chat saves files in your workspace folder:
 
-`init` is idempotent — re-running tops up missing files and prints a `Created: ... ; Skipped: ...` summary. It never overwrites `context.md` or `voice-profile.md`. `-f` / `--force` resets `.dd-config.yaml` to a fresh default and rewrites the managed files, so copy any settings you want to keep first. See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
+- `day-start` saves the plan in a file such as `2026/11/2026-11-02-plan.md`. Run `daily-driver paths daily-plan` to print the path.
+- `day-end` saves the notes in a file such as `2026/11/2026-11-02-notes.md`. Run `daily-driver paths daily-notes` to print the path.
+- Your list is in `tracker.yaml`. Claude updates it during the chat.
 
-`doctor` checks contracts and dependencies. WARNINGs exit 0; ERRORs need `doctor --fix` (regenerates managed files, restores deleted ones) or `doctor --reset` (full overwrite).
+To save these files in another folder, change `daily_driver.output_dir` in `.dd-config.yaml`.
 
-### 2. Fill in `context.md`
+Things you can say in a chat:
 
-Replace the seeded placeholders with real biographical context — what you do, what you're working on, anything you'd tell a new collaborator. List tasks that repeat under `## Recurring Tasks`, one per line; `day-start` adds each one to your plan. `day-start` and `day-end` read this file, so a richer file means better plans.
+- "Help me plan today. I have a dentist appointment at 3 pm."
+- "Add my open Jira tickets to my list, then help me plan today."
+- "I finished the passport renewal. The bank form is blocked until Monday."
+- "What should I focus on first?"
+- "Summarize what I got done this month."
+- "Draft a status update for my manager from my Jira tickets and what I finished this week."
 
-`voice-profile.md` can wait until you have writing samples — see [Voice updates](#voice-updates).
+Options:
 
-### 3. Add a first tracker entry
+- `check-in` starts a new chat each time. To continue your most recent chat instead, set `claude.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
+- If you close a chat by mistake, run `daily-driver resume` to reopen the most recent one.
+- Each command runs a Claude command of the same name, such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-claude-launchers).
 
-```bash
-daily-driver tracker add -c task -T "draft Q2 OKRs" -s open
-daily-driver tracker list
-daily-driver status
-```
+See also: [Connect your other tools](../README.md#connect-your-other-tools).
 
-`status` is the dashboard: setup gaps first (if any), totals by category and status, stalled items, and seven days of activity.
+## Your list (the tracker)
 
-### 4. Start the day
+Your list holds the things you follow up on. Claude keeps it up to date in your chats. You can also work with it yourself. Each item has a category (`task`, `errand`, `contact`, `ticket`, or any name you choose), a title, a status, and an identifier (ID). An ID is the category, a dash, and a number, such as `errand-001`.
 
-```bash
-daily-driver day-start
-```
+To require fields for a category, or to show it in `daily-driver help categories`, list it under `tracker.categories` in `.dd-config.yaml`. See [Settings](configuration.md#custom-tracker-categories).
 
-Spawns a `claude` session with the `work-planner` agent and your workspace attached, then runs `/daily-driver:day-start` — it reads your tracker, recent commits, and calendar, and helps draft the day's plan into `<output_dir>/<YYYY>/<MM>/<YYYY-MM-DD>-plan.md` (`output_dir` is the workspace directory unless you change it; `daily-driver paths daily-plan` prints the path).
+Claude runs these commands for you in a chat. You can also run them yourself:
 
-### 5. Check in at mid-day
-
-```bash
-daily-driver check-in
-```
-
-Starts a fresh session by default. Set `claude.resume_check_in: true` to continue your most recent session instead. Update the tracker as you go — via the slash command, or directly with `daily-driver tracker update <ID> -s in-progress`.
-
-### 6. Wind down
-
-```bash
-daily-driver day-end
-```
-
-Reviews what got done, what didn't, and what to carry forward. Writes the day's notes to `<output_dir>/<YYYY>/<MM>/<YYYY-MM-DD>-notes.md` (`daily-driver paths daily-notes` prints the path). That's the loop — repeat tomorrow.
-
-## Tracker
-
-The load-bearing surface. Categories are free-form: use any name with `-c`, such as `task`, `errand`, `contact`, or `ticket`. List a category under `tracker.categories` in `.dd-config.yaml` to require fields on it and to show it in `daily-driver help categories`.
-
-| Command | Purpose |
+| Command | What it does |
 |---|---|
-| `tracker add -c CAT -T TEXT [...]` | Create an entry |
-| `tracker list [-c CAT] [-s STATUS] [-t TAG] [--since SPEC] [-j]` | Filter; table or JSON |
-| `tracker show ID [-j]` | Single-entry detail |
-| `tracker update ID [-s STATUS] [-N NOTE] [-t TAGS] [...]` | Update; `-N` appends, `-t` replaces |
-| `tracker delete ID` | Remove one entry |
-| `tracker prune [-c CAT] [-s STATUS] [--older-than SPEC] [-n]` | Bulk delete (one filter required) |
-| `tracker follow-ups [--overdue] [-j]` | Entries with `next_action` set |
-| `tracker stats [-j]` | Counts by category and status |
+| `tracker add -c CATEGORY -T TITLE` | Adds an item |
+| `tracker list` | Shows your items. Filter with `-c` (category), `-s` (status), `-t` (tag), or `--since` (changed since a date). |
+| `tracker show ID` | Shows one item in full |
+| `tracker update ID` | Changes an item. `-s` sets the status, `-N` adds a note, `-t` replaces the tags. |
+| `tracker delete ID` | Deletes one item |
+| `tracker prune` | Deletes many items at once. You must give at least one filter. Add `-n` to preview. |
+| `tracker follow-ups` | Shows unfinished items that have a next action. `--overdue` shows only those past their due date. |
+| `tracker stats` | Shows counts by category and status |
 
 ```bash
 daily-driver tracker add -c errand -T "Book dentist" -s open -d 2026-11-15 --next-action "call the office" --extra phone=555-0100
 daily-driver tracker update errand-001 -s blocked -N "waiting on a callback"
-daily-driver tracker prune -c errand -s done --older-than month -n   # dry-run first
+daily-driver tracker prune -c errand -s done --older-than month -n   # preview first; nothing is deleted
 ```
 
-Entry IDs look like `errand-001`: the category, a dash, and a number.
+In the first command, `-s` sets the status, `-d` sets the due date, `--next-action` records the next step, and `--extra` adds your own field. In the second command, `-N` adds a note.
 
 ### Statuses
 
-Recommended set: `open`, `in-progress`, `blocked`, `done`, `ruled-out`. Anything else works; the CLI nudges once (to stderr) for a status outside that set that no other entry uses. Silence it with `tracker.warn_unknown_status: false`. Run `daily-driver help statuses` for the current recommended + in-use list. `job` entries (from `jobs promote`) use their own recommended set: `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`.
+Each item has a status. These are the suggested statuses:
 
-### Date specifiers
+| Status | Meaning |
+|---|---|
+| `open` | Not started |
+| `in-progress` | You are working on it |
+| `blocked` | You are waiting on something |
+| `done` | Finished |
+| `ruled-out` | You decided not to do it |
 
-`--since` (forward-looking) and `--older-than` (backward-looking) accept:
+You can use other statuses. Daily Driver shows a one-line notice when you use a new one. To turn the notice off, set `tracker.warn_unknown_status: false`. Run `daily-driver help statuses` to see the suggested statuses and the ones you use. Items from `jobs promote` use these statuses: `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, and `closed`.
 
-```
-today | yesterday | tomorrow
-week | month | quarter | year
-Nd | Nw | Nm | Ny           (e.g. 30d, 6w)
-YYYY-MM-DD
-```
+### Date words
 
-`daily-driver help dates` prints the date tokens and the flags that accept them.
+Some options accept a date word, such as `--since`, `--older-than`, and `summary --range`. For tracker commands, `--since` keeps items that changed on or after the date. `--older-than` selects items that last changed before the date.
+
+| You type | It means |
+|---|---|
+| `today`, `yesterday`, `tomorrow` | That day |
+| `week` | Monday of this week |
+| `month` | The first day of this month |
+| `quarter` | The first day of this quarter |
+| `year` | 1 January of this year |
+| `7d`, `2w`, `3m`, `1y` | That many days, weeks, months, or years ago |
+| `2026-11-15` | That exact date |
+
+`daily-driver help dates` shows the date words and the options that accept them.
 
 ## Focus mode
 
-A flock-backed toggle other commands respect — scheduled check-ins skip while focus is on.
+Focus mode pauses scheduled check-in reminders while you work without interruptions. A check-in that you start yourself still runs.
 
 ```bash
-daily-driver focus on --for 90m --reason "deep work on Q2 OKRs"
+daily-driver focus on --for 90m --reason "write the report"
 daily-driver focus status
 daily-driver focus off
 ```
 
-`--for` accepts `30m`, `2h`, `1h30m`, or bare minutes; omitting it falls back to `focus.default_duration` (default `25m`). The lock lives at `.daily-driver/state/focus.lock` — if it sticks, `focus off` releases it, or delete the file directly.
-
-## Day cycle launchers
-
-Three thin wrappers around `claude` that spawn a workspace-aware session with the `work-planner` agent.
-
-| Command | Slash command | Typical time |
-|---|---|---|
-| `day-start` | `/daily-driver:day-start` | morning |
-| `check-in` | `/daily-driver:check-in` | midday |
-| `day-end` | `/daily-driver:day-end` | evening |
-
-Shared flags: `--session-name NAME`, `--agent NAME` (default `work-planner`), `--model {sonnet,opus,haiku}`. `check-in` adds `--no-resume` to force a fresh session; the default is governed by `claude.resume_check_in`.
-
-If a launcher tab closes, `daily-driver resume` reattaches to the workspace's most recent session.
+`--for` sets how long focus mode lasts: `30m`, `2h`, `1h30m`, or a number of minutes. The default is 25 minutes. You can change it with `focus.default_duration` in `.dd-config.yaml`. If focus mode seems stuck, see [Troubleshooting](troubleshooting.md#focus-mode-stuck-on).
 
 ## Jobs
 
-The job-search plugin scrapes a configurable set of boards, dedupes against `jobs.csv`, and enriches missing fields (fit, notes, comp) via an AI provider.
+Job search is optional. It looks for new job postings on the sites you choose and saves them in a spreadsheet file named `jobs.csv`. It skips postings you already have. Then an AI model fills in missing details, such as how well each job fits you, notes, and pay.
 
 ### Enable it
 
-Job search is off by default, and every `jobs` command exits 1 until it is on. To switch it off again, set `enabled: false` under `plugins.job_search` and run `daily-driver doctor --fix`. If you use the scheduler, run `daily-driver scheduler install` to remove the `jobs` and `jobs-discover` agents. Your settings stay.
+Job search is off by default. Until you switch it on, every `jobs` command prints a message and stops.
 
-1. Switch it on. For a new workspace, run `daily-driver init --job-search <path>`. For an existing one, add a `plugins.job_search` block to `.dd-config.yaml`, then run `daily-driver doctor --fix` to add the job sections to the Claude prompts. `context.md` is not rewritten, so add your location preferences and what you look for in a role by hand. If you use the scheduler, run `daily-driver scheduler install` afterwards to add the `jobs` and `jobs-discover` agents.
-2. Set `scraper.enabled: true` and list your sources. If `init --job-search` already wrote a `plugins.job_search` block, merge these settings into it; a second `plugins:` key replaces the first. Minimal:
+1. For a new workspace, run `daily-driver init --job-search PATH`.
+2. For an existing workspace, add `plugins: {job_search: {}}` to `.dd-config.yaml`. Then run `daily-driver doctor --fix`. This adds job search to your Claude commands.
+3. Open `context.md`. Add the places you want to work and the roles you want. Daily Driver does not add these for you.
+4. If you use the scheduler, run `daily-driver scheduler install`. This adds the job search tasks.
+5. Add `scraper.enabled: true` and your sources to `.dd-config.yaml`, as in the example below. Do not add a second `plugins:` line. Add these lines under the one that exists.
 
 ```yaml
 plugins:
   job_search:
-    persona: "Senior SRE, IC-track only"
-    seniority_keywords: [senior, staff, principal]
+    persona: "Experienced project coordinator, open to remote roles"
+    roles: [project coordinator, project manager]
+    domain_keywords: [project, program, operations]
+    seniority_keywords: [senior, lead]
     locations:
       home_city: Vancouver, BC
       remote: true
-      # ISO code -> city allow-list; [] = whole country, cities = only those
+      # Country code. [] means the whole country. A list of cities means only those cities.
       countries: {US: [], CA: [Vancouver, Victoria]}
     scraper:
       enabled: true
@@ -160,143 +145,134 @@ plugins:
         greenhouse_boards: [company-a, company-b, company-c]
       hn_jobs: {}
       hn_who_is_hiring: {}
-      remoteok: {remoteok_tags: [devops, kubernetes, aws]}
-      weworkremotely: {wwr_categories: [devops-sysadmin]}
 ```
 
-Full field reference: [configuration.md](configuration.md#pluginsjob_search).
+`roles`, `domain_keywords`, and `seniority_keywords` decide which job titles are kept. If you leave `domain_keywords` or `seniority_keywords` empty, job search uses built-in keywords for infrastructure jobs. For every job search setting, see [Settings](configuration.md#pluginsjob_search).
+
+To switch job search off, set `enabled: false` under `plugins.job_search` and run `daily-driver doctor --fix`. If you use the scheduler, run `daily-driver scheduler install` to remove the job search tasks. Your settings stay.
 
 ### Sources
 
-| Source | Notes |
+| Source | What it searches |
 |---|---|
-| `remoteok` | RemoteOK feed; `?tags=` slugs from `remoteok_tags` |
-| `weworkremotely` | WeWorkRemotely feeds, one per `wwr_categories` entry; scrapes nothing until you list a category |
-| `hn_who_is_hiring` | Hacker News monthly thread |
-| `hn_jobs` | YC-funded jobs |
-| `greenhouse` | One row per `greenhouse_boards` entry |
-| `ashby` | One row per `ashby_boards` entry (AshbyHQ public API) |
-| `lever` | One row per `lever_boards` entry (Lever Postings API) |
-| `workable` | One row per `workable_accounts` entry (Workable widget API) |
-| `workday` | Paginated Workday careers site; one `workday_boards` entry per company |
-| `linkedin` | LinkedIn via JobSpy |
-| `indeed` | Indeed via JobSpy |
-| `apple` | Apple careers (requires Playwright) |
+| `remoteok` | Remote jobs on RemoteOK. Set `remoteok_tags` to the topics you want. |
+| `weworkremotely` | Remote jobs on We Work Remotely. Finds nothing until you list categories in `wwr_categories`. |
+| `hn_who_is_hiring` | The monthly "Who is hiring?" post on Hacker News |
+| `hn_jobs` | The Hacker News jobs page (companies funded by Y Combinator) |
+| `greenhouse` | Company job pages on Greenhouse. List company board names in `greenhouse_boards`. |
+| `ashby` | Company job pages on Ashby. List them in `ashby_boards`. |
+| `lever` | Company job pages on Lever. List them in `lever_boards`. |
+| `workable` | Company job pages on Workable. List accounts in `workable_accounts`. |
+| `workday` | Company job pages on Workday. One `workday_boards` entry per company. |
+| `linkedin`, `indeed` | LinkedIn and Indeed job search |
+| `apple` | Apple's job site. Needs a Playwright browser. See [Install](install.md#playwright-browser-install-optional). |
 
-`linkedin` and `indeed` are site-named sources (fetched via the `python-jobspy` library, an implementation detail). When both are enabled, each is fetched separately — its own progress row, retry, and failure isolation — and labeled by its own site name in the `Source` column.
+For Greenhouse, Ashby, and Lever, `daily-driver jobs discover-boards` finds company pages that list your roles. You do not have to list every page yourself.
 
-`daily-driver jobs run --list-sources` (or `daily-driver help sources`) prints the live set.
+`daily-driver jobs run --list-sources` (or `daily-driver help sources`) prints the current list.
 
 ### Commands
 
 ```bash
-daily-driver jobs run                           # full run, writes jobs.csv
-daily-driver jobs run -n                        # dry run (no writes)
-daily-driver jobs run --no-enrich               # append only, skip enrichment
-daily-driver jobs backfill                      # re-enrich empty cells
-daily-driver jobs backfill --limit 20           # cap LLM spend at 20 fit/notes calls
-daily-driver jobs run -S remoteok,hn_jobs       # source override
-daily-driver jobs discover-boards               # find Greenhouse, Ashby, and Lever boards that list your roles
-daily-driver jobs promote https://acme.example/jobs/123   # row -> tracker job entry
-daily-driver jobs status                        # last run, row counts by status, board discovery
-daily-driver jobs prune --older-than month      # archive triaged rows found over a month ago
+daily-driver jobs run                           # search all sources and save new jobs in jobs.csv
+daily-driver jobs run -n                        # preview only; nothing is saved
+daily-driver jobs run --no-enrich               # save new jobs without the AI details
+daily-driver jobs backfill                      # fill in empty details for saved jobs
+daily-driver jobs backfill --limit 20           # use the AI model for at most 20 jobs
+daily-driver jobs run -S remoteok,hn_jobs       # search only these sources
+daily-driver jobs discover-boards               # find company job pages (Greenhouse, Ashby, Lever) that list your roles
+daily-driver jobs promote https://acme.example/jobs/123   # copy a saved job into your tracker
+daily-driver jobs status                        # show the last run and job counts by status
+daily-driver jobs prune --older-than 30d        # archive finished jobs found more than 30 days ago
 daily-driver jobs verify                        # close saved jobs that are no longer posted
 ```
 
-`jobs run` writes as it works, so an interrupt (Ctrl-C or a scheduled `SIGTERM`) keeps what finished. Each source appends as it completes; LinkedIn and Indeed checkpoint after every search unit. A graceful stop drains in-flight work and exits (`130` for Ctrl-C, `143` for `SIGTERM`); a second Ctrl-C quits immediately. An interrupt during scraping skips enrichment — run `jobs backfill` to fill the empty cells later.
-
-`jobs promote` copies a triaged row into a tracker `job` entry once it needs active driving (interviews, follow-ups). The tracker drives work; `jobs.csv` is the discovery record; promotion is the explicit, idempotent bridge — it never mutates `jobs.csv`. Select by exact Link URL or an unambiguous Company substring.
-
-`jobs prune --older-than SPEC` defaults to `14d`. Default target statuses are `dropped`, `rejected`, `closed`, `skipped`; pass `-s STATUS` (repeatable) to override, for example `-s applied -s interviewing`. Those statuses age from `Date Found`, while `--min-fit` rows age from `Date Verified` — see `commands.md` for why. Pruned rows move to `jobs.archive.csv` — nothing is deleted outright.
+- Press Ctrl-C to stop a search. Daily Driver keeps the jobs it has already found. If you stop while it is still searching, the AI details are skipped. Run `daily-driver jobs backfill` later to fill them in.
+- `jobs promote` copies a saved job from `jobs.csv` into your tracker. Use it when you start to apply or interview. It does not change `jobs.csv`, and running it twice does not make a duplicate. Name the job with its full web address (URL), or with part of the company name that matches only one job.
+- `jobs prune` moves finished jobs from `jobs.csv` to `jobs.archive.csv`. By default it moves jobs with the status `dropped`, `rejected`, `closed`, or `skipped` that were found more than 14 days ago. To use other statuses, add `-s STATUS`, for example `-s applied`. Nothing is deleted.
 
 ### Choosing an AI provider
 
-Enrichment and summary default to the `claude` CLI. Route either to a local Ollama server with the `ai:` and plugin enrichment blocks:
-
-```yaml
-ai:
-  ollama:
-    endpoint: http://localhost:11434
-    timeout: 60
-plugins:
-  job_search:
-    enrichment:
-      provider: ollama
-      model: qwen2.5:14b
-```
-
-`claude` suits low-volume, high-quality work; `ollama` suits `jobs backfill` over hundreds of rows (no rate limits, free, local). Interactive launchers always use `claude`. Full walkthrough: [ollama-setup.md](ollama-setup.md). When a task routes to ollama, `daily-driver doctor` checks server reachability and model presence: an `AI providers` row for `summary` and `voice-update`, and an `Enrichment provider` row for job search enrichment.
+By default, job search uses Claude to fill in job details. You can use a free AI model on your own computer instead (Ollama). This suits large runs of `jobs backfill`. Interactive chats always use Claude. For setup, see [Local AI setup](ollama-setup.md).
 
 ## Summary
 
-Generate a headless summary of any period and copy it to the clipboard.
+`daily-driver summary` writes a summary of any period and copies it to your clipboard. You can also ask Claude for a summary in a chat.
 
 ```bash
 daily-driver summary -r today
 daily-driver summary -r week --detail high
-daily-driver summary -r 2026-05-01:2026-05-09 --match python --match sre
-daily-driver summary -r yesterday -j                # resolved date range as JSON, no claude call
+daily-driver summary -r 2026-05-01:2026-05-09 --match project --match budget
 ```
 
-`-r` / `--range` accepts the tracker date grammar plus `YYYY-MM-DD:YYYY-MM-DD`. `--no-clipboard` skips `pbcopy`; `--timeout SECONDS` (default 180) caps the wait for `claude`.
+| Option | What it does |
+|---|---|
+| `-r`, `--range` | The period. Use a date word from [Date words](#date-words), one date, or two dates such as `2026-05-01:2026-05-09`. |
+| `--detail` | How much detail: `low`, `med`, or `high` |
+| `--match` | Limits the summary to a keyword. Repeat the option for more keywords. |
+| `--no-clipboard` | Skips copying to the clipboard |
+| `--timeout SECONDS` | How long to wait for Claude. The default is 180 seconds. |
 
 ## Voice updates
 
-`voice-profile.md` shapes how `claude` writes on your behalf. Rewrite it from authentic samples (Slack exports, emails, blog posts):
+`voice-profile.md` tells Claude how you write, so drafts sound like you. Update it from your own writing, such as Slack exports, emails, or blog posts:
 
 ```bash
 daily-driver voice-update --from ~/exports/slack.txt ~/blog/
-daily-driver voice-update --from ~/exports/slack.txt -n        # check the sources, no model call, no write
+daily-driver voice-update --from ~/exports/slack.txt -n        # check your files only; nothing changes
 daily-driver voice-update --from ~/exports/slack.txt --replace
 ```
 
-`--from` takes one or more files or directories after a single flag; repeating `--from` keeps only the last one. Only `.md` and `.txt` files up to 500,000 bytes are read.
+- Give all files and folders after one `--from`. If you repeat `--from`, only the last one is used.
+- Daily Driver reads `.md` and `.txt` files up to 500 kilobytes (KB) each.
+- By default, new observations are added to your profile (`--append`). `--replace` starts over. Both save the old profile as `voice-profile.md.bak`.
+- `-n` (`--dry-run`) checks that your files can be read. It does not change anything and does not show the new profile.
 
-Default mode is `--append`; `--replace` starts over; `-n` / `--dry-run` validates the sources and prints the target path without calling the model or writing (it does not preview the generated profile).
+Use writing that you wrote yourself, not AI-generated text. The profile records your voice, not Claude's.
 
-> Run this on writing you actually produced, not AI-generated text — the profile captures your voice, not Claude's.
+## Other commands
 
-## Workspace utilities
+Claude runs many of these for you in a chat. You can also run them yourself:
 
-| Command | Use |
+| Command | What it does |
 |---|---|
-| `paths <kind> [-d DATE] [-j]` | Print a resolved workspace path. Kinds: `root`, `output`, `state`, `ephemeral`, `tracker`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. `-j` emits all paths including the `tracker` key. |
-| `gather calendar [--since SPEC] [--until SPEC] [-j]` | Read macOS Calendar (icalBuddy) events. |
-| `gather git [--repo PATH] [--since SPEC] [--until SPEC] [-j]` | Recent commits from configured repos (or `--repo PATH`). |
-| `status [-j]` | Tracker dashboard. |
-| `calendar sync` | Write today's plan time blocks to a macOS Calendar. Off until `calendar.sync_enabled: true`; the calendar named in `calendar.plan_calendar_name` (default `Daily Plan`) must already exist. `day-start` runs it for you. |
+| `status` | Shows totals, items with no update in 14 days, and recent changes |
+| `paths daily-plan` | Prints the path of today's plan file. Use `daily-notes` for the notes file. |
+| `gather calendar` | Shows your macOS Calendar events |
+| `gather git` | Shows recent Git commits from your projects |
+| `calendar sync` | Copies today's plan time blocks to a macOS Calendar. Off until you set `calendar.sync_enabled: true`. The calendar named in `calendar.plan_calendar_name` (default `Daily Plan`) must exist. `day-start` runs it for you. |
+| `help` | Shows lists of valid values: `help commands`, `help statuses`, `help categories`, `help sources`, `help dates` |
 
-## Help
-
-`daily-driver help [TOPIC]` is the in-CLI reference for discoverable values that change with config or release:
-
-| Topic | What it lists |
-|---|---|
-| `commands` | Every subcommand with a one-line description |
-| `statuses` | Recommended statuses + ones in your tracker |
-| `categories` | Categories defined in `tracker.categories` |
-| `sources` | Job-board sources known to the scraper |
-| `dates` | Date-spec grammar |
-
-`daily-driver help -j` emits a structured payload for scripts or completion. No topic prints all sections. This is distinct from argparse `--help`, which only shows flag usage.
+For the options of one command, run `daily-driver COMMAND --help`. For every command, see [Commands](commands.md).
 
 ## Scheduler (macOS)
 
-`scheduler` manages launchd plists in `~/Library/LaunchAgents/` via three idempotent actions: `install`, `uninstall`, `status`.
+The scheduler uses launchd, the macOS tool that runs tasks at set times. Daily Driver uses it to remind you to check in.
 
-Defaults when `scheduler:` is omitted:
+| Command | What it does |
+|---|---|
+| `daily-driver scheduler install` | Sets up the scheduled tasks |
+| `daily-driver scheduler status` | Shows each task and whether it is installed |
+| `daily-driver scheduler uninstall` | Removes the tasks |
 
-| Job | Time | Action |
+These are the tasks and their default times:
+
+| Task | Time | What it runs |
 |---|---|---|
-| `checkin` | 11:00, 15:00 | `daily-driver check-in` (skipped while focus is on) |
+| `checkin` | 11:00 and 15:00 | `daily-driver check-in` (skipped while focus mode is on) |
+| `day-start` | Off until you set `schedule.day_start` | `daily-driver day-start` |
+| `day-end` | Off until you set `schedule.day_end` | `daily-driver day-end` |
 | `jobs` | 07:00 (job search only) | `daily-driver jobs run` |
-| `jobs-discover` | 23:59 Sat, Tue (job search only) | `daily-driver jobs discover-boards` |
-| `day-start` | `schedule.day_start` (off until set) | `daily-driver day-start` |
-| `day-end` | `schedule.day_end` (off until set) | `daily-driver day-end` |
+| `jobs-discover` | 23:59 on Saturday and Tuesday (job search only) | `daily-driver jobs discover-boards` |
 
-When launchd fires them, `day-start`, `day-end`, and `check-in` each post a desktop notification (clickable when `terminal-notifier` is installed; otherwise it shows the command to run). Clicking opens the session in a new iTerm2 tab, or in Terminal.app if iTerm2 is not installed (via the launchers' `--launch notify` mode; see [commands.md](commands.md)). launchd cannot open a terminal itself, so the notification is the nudge. The `jobs` and `jobs-discover` runs are headless.
+When a task runs:
 
-Override times in `.dd-config.yaml`. The `scheduler:` block is strictly typed — unknown keys are rejected at config load. Each job takes an optional `days` cadence — `daily` (default), `weekdays`, or a list of day names (e.g. `[sun, wed]`); `scheduler.checkin.days`, `scheduler.jobs.days`, and `scheduler.discovery.days` scope those jobs, and `schedule.days` applies to both day-start and day-end:
+- `day-start`, `day-end`, and `check-in` show a macOS notification.
+- Click the notification to open the chat in a new iTerm2 tab. Without iTerm2, it opens in Terminal.
+- Clicking works only if `terminal-notifier` is installed. Without it, the notification shows the command to run. If clicking does nothing, see [Troubleshooting](troubleshooting.md).
+- `jobs` and `jobs-discover` run in the background with no window.
+
+To change the times or days, edit `.dd-config.yaml`:
 
 ```yaml
 schedule:
@@ -308,50 +284,33 @@ scheduler:
   jobs:    {time: "23:59", days: [sun, wed]}
 ```
 
-Re-run `scheduler install` after changes; it unloads, rewrites, and reloads in one step. With job search off, a full `scheduler install` (no job names) also removes any `jobs` and `jobs-discover` agents left from an earlier install and lists them; `scheduler status` marks such agents `yes, job search off`. Logs land under `.daily-driver/state/logs/launchd-*.{out,err}`.
-
-## Output and verbosity
-
-Daily Driver writes data on stdout and status messages on stderr, so pipelines work without ceremony:
-
-```bash
-daily-driver tracker list -s open -j | jq -r '.data.entries[].title'
-daily-driver paths daily-plan | xargs $EDITOR
-daily-driver summary -r week -j > /tmp/week.json
-```
-
-`-j` output is wrapped as `{"schema": 1, "data": ...}`, so read fields under `.data`.
-
-On a TTY, `jobs run` pins a live progress display at the bottom: a `Scraping sources` header bar (green ok / red failed segments) with one bar per source, then an `Enriching jobs` group. Each source reports against its natural unit (search term × country for LinkedIn/Indeed/Apple, boards for Greenhouse, categories for WeWorkRemotely, a single fetch for the rest) and stays pinned at its result (`linkedin  61 found`, red on failure). It ends with a `Completed:` line reconciling totals. Non-interactive output (cron, launchd, pipes), or a terminal that doesn't answer the cursor-position query, falls back to plain lines.
-
-Verbosity is two mutually exclusive flags:
-
-| Flag | Effect |
+| Setting | Days it controls |
 |---|---|
-| (default) | WARNING + ERROR logs; normal status lines; live progress on a TTY |
-| `-v` | Adds INFO (per-step progress, per-source scrape lines, enrichment counts), scrolling above the pinned display |
-| `-vv` | Adds DEBUG (resolved gather windows, per-job enrichment prompts and AI responses, pre/post field state) |
-| `-q`, `--quiet` | Errors only; suppresses status, INFO, DEBUG, and the live display |
+| `schedule.days` | `day-start` and `day-end` |
+| `scheduler.checkin.days` | Check-in |
+| `scheduler.jobs.days` | Job search run |
+| `scheduler.discovery.days` | Board discovery |
 
-Use `-v` for "tell me what just happened" (why a run produced few rows, which calendar window resolved). Use `-vv` to chase a data bug (ollama returning malformed JSON, fields not written). `--no-color` drops ANSI color but keeps Rich markup and table layout — what you want when paging or redirecting output.
+A `days` setting is `daily`, `weekdays`, or a list of day names, such as `[sun, wed]`. The default is `daily`, except board discovery, which runs on Saturday and Tuesday.
+
+After you change a setting, run `daily-driver scheduler install` again. If you switch job search off, `scheduler install` also removes its tasks. Logs are in `.daily-driver/state/logs/`.
 
 ## Troubleshooting
 
-Full guide: [troubleshooting.md](troubleshooting.md). Quick map:
+Full guide: [Troubleshooting](troubleshooting.md). This table shows where to start:
 
 | Symptom | Where to look |
 |---|---|
-| `doctor` errors | Run `doctor --fix`; then [troubleshooting.md#doctor-reports-error](troubleshooting.md#doctor-reports-error) |
-| Stale launchd plist or wrong path | `scheduler install` again; else [launchd plist won't load](troubleshooting.md#launchd-plist-wont-load) |
-| Focus mode stuck on | `daily-driver focus off`; manual removal in [Focus mode stuck on](troubleshooting.md#focus-mode-stuck-on) |
-| Ollama connection refused / model not pulled | [ollama-setup.md#troubleshooting](ollama-setup.md#troubleshooting) |
-| Pydantic config error after upgrade | Read `CHANGELOG.md`, edit `.dd-config.yaml`, run `doctor`. No automatic migrations. |
+| A command does not work as expected | Run it again with `-v` for more detail or `-vv` for the most detail. `-q` shows errors only. |
+| `doctor` shows an ERROR | Run `daily-driver doctor --fix`. Then see [`doctor` reports ERROR](troubleshooting.md#doctor-reports-error). |
+| Scheduled reminders do not run, or run the wrong program | Run `daily-driver scheduler install` again. Then see [launchd plist won't load](troubleshooting.md#launchd-plist-wont-load). |
+| Focus mode is stuck on | Run `daily-driver focus off`. Then see [Focus mode stuck on](troubleshooting.md#focus-mode-stuck-on). |
+| Ollama connection refused, or model not downloaded | [Local AI setup](ollama-setup.md#troubleshooting) |
+| Settings error after an upgrade | Read `CHANGELOG.md`, edit `.dd-config.yaml`, then run `daily-driver doctor`. Daily Driver does not change your settings for you. |
 
-## Reference
+## More guides
 
-- [concepts.md](concepts.md) — mental model and workspace overview
-- [commands.md](commands.md) — per-subcommand flag detail
-- [configuration.md](configuration.md) — `.dd-config.yaml` schema
-- [cli-tree.md](cli-tree.md) — at-a-glance command tree
-- [ollama-setup.md](ollama-setup.md) — local-LLM provider
-- [troubleshooting.md](troubleshooting.md) — failure modes and recovery
+- [Commands](commands.md): every command and option, plus a [command tree](cli-tree.md).
+- [Settings](configuration.md): every setting in `.dd-config.yaml`.
+- [Local AI setup](ollama-setup.md): run some AI tasks on your own computer.
+- [Troubleshooting](troubleshooting.md): fixes for common problems.
