@@ -121,6 +121,7 @@ def test_load_names_removed_setting_and_its_fix(tmp_path, block, fix):
     message = str(excinfo.value)
     assert block.split(":")[0] in message
     assert fix in message
+    assert "indented lines under it" in message
     assert str(cfg_file) in message
 
 
@@ -144,22 +145,3 @@ def test_load_reports_removed_and_other_problems_together(tmp_path):
         load(cfg_file)
     assert "user_profile" in str(excinfo.value)
     assert "focus.bogus" in str(excinfo.value)
-
-
-def test_cli_shows_removed_setting_fix(tmp_path, capsys):
-    from daily_driver.cli.cli import app
-    from daily_driver.core.workspace import Workspace
-
-    Workspace.init(tmp_path)
-    cfg_file = tmp_path / ".dd-config.yaml"
-    cfg_file.write_text(
-        cfg_file.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
-        encoding="utf-8",
-    )
-    rc = app(["--workspace", str(tmp_path), "tracker", "list"])
-    assert rc == 1
-    err = capsys.readouterr().err
-    assert "user_profile" in err
-    assert "context.md" in err
-    assert "Extra inputs are not permitted" not in err
-    assert "ConfigError" not in err

@@ -18,11 +18,15 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Removed
 
-- **The `user_profile` and `recurring_tasks` config settings are gone.** Nothing read them: day-start takes your background and recurring tasks from `context.md`. A config that still has either block stops every command except `help` with a message that names the block, says where its content goes now, and lists any other problem in the file: delete the block and move anything you need into `context.md`. New workspaces get an empty `## Recurring Tasks` section in `context.md`. `help cadences` is gone with them. (#269)
+- **The `user_profile` and `recurring_tasks` config settings are gone.** Nothing read them: day-start takes your background and recurring tasks from `context.md`. A config that still has either block stops every command except `help` with a message that names the block, says where its content goes now, and lists any other problem in the file: delete the setting and the indented lines under it, and move anything you need into `context.md`. New workspaces get an empty `## Recurring Tasks` section in `context.md`. `help cadences` is gone with them. (#269, #271)
 
 - **The `/daily-driver:daily-learning` command is gone,** along with day-start's optional interview-practice step. Your next `doctor --fix` removes the command from the workspace; your notes under `daily-learning/` are left alone. (#266)
 
 ### Fixed
+
+- **A new install works with job search again.** python-jobspy 1.4.0 removed the salary helper and the country data that job search uses. On any install made after its release, reading pay from a description raised an error and location filtering recognized no country. Daily Driver now requires a python-jobspy older than 1.4. To repair an existing install, upgrade Daily Driver to this release. To stay on an older version, run `pip install 'python-jobspy<1.4'` in the environment Daily Driver is installed in, or `pipx runpip daily-driver install 'python-jobspy<1.4'` if you installed it with pipx. (#274)
+
+- **A `scheduler` part you set only partly keeps the default for the rest.** `checkin: {days: weekdays}` used to install no check-in reminders, `jobs: {days: [mon]}` dropped the jobs run, and `discovery: {time: "02:00"}` ran every day instead of Saturday and Tuesday. Each line you leave out now keeps its default, and an empty part such as `jobs: {}` keeps all of them. To stop a run, use `time: null`, or `times: []` for check-in. Re-run `scheduler install` to rewrite the reminders. (#272)
 
 - **day-start, day-end and `voice-update` now find `context.md` and `voice-profile.md` when `output_dir` is not `.`.** `init` writes both files to the workspace folder, where `status` checks them, but day-start, day-end and the work-planner agent read them from the output folder, and `voice-update` wrote the profile there. So planning ran without your background or recurring tasks, and the profile `init` made was never used. All of them now use the workspace folder. Run `doctor --fix` to update the day-start and day-end commands and the work-planner agent in an existing workspace. If you set `output_dir` and ran `voice-update`, move anything you want from `<output_dir>/voice-profile.md` into `voice-profile.md` in the workspace folder. (#269)
 

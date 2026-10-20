@@ -2,8 +2,7 @@
 
 `test_config_template.py` proves every pydantic field APPEARS in the shipped
 config template. This complement proves every *leaf* knob's BEHAVIOR is
-exercised by — or deliberately excluded from — the test suite, so a knob can
-never ship silently untested.
+exercised by the test suite, so a knob can never ship silently untested.
 
 Mechanism (kept deliberately simple and fast): walk the same model tree the
 template walker walks, reduce it to leaf knobs (fields with no sub-fields),
@@ -18,22 +17,17 @@ while the guard stayed green. These four forms are how config is actually
 
 The two pure-schema modules (``test_config_models.py``,
 ``test_config_template.py``) are excluded from the scan: they prove a field
-validates / renders, not that its behavior is exercised. A knob whose only
-coverage is a model-level validator in those modules belongs in the ledger.
+validates / renders, not that its behavior is exercised.
 
-A leaf that is genuinely untestable in unit scope (or validator-only) is listed
-in ``_BEHAVIOR_UNTESTED`` WITH a one-line reason. A leaf that is neither
-referenced nor listed fails this test — the same red-contract discipline as the
-template walker's ``_UNTEMPLATED`` ledger. Its job is to keep FUTURE knobs
-honest: add a field without a behavior test or a ledger entry and this turns
-red, naming the dotted path.
+A leaf that no functional test references fails this test, naming the dotted
+path. Its job is to keep FUTURE knobs honest: add a field without a behavior
+test and this turns red.
 """
 
 from __future__ import annotations
 
 import pathlib
 import re
-from collections import Counter
 
 from daily_driver.core.config_models import Config
 
@@ -43,8 +37,7 @@ from tests.test_core.test_config_template import _walk_fields
 
 # Schema/template test modules prove a field VALIDATES or RENDERS, not that its
 # behavior is exercised; excluded from the behavior scan so a config round-trip
-# never counts as behavior coverage. (This module is excluded too — it names
-# every ledger key in prose.)
+# never counts as behavior coverage. This module is excluded too.
 _SCHEMA_TEST_MODULES = frozenset(
     {
         "test_config_models.py",
@@ -52,26 +45,6 @@ _SCHEMA_TEST_MODULES = frozenset(
         "test_config_behavior.py",
     }
 )
-
-# --- The behavior-exclusion ledger -----------------------------------------
-#
-# Each entry is a leaf knob dotted path with NO unit-testable behavior in a
-# functional (non-schema) test module, e.g. a knob whose only behavior is a
-# pydantic cross-field validator, which lives in (the excluded)
-# test_config_models.py.
-#
-# A knob with real, functional behavior does NOT belong here — write a focused
-# test instead. Keep each reason to one line.
-_BEHAVIOR_UNTESTED: dict[str, str] = {}
-
-# The budget cap (max_enrich_fit) is NOT in the ledger: its behavior is covered
-# in test_typed_enrichers.py (config-default vs 0=no-calls), and the
-# fit-enrich-budget-boundary work owns the budget-param boundary semantics. It
-# passes this guard via name reference; no duplicate cap tests are added here.
-#
-# scraper.headless is NOT in the ledger either: although orchestrator-overridden
-# in production, test_playwright_browser.py asserts the flag reaches the launch
-# call, so it is genuinely behavior-referenced.
 
 
 def _leaf_knobs() -> list[tuple[str, str]]:
@@ -93,12 +66,6 @@ def _leaf_knobs() -> list[tuple[str, str]]:
         if not is_container:
             leaves.append((dotted, key))
     return leaves
-
-
-def _shared_keys() -> frozenset[str]:
-    """Leaf yaml keys carried by more than one knob (string-unattributable)."""
-    counts = Counter(key for _dotted, key in _leaf_knobs())
-    return frozenset(k for k, n in counts.items() if n > 1)
 
 
 def _behavior_text() -> str:
@@ -127,59 +94,14 @@ def _key_referenced(yaml_key: str, text: str) -> bool:
     return any(re.search(p, text) for p in patterns)
 
 
-def test_every_config_knob_is_tested_or_ledgered() -> None:
-    """Every leaf knob is behavior-referenced by some test, or in the ledger.
+def test_every_config_knob_is_behavior_tested() -> None:
+    """Every leaf knob is behavior-referenced by some test.
 
-    RED contract: add a config field without a behavior test (or a justified
-    ledger entry) and this fails, naming the dotted path.
+    RED contract: add a config field without a behavior test and this fails,
+    naming the dotted path.
     """
     text = _behavior_text()
     uncovered = sorted(
-        dotted
-        for dotted, key in _leaf_knobs()
-        if dotted not in _BEHAVIOR_UNTESTED and not _key_referenced(key, text)
+        dotted for dotted, key in _leaf_knobs() if not _key_referenced(key, text)
     )
-    assert (
-        not uncovered
-    ), "config knobs neither behavior-tested nor in _BEHAVIOR_UNTESTED: " + ", ".join(
-        uncovered
-    )
-
-
-def test_behavior_ledger_paths_are_real_leaf_knobs() -> None:
-    """Each _BEHAVIOR_UNTESTED entry must name a real leaf field.
-
-    Keeps the ledger honest: a path that no longer exists (or is a container,
-    not a leaf) should be removed rather than masking coverage.
-    """
-    leaf_paths = {dotted for dotted, _key in _leaf_knobs()}
-    for excluded in _BEHAVIOR_UNTESTED:
-        assert (
-            excluded in leaf_paths
-        ), f"_BEHAVIOR_UNTESTED path {excluded!r} is not a real leaf knob"
-
-
-def test_behavior_ledger_entries_are_not_behavior_referenced() -> None:
-    """A ledgered knob must NOT be behavior-referenced by the scan.
-
-    If someone later writes a real behavior test for a ledgered knob (so its key
-    now appears in a construction form), this turns red — forcing the stale
-    "untestable" entry out of the ledger instead of silently masking the new
-    coverage. Keys carried by more than one knob (`model`, `timeout`,
-    `enabled`, ...) cannot be pinned to one knob by string search, so they are
-    skipped: a false "referenced" there would fail spuriously, and those
-    entries rely on the real-leaf check above.
-    """
-    text = _behavior_text()
-    unattributable = _shared_keys()
-    leftover = sorted(
-        dotted
-        for dotted, key in _leaf_knobs()
-        if dotted in _BEHAVIOR_UNTESTED
-        and key not in unattributable
-        and _key_referenced(key, text)
-    )
-    assert not leftover, (
-        "ledgered knobs are now behavior-referenced; remove them from "
-        "_BEHAVIOR_UNTESTED: " + ", ".join(leftover)
-    )
+    assert not uncovered, "config knobs with no behavior test: " + ", ".join(uncovered)

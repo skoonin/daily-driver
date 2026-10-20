@@ -49,7 +49,7 @@ def test_remoteok_live_returns_list_with_expected_fields() -> None:
 def test_jobspy_linkedin_fetch_description_accepted() -> None:
     """JobSpy accepts ``linkedin_fetch_description=True`` against a live call.
 
-    Pip pin (`python-jobspy>=1.1.82`) + the ``TypeError`` hard-fail in
+    Pip pin (`python-jobspy>=1.1.82,<1.4`) + the ``TypeError`` hard-fail in
     ``scrape_jobspy`` enforce the version contract; this test exercises the
     real call path end-to-end. Asserts shape only — empty results are fine
     (LinkedIn rate-limits, search may not match anything in `hours_old`).
