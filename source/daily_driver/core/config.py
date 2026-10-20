@@ -18,10 +18,13 @@ _logger = get_logger("config")
 # Settings that no longer exist, each with what to do instead. Without this the
 # strict schema reports only "Extra inputs are not permitted".
 _REMOVED_SETTINGS = {
-    "user_profile": "delete it and put your background in context.md.",
+    "user_profile": (
+        "delete it and the indented lines under it, and put your background in "
+        "context.md."
+    ),
     "recurring_tasks": (
-        'delete it and list your recurring tasks under "## Recurring Tasks" '
-        "in context.md."
+        "delete it and the indented lines under it, and list your recurring "
+        'tasks under "## Recurring Tasks" in context.md.'
     ),
 }
 

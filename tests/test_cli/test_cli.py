@@ -274,3 +274,26 @@ def test_unhandled_error_reports_class_name(monkeypatch, capsys):
     rc = app(["doctor"])
     assert rc == 1
     assert "ValueError: boom" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# 9. A config error prints its own message, without a class name
+# ---------------------------------------------------------------------------
+
+
+def test_removed_setting_error_shows_its_fix(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
+        encoding="utf-8",
+    )
+    rc = app(["--workspace", str(tmp_path), "tracker", "list"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "user_profile" in err
+    assert "context.md" in err
+    assert "Extra inputs are not permitted" not in err
+    assert "ConfigError" not in err
