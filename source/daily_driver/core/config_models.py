@@ -57,8 +57,8 @@ def _normalize_days(v: Any) -> Any:
 
     Accepts the shortcut strings "daily" / "weekdays", or a list of day names
     (full or abbreviated, any case) normalized to canonical three-letter
-    lowercase. An explicit empty list is rejected — omit the key (or use
-    "daily") to fire every day.
+    lowercase. An explicit empty list is rejected — use "daily" to fire every
+    day.
     """
     if v is None:
         return v
@@ -79,7 +79,7 @@ def _normalize_days(v: Any) -> Any:
             if name not in normalized:
                 normalized.append(name)
         if not normalized:
-            raise ValueError("days list must not be empty; omit for daily")
+            raise ValueError("days list must not be empty; use daily")
         return normalized
     raise ValueError(f"expected a days shortcut string or list, got {v!r}")
 

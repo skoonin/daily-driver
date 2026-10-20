@@ -24,6 +24,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Fixed
 
+- **A `scheduler` part you set only partly keeps the default for the rest.** `checkin: {days: weekdays}` used to install no check-in reminders, `jobs: {days: [mon]}` dropped the jobs run, and `discovery: {time: "02:00"}` ran every day instead of Saturday and Tuesday. Each line you leave out now keeps its default, and an empty part such as `jobs: {}` keeps all of them. To stop a run, use `time: null`, or `times: []` for check-in. Re-run `scheduler install` to rewrite the reminders.
+
 - **day-start, day-end and `voice-update` now find `context.md` and `voice-profile.md` when `output_dir` is not `.`.** `init` writes both files to the workspace folder, where `status` checks them, but day-start, day-end and the work-planner agent read them from the output folder, and `voice-update` wrote the profile there. So planning ran without your background or recurring tasks, and the profile `init` made was never used. All of them now use the workspace folder. Run `doctor --fix` to update the day-start and day-end commands and the work-planner agent in an existing workspace. If you set `output_dir` and ran `voice-update`, move anything you want from `<output_dir>/voice-profile.md` into `voice-profile.md` in the workspace folder. (#269)
 
 - **`doctor` no longer reports a removed managed file as missing forever.** When an upgrade stopped shipping a command, its entry stayed in the workspace manifest, and `doctor` warned about it with no way for `--fix` to clear it. (#266)

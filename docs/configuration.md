@@ -131,18 +131,20 @@ Per-job launchd cadence for the `check-in`, `jobs`, and board-discovery runs (`d
 
 | Key | Type | Default | Notes |
 |-----|------|---------|-------|
-| `checkin.times` | list[string] (HH:MM) | `[]` | Check-in firing times |
+| `checkin.times` | list[string] (HH:MM) | `["11:00", "15:00"]` | Check-in firing times |
 | `checkin.days` | cadence | `daily` | Which days check-in fires (see below) |
-| `jobs.time` | string (HH:MM) or null | null | Single `jobs run` firing time |
+| `jobs.time` | string (HH:MM) or null | `"07:00"` | Single `jobs run` firing time |
 | `jobs.days` | cadence | `daily` | Which days the jobs run fires |
-| `discovery.time` | string (HH:MM) or null | null | Single `jobs discover-boards` firing time |
-| `discovery.days` | cadence | `daily` | Which days the board sweep fires |
+| `discovery.time` | string (HH:MM) or null | `"23:59"` | Single `jobs discover-boards` firing time |
+| `discovery.days` | cadence | `[sat, tue]` | Which days the board sweep fires |
+
+Each key you leave out keeps its default, so `checkin: {days: weekdays}` keeps the 11:00 and 15:00 check-ins and runs them on weekdays only.
 
 Discovery is its own launchd agent rather than a step inside the scrape. The board universe turns over far more slowly than postings do, so sweeping as often as scraping is wasted work; launchd takes a single command, so chaining the two would need a wrapper script; and a sweep that hangs must not block the scrape. Schedule it to land the day before a scrape. If a sweep is skipped the scrape simply uses the previous board list.
 
-To stop a job being installed, clear its time (`discovery: {time: null}`), not the whole block. Setting a block to `null` is indistinguishable from omitting it, so the packaged default applies and the job is still installed. This holds for `checkin` and `jobs` too.
+To stop a job being installed, clear its time: `checkin: {times: []}`, `jobs: {time: null}`, or `discovery: {time: null}`. Setting a whole block to `null` or `{}` is the same as omitting it, so the packaged defaults apply and the job is still installed.
 
-The `days` field on every schedule block is a **cadence**: `daily` (default), `weekdays`, or an explicit list of day names — three-letter or full, any case (e.g. `[sun, wed]`). An empty list is rejected; omit the key (or use `daily`) to fire every day. Re-run `scheduler install` after changing any of these to rewrite the plists.
+The `days` field on every schedule block is a **cadence**: `daily` (the default, except `[sat, tue]` for discovery), `weekdays`, or an explicit list of day names — three-letter or full, any case (e.g. `[sun, wed]`). An empty list is rejected; use `daily` to fire every day. Re-run `scheduler install` after changing any of these to rewrite the plists.
 
 ```yaml
 scheduler:

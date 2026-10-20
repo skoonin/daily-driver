@@ -286,7 +286,7 @@ Defaults when `scheduler:` is omitted:
 
 When launchd fires them, `day-start`, `day-end`, and `check-in` each post a clickable desktop notification that opens the session on click (via the launchers' `--launch notify` mode; see [commands.md](commands.md)). launchd cannot open a terminal itself, so the notification is the nudge and the session starts from your own session on click. The `jobs` scrape runs headless.
 
-Override times in `.dd-config.yaml`. The `scheduler:` block is strictly typed — unknown keys are rejected at config load. Each job takes an optional `days` cadence — `daily` (default), `weekdays`, or a list of day names (e.g. `[sun, wed]`); `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs, and `schedule.days` applies to both day-start and day-end:
+Override times in `.dd-config.yaml`. The `scheduler:` block is strictly typed — unknown keys are rejected at config load. Each job takes an optional `days` cadence — `daily` (the default, except `[sat, tue]` for discovery), `weekdays`, or a list of day names (e.g. `[sun, wed]`); `scheduler.checkin.days` and `scheduler.jobs.days` scope those jobs, and `schedule.days` applies to both day-start and day-end:
 
 ```yaml
 schedule:

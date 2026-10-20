@@ -116,10 +116,51 @@ class TestBuildJobs:
         jobs = scheduler.build_jobs(ws)
         assert all(j.label != "com.daily-driver.checkin" for j in jobs)
 
-    def test_missing_scrape_time_omits_job(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {}})
+    def test_cleared_scrape_time_omits_job(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {"time": None}})
         jobs = scheduler.build_jobs(ws)
         assert all(j.label != "com.daily-driver.jobs" for j in jobs)
+
+    def test_checkin_days_alone_keeps_default_times(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"checkin": {"days": "weekdays"}}
+        )
+        jobs = scheduler.build_jobs(ws)
+        checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
+        assert {(e["hour"], e["minute"]) for e in checkin.context["times"]} == {
+            (11, 0),
+            (15, 0),
+        }
+        assert {e["weekday"] for e in checkin.context["times"]} == {1, 2, 3, 4, 5}
+
+    def test_jobs_days_alone_keeps_default_time(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {"days": ["mon"]}})
+        jobs = scheduler.build_jobs(ws)
+        scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
+        assert scrape.context["times"] == [{"hour": 7, "minute": 0, "weekday": 1}]
+
+    def test_discovery_time_alone_keeps_default_days(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"discovery": {"time": "02:00"}}
+        )
+        jobs = scheduler.build_jobs(ws)
+        sweep = next(j for j in jobs if j.label == "com.daily-driver.jobs-discover")
+        assert sweep.context["times"] == [
+            {"hour": 2, "minute": 0, "weekday": 6},
+            {"hour": 2, "minute": 0, "weekday": 2},
+        ]
+
+    @pytest.mark.parametrize("part", [None, {}])
+    def test_null_or_empty_part_keeps_its_defaults(
+        self, tmp_path: Path, part: dict | None
+    ) -> None:
+        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"checkin": part})
+        jobs = scheduler.build_jobs(ws)
+        checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
+        assert checkin.context["times"] == [
+            {"hour": 11, "minute": 0},
+            {"hour": 15, "minute": 0},
+        ]
 
     def test_log_paths_land_in_state_logs(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(tmp_path)
