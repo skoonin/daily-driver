@@ -156,17 +156,22 @@ def _default_scheduler_config() -> dict[str, Any]:
 
 
 def _merge_scheduler_config(workspace: Workspace) -> dict[str, Any]:
+    """Packaged defaults with the user's `scheduler` settings laid over them.
+
+    The merge is per line: `checkin: {days: weekdays}` keeps the default check-in
+    times. A part set to null keeps all of its defaults, and an explicit
+    `time: null` (or `times: []`) stops that run.
+    """
     defaults = _default_scheduler_config()
-    # exclude_none preserves shallow-merge-over-defaults: a user setting only
-    # `checkin` keeps the packaged-default `jobs` (and vice versa).
     user_cfg = (
-        workspace.config.scheduler.model_dump(exclude_none=True)
+        workspace.config.scheduler.model_dump(exclude_unset=True)
         if workspace.config.scheduler is not None
         else {}
     )
     merged: dict[str, Any] = {**defaults}
     for key, value in user_cfg.items():
-        merged[key] = value
+        if value is not None:
+            merged[key] = {**defaults.get(key, {}), **value}
     return merged
 
 
