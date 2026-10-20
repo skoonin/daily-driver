@@ -313,7 +313,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     except ImportError:
         log.warning(
             "[linkedin/indeed] job board library not installed — "
-            "run: pip install python-jobspy"
+            "run: pip install 'python-jobspy>=1.1.82,<1.4'"
         )
         return []
 
@@ -428,7 +428,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
             # Bail the whole run with an actionable hint, not a per-unit warn.
             log.error(
                 "[%s] job board library is too old (%s); upgrade with "
-                "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                "`pip install 'python-jobspy>=1.1.82,<1.4'` or `make setup`",
                 site_label,
                 exc,
             )
@@ -448,7 +448,7 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
                 except TypeError as exc2:
                     log.error(
                         "[%s] job board library is too old (%s); upgrade with "
-                        "`pip install -U 'python-jobspy>=1.1.82'` or `make setup`",
+                        "`pip install 'python-jobspy>=1.1.82,<1.4'` or `make setup`",
                         site,
                         exc2,
                     )
