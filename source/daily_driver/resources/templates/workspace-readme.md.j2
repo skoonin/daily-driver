@@ -1,60 +1,75 @@
 # Daily Driver Workspace
 
-This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace.
-It holds your personal context, task tracker, {% if "job_search" in plugins %}job search data, {% endif %}and Claude session scaffolding.
+This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace. It holds your background, your task tracker, {% if "job_search" in plugins %}your job search data, {% endif %}and the files that set up your chats with Claude.
 
-## Day-to-day commands
+## Chat with Claude
+
+Most of the time, you start a chat with Claude. Type one of these commands in the Terminal app, inside this folder. Claude adds and updates your tasks and writes your plans and notes.
 
 ```
-daily-driver day-start        # open a Claude session to plan your day
-daily-driver check-in         # mid-day check-in with Claude
-daily-driver day-end          # close-out session and capture learnings
+daily-driver day-start        # start a chat with Claude to plan your day
+daily-driver check-in         # midday chat: tell Claude what is done or stuck
+daily-driver day-end          # end-of-day chat: review the day and save notes
+daily-driver resume           # reopen your most recent chat
 ```
 
 ## Task tracker
 
+Claude keeps your task tracker up to date during a chat. You can also run these commands yourself.
+
 ```
-daily-driver tracker add      # add a task ({% if "job_search" in plugins %}job, {% endif %}errand, milestone, etc.)
+daily-driver tracker add      # add a task ({% if "job_search" in plugins %}job, {% endif %}errand, milestone, or similar)
 daily-driver tracker list     # list tracked tasks
 daily-driver tracker update   # update status or notes on a task
-daily-driver tracker stats    # summary counts by status/category
+daily-driver tracker stats    # counts by status and category
 ```
 
 {% if "job_search" in plugins %}
 ## Job search
 
 ```
-daily-driver jobs run         # run configured job board scrapers
-daily-driver jobs status      # show last-run metadata per source
-daily-driver jobs prune       # archive stale rows from jobs.csv
+daily-driver jobs run              # search your job sites and save new jobs
+daily-driver jobs discover-boards  # find company job pages (Greenhouse, Ashby, Lever) that list your roles
+daily-driver jobs backfill         # fill in empty details for saved jobs
+daily-driver jobs promote          # copy a saved job into your tracker
+daily-driver jobs status           # show the last run and job counts by status
+daily-driver jobs prune            # archive old jobs you are done with
+daily-driver jobs verify           # close saved jobs that are no longer posted
 ```
 
 {% endif %}
 ## Status and focus
 
 ```
-daily-driver status           # dashboard table (Rich or --json)
-daily-driver focus on         # suppress check-ins while deep-focused
-daily-driver focus off        # re-enable check-ins
+daily-driver status           # totals, items with no update in 14 days, and recent activity
+daily-driver focus on         # pause scheduled check-in reminders while you focus
+daily-driver focus off        # turn check-in reminders back on
 ```
 
 ## Maintenance
 
 ```
-daily-driver doctor           # verify workspace integrity
-daily-driver doctor --fix     # repair drift, preserve your edits
-daily-driver doctor --reset   # repair drift, overwrite managed files
+daily-driver doctor           # check that your workspace works
+daily-driver doctor --fix     # repair problems and keep your edits
+daily-driver doctor --reset   # repair problems and replace Daily Driver files (your edits to them are lost)
 ```
 
 ## Configuration
 
 Edit `.dd-config.yaml` in this directory to configure categories, {% if "job_search" in plugins %}job sources, {% endif %}daily schedule, and other workspace settings.
 
-## Managed files
+## Files Daily Driver supplies
 
-Files under `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/`
-are package-managed. They are updated automatically on version upgrades.
-`doctor --fix` preserves your edits; `doctor --reset` overwrites them with
-fresh copies from the installed package.
+Daily Driver supplies the files in `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/hooks/`. After you upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`. Run `daily-driver doctor --fix` to update them:
 
-This `README.md` is also package-managed and follows the same lifecycle.
+- It keeps your edits to these files.
+- It deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Put your own commands in `.claude/commands/user/`.
+- It replaces the allow rules saved in `.claude/settings.local.json`.
+
+`daily-driver doctor --reset` replaces all of these files with fresh copies. Your edits to them, and files you added to them, are lost.
+
+This `README.md` is updated the same way. `doctor --fix` keeps your edits to it. `doctor --reset` overwrites it.
+
+## Help
+
+Run `daily-driver help` for lists of valid values, or `daily-driver COMMAND --help` for the options of one command. Full guides are in the `docs` folder of the [daily-driver repository](https://github.com/skoonin/daily-driver).

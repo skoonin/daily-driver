@@ -1,75 +1,100 @@
 # Quick start
 
-Minimal checklist to scaffold a workspace, verify health, and make a first entry. For the end-to-end daily flow (day-start, check-in, day-end, jobs, summary), read [usage.md](usage.md) next.
+Follow these steps to set up your workspace and start your first chat with Claude. Your workspace is the folder where Daily Driver keeps your data. Type the commands in the Terminal app. Then read the [daily guide](usage.md) for a full day with Daily Driver.
 
-## 1. Initialize
+## 1. Create your workspace
 
 ```bash
 daily-driver init ~/daily-driver-workspace
 cd ~/daily-driver-workspace
 ```
 
-Job search is off by default. To use it, add `--job-search`: `daily-driver init --job-search ~/daily-driver-workspace`. That writes the job settings into `.dd-config.yaml` and the job sections into the Claude prompts.
+`init` creates these files and folders:
 
-`init` is idempotent. Re-running fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are written only if missing — `-f` / `--force` overwrites `.dd-config.yaml` (keeping the old copy as `.dd-config.yaml.bak`) but never clobbers your edits to the static files.
+| Name | What it holds | Do you edit it? |
+|---|---|---|
+| `.dd-config.yaml` | Your settings | Yes |
+| `context.md` | Your background and tasks that repeat. Claude reads it. | Yes |
+| `voice-profile.md` | How you write, so Claude can draft in your style | Yes |
+| `.claude/` | Claude commands, agents, and settings | Only `commands/user/` and `agents/user/` |
+| `README.md`, `.gitignore`, `.daily-driver/` | A command list, a Git ignore list, and Daily Driver records | Usually not |
 
-`init` creates:
+Job search is off until you switch it on. To switch it on in a new workspace, add `--job-search`: `daily-driver init --job-search ~/daily-driver-workspace`. In an existing workspace, this flag changes nothing unless you also pass `--force`. `init` then prints the steps to follow. See [Jobs](usage.md#jobs).
 
-```
-~/daily-driver-workspace/
-├── .dd-config.yaml            # workspace config (you edit this)
-├── .daily-driver/             # version stamp, SHA-256 manifest, state/ for locks + logs
-├── .claude/
-│   ├── settings.local.json    # rendered from packaged template
-│   ├── commands/daily-driver/ # managed — regenerated on drift
-│   └── agents/daily-driver/   # managed — regenerated on drift
-├── context.md                 # your writing context (copied once; yours thereafter)
-└── voice-profile.md           # your writing-style profile (ditto)
-```
+You can run `init` again safely. It adds files that are missing and keeps the others. It never changes `context.md`, `voice-profile.md`, or `.gitignore` after you create them.
 
-The `.claude/*/daily-driver/` subdirs are package-managed. Top-level entries under `.claude/commands/` and `.claude/agents/` are yours and never touched. See [Customization](configuration.md#customization).
+To reset your settings, run `daily-driver init --force`. This replaces `.dd-config.yaml` with the default file, so copy any settings you want to keep first. It also replaces the Daily Driver files in `.claude/`, and your edits to them are lost. See [`.claude/` ownership](configuration.md#claude-ownership).
 
-## 2. Health check
+## 2. Check the setup
 
 ```bash
 daily-driver doctor
-daily-driver doctor --fix      # regenerate if drifted; restore deleted managed files
-daily-driver doctor --reset    # force full regenerate
 ```
 
-`--fix` and `--reset` are mutually exclusive. ERROR rows exit non-zero; WARNING rows exit 0. `--fix` restores managed files you may have deleted under `.claude/*/daily-driver/`.
+`doctor` checks that your workspace and tools work. Each row of its table is OK, WARNING, or ERROR. A WARNING means you should check something. An ERROR means something is broken.
 
-## 3. First tracker entry
+| Command | What it does |
+|---|---|
+| `daily-driver doctor --fix` | Repairs problems and restores Daily Driver files that you deleted. Keeps your edits to those files. |
+| `daily-driver doctor --reset` | Replaces the Daily Driver files in `.claude/` with fresh copies. Your edits to them are lost. |
+
+Use `--fix` or `--reset`, not both.
+
+## 3. Describe yourself
+
+Open `context.md` in your workspace. Describe your work, your goals, and your routines. Add anything a new coworker should know. List tasks that repeat under `## Recurring Tasks`, one per line. Claude reads this file when it plans your day.
+
+`voice-profile.md` can wait until you have writing samples. See [Voice updates](usage.md#voice-updates).
+
+## 4. Start your first chat
 
 ```bash
-daily-driver tracker add -c task -T "renew passport"
+daily-driver day-start
+```
+
+This opens a chat with Claude that helps you plan your day. Tell Claude what you work on and what is due. Ask it to add your tasks to your list (the tracker). Claude saves your list, plan, and notes in your workspace.
+
+Run the commands from inside your workspace folder, or add `--workspace ~/daily-driver-workspace` to run them from anywhere. For ideas on what to say, see [Daily sessions](usage.md#daily-sessions).
+
+## 5. See your list (optional)
+
+Claude keeps your list up to date. To look at it yourself, run:
+
+```bash
 daily-driver tracker list
 daily-driver status
 ```
 
-`status` shows tracker totals, items stalled >14 days (non-terminal), and 7-day activity. `-j` / `--json` emits machine-readable output.
+`status` shows:
 
-## 4. Scheduler (optional)
+- how many items you have
+- items that are not finished and have no update for more than 14 days
+- items that changed in the last 7 days
+
+To add an item yourself, run `daily-driver tracker add -c task -T "renew passport"`. `-c` sets the category and `-T` sets the title.
+
+## 6. Reminders (optional, macOS only)
 
 ```bash
 daily-driver scheduler install
 ```
 
-Renders launchd plists into `~/Library/LaunchAgents/` for mid-day check-ins, plus overnight job searches when job search is on. `daily-driver scheduler uninstall` removes them; `daily-driver scheduler status` lists installed jobs. macOS only.
+This sets up check-in reminders at 11:00 and 15:00. It uses launchd, the macOS tool that runs tasks at set times. Click a reminder to open the chat. Clicking needs the optional `terminal-notifier` tool. See the [install guide](install.md).
 
-## If something looks off
+For other tasks and times, see [Scheduler](usage.md#scheduler-macos). `daily-driver scheduler status` shows what is installed. `daily-driver scheduler uninstall` removes the reminders.
 
-Re-run the command with `-v` (or `-vv` for full debug traces). Status and log output goes to stderr, so `-v` is safe to add even when piping stdout into another tool:
+## If a command fails
+
+Run it again with `-v` to see more detail. Use `-vv` for the most detail. Use `-q` to show errors only.
 
 ```bash
 daily-driver doctor -v
-daily-driver summary --range 7d -vv 2>&1 | tee /tmp/summary.log
 ```
 
-`-q` does the opposite — errors only — for scheduled or scripted runs where you only care about failures.
+For fixes to common problems, see [Troubleshooting](troubleshooting.md).
 
 ## Next
 
-- [usage.md](usage.md) — the full daily flow.
-- [commands.md](commands.md) — every subcommand and its non-obvious flags.
-- [configuration.md](configuration.md) — `.dd-config.yaml` reference.
+- [Daily guide](usage.md): a full day with Daily Driver.
+- [Commands](commands.md): every command and option.
+- [Settings](configuration.md): the settings in `.dd-config.yaml`.

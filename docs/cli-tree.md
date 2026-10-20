@@ -62,7 +62,8 @@ daily-driver/
 │   │   ├── -c, --category CAT
 │   │   ├── -s, --status STATUS
 │   │   ├── --older-than SPEC
-│   │   └── -n, --dry-run
+│   │   ├── -n, --dry-run
+│   │   └── -j, --json
 │   ├── show
 │   │   ├── id (positional)
 │   │   └── -j, --json
@@ -86,18 +87,20 @@ daily-driver/
 │   ├── off
 │   └── status
 │       └── -j, --json
-├── jobs
+├── jobs  (needs job search on)
 │   ├── run
 │   │   ├── -n, --dry-run  (mutually exclusive with -j)
 │   │   ├── -j, --json
 │   │   ├── --no-enrich
 │   │   ├── -S, --sources LIST
-│   │   └── --list-sources
+│   │   ├── --list-sources
+│   │   └── -sd, --skip-descriptions
 │   ├── backfill
 │   │   ├── -n, --dry-run
 │   │   ├── --limit N
 │   │   ├── --force-update
 │   │   ├── --cooldown-hours N|missing
+│   │   ├── -sd, --skip-descriptions
 │   │   └── -j, --json
 │   ├── promote
 │   │   ├── selector (positional: URL-OR-COMPANY)
@@ -167,11 +170,11 @@ daily-driver/
 │   ├── --model {sonnet,opus,haiku}
 │   └── --timeout SECONDS
 ├── scheduler
-│   ├── install [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label)
+│   ├── install [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label; jobs and jobs-discover need job search on)
 │   ├── uninstall [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label)
 │   └── status [-j, --json]
 ├── voice-update
-│   ├── --from PATH ... (required, repeatable)
+│   ├── --from PATH [PATH ...] (required; one flag takes one or more paths)
 │   ├── --append | --replace
 │   ├── -n, --dry-run
 │   ├── --no-clipboard

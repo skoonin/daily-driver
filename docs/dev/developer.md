@@ -20,13 +20,15 @@ daily_driver/
 │   ├── console.py           # two-stream Rich Console (stdout + stderr)
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
+│   ├── templating.py        # Jinja rendering of shipped prompts and templates (plugin sections)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
 ├── gathers/                 # read-only readers: calendar, git
 ├── integrations/            # subprocess + external-service boundary: claude_cli,
 │                            #   ai_provider, ollama_client, clipboard, launchd,
-│                            #   git, icalbuddy, notify
+│                            #   git, icalbuddy, notify, calendar_write,
+│                            #   terminal_launcher, playwright
 ├── plugins/                 # feature slices wired through a static registry
-│   ├── __init__.py          # PLUGINS tuple + _validate_registry (import-time check)
+│   ├── __init__.py          # PLUGINS tuple, enabled_plugins(), _validate_registry (import-time check)
 │   ├── _base.py             # Plugin / PackageDataDir frozen dataclasses (the contract)
 │   ├── config.py            # PluginsConfig assembled from PLUGINS (extra="forbid")
 │   └── job_search/          # the one shipped plugin
@@ -36,12 +38,12 @@ daily_driver/
 │       ├── doctor.py        # run_checks(workspace)
 │       ├── jobs_archive.py  # prune stale jobs.csv rows
 │       ├── jobs_lock.py     # flock guard for jobs.csv
+│       ├── promote.py       # jobs promote: jobs.csv row -> tracker entry
 │       ├── scraper_status.py  # last-run metadata
 │       ├── templates/       # PACKAGE DATA — jobs.plist.j2 (Jinja)
-│       └── scraper/         # comp, parsing, csv_io, enrichment, models, runner,
-│                            #   discovery, closure, verify
+│       └── scraper/         # job pipeline modules (full list under "Layer rules")
 │           ├── enrichment/   # detail-page + LLM enrichers (EnrichedJob in/out)
-│           └── sources/     # one module per source + _http.py shared helpers
+│           └── sources/     # one module per source + shared helpers (_http.py, _boards.py)
 └── resources/               # PACKAGE DATA — bundled into the wheel
     ├── slash_commands/daily-driver/  # shipped slash commands
     ├── agents/daily-driver/          # shipped agents
@@ -51,30 +53,30 @@ daily_driver/
 
 ### Layer rules
 
-- **`cli/`** — argparse + Rich only. `add_parser(subparsers, parents)` + `run(args) -> int`. Non-trivial logic belongs in `core/<same-name>.py`. Use `core.console.Console` for user-facing status / errors; reserve bare `print()` for machine-readable stdout payloads (JSON, single resolved paths).
+- **`cli/`** — argparse + Rich only. `add_parser(subparsers, parents)` + `run(args) -> int`. Non-trivial logic belongs in `core/<same-name>.py`. Use `core.console.Console` for user-facing status / errors; use `Console.emit_json(data)` for `--json` payloads and reserve bare `print()` for single resolved paths and plain stdout text.
 - **`core/`** — business logic. No subprocess, no TTY, no network. Unit-testable in isolation.
-- **`gathers/`** — typed readers returning plain dataclasses. No YAML, no printing.
-- **`plugins/`** — feature slices wired through the static `PLUGINS` registry (no runtime discovery). Each plugin owns its CLI, config, and optional scheduler / doctor / package-data under `plugins/<name>/`. `job_search` is the reference plugin; its scraper lives at `plugins/job_search/scraper/` — focused modules `comp.py`, `parsing.py`, `csv_io.py`, `enrichment/` (detail-page + LLM enrichers), `models.py`, `context.py` (`ScrapeContext` + pipeline exceptions), `rows.py` (location filter, dedup keys, the dict -> model lift), `sink.py` (`_JobSink`, the run's durable-record writer), `scrape_all.py` (source fan-out orchestration), `runner.py` (the `run`/`run_backfill` entry points, enrichment waves, and run summary), `discovery.py` (`jobs discover-boards`: sweeps the ATS slug universe and caches role-matching boards), `closure.py` (board-diff closure: a stored row absent from a full-enumeration board's successfully-fetched listing gets marked closed), `verify.py` (`jobs verify`: per-URL liveness checks for windowed sources that never re-show an old posting), and `scraper/sources/<name>.py` (one file per source). `sources/__init__.py` registers each source in the `SCRAPERS` dict. Past the source-adapter boundary every job is one frozen `EnrichedJob`: adapters emit wire-format dicts, `rows._enriched_from_scraped` lifts each to an `EnrichedJob` once, and enrichers / CSV read-write / backfill all operate on that single representation through one `CANONICAL_HEADER` (derived from `EnrichedJob.CSV_COLUMN_TO_ATTR`). See "Plugins" below and [extending.md](extending.md).
+- **`gathers/`** — typed readers returning pydantic models. No YAML, no printing.
+- **`plugins/`** — feature slices wired through the static `PLUGINS` registry (no runtime discovery). Each plugin owns its CLI, config, and optional scheduler / doctor / package-data under `plugins/<name>/`. `job_search` is the reference plugin; its scraper lives at `plugins/job_search/scraper/` — focused modules `comp.py`, `parsing.py`, `csv_io.py`, `enrichment/` (detail-page + LLM enrichers), `models.py`, `context.py` (`ScrapeContext` + pipeline exceptions), `rows.py` (location filter, dedup keys, the dict -> model lift), `sink.py` (`_JobSink`, the run's durable-record writer), `scrape_all.py` (source fan-out orchestration), `runner.py` (the `run`/`run_backfill` entry points, enrichment waves, and run summary), `discovery.py` (`jobs discover-boards`: sweeps the ATS slug universe and caches role-matching boards), `closure.py` (board-diff closure: a stored row absent from a full-enumeration board's successfully-fetched listing gets marked closed), `verify.py` (`jobs verify`: per-URL liveness checks for windowed sources that never re-show an old posting), `countries.py` (JobSpy-derived country tables and the Apple location resolver), `descriptions.py` (sidecar store for job-description text), `normalize_location.py` (country-first location normalization), `roles.py` (role matching and search terms), and `scraper/sources/<name>.py` (one file per source; `_http.py` and `_boards.py` hold shared helpers). `sources/__init__.py` registers each source in the `SCRAPERS` dict. Past the source-adapter boundary every job is one frozen `EnrichedJob`: adapters emit wire-format dicts, `rows._enriched_from_scraped` lifts each to an `EnrichedJob` once, and enrichers / CSV read-write / backfill all operate on that single representation through one `CANONICAL_HEADER` (derived from `EnrichedJob.CSV_COLUMN_TO_ATTR`). See "Plugins" below and [extending.md](extending.md).
 - **`integrations/`** — the single subprocess + external-service boundary. Every `claude`, `pbcopy`, `launchctl`, `git`, `icalBuddy`, and desktop-notification call goes through here, alongside the `ai_provider` / `ollama_client` adapters. Wrappers raise domain exceptions (e.g. `claude_cli` raises `ClaudeNotFoundError` / `ClaudeInvocationError` / `ClaudeTimeoutError`; `git` raises `GitCommandError`) so callers handle typed failures instead of inspecting return codes. Tests monkeypatch one module instead of many.
-- **`resources/`** — package data only, bundled into the wheel and accessed via `importlib.resources`: `slash_commands/daily-driver/` and `agents/daily-driver/` (shipped `.md`, copied into the workspace `.claude/` tree), `launchd/` (core plist templates), and `templates/` (scaffold + settings Jinja, plus `hooks/`). No importable logic.
+- **`resources/`** — package data only, bundled into the wheel and accessed via `importlib.resources`: `slash_commands/daily-driver/` and `agents/daily-driver/` (shipped `.md`, rendered into the workspace `.claude/` tree), `launchd/` (core plist templates), and `templates/` (scaffold + settings Jinja, plus `hooks/`). No importable logic.
 
 ## Runtime flow
 
 `daily-driver` (console entry) → `daily_driver.cli.cli.app()`:
 
-1. Argparse tree built from static `_COMMANDS` table. Subcommand modules are imported lazily (`importlib.import_module`) — startup stays cheap.
+1. Argparse tree built from static `_COMMANDS` table (`_CORE_COMMANDS` plus the plugin commands). Only the invoked command's module is imported (`importlib.import_module`); every other command is a help-only stub built from `_TOP_HELP` — startup stays cheap.
 2. Global flags (`--workspace`, `--verbose`/`-v`/`-vv`, `--quiet`, `--no-color`) are registered via `cli/_common.py:add_global_flags(parser)` on both the top-level parser and each leaf, AFTER local args, so they render under a "global options" group at the bottom of `--help`. All globals use `default=argparse.SUPPRESS`; reads must use `getattr(args, name, default)`.
 3. `cli/_common.py:configure(args)` runs once after parse: it calls `core.logging.configure(verbosity)` (mapping `-q`/`-v`/`-vv` to `ERROR`/`INFO`/`DEBUG`; bare invocation is `WARNING`), then `Console.setup_for_user(quiet, verbose, no_color)`. Both helpers are idempotent — second calls remove the existing counting handler before re-attaching.
-4. Most subcommands call `Workspace.discover_or_fail(override=args.workspace)`. Precedence: `--workspace` flag, upward search for `.dd-config.yaml`, fail with `WorkspaceError`.
-5. `core.config.load()` parses YAML (`safe_load`) and validates against `core.config_models.Config`. Pydantic v2, `extra="forbid"` at every nesting level. Invalid config fails at parse, not mid-command.
-6. `core.version_stamp` compares the workspace's stamp against `version_stamp.expected(__version__, config)`: the package version plus the names of the plugins switched on (`1.3.0+job_search`). On mismatch (an upgrade, or a plugin switched on or off): `doctor --fix` regenerates; other subcommands proceed without touching the filesystem.
-7. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`: at `-v` or higher the daily_driver logger emits a full `logger.exception()` traceback to stderr; otherwise `Console.error(str(exc))` prints a single-line message. Non-zero exit either way — no tracebacks on happy-path failures.
+4. Most subcommands call `resolve_workspace(args)` (`cli/_common.py`), which reads `--workspace` with `getattr` and calls `Workspace.discover_or_fail(override=...)`. Precedence: `--workspace` flag, upward search for `.dd-config.yaml`, fail with `WorkspaceError`.
+5. `core.config.load()` parses YAML (`safe_load`) and validates against `core.config_models.Config`. Pydantic v2, `extra="forbid"` at every nesting level. Invalid config fails at parse, not mid-command. A config that sets a setting listed in `_REMOVED_SETTINGS` (`core/config.py`) fails with `ConfigError`, which names each setting, says where its content goes, and lists any other problem in the file.
+6. `core.version_stamp` compares the workspace's stamp against `version_stamp.expected(__version__, config)`: the package version plus the names of the plugins switched on (`1.3.0+job_search`). On mismatch (an upgrade, or a plugin switched on or off): `doctor --fix` and `init` regenerate; other subcommands proceed without touching the filesystem.
+7. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`, which also saves the traceback to `<state_dir>/logs/cli-error.log` when a workspace resolves. At `-v` or higher the daily_driver logger emits a full `logger.exception()` traceback to stderr. Otherwise `Console.error` prints `ExceptionName: message` (plus a `caused by:` line when there is one), or only the message for a `ConfigError`, which already says what to change. Non-zero exit either way — no tracebacks on happy-path failures.
 
 Scheduled invocations go through the same entry point. `scheduler install` renders a `<job>.plist.j2` Jinja template with workspace-specific paths and calls `launchctl load`. Core jobs render from `resources/launchd/` (e.g. `checkin.plist.j2`); a plugin ships its own template alongside its code (`job_search` renders `plugins/job_search/templates/jobs.plist.j2`). stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
 
 ## Generate lifecycle
 
-`generate(workspace, force=False)` writes the full package-managed set into the workspace:
+`generate(workspace, *, ignore_drift=False, force_overwrite=False)` writes the full package-managed set into the workspace:
 
 - `.claude/commands/daily-driver/*.md` and `.claude/agents/daily-driver/*.md` from `resources/slash_commands/` and `resources/agents/` (manifest-guarded)
 - `.claude/settings.local.json`, rendered from the template and merged (not manifest-guarded — see below)
@@ -95,7 +97,7 @@ Key invariants:
 
 ## Init contract
 
-`core/contract.py` codifies every artifact `daily-driver init` promises to produce. `doctor` runs `contract.check()` and surfaces violations as ERROR. A regression test counts files on disk after `generate(force=True)`, closing the broken-wheel gap that shipped in v0.1.0 (prior to this, an `is_dir()` check passed even when the wheel contained zero `.md` files — users got a workspace with an empty `commands/daily-driver/` directory).
+`core/contract.py` codifies every artifact `daily-driver init` promises to produce. `doctor` runs `contract.check()` and surfaces violations as ERROR. A regression test counts files on disk after `generate(ignore_drift=True, force_overwrite=True)` so a broken wheel cannot pass: an `is_dir()` check passes even when the wheel contains zero `.md` files, which leaves the workspace with an empty `commands/daily-driver/` directory.
 
 `check(workspace_root)` returns a list of `ContractViolation`, empty iff the contract holds. The checks are written inline (one caller — `doctor.py` — so a per-kind dispatch table was more indirection than it was worth):
 
@@ -121,10 +123,10 @@ Daily Driver writes to four distinct output registers. Picking the wrong one is 
 
 | Register | API | Stream | Purpose | Gated by |
 | --- | --- | --- | --- | --- |
-| Rich Console (user-facing) | `Console.print` (payload) / `Console.info` / `Console.success` / `Console.warning` / `Console.error` | stdout for `print`; stderr for status/warning/error | Human-readable status, summaries, tables, and prompts | `--quiet` mutes `print`/`info`/`success`; `warning`/`error` always show |
+| Rich Console (user-facing) | `Console.get_user_console().print` (payload) / `Console.info` / `Console.success` / `Console.warning` / `Console.error` | stdout for the user console; stderr for info/success/warning/error | Human-readable status, summaries, tables, and prompts | `--quiet` mutes `info`/`success` and the live progress block; payload prints, `warning`, and `error` always show |
 | Logging (diagnostics) | `dd_logging.get_logger(__name__).{debug,info,warning,error}` | stderr | Module-level diagnostic trail for debugging a run after the fact | Log level (`-q`/`-v`/`-vv` map to ERROR/INFO/DEBUG; bare = WARNING) |
 | Live progress block | `core.progress.RunProgress` (Groups / Items / Phases) | stderr (same object the log handler binds) | Pinned, in-place progress for a long run that owns the terminal | TTY-only; suppressed under `--quiet` and forced to plain lines on non-TTY / unresponsive TTY / `jobs run --json` |
-| Machine output (stdout contract) | bare `print(json.dumps(...))` or a single resolved path | stdout | A parseable contract for scripting (`--json`, `paths`) | Never gated -- a stable process contract |
+| Machine output (stdout contract) | `Console.emit_json(data)` (wraps the payload as `{"schema": 1, "data": ...}`) or a bare `print()` of a single resolved path | stdout | A parseable contract for scripting (`--json`, `paths`) | Never gated -- a stable process contract |
 
 The split keeps stdout a clean data channel: `daily-driver tracker list --json | jq` and `daily-driver jobs run --json` work because only the machine payload reaches stdout, while every status line, log line, and progress bar goes to stderr regardless of verbosity. The live progress block and the logging register deliberately share one underlying `sys.stderr` object so log lines scroll above the pinned bars on one channel.
 
@@ -134,8 +136,8 @@ Two separate concerns, one shared Rich color theme.
 
 **`core.console.Console`** — class-level (process-wide) two-stream Rich console:
 
-- `_user_console` writes to **stdout**. Used for data payloads and user-facing text via `Console.print(...)`. Suppressed when `quiet_mode=True`.
-- `_log_console` writes to **stderr**. Used for status/diagnostic output: `Console.info`, `Console.success`, `Console.debug` (gated by `verbose_mode`), and `Console.warning` / `Console.error` (always visible — not gated by quiet).
+- `_user_console` writes to **stdout**. Used for data payloads and user-facing text via `Console.get_user_console().print(...)`. `--quiet` does not mute it.
+- `_log_console` writes to **stderr**. Used for status/diagnostic output: `Console.info` and `Console.success` (muted by `--quiet`), and `Console.warning` / `Console.error` (always visible — not gated by quiet).
 - `setup_for_user(quiet, verbose, no_color)` is called once from `cli/_common.configure()`. The flags drive the gates above; `--no-color` sets `color_system=None` (markup and highlight stay on so structured output still renders).
 - `soft_wrap=True` on the user console when stdout is piped, so JSON / TSV consumers don't get Rich-wrapped lines.
 
@@ -151,13 +153,13 @@ Two separate concerns, one shared Rich color theme.
 
 | Output kind | API | Stream | Gated by |
 | --- | --- | --- | --- |
-| Data payload (table, JSON, path) | `Console.print(...)` | stdout | `--quiet` |
-| Machine-readable JSON contract | bare `print(json.dumps(...))` | stdout | never (process contract) |
+| Data payload (table, path) | `Console.get_user_console().print(...)` | stdout | never |
+| Machine-readable JSON contract | `Console.emit_json(data)` | stdout | never (process contract) |
 | Status / "ran N rows" | `Console.info(...)` | stderr | `--quiet` |
 | Success summary | `Console.success(...)` | stderr | `--quiet` |
 | Warning | `Console.warning(...)` | stderr | never |
 | Error before exit | `Console.error(...)` | stderr | never |
-| Debug trace | `Console.debug(...)` or `logger.debug(...)` | stderr | not `-vv` |
+| Debug trace | `logger.debug(...)` | stderr | log level (`-vv`) |
 | Long-running module log | `dd_logging.get_logger(__name__).info(...)` etc. | stderr | log level |
 
 **`core.progress`** — a domain-neutral, app-wide live-progress foundation built on enlighten; `daily-driver jobs run` is the first consumer.
@@ -189,14 +191,14 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 
 ### Without forking
 
-- **Tracker categories** — config-driven. Add a key under `tracker.categories` in `.dd-config.yaml`. See [configuration.md](../configuration.md#customization).
+- **Tracker categories** — free-form: any name works with `-c`. List one under `tracker.categories` in `.dd-config.yaml` to require fields on it. See [configuration.md](../configuration.md#customization).
 - **`plugins.job_search.*`** — sources, filters, locations, enrichment tuning all live in config.
 - **Your own slash commands / agents** — any `.md` file under `.claude/commands/` or `.claude/agents/` outside the `daily-driver/` subdir is yours and never touched. See [configuration.md#customization](../configuration.md#customization).
 
 ### Requires a fork
 
-- New core subcommand — static `_COMMANDS` table in `cli/cli.py`; no runtime discovery.
-- New config fields — Pydantic model in `core.config_models`, plus a commented line in `resources/templates/.dd-config.yaml.j2`. `extra="forbid"` is strict.
+- New core subcommand — add it to `_CORE_COMMANDS` and `_TOP_HELP` in `cli/cli.py`; no runtime discovery.
+- New config fields — Pydantic model in `core.config_models`, plus a commented line in `resources/templates/.dd-config.yaml.j2`, plus a test that sets the knob (`tests/test_core/test_config_behavior.py` fails for an untested knob unless it is listed in `_BEHAVIOR_UNTESTED` with a reason). `extra="forbid"` is strict.
 - New plugin — see [extending.md](extending.md) and "Plugins" below.
 
 ### Plugins
@@ -204,7 +206,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 `source/daily_driver/plugins/` holds feature slices that core wires through a static registry — no runtime discovery. `job_search` is the one shipped plugin; its config, CLI, scraper sources, scheduler, and doctor checks all live under `plugins/job_search/`.
 
 - **Registry.** `plugins/__init__.py` exposes `PLUGINS: tuple[Plugin, ...]`, listed explicitly. `_validate_registry` runs at import and `find_spec`-checks every declared hook module (command, scheduled-jobs builder, doctor checks, package-data sources) so a typo'd path fails at startup, not on first use.
-- **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs copied into the workspace `.claude/` tree).
+- **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `name` (plugin key and `plugins.<name>` config namespace); `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `launchd_labels` (every launchd label the plugin manages: swept on `scheduler uninstall`, removed by a full `scheduler install` while the plugin is off); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs rendered into the workspace `.claude/` tree).
 - **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the one on/off answer: a plugin is on when its `plugins.<name>` block exists and does not set `enabled: false`. `core.scheduler`, `core.doctor`, `core.generate`, `core.version_stamp`, and the plugin-command dispatch in `cli/cli.py` all ask it (importing lazily so core stays import-light). A full `scheduler install` also removes the launchd agents of plugins that are off. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
 - **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) when the plugin is on and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`); its prompt content is `{% if "job_search" in plugins %}` sections inside the core prompts. The path is exercised by a synthetic-plugin test.
 - **Config template.** `resources/templates/.dd-config.yaml.j2` is hand-written for users. Each plugin's `plugins.<name>` section, and any core setting only that plugin uses (e.g. `scheduler.jobs`), sits inside a `{% if "<name>" in plugins %}` block, so `init` writes it only for chosen plugins. `tests/test_core/test_config_template.py` fails when a model field is missing from its path in the template, a job-only setting shows without job search, or an example does not validate. A field left out of the template on purpose goes in that test's `_UNTEMPLATED` set with a reason.
@@ -216,20 +218,21 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 | Business logic in `cli/commands/*.py` | Move to `core/<name>.py` |
 | `subprocess.run(...)` in `core/` or `cli/` | Add a wrapper in `integrations/` |
 | Reading/writing YAML without `file_lock` | Always guard with `core.locking.file_lock(path)` |
-| Editing `.claude/*/daily-driver/` expecting persistence | That subdir is package-managed; `--fix` preserves edits via manifest but `--reset` overwrites |
+| Adding a `.md` file under `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, or a `.sh` file under `.claude/hooks/` | `doctor --fix` deletes it on regeneration and `doctor --reset` wipes those directories; put your own commands in `commands/user/` or `agents/user/` (see [`.claude/` ownership](../configuration.md#claude-ownership)) |
 | Unknown keys under the config root | Root is `extra="forbid"`. Nest under `plugins.<namespace>:` |
-| Bare `print(...)` for status text | Use `Console.info/success/warning/error` from `core/console.py` — those route to stderr. Reserve bare `print()` for stdout data contracts (machine-readable JSON) |
+| Bare `print(...)` for status text | Use `Console.info/success/warning/error` from `core/console.py` — those route to stderr. Use `Console.emit_json` for machine-readable JSON and reserve bare `print()` for single resolved paths and plain stdout text |
 | `logging.getLogger(__name__)` outside `daily_driver` root | Use `dd_logging.get_logger(__name__)` so the logger is under the `daily_driver.*` namespace and inherits the configured handler |
 
 ## Common tasks
 
 | Task | Solution |
 | --- | --- |
-| Access workspace | `Workspace.discover_or_fail(override=args.workspace)` at command entry |
+| Access workspace | `resolve_workspace(args)` (from `cli/_common.py`) at command entry |
 | Lock a file | `with file_lock(path): ...` — always read-modify-write inside the lock |
 | Shell out | Add a wrapper in `integrations/`. Never `subprocess.run` from `cli/` or `core/` |
 | Bundle a template | Drop into `source/daily_driver/resources/templates/`, access via `importlib.resources` |
 | Add a subcommand | See [extending.md](extending.md) |
+| Add a plugin | See [extending.md](extending.md) |
 | Add a scraper source | See [extending.md](extending.md) |
 
 ## Dev setup and make targets
@@ -237,25 +240,26 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 ```bash
 git clone https://github.com/skoonin/daily-driver.git
 cd daily-driver
-make setup           # .venv + pip install -e .[dev] + pre-commit hooks
+make setup-dev       # .venv + pip install -e .[dev] + pre-commit hooks
 make test
 ```
 
 | Target | Purpose |
 | --- | --- |
-| `make setup` | venv + editable install + pre-commit hooks |
+| `make setup` | venv + editable install with dev extras |
+| `make setup-dev` | `make setup` plus pre-commit hooks |
 | `make test` | Full tox envlist (see `tox.ini`), matches CI |
 | `make test-quick` | py311 only — fast inner loop |
 | `make test-unit` / `test-cli` / `test-e2e` | Scoped suites |
 | `make test-cov` | Full suite + coverage report + HTML |
-| `make lint` | black + isort + flake8 + mypy |
+| `make lint` | black, isort, flake8 (check only; mypy is `make type`) |
 | `make format` | Auto-format (black + isort) |
 | `make type` | mypy only |
 | `make build` | sdist + wheel into `dist/` |
-| `make release` / `release-push` | See [releasing.md](releasing.md) |
+| `make release` / `release-ci` / `release-push` | See [releasing.md](releasing.md) |
 | `make clean` / `distclean` | Remove build artifacts (and `.venv` for distclean) |
 
-See [releasing.md](releasing.md) for the release workflow and [extending.md](extending.md) for adding subcommands or scraper sources.
+See [releasing.md](releasing.md) for the release workflow and [extending.md](extending.md) for adding subcommands, plugins, or scraper sources.
 
 ## Calendar (icalBuddy) setup
 
@@ -263,28 +267,18 @@ See [releasing.md](releasing.md) for the release workflow and [extending.md](ext
 Calendar events. It needs three things to return data:
 
 1. **Binary on PATH.** `brew install ical-buddy`. Check with `which icalBuddy`.
-2. **Calendar access for the terminal.** macOS gates Calendar access per
-   parent process. Open *System Settings -> Privacy & Security -> Calendars*
-   and toggle on the terminal you launch `daily-driver` from (Terminal,
-   iTerm2, VS Code, etc.). The first run after granting access may require
-   restarting the terminal.
-3. **icalBuddy preference plist** (optional but recommended). Without a
-   plist, icalBuddy will read all calendars including spammy subscribed
-   ones. Create `~/Library/Preferences/com.hasseg.icalBuddy.plist` to scope
-   the calendars and time format. Minimal example:
+2. **Calendar access for the terminal.** macOS gates Calendar access per parent process. Open *System Settings -> Privacy & Security -> Calendars* and toggle on the terminal you launch `daily-driver` from (for example Terminal or iTerm2). The first run after granting access may require restarting the terminal. Known issue: this step may not be enough in the Visual Studio Code (VS Code) terminal on recent macOS, and a tested fix is not available yet; see [troubleshooting.md](../troubleshooting.md#calendar-events-are-missing-in-vs-code).
+3. **icalBuddy config file** (optional but recommended). Without one, icalBuddy reads all calendars, including spammy subscribed ones. Create `~/.icalBuddyConfig.plist` to scope the calendars. Minimal example:
 
    ```bash
-   /usr/libexec/PlistBuddy -c "Add :includeCals array" ~/Library/Preferences/com.hasseg.icalBuddy.plist
-   /usr/libexec/PlistBuddy -c "Add :includeCals: string 'Work'" ~/Library/Preferences/com.hasseg.icalBuddy.plist
+   /usr/libexec/PlistBuddy -c "Add :constantArguments dict" ~/.icalBuddyConfig.plist
+   /usr/libexec/PlistBuddy -c "Add :constantArguments:includeCals string Work,Personal" ~/.icalBuddyConfig.plist
    ```
 
-   List your calendars with `icalBuddy calendars` and substitute their
-   names. See `man icalBuddy` for the full key reference.
+   List your calendars with `icalBuddy calendars` and substitute their names (comma-separated). See `man icalBuddyConfig` for the full key reference.
 
-If `gather calendar` is silent or warns about a non-zero exit, run the
-underlying command directly to see the raw error — the gather code surfaces
-icalBuddy's stderr but elides multi-line output:
+If `gather calendar` is silent or warns about a non-zero exit, run the underlying command directly to see the raw error — the gather code logs icalBuddy's stderr truncated to 200 characters:
 
 ```bash
-icalBuddy -nc -df '%Y-%m-%d' -tf '%H:%M' eventsToday
+icalBuddy -iep title,datetime,location -nc -nrd -b '' -df '%Y-%m-%d' -tf '%H:%M' eventsFrom:YYYY-MM-DD to:YYYY-MM-DD
 ```

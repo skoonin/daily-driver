@@ -1,48 +1,47 @@
-# Concepts
+# How it works
 
-This page explains the mental model behind Daily Driver: what exists on disk, what each surface does, and why the program is structured the way it is. Read this once; then use [usage.md](usage.md) for the daily flow and [commands.md](commands.md) for flag detail.
+This page explains the parts of Daily Driver and how they fit together. Read it once. Then use the [daily guide](usage.md) for the daily routine and [Commands](commands.md) for every option.
 
 ## What it does
 
-Daily Driver keeps the durable record of your day on disk (tracker, plans, notes, and optionally job search) and hands a `claude` session the context it needs to help you plan, check in, and wind down. The program owns the data; Claude is the conversation layer.
+You use Daily Driver by chatting with Claude, an AI assistant. Claude manages your data for you: it adds and updates items in your list (the tracker) and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
 
-You drive it from one CLI: `daily-driver`. Everything else lives in a workspace directory you scaffold once.
+You start a chat by typing `daily-driver day-start`, `daily-driver check-in`, or `daily-driver day-end` in the Terminal app. Daily Driver saves your data as files on your computer. All your files are in one folder that you create once. This folder is called a workspace.
 
 ## Workspace layout
 
 ```
 workspace/                 your data
-├── .dd-config.yaml        what daily-driver knows about you
-├── context.md             biographical context for claude
-├── voice-profile.md       writing-style profile for claude
-├── tracker.yaml           anything you follow up on
-├── jobs.csv               job-search rows (if you use the jobs plugin)
-├── 2026/05/11/            today's plan + notes (created on demand)
-└── .claude/, .daily-driver/  managed by daily-driver; mostly leave alone
+├── .dd-config.yaml        your settings (categories, schedule, job search)
+├── context.md             your background and tasks that repeat; Claude reads it
+├── voice-profile.md       how you write; Claude uses it to draft in your style
+├── tracker.yaml           your list (the tracker): anything you follow up on
+├── jobs.csv               saved job postings (only when job search is on)
+├── 2026/05/               plan and notes files, such as 2026-05-11-plan.md (created on demand)
+└── .claude/, .daily-driver/  Daily Driver manages these. Do not edit them.
 ```
 
-The workspace is a plain directory. All state is in files you can read, edit, and back up with `git` or any tool. Daily Driver does not phone home and has no server component.
+The workspace is an ordinary folder. Everything is saved in files that you can read, edit, and back up. Daily Driver has no server and does not send usage data anywhere.
 
-## Surfaces
+## Features
 
-| Surface | What it does | Commands |
+| Feature | What it does | Commands |
 | --- | --- | --- |
-| **Workspace** | Holds your data. One per machine, typically. | `init`, `doctor`, `paths` |
-| **Tracker** | YAML store for tasks, jobs, errands, contacts, anything. | `tracker {add,list,update,show,delete,prune,stats,follow-ups}` |
-| **Focus** | File-lock toggle that suppresses scheduled check-ins. | `focus {on,off,status}` |
-| **Day cycle** | Interactive `claude` sessions for morning / mid-day / evening. | `day-start`, `check-in`, `day-end` |
-| **Jobs** (optional, `init --job-search`) | Multi-board scraper plus AI enrichment for `jobs.csv`. | `jobs {run,status,prune}` |
-| **Summary** | Headless period summary copied to clipboard. | `summary -r SPEC` |
-| **Voice** | Rewrite `voice-profile.md` from real writing samples. | `voice-update --from PATH` |
-| **Scheduler** | macOS launchd plists for unattended runs. | `scheduler {install,uninstall,status}` |
-| **Help** | Built-in reference for discoverable values. | `help [TOPIC]` |
+| **Daily sessions** | Chats with Claude for the morning, midday, and evening | `day-start`, `check-in`, `day-end`, `resume` |
+| **Your list (the tracker)** | Your tasks, errands, contacts, and anything else you follow up on. Claude keeps it up to date. | `tracker` |
+| **Workspace** | The folder that holds your data. Most people use one. | `init`, `doctor`, `paths` |
+| **Status** | One screen with your totals, items with no recent update, and recent activity | `status` |
+| **Focus** | Pauses scheduled check-in reminders while you work without interruptions | `focus` |
+| **Calendar and Git** | Reads your macOS Calendar events and Git commits, so Claude knows about your day | `gather` |
+| **Job search** (optional, `init --job-search`) | Finds job postings on the sites you choose, saves them in `jobs.csv`, and rates how well each one fits you | `jobs` |
+| **Summary** | Writes a summary of any period and copies it to your clipboard | `summary` |
+| **Voice** | Learns how you write from your own writing samples | `voice-update` |
+| **Scheduler** | Starts reminders at set times (macOS) | `scheduler` |
+| **Help** | Shows lists of valid values | `help` |
 
-## Design decisions
+## Good to know
 
-**The program owns the record; Claude owns the conversation.** Claude is not a reliable data store. The tracker, jobs CSV, plans, and notes live in files. Claude reads them — it writes them only via explicit CLI commands (`tracker update`, `jobs run`, etc.).
-
-**One workspace per machine, typically.** Discovery walks upward from `$CWD` to find `.dd-config.yaml`. Pass `-w PATH` to any command to override.
-
-**Managed vs. user territory.** Files under `.claude/*/daily-driver/` are regenerated on `init` and on version drift. Your own commands and agents go at the top level (`.claude/commands/*.md`), where they are never touched. Full ownership table: [Customization](configuration.md#customization).
-
-**No automatic migrations.** Config is validated by Pydantic with `extra="forbid"`. When a release adds or renames a key, `doctor` reports an error and the CHANGELOG describes the manual edit needed.
+- **Claude is the front end. Daily Driver keeps your data.** Claude changes your list by running `daily-driver` commands. It writes your plan and notes files itself. A new chat starts without memory of earlier chats, so each chat begins by reading your files.
+- **Run commands inside your workspace folder or one of its subfolders.** To run them from anywhere, add `--workspace PATH` (or `-w PATH`) to a command.
+- **Daily Driver manages some files in `.claude/`.** It updates them after an upgrade when you run `daily-driver doctor --fix`. Put your own Claude commands and agents in `.claude/commands/user/` and `.claude/agents/user/`. Daily Driver never changes those folders. See [`.claude/` ownership](configuration.md#claude-ownership).
+- **Settings do not change on their own.** If an upgrade removes or renames a setting, commands stop and name it. `CHANGELOG.md` says what to change.

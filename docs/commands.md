@@ -1,6 +1,6 @@
 # Commands
 
-`daily-driver --help` lists every subcommand. `daily-driver <cmd> --help` shows per-command flags. `daily-driver help [TOPIC]` is the in-CLI reference for discoverable values (statuses, categories, sources, date grammar). This page covers the non-obvious behavior that isn't in `--help`.
+`daily-driver --help` lists every subcommand except `paths`, a scripting helper that is hidden from the list but works. `daily-driver <cmd> --help` shows per-command flags. `daily-driver help [TOPIC]` is the in-CLI reference for discoverable values (statuses, categories, sources, date grammar). This page covers the non-obvious behavior that isn't in `--help`.
 
 > For an end-user walkthrough of the daily flow, start with [usage.md](usage.md). For configuration, see [configuration.md](configuration.md).
 
@@ -34,6 +34,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | --- | --- | --- |
 | (global) | `--workspace` | `-w` |
 | `init` | `--force` | `-f` |
+| `doctor` | `--json` | `-j` |
 | `tracker add` | `--category` | `-c` |
 | `tracker add` | `--title` | `-T` |
 | `tracker add` | `--status` | `-s` |
@@ -64,6 +65,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `jobs run` | `--dry-run` | `-n` |
 | `jobs run` | `--json` | `-j` |
 | `jobs run` | `--skip-descriptions` | `-sd` |
+| `jobs backfill` | `--dry-run` | `-n` |
 | `jobs backfill` | `--json` | `-j` |
 | `jobs backfill` | `--skip-descriptions` | `-sd` |
 | `jobs discover-boards` | `--json` | `-j` |
@@ -91,17 +93,25 @@ Capitals are used where a lowercase letter is already taken on the same subparse
 
 ### `init [PATH] [-f | --force] [--job-search]`
 
-Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing — `--force` does not clobber them. With `--force`, `.dd-config.yaml` is overwritten with a fresh default; the previous copy is kept as `.dd-config.yaml.bak` only while `init` runs and is restored if it fails, so copy any settings you want to keep first. `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` are always (re-)generated.
+Scaffolds a workspace. Idempotent: re-running on the same path fills any missing artifacts and exits 0 with a `Created: ... ; Skipped: ...` summary. Static files (`context.md`, `voice-profile.md`, `.gitignore`) are only written if missing; `--force` does not overwrite them.
 
-Job search is off unless you pass `--job-search`. The flag writes a `plugins.job_search` block with `enabled: true`, adds the job settings to `.dd-config.yaml`, the job sections to the Claude prompts, README and `context.md`. The summary ends with `Job search: on` or `Job search: off`. On an existing workspace without `--force`, `--job-search` leaves `.dd-config.yaml` alone and prints how to switch job search on by hand. `--force` without `--job-search` writes a config with job search off.
+- Managed files — `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/hooks/` are generated on the first run, and again when the package version or the switched-on plugins change. Otherwise `init` reports `Generated: unchanged`. Without `--force`, regeneration follows the [`doctor --fix`](#doctor---fix----reset--j----json) rules.
+- `--force` — overwrites `.dd-config.yaml` with a fresh default and rewrites the managed files. Your edits to shipped files and any file you added in the managed directories are lost. The previous config is kept as `.dd-config.yaml.bak` only while `init` runs, and is restored if `init` fails. Copy any settings you want to keep first.
+
+Job search is off unless you pass `--job-search`. The flag writes a `plugins.job_search` block with `enabled: true`, adds the job settings to `.dd-config.yaml`, the job sections to the Claude prompts, README and `context.md`. The summary ends with `Job search: on`, or with `Job search: off (to switch on, ...)` and the step that fits your config. On an existing workspace without `--force`, `--job-search` leaves `.dd-config.yaml` alone and prints how to switch job search on by hand. `--force` without `--job-search` writes a config with job search off.
 
 ### `doctor [--fix | --reset] [-j | --json]`
 
-Runs contract + dependency checks. `--fix` and `--reset` are mutually exclusive. Exit 1 on any ERROR; WARNING exits 0. `--reset` requires a workspace. `--fix` prints an action log of every repair it performs (created file, restored permission, regenerated managed file) so the change set is auditable. `--json` emits a `{schema, data}` envelope whose `data` carries the run `mode` (`check`/`fix`/`reset`), the per-check results (`name`, `status`, `detail`, `fix_hint`), and the overall `exit_code` (the results table is suppressed).
+Runs contract + dependency checks. Every mode needs a workspace and exits 1 without one. Exit 1 on any ERROR; WARNING exits 0. See [`.claude/` ownership](configuration.md#claude-ownership) for what `doctor --fix`, `doctor --reset`, and `init --force` keep, overwrite, and delete.
+
+- `Workspace drift` — a WARNING that shows when the managed files were generated for another package version or another set of switched-on plugins, or when a managed file is missing.
+- `--fix` — when `doctor` reports drift or a failed contract check, it re-renders the managed files you have not edited. That regeneration also deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Separately, it runs the repair that a check carries (for example installing the Playwright browser). It prints `Action:` lines, such as `regenerated 7 files (preserved 0 user-edited)`, then the table again.
+- `--reset` — rewrites every managed file, with or without drift, discarding your edits to shipped files and any file you added in the managed directories. It cannot be combined with `--fix`.
+- `-j` / `--json` — emits a `{schema, data}` envelope whose `data` carries the run `mode` (`check`/`fix`/`reset`), a `checks` list (`name`, `status`, `detail`, `fix_hint`), and the overall `exit_code` (the results table is suppressed).
 
 ### `status [-j | --json]`
 
-Tracker dashboard: setup gaps (printed first when present), totals by category/status, items stalled >14 days (non-terminal), 7-day activity. `--json` emits the full payload including a `setup_gaps` array of `{kind, message}` entries detected from workspace state.
+Tracker dashboard: setup gaps (printed first when present), totals by category/status, items stalled >14 days (non-terminal), 7-day activity. `--json` emits the full payload including a `setup_gaps` array of `{id, message}` entries detected from workspace state.
 
 ## Discovery
 
@@ -109,11 +119,11 @@ Tracker dashboard: setup gaps (printed first when present), totals by category/s
 
 Reference command — distinct from argparse `--help` (usage). Prints the subcommand list plus discoverable value groups in one place: tracker statuses (recommended + in-use), tracker categories (from `.dd-config.yaml`), scraper sources, date-spec grammar. `TOPIC` filters to a single section: `commands`, `statuses`, `categories`, `sources`, `dates`. `--json` produces a structured payload for tab-completion or scripting.
 
-`help` is workspace-aware but does not require one; without a workspace, `categories` reports a hint and `statuses.in_use` is empty.
+`help` is workspace-aware but does not require one; without a workspace, `categories` reports a hint and `statuses.in_use` is empty. `help` still works when the config uses a removed setting: it prints a warning and shows the values it would show without a workspace.
 
 ## Tracker
 
-YAML-backed store under `<output_dir>/tracker.yaml`. Categories and their `required` field lists are defined in `.dd-config.yaml` under `tracker.categories`. Writes are flock-guarded.
+YAML-backed store under `<output_dir>/tracker.yaml`. Categories are free-form: any name works with `-c`. `tracker.categories` in `.dd-config.yaml` sets `required` fields per category, and it is the list that `default_category` must name and `help categories` shows. Writes are flock-guarded.
 
 Statuses are free-form, but `tracker add` / `tracker update` print a one-line stderr nudge for a value outside the recommended set that no other entry uses. Spelling is normalized (case-folded, underscores/spaces to hyphens), so `Ruled_Out` and `ruled-out` are one status and neither warns.
 
@@ -195,7 +205,7 @@ Each of these launchers records the id of the session it starts as the workspace
 
 ### `resume`
 
-`resume` reattaches to the workspace's most recent Claude session via `claude --resume <uuid>` — the same session pointer a resuming `check-in` uses. Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost: it drops you back into that conversation through the normal launcher path, so the workspace's configured model, agent, and `--add-dir` still apply (unlike a bare `claude -c`). It accepts the shared session flags (`--agent`, `--model`, `--session-name`) but not `--launch` — it is a manual recovery command, not a scheduled one. With no prior session recorded it prints a clear notice instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that ("No conversation found with session ID") and `resume` exits with claude's code — run `day-start` to begin fresh.
+`resume` reattaches to the workspace's most recent Claude session via `claude --resume <uuid>` — the same session pointer a resuming `check-in` uses. Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost: it drops you back into that conversation through the normal launcher path, so the workspace's configured model, agent, and `--add-dir` still apply (unlike a bare `claude -c`). It accepts the shared session flags (`--agent`, `--model`, `--session-name`) but not `--launch` — it is a manual recovery command, not a scheduled one. With no prior session recorded it exits 1 with `no prior session to resume — run day-start, day-end, or check-in first` instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that ("No conversation found with session ID") and `resume` exits with claude's code — run `day-start` to begin fresh.
 
 ## Headless Claude commands
 
@@ -208,24 +218,24 @@ Generates a period summary non-interactively and copies to clipboard.
 | `--range SPEC` | Required. `today`, `yesterday`, `week`, `month`, `YYYY-MM-DD`, or `YYYY-MM-DD:YYYY-MM-DD` |
 | `--detail low\|med\|high` | Verbosity |
 | `--match KW` | Repeatable keyword filter |
-| `--json` | Emit JSON bundle without invoking claude |
+| `--json` | Print the resolved range, detail level, and match filters as JSON; no claude call |
 | `--no-clipboard` | Skip `pbcopy` |
 | `--timeout SECONDS` | Default 180 |
 
 ### `voice-update --from PATH [PATH ...]`
 
-Updates `voice-profile.md` from writing samples via headless `claude`. Default `--append` merges new observations into the profile by section, preserving existing text; `--replace` rewrites the whole profile from scratch.
+Updates `voice-profile.md` in the workspace directory (not `output_dir`) from writing samples via headless `claude`, or the provider set in `ai.voice_update`. Default `--append` merges new observations into the profile by section, preserving existing text; `--replace` rewrites the whole profile from scratch. Each write saves the previous file as `voice-profile.md.bak`.
 
 | Flag | Notes |
 | --- | --- |
-| `--from PATH` | Required; repeatable; files or directories |
+| `--from PATH [PATH ...]` | Required. One `--from` takes one or more files or directories; repeating the flag keeps only the last one |
 | `--append` / `--replace` | Default `--append` merges new observations by section; `--replace` rewrites the whole profile |
 | `-n`, `--dry-run` | Validate sources + print target path; no model call or write |
 | `--no-clipboard`, `--timeout`, `--model`, `--session-name` | As above |
 
 ## Job search plugin
 
-Off by default. Every `jobs` action exits 1 with "job search is off in this workspace" until job search is on: create the workspace with `init --job-search`, or add `plugins: {job_search: {}}` to `.dd-config.yaml` (if it already has a `job_search` block with `enabled: false`, remove that line instead; a second `plugins:` key would replace the block). The message names the step that fits your config. `jobs` works as soon as job search is on; run `doctor --fix` as well to add the job sections to the Claude prompts and README. See [configuration.md](configuration.md#pluginsjob_search).
+Off by default. Every `jobs` action exits 1 with "job search is off in this workspace" until job search is on: create the workspace with `init --job-search`, or add `plugins: {job_search: {}}` to `.dd-config.yaml` (if it already has a `job_search` block with `enabled: false`, remove that line instead; a second `plugins:` key would replace the block). The message names the step that fits your config. Run `doctor --fix` as well to add the job sections to the Claude prompts and README. `jobs run` also needs `scraper.enabled: true` and a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on. See [configuration.md](configuration.md#pluginsjob_search).
 
 The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank. Only `found`/`pending` rows are eligible for (re-)enrichment (`jobs run`, `jobs backfill`) — once a row moves to any other status its Fit/Notes/Remote are left alone.
 
@@ -260,11 +270,11 @@ After the new rows are enriched, the run also picks up the **backlog**: pre-exis
 
 **Sources.** `apple`, `ashby`, `greenhouse`, `hn_jobs`, `hn_who_is_hiring`, `indeed`, `lever`, `linkedin`, `remoteok`, `weworkremotely`, `workable`, `workday`. `linkedin` and `indeed` are site-named selectors (`-S linkedin` or `-S linkedin,indeed`); each enabled site is fetched separately, under its own progress row, retry, and failure isolation. `daily-driver help sources` lists them at runtime.
 
-**Live display.** On a TTY, `jobs run` pins a display at the bottom: a `Scraping sources` header bar (green ok / red failed) with one bar per source, then an `Enriching jobs` group. Details covered once in [usage.md](usage.md#output-and-verbosity); the short version: each source reports against its natural unit, stays pinned at its result, recolours into a found/new/already-in-csv/skipped breakdown on finish, and the run ends with a reconciling `Completed:` line. `-q` suppresses the display; `-v`/`-vv` only change how much scrolls above it. Non-interactive output (cron, launchd, pipes) falls back to plain lines.
+**Live display.** On a TTY, `jobs run` pins a display at the bottom: a `Scraping sources` header bar (green ok / red failed) with one bar per source, then an `Enriching jobs` group. Each source reports against its natural unit, stays pinned at its result, recolours into a found/new/already-in-csv/skipped breakdown on finish, and the run ends with a reconciling `Completed:` line. `-q` suppresses the display; `-v`/`-vv` only change how much scrolls above it. Non-interactive output (cron, launchd, pipes) falls back to plain lines.
 
 > **VS Code integrated terminal**: a frozen copy of the live block left in scrollback is VS Code's DOM renderer mishandling scroll-region repaints, not the program. Set `terminal.integrated.gpuAcceleration` to `"auto"` (or `"on"`) to fix it. iTerm2 and tmux are unaffected.
 
-### `jobs backfill [-n|--dry-run] [--limit N] [--force-update] [--cooldown-hours N] [-sd|--skip-descriptions] [-j|--json]`
+### `jobs backfill [-n|--dry-run] [--limit N] [--force-update] [--cooldown-hours N|missing] [-sd|--skip-descriptions] [-j|--json]`
 
 Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight. Comp fills from the cached description at no LLM or network cost wherever the description states a pay range, and a row missing its description fetches it from the job board when the board serves one (disable with `-sd`). Blank Comps get checked: filled when a source states pay, marked `Not listed` when the sources are exhausted. A failed fetch never marks, and a response that doesn't look like a real job posting (auth wall, bot challenge) counts as failed — the row stays blank and retries next run.
 
@@ -272,7 +282,7 @@ Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. S
 - `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
 - `--limit N` — cap LLM spend by bounding the fit/notes budget at `N` (minimum 1; default: the configured per-phase cap).
 - `--force-update` — re-enrich every eligible row and OVERWRITE its existing Fit, Notes, and Remote, instead of the default fill-missing-only behavior, and re-derive Comp from the cached description wherever it parses to a different value (an existing Comp is never blanked, only replaced). Still bounded by `--limit` and the cooldown below.
-- `--cooldown-hours N` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time). The cooldown governs the LLM fit/notes pass only; the no-cost Comp fill/repair runs regardless.
+- `--cooldown-hours N|missing` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time), and `missing` re-enriches only rows with no enrichment timestamp yet. The cooldown governs the LLM fit/notes pass only; the no-cost Comp fill/repair runs regardless.
 - `-sd` / `--skip-descriptions` — don't fetch missing descriptions: descriptions stay cache-only and the detail phase fills Comp alone.
 - `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `comp_filled`, `comp_repaired`, `comp_not_listed`, `descriptions_filled`, `elapsed_seconds`; `dry_run` adds `fit_cap`, `comp_needs`, `comp_check_needs`, and `description_needs`) in the `{schema, data}` envelope, with the live progress block suppressed.
 - A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
@@ -343,7 +353,7 @@ The status channel must not read `Date Verified`: every run re-stamps it to toda
 
 ### `scheduler install`
 
-Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00, day-cycle at `schedule.day_start` / `schedule.day_end` (configurable in `.dd-config.yaml`), and, when job search is on, jobs at 07:00 and board discovery at 23:59 on Saturday and Tuesday. A full install (no job names) also removes the `jobs` and `jobs-discover` agents when job search is off, and lists them under "Removed launchd agents (job search is off)". Naming `jobs` or `jobs-discover` while job search is off is an error that says so. `scheduler status` shows such leftover agents as `yes, job search off`. Idempotent.
+Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them. Reads the typed `scheduler:` block from `.dd-config.yaml` (unknown keys are rejected at config load). Defaults: check-in at 11:00 and 15:00. day-start and day-end are installed only when `schedule.day_start` / `schedule.day_end` are set; they have no default time. With job search on, it also installs jobs at 07:00 and board discovery at 23:59 on Saturday and Tuesday. A full install (no job names) also removes the `jobs` and `jobs-discover` agents when job search is off, and lists them under "Removed launchd agents (job search is off)". Naming `jobs` or `jobs-discover` while job search is off is an error that says so. `scheduler status` shows such leftover agents as `yes, job search off`. Idempotent.
 
 Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`, `jobs-discover`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
 

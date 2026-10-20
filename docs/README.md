@@ -1,31 +1,17 @@
 # Documentation
 
-Daily Driver documentation is split by audience and purpose.
+Start with the install guide, then follow the steps in order. Use the other guides when you need them.
 
-**Users** — start with [quick-start.md](quick-start.md) to scaffold a workspace, then read [usage.md](usage.md) for the daily flow. Read [concepts.md](concepts.md) once for the mental model. Look things up in [commands.md](commands.md), [configuration.md](configuration.md), and [troubleshooting.md](troubleshooting.md) as needed.
-
-**Developers** — start with [dev/developer.md](dev/developer.md) for the architecture map, then [dev/extending.md](dev/extending.md) for recipes.
-
-## User docs
-
-Tables below list docs in recommended reading order — read-first entries first, then references.
-
-| Doc | What it covers |
+| Guide | What it covers |
 | --- | --- |
-| [quick-start.md](quick-start.md) | Read first — minimal scaffold checklist for first-time setup |
-| [usage.md](usage.md) | Read second — end-to-end daily flow with worked examples |
-| [concepts.md](concepts.md) | Read once — mental model: workspace, surfaces, and design decisions |
-| [commands.md](commands.md) | Reference — every subcommand and non-obvious flag behavior |
-| [configuration.md](configuration.md) | Reference — `.dd-config.yaml` schema, defaults, and customization |
-| [cli-tree.md](cli-tree.md) | Reference — at-a-glance command tree (orientation only) |
-| [ollama-setup.md](ollama-setup.md) | How-to — local LLM provider for enrichment and summary |
-| [troubleshooting.md](troubleshooting.md) | How-to — failure modes and recovery steps |
-| [install.md](install.md) | How-to — install, upgrade, and Playwright setup |
+| [Install](install.md) | Step 1. Install, upgrade, and optional extras |
+| [Quick start](quick-start.md) | Step 2. Set up your workspace and start your first chat |
+| [Daily guide](usage.md) | Step 3. How to use Daily Driver each day |
+| [How it works](concepts.md) | The parts of Daily Driver and how they fit together |
+| [Commands](commands.md) | Every command and its options |
+| [Command tree](cli-tree.md) | All commands in one list |
+| [Settings](configuration.md) | Settings you can change in `.dd-config.yaml` |
+| [Local AI setup](ollama-setup.md) | Run some AI tasks on your own computer instead of with Claude |
+| [Troubleshooting](troubleshooting.md) | Fixes for common problems |
 
-## Developer docs
-
-| Doc | What it covers |
-| --- | --- |
-| [dev/developer.md](dev/developer.md) | Architecture, module map, runtime flow, init contract |
-| [dev/extending.md](dev/extending.md) | Adding subcommands and scraper sources |
-| [dev/releasing.md](dev/releasing.md) | Release workflow, semver, CHANGELOG |
+Developers: see [dev/README.md](dev/README.md).

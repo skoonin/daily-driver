@@ -24,7 +24,7 @@ def available() -> bool:
         "calendar: icalBuddy not found on PATH; skipping calendar gather. "
         "Install via `brew install ical-buddy` and grant the terminal "
         "Calendar access (System Settings -> Privacy & Security -> "
-        "Calendars). See docs/developer.md 'Calendar (icalBuddy) setup'."
+        "Calendars). See docs/install.md 'Calendar access'."
     )
     return False
 
@@ -70,8 +70,8 @@ def events_between(since: datetime, until: datetime) -> str | None:
 
     if result.returncode != 0:
         log.warning(
-            "calendar: icalBuddy exited %d; stderr=%r. See docs/developer.md "
-            "'Calendar (icalBuddy) setup' for plist + permission steps.",
+            "calendar: icalBuddy exited %d; stderr=%r. See docs/install.md "
+            "'Calendar access' for the permission steps.",
             result.returncode,
             (result.stderr or "").strip()[:200],
         )
