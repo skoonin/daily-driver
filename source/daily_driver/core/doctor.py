@@ -74,7 +74,7 @@ def _check_python_deps() -> list[CheckResult]:
                     name=f"dep:{pkg}",
                     status="ERROR",
                     detail=f"{pkg} not installed",
-                    fix_hint=f"pip install {pkg}",
+                    fix_hint="Reinstall Daily Driver: pipx reinstall --python python3.12 daily-driver",
                 )
             )
     return results

@@ -92,7 +92,7 @@ A board is a company's job page on a hiring site such as Greenhouse, Ashby, or L
 Rules:
 
 - Times use the 24-hour clock in your local time. Write them in quotes.
-- `days` is `daily`, `weekdays`, or a list of day names such as `[sun, wed]`. Day names can be short or full, in any case.
+- `days` is `daily`, `weekdays`, or a list of day names such as `[sun, wed]`. Day names can be short or full, in any case. An empty list is rejected; use `daily` instead.
 - In a part you set, each line you leave out keeps its default. For example, `checkin: {days: weekdays}` keeps the 11:00 and 15:00 check-ins and runs them on weekdays only.
 - To stop a run, clear its time: `checkin: {times: []}`, `jobs: {time: null}`, or `discovery: {time: null}`. Setting a whole part to `null` or `{}` does not stop it.
 - Run `daily-driver scheduler install` after every change.
