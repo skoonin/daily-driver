@@ -18,7 +18,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Removed
 
-- **The `user_profile` and `recurring_tasks` config settings are gone.** Nothing read them: day-start takes your background and recurring tasks from `context.md`. A config that still has either block stops every command except `help` with a message that names the block, says where its content goes now, and lists any other problem in the file: delete the block and move anything you need into `context.md`. New workspaces get an empty `## Recurring Tasks` section in `context.md`. `help cadences` is gone with them. (#269)
+- **The `user_profile` and `recurring_tasks` config settings are gone.** Nothing read them: day-start takes your background and recurring tasks from `context.md`. A config that still has either block stops every command except `help` with a message that names the block, says where its content goes now, and lists any other problem in the file: delete the setting and the indented lines under it, and move anything you need into `context.md`. New workspaces get an empty `## Recurring Tasks` section in `context.md`. `help cadences` is gone with them. (#269, #271)
 
 - **The `/daily-driver:daily-learning` command is gone,** along with day-start's optional interview-practice step. Your next `doctor --fix` removes the command from the workspace; your notes under `daily-learning/` are left alone. (#266)
 
