@@ -141,13 +141,7 @@ pipx puts the `daily-driver` command in `~/.local/bin`. Run `pipx ensurepath`, t
 
 ## pipx says `daily-driver` was already on your PATH
 
-An older copy installed with `pip` is still there, and it can run instead of the pipx copy. `type -a daily-driver` lists both copies, and the first one is the copy that runs. To find the Python that the older copy uses, run `head -1 /path/from/the/warning`. Then remove that copy with the same Python:
-
-```bash
-/path/to/that/python -m pip uninstall daily-driver
-```
-
-The plain `pip` command can belong to a different Python than `python3`, so use the full path from the first line.
+An older copy installed with `pip` is still there, and it can run instead of the pipx copy. `type -a daily-driver` lists both copies, and the first one is the copy that runs. To remove the older copy, follow [Upgrade from a pip install](install.md#upgrade-from-a-pip-install).
 
 ## Pydantic import error
 
