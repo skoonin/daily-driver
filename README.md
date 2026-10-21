@@ -130,7 +130,7 @@ pipx install --force git+https://github.com/skoonin/daily-driver.git
 daily-driver doctor --fix
 ```
 
-If you installed from a copy of the code, run `git pull && make install` in its folder instead.
+If you installed from a copy of the code, run `git pull && make install` in its folder instead. If you installed version 1.3.0 or older with `pip`, first follow [Upgrade from a pip install](docs/install.md#upgrade-from-a-pip-install).
 
 Uninstall. Run these commands in your workspace folder. The first one removes the scheduled reminders before the program is gone:
 
