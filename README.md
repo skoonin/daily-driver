@@ -42,18 +42,14 @@ brew install pipx
 pipx ensurepath
 ```
 
-Open a new terminal window, then download and install Daily Driver:
+Open a new terminal window, then install Daily Driver:
 
 ```bash
-git clone https://github.com/skoonin/daily-driver.git ~/daily-driver
-cd ~/daily-driver
-make install
+pipx install git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
-The last command prints the version number if the install worked. To upgrade later, run `git pull && make install` in the same folder. Run `make help` to see the other shortcuts.
-
-To install without downloading the code, run `pipx install git+https://github.com/skoonin/daily-driver.git` instead. The [install guide](docs/install.md) covers upgrades and optional tools.
+The last command prints the version number if the install worked. If you have a copy of the code, run `make install` in its folder instead, and `make help` to see the other shortcuts. The [install guide](docs/install.md) covers upgrades and optional tools.
 
 ## Get started
 
