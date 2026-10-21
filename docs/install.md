@@ -18,6 +18,16 @@ A `brew upgrade` can replace the Python that pipx uses. If Daily Driver stops wo
 
 ## Install
 
+Run `brew --version` to check for Homebrew. If the command is not found, install Homebrew from [brew.sh](https://brew.sh). Paste this command in Terminal, then run the commands it shows under "Next steps":
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+The Homebrew installer also installs the Xcode Command Line Tools, which include `git`. pipx uses `git` to download Daily Driver.
+
+Install pipx. Homebrew installs a current Python with it, so you do not need to install Python yourself:
+
 ```bash
 brew install pipx
 pipx ensurepath
@@ -29,6 +39,8 @@ Open a new terminal window, then install Daily Driver:
 pipx install git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
+
+pipx puts Daily Driver in its own folder and puts the `daily-driver` command in `~/.local/bin`. `pipx ensurepath` adds `~/.local/bin` to your PATH, so the command works in every new terminal window, from any folder.
 
 The last command prints the version number if the install worked.
 
