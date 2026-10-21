@@ -6,7 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
-- **Daily Driver installs with your default Python.** The install steps, `make install`, and the repair hints from `doctor` and job search no longer force Python 3.12. Any Python 3.11 or newer works, and the install stops with an error on an older one. `make install` now needs pipx and says how to install it when it is missing, instead of falling back to a `pip install --user` that fails on a stock Mac. The README now mentions `make install` for a copy of the code and points developers to `make setup-dev` and `make test`. The install steps now start with installing Homebrew and explain where pipx puts the `daily-driver` command. Troubleshooting covers the pipx warning that `daily-driver` is already on your PATH. (#276)
+- **Daily Driver installs with your default Python.** The install steps, `make install`, and the repair hints from `doctor` and job search no longer force Python 3.12. Any Python 3.11 or newer works, and the install stops with an error on an older one. `make install` now needs pipx and says how to install it when it is missing, instead of falling back to a `pip install --user` that fails on a stock Mac. The README now mentions `make install` for a copy of the code and points developers to `make setup-dev` and `make test`. The install steps now start with installing Homebrew and explain where pipx puts the `daily-driver` command. The README and install guide now show how to upgrade and uninstall. Troubleshooting covers the pipx warning that `daily-driver` is already on your PATH. (#276)
 
 ## [1.4.0] — 2026-10-20
 

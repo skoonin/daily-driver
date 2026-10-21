@@ -87,6 +87,8 @@ pipx install --force git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
+If you installed from a copy of the code, run `git pull && make install` in its folder instead.
+
 After an upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`. This means some Daily Driver files in your workspace are out of date. Run `daily-driver doctor --fix` to update them:
 
 - Kept: your edits to the Daily Driver files that came with the program.
@@ -119,6 +121,19 @@ daily-driver doctor --fix
 ```
 
 Replace `vX.Y.Z` with the release you want, for example `v1.2.0`.
+
+## Uninstall
+
+Run these commands in your workspace folder:
+
+```bash
+daily-driver scheduler uninstall
+pipx uninstall daily-driver
+```
+
+- `scheduler uninstall` removes the scheduled reminders. Run it first: after `pipx uninstall`, the `daily-driver` command is gone, but macOS keeps trying to run the reminders.
+- `pipx uninstall` removes the program and the `daily-driver` command.
+- Your workspace folder stays, with your list, plans, notes, and settings. Delete it yourself if you do not want them.
 
 ## Next
 

@@ -121,6 +121,26 @@ Your workspace is a normal folder on your Mac. Daily Driver has no server and do
 
 Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone unless a guide tells you otherwise. [How it works](docs/concepts.md) has details.
 
+## Upgrade or uninstall
+
+Upgrade to the latest version, then update the Daily Driver files in your workspace:
+
+```bash
+pipx install --force git+https://github.com/skoonin/daily-driver.git
+daily-driver doctor --fix
+```
+
+If you installed from a copy of the code, run `git pull && make install` in its folder instead.
+
+Uninstall. Run these commands in your workspace folder. The first one removes the scheduled reminders before the program is gone:
+
+```bash
+daily-driver scheduler uninstall
+pipx uninstall daily-driver
+```
+
+Your workspace folder stays. Delete it yourself if you do not want your data. The [install guide](docs/install.md#upgrade) has more about upgrades.
+
 ## Learn more
 
 | Guide | What you will find |
