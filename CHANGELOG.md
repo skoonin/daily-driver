@@ -4,6 +4,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-20
+
 ### Changed
 
 - **Install and repair hints recommend pipx.** When `doctor` finds a missing package, or job search finds its job board library or Playwright missing, the message now says to reinstall Daily Driver with `pipx reinstall --python python3.12 daily-driver`. Browser hints now name the Python that Daily Driver runs on (`<python> -m playwright install <browser>`) instead of a bare `playwright install`, which can install the browser for a different Python. `make install` from a source checkout now uses pipx when it is installed and falls back to `pip install --user`. (#275)
