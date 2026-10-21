@@ -4,7 +4,7 @@ Single-command release workflow. `make release` (interactive) or `make release-c
 
 ## Branches
 
-- **`dev`** is the integration trunk. Feature branches branch off `dev` and merge back to `dev`. On `dev`, `__version__` carries the next release's `-dev` working marker (e.g. `0.3.0-dev`). Install the latest in-progress build with `pip install 'git+https://github.com/skoonin/daily-driver.git@dev'`.
+- **`dev`** is the integration trunk. Feature branches branch off `dev` and merge back to `dev`. On `dev`, `__version__` carries the next release's `-dev` working marker (e.g. `0.3.0-dev`). Install the latest in-progress build with `pipx install --force 'git+https://github.com/skoonin/daily-driver.git@dev'`.
 - **`main`** holds only released, tagged states; it never carries a `-dev` version between releases.
 - **Cutting a release** (`dev` → `main`):
   1. Create a `release/X.Y.Z` branch from a freshly fetched `dev`: `git fetch origin && git checkout -b release/X.Y.Z origin/dev`.
@@ -87,7 +87,7 @@ Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push on macOS
 
 ### GitHub Actions must be running
 
-The GitHub Release + artifacts depend on `release.yaml` actually triggering. This repo has had Actions disabled/paused at times — when Actions are off, the tag push creates no run, so no GitHub Release is built (the tag itself still installs fine via `pip install git+https://github.com/skoonin/daily-driver.git@vX.Y.Z`). After `make release-push`, confirm a run started (`gh run list --workflow=release.yaml --limit 1`) and that `gh release view vX.Y.Z` exists. If Actions were off, re-enable them and either re-push the tag or build and attach manually:
+The GitHub Release + artifacts depend on `release.yaml` actually triggering. This repo has had Actions disabled/paused at times — when Actions are off, the tag push creates no run, so no GitHub Release is built (the tag itself still installs fine via `pipx install --force 'git+https://github.com/skoonin/daily-driver.git@vX.Y.Z'`). After `make release-push`, confirm a run started (`gh run list --workflow=release.yaml --limit 1`) and that `gh release view vX.Y.Z` exists. If Actions were off, re-enable them and either re-push the tag or build and attach manually:
 
 ```bash
 make build
@@ -135,7 +135,7 @@ Delete the GitHub Release manually if one was created.
 Ships macOS arm64 only, installed from git (no PyPI publish):
 
 ```bash
-pip install git+https://github.com/skoonin/daily-driver.git
-pip install git+https://github.com/skoonin/daily-driver.git@vX.Y.Z
-pip install 'git+https://github.com/skoonin/daily-driver.git@dev'  # latest in-progress build
+pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+pipx install --force 'git+https://github.com/skoonin/daily-driver.git@vX.Y.Z'
+pipx install --force 'git+https://github.com/skoonin/daily-driver.git@dev'  # latest in-progress build
 ```

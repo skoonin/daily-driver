@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import sys
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -230,8 +231,9 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
     engine = ctx.plugin.scraper.browser
     if not _has_playwright():
         raise ImportError(
-            f"playwright not installed -- reinstall daily-driver and run: "
-            f"playwright install {engine}"
+            "playwright not installed -- reinstall Daily Driver "
+            "(`pipx reinstall --python python3.12 daily-driver`), then run "
+            f"`{sys.executable} -m playwright install {engine}`"
         )
 
     from playwright.sync_api import Error as PWError
@@ -245,7 +247,10 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
             browser = getattr(pw, engine).launch(headless=headless)
         except (PWError, OSError) as exc:
             log.error(
-                "browser launch failed (run: playwright install %s): %s", engine, exc
+                "browser launch failed (run: %s -m playwright install %s): %s",
+                sys.executable,
+                engine,
+                exc,
             )
             raise
         browser_ctx = browser.new_context(

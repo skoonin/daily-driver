@@ -41,7 +41,7 @@ The managed files were generated for a different package version, or for a diffe
 
 ## Config "has settings that daily-driver no longer uses"
 
-Every command except `help` stops with this message when `.dd-config.yaml` contains `user_profile` or `recurring_tasks`. The message names each of these settings and says where its content goes. Delete the block. Move your background into `context.md`, and list recurring tasks under `## Recurring Tasks` in `context.md`. If the file has other mistakes, the message lists them too. Run `daily-driver doctor` to see the message again.
+Every command except `help` stops with this message when `.dd-config.yaml` contains `user_profile` or `recurring_tasks`. The message names each of these settings and says where its content goes. Delete the setting and the indented lines under it. Move your background into `context.md`, and list recurring tasks under `## Recurring Tasks` in `context.md`. If the file has other mistakes, the message lists them too. Run `daily-driver doctor` to see the message again.
 
 ## `jobs` says "job search is off in this workspace"
 
