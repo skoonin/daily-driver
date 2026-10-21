@@ -6,7 +6,7 @@ Daily Driver runs on Macs with Apple silicon (M1 or newer). Intel Macs probably 
 
 | Requirement | Notes |
 |-------------|-------|
-| pipx and Python 3.12 | pipx installs Daily Driver in its own folder with Python 3.12, the version Daily Driver is tested on. It does not change other Python programs. See [Install](#install). |
+| pipx and Python 3.11 or newer | pipx installs Daily Driver in its own folder, so it does not change other Python programs. It uses its own default Python (for the Homebrew pipx, the newest Homebrew Python), and the install stops with an error if that Python is older than 3.11. See [Install](#install-1). |
 | Claude Code (the `claude` command) | Needed for `day-start`, `day-end`, `check-in`, `summary`, and `voice-update`. Install it and sign in. See the [Anthropic install guide](https://code.claude.com/docs/en/install). |
 | `icalBuddy` | Optional. Lets Daily Driver read your macOS Calendar. See [Calendar access](#calendar-access-optional). |
 | `terminal-notifier` | Optional. Makes the scheduled reminders clickable. Install it with `brew install terminal-notifier`. |
@@ -14,21 +14,33 @@ Daily Driver runs on Macs with Apple silicon (M1 or newer). Intel Macs probably 
 
 The `brew` commands need Homebrew, an app installer for macOS. See [brew.sh](https://brew.sh).
 
-A `brew upgrade` can replace the Python that pipx uses. If Daily Driver stops working after that, run `pipx reinstall --python python3.12 daily-driver`.
+A `brew upgrade` can replace the Python that pipx uses. If Daily Driver stops working after that, run `pipx reinstall daily-driver`.
 
 ## Install
 
+Run `brew --version` to check for Homebrew. If the command is not found, install Homebrew from [brew.sh](https://brew.sh). Paste this command in Terminal, then run the commands it shows under "Next steps":
+
 ```bash
-brew install pipx python@3.12
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+The Homebrew installer also installs the Xcode Command Line Tools, which include `git`. pipx uses `git` to download Daily Driver.
+
+Install pipx. Homebrew installs a current Python with it, so you do not need to install Python yourself:
+
+```bash
+brew install pipx
 pipx ensurepath
 ```
 
 Open a new terminal window, then install Daily Driver:
 
 ```bash
-pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+pipx install git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
+
+pipx puts Daily Driver in its own folder and puts the `daily-driver` command in `~/.local/bin`. `pipx ensurepath` adds `~/.local/bin` to your PATH, so the command works in every new terminal window, from any folder.
 
 The last command prints the version number if the install worked.
 
@@ -75,6 +87,8 @@ pipx install --force git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
+If you installed from a copy of the code, run `git pull && make install` in its folder instead.
+
 After an upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`. This means some Daily Driver files in your workspace are out of date. Run `daily-driver doctor --fix` to update them:
 
 - Kept: your edits to the Daily Driver files that came with the program.
@@ -99,6 +113,34 @@ This replaces every Daily Driver file in `.claude/` with a fresh copy. These fol
 
 After an upgrade, run `daily-driver scheduler install` again. This updates your scheduled reminders to match the new version.
 
+### Upgrade from a pip install
+
+Daily Driver 1.3.0 and older said to install with `pip install`. Remove that copy before you install with pipx, or it can run instead of the pipx copy.
+
+1. List every `daily-driver` command on your PATH:
+
+   ```bash
+   type -a daily-driver
+   ```
+
+2. For each path that is not `~/.local/bin/daily-driver`, find the Python that it uses. The path after `#!` on the first line is that Python:
+
+   ```bash
+   head -1 /opt/homebrew/bin/daily-driver
+   ```
+
+3. Remove the copy with that same Python. The plain `pip` command can belong to a different Python than `python3`, so use the full path from step 2:
+
+   ```bash
+   /opt/homebrew/opt/python@3.11/bin/python3.11 -m pip uninstall daily-driver
+   ```
+
+   If pip stops with `externally-managed-environment`, add `--break-system-packages` to the command.
+
+4. Follow [Install](#install-1), then run `type -a daily-driver` again. It shows only `~/.local/bin/daily-driver`.
+
+Your workspace does not change. Each scheduled reminder runs the `daily-driver` path that was first on your PATH when you ran `scheduler install`, so run `daily-driver scheduler install` in your workspace again after the pipx install.
+
 ### Downgrade
 
 ```bash
@@ -107,6 +149,20 @@ daily-driver doctor --fix
 ```
 
 Replace `vX.Y.Z` with the release you want, for example `v1.2.0`.
+
+## Uninstall
+
+Run these commands in your workspace folder:
+
+```bash
+daily-driver scheduler uninstall
+pipx uninstall daily-driver
+```
+
+- `scheduler uninstall` removes the scheduled reminders. Run it first: after `pipx uninstall`, the `daily-driver` command is gone, but macOS keeps trying to run the reminders.
+- `pipx uninstall` removes the program and the `daily-driver` command.
+- Your workspace folder stays, with your list, plans, notes, and settings. Delete it yourself if you do not want them.
+- A copy installed with `pip` (Daily Driver 1.3.0 and older) is not removed. See [Upgrade from a pip install](#upgrade-from-a-pip-install).
 
 ## Next
 

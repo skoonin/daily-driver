@@ -25,7 +25,7 @@ If you close a chat by accident, run `daily-driver resume` to reopen the most re
 
 ## Connect your other tools
 
-Each chat runs in Claude Code, so it can use the integrations you already set up there. These are also called Model Context Protocol (MCP) servers. With the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Set them up once in Claude Code, and every chat can use them.
+Each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell claude to use them or put it in `context.md`, and every chat can use them.
 
 ## What you need
 
@@ -37,19 +37,31 @@ Each chat runs in Claude Code, so it can use the integrations you already set up
 
 ## Install
 
+In order to install Daily-Driver, you must have [Homebrew](https://brew.sh) and pipx installed.
+
+If **Homebrew is not installed**, you can install install it by running this command in Terminal:
+
 ```bash
-brew install pipx python@3.12
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Then install pipx. Homebrew installs a current Python with it, so you do not need to install Python yourself:
+
+```bash
+brew install pipx
 pipx ensurepath
 ```
 
 Open a new terminal window, then install Daily Driver:
 
 ```bash
-pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+pipx install git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 
-The last command prints the version number if the install worked. The [install guide](docs/install.md) covers upgrades and optional tools.
+pipx puts Daily Driver in its own folder and puts the `daily-driver` command in `~/.local/bin`. `pipx ensurepath` adds `~/.local/bin` to your PATH, so the command works in every new terminal window, from any folder.
+
+The last command prints the version number if the install worked. If you have a copy of the code, run `make install` in its folder instead, and `make help` to see the other shortcuts. The [install guide](docs/install.md) covers upgrades and optional tools.
 
 ## Get started
 
@@ -66,7 +78,7 @@ The last command prints the version number if the install worked. The [install g
    daily-driver doctor
    ```
 
-3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day.
+3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day. You can also ask Claude to write it for you by asking you questions.
 
 4. Start your first chat. Tell Claude what you work on and what is due, and ask it to add your tasks to your list:
 
@@ -109,6 +121,26 @@ Your workspace is a normal folder on your Mac. Daily Driver has no server and do
 
 Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone unless a guide tells you otherwise. [How it works](docs/concepts.md) has details.
 
+## Upgrade or uninstall
+
+Upgrade to the latest version, then update the Daily Driver files in your workspace:
+
+```bash
+pipx install --force git+https://github.com/skoonin/daily-driver.git
+daily-driver doctor --fix
+```
+
+If you installed from a copy of the code, run `git pull && make install` in its folder instead. If you installed version 1.3.0 or older with `pip`, first follow [Upgrade from a pip install](docs/install.md#upgrade-from-a-pip-install).
+
+Uninstall. Run these commands in your workspace folder. The first one removes the scheduled reminders before the program is gone:
+
+```bash
+daily-driver scheduler uninstall
+pipx uninstall daily-driver
+```
+
+Your workspace folder stays. Delete it yourself if you do not want your data. The [install guide](docs/install.md#upgrade) has more about upgrades.
+
 ## Learn more
 
 | Guide | What you will find |
@@ -122,7 +154,7 @@ Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone
 | [Local AI setup](docs/ollama-setup.md) | Run some AI tasks on your own computer |
 | [Troubleshooting](docs/troubleshooting.md) | Fixes for common problems |
 
-**Developers:** see the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+**Developers:** run `make setup-dev` to create the development environment and `make test` to run the tests. See the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -139,6 +139,10 @@ rm .daily-driver/state/focus.lock
 
 pipx puts the `daily-driver` command in `~/.local/bin`. Run `pipx ensurepath`, then open a new terminal window.
 
+## pipx says `daily-driver` was already on your PATH
+
+An older copy installed with `pip` is still there, and it can run instead of the pipx copy. `type -a daily-driver` lists both copies, and the first one is the copy that runs. To remove the older copy, follow [Upgrade from a pip install](install.md#upgrade-from-a-pip-install).
+
 ## Pydantic import error
 
 ```text
@@ -148,7 +152,7 @@ ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
 A version mismatch between `pydantic` and `pydantic-core`. Fix it with:
 
 ```bash
-pipx reinstall --python python3.12 daily-driver
+pipx reinstall daily-driver
 ```
 
 ## Ollama provider issues

@@ -232,7 +232,7 @@ def _playwright_browser(ctx: ScrapeContext) -> Any:
     if not _has_playwright():
         raise ImportError(
             "playwright not installed -- reinstall Daily Driver "
-            "(`pipx reinstall --python python3.12 daily-driver`), then run "
+            "(`pipx reinstall daily-driver`), then run "
             f"`{sys.executable} -m playwright install {engine}`"
         )
 
