@@ -37,15 +37,15 @@ Each chat runs in Claude Code, so it can use the integrations/MCPs you already s
 
 ## Install
 
-Run `brew --version` to check for Homebrew. If the command is not found, install Homebrew from [brew.sh](https://brew.sh). Paste this command in Terminal, then run the commands it shows under "Next steps":
+In order to install Daily-Driver, you must have [Homebrew](https://brew.sh) and pipx installed.
+
+If **Homebrew is not installed**, you can install install it by running this command in Terminal:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
 
-The Homebrew installer also installs the Xcode Command Line Tools, which include `git`. pipx uses `git` to download Daily Driver.
-
-Install pipx. Homebrew installs a current Python with it, so you do not need to install Python yourself:
+Then install pipx. Homebrew installs a current Python with it, so you do not need to install Python yourself:
 
 ```bash
 brew install pipx
@@ -78,7 +78,7 @@ The last command prints the version number if the install worked. If you have a 
    daily-driver doctor
    ```
 
-3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day.
+3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day. You can also ask Claude to write it for you by asking you questions.
 
 4. Start your first chat. Tell Claude what you work on and what is due, and ask it to add your tasks to your list:
 
