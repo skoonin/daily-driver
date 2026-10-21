@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Changed
+
+- **Daily Driver installs with your default Python.** The install steps, `make install`, and the repair hints from `doctor` and job search no longer force Python 3.12. Any Python 3.11 or newer works, and the install stops with an error on an older one. The README now shows how to install and upgrade from a downloaded copy with `make install`, and points developers to `make setup-dev` and `make test`. (#276)
+
 ## [1.4.0] — 2026-10-20
 
 ### Changed

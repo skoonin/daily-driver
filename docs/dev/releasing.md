@@ -135,7 +135,7 @@ Delete the GitHub Release manually if one was created.
 Ships macOS arm64 only, installed from git (no PyPI publish):
 
 ```bash
-pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+pipx install git+https://github.com/skoonin/daily-driver.git
 pipx install --force 'git+https://github.com/skoonin/daily-driver.git@vX.Y.Z'
 pipx install --force 'git+https://github.com/skoonin/daily-driver.git@dev'  # latest in-progress build
 ```

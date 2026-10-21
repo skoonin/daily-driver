@@ -25,7 +25,7 @@ If you close a chat by accident, run `daily-driver resume` to reopen the most re
 
 ## Connect your other tools
 
-Each chat runs in Claude Code, so it can use the integrations you already set up there. These are also called Model Context Protocol (MCP) servers. With the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Set them up once in Claude Code, and every chat can use them.
+Each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell claude to use them or put it in `context.md`, and every chat can use them.
 
 ## What you need
 
@@ -38,18 +38,22 @@ Each chat runs in Claude Code, so it can use the integrations you already set up
 ## Install
 
 ```bash
-brew install pipx python@3.12
+brew install pipx
 pipx ensurepath
 ```
 
-Open a new terminal window, then install Daily Driver:
+Open a new terminal window, then download and install Daily Driver:
 
 ```bash
-pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+git clone https://github.com/skoonin/daily-driver.git ~/daily-driver
+cd ~/daily-driver
+make install
 daily-driver --version
 ```
 
-The last command prints the version number if the install worked. The [install guide](docs/install.md) covers upgrades and optional tools.
+The last command prints the version number if the install worked. To upgrade later, run `git pull && make install` in the same folder. Run `make help` to see the other shortcuts.
+
+To install without downloading the code, run `pipx install git+https://github.com/skoonin/daily-driver.git` instead. The [install guide](docs/install.md) covers upgrades and optional tools.
 
 ## Get started
 
@@ -122,7 +126,7 @@ Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone
 | [Local AI setup](docs/ollama-setup.md) | Run some AI tasks on your own computer |
 | [Troubleshooting](docs/troubleshooting.md) | Fixes for common problems |
 
-**Developers:** see the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+**Developers:** run `make setup-dev` to create the development environment and `make test` to run the tests. See the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

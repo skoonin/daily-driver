@@ -6,7 +6,7 @@ Daily Driver runs on Macs with Apple silicon (M1 or newer). Intel Macs probably 
 
 | Requirement | Notes |
 |-------------|-------|
-| pipx and Python 3.12 | pipx installs Daily Driver in its own folder with Python 3.12, the version Daily Driver is tested on. It does not change other Python programs. See [Install](#install). |
+| pipx and Python 3.11 or newer | pipx installs Daily Driver in its own folder, so it does not change other Python programs. It uses its own default Python (for the Homebrew pipx, the newest Homebrew Python), and the install stops with an error if that Python is older than 3.11. See [Install](#install). |
 | Claude Code (the `claude` command) | Needed for `day-start`, `day-end`, `check-in`, `summary`, and `voice-update`. Install it and sign in. See the [Anthropic install guide](https://code.claude.com/docs/en/install). |
 | `icalBuddy` | Optional. Lets Daily Driver read your macOS Calendar. See [Calendar access](#calendar-access-optional). |
 | `terminal-notifier` | Optional. Makes the scheduled reminders clickable. Install it with `brew install terminal-notifier`. |
@@ -14,19 +14,19 @@ Daily Driver runs on Macs with Apple silicon (M1 or newer). Intel Macs probably 
 
 The `brew` commands need Homebrew, an app installer for macOS. See [brew.sh](https://brew.sh).
 
-A `brew upgrade` can replace the Python that pipx uses. If Daily Driver stops working after that, run `pipx reinstall --python python3.12 daily-driver`.
+A `brew upgrade` can replace the Python that pipx uses. If Daily Driver stops working after that, run `pipx reinstall daily-driver`.
 
 ## Install
 
 ```bash
-brew install pipx python@3.12
+brew install pipx
 pipx ensurepath
 ```
 
 Open a new terminal window, then install Daily Driver:
 
 ```bash
-pipx install --python python3.12 git+https://github.com/skoonin/daily-driver.git
+pipx install git+https://github.com/skoonin/daily-driver.git
 daily-driver --version
 ```
 

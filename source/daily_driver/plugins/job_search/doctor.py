@@ -169,7 +169,7 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
                 f"source(s) {sources} will fail at launch"
             ),
             fix_hint=(
-                "Repair playwright: pipx reinstall --python python3.12 daily-driver "
+                "Repair playwright: pipx reinstall daily-driver "
                 f"(pip installs: {sys.executable} -m pip install "
                 "--force-reinstall playwright)"
             ),

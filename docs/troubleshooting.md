@@ -148,7 +148,7 @@ ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'
 A version mismatch between `pydantic` and `pydantic-core`. Fix it with:
 
 ```bash
-pipx reinstall --python python3.12 daily-driver
+pipx reinstall daily-driver
 ```
 
 ## Ollama provider issues
