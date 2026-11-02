@@ -13,8 +13,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
-from daily_driver.core.config_models import AIConfig
 from daily_driver.core.logging import get_logger
+from daily_driver.core.providers import Provider, default_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin, SourceToggle
 from daily_driver.plugins.job_search.scraper.models import SaturationRecord
 
@@ -41,7 +41,9 @@ class ScrapeContext:
     """
 
     plugin: JobSearchPlugin
-    ai: AIConfig = field(default_factory=AIConfig)
+    # The provider that runs the fit_notes task, resolved from the workspace
+    # config by the CLI.
+    provider: Provider = field(default_factory=default_provider)
     context_text: str = ""  # was the transient config["context"]
     known_urls: frozenset[str] = field(
         default_factory=frozenset

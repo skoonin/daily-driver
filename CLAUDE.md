@@ -33,13 +33,10 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` — manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via free-form categories (`tracker.categories` adds required fields).
 - `daily-driver status` — dashboard table (Rich or JSON).
 - `daily-driver focus {on,off,status}` — flock-backed check-in suppression.
-- `daily-driver day-start | day-end | check-in` — interactive Claude-session
-  launchers (read-only scaffold + `claude --add-dir workspace`).
-- `daily-driver resume` — reattach to the workspace's most recent Claude session
-  (`claude --resume <uuid>`) when a launcher tab is closed or lost.
-- `daily-driver summary --range SPEC` — headless period summary via `claude` (or Ollama when `ai.summary.provider: ollama`); prints to stdout and copies to clipboard.
-- `daily-driver voice-update --from PATH` — headless rewrite of
-  `voice-profile.md` from writing samples.
+- `daily-driver day-start | day-end | check-in` — interactive session launchers. They run on the provider that has the `interactive` task (default `claude`, launched with the read-only scaffold + `--add-dir workspace`).
+- `daily-driver resume` — reattach to the workspace's most recent session through the provider's `resume` template (`claude --resume <id>` for claude) when a launcher tab is closed or lost. It refuses a session that another provider started.
+- `daily-driver summary --range SPEC` — period summary from the provider that has the `summary` task (an agent task: the program lists the files, the provider reads them); prints to stdout and copies to clipboard.
+- `daily-driver voice-update --from PATH` — rewrite of `voice-profile.md` from writing samples, run by the provider that has the `voice_update` task (a text task).
 - `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
   search the configured job boards, re-enrich empty fields on existing rows,
   promote a row into the tracker, show last-run metadata, archive stale rows, or
@@ -61,8 +58,20 @@ Key conventions:
 
 - **CLI is presentation-only.** `cli/commands/<name>.py` does argparse +
   Rich; non-trivial logic lives in `core/<name>.py`.
-- **Subprocess calls funnel through `integrations/`.** `claude`, `pbcopy`,
+- **Subprocess calls funnel through `integrations/`.** AI programs and servers
+  (`integrations/provider.py`), `pbcopy`,
   `launchctl` — tests monkeypatch one spot, not many.
+- **AI is provider-agnostic, and providers are data.** `tasks.py` names the tasks
+  (`interactive`, `summary`, `voice_update`, plus each plugin's own). A provider
+  is command templates or an OpenAI-compatible HTTP endpoint, set under
+  `ai.providers` and merged over the built-ins in
+  `resources/templates/providers.default.yaml` (`claude`, `opencode`, `lmstudio`,
+  `ollama`). `core.providers.provider_for` picks the provider for a task, and
+  `integrations.provider.invoke` runs it. A provider claims core tasks with
+  `tasks`; a task nobody claims runs on `claude`. No code branches on a provider
+  name. A plugin declares tasks on `Plugin.tasks` and routes them under
+  `plugins.<name>.provider` and `plugins.<name>.tasks`. See
+  `docs/dev/developer.md` and `docs/dev/extending.md`.
 - **Workspace writes are flock-guarded.** `core.locking.file_lock` wraps
   `fcntl.flock` for YAML reads + writes and the focus lock.
 - **These paths are package-managed:** `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`. Generated from wheel package-data on `init` and on version drift. `doctor --fix` preserves user-edited managed files (SHA-256 manifest) but deletes `.md` files you add to the commands and agents directories and `.sh` files you add to hooks. `doctor --reset` wipes and rewrites those directories and overwrites the workspace `README.md`. Top-level `.claude/commands/` and `.claude/agents/` are user territory. Full rule: `docs/configuration.md` (`.claude/` ownership).

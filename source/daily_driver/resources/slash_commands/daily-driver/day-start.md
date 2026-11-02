@@ -25,7 +25,11 @@ Read the YAML at that path. If the file is missing or `late_day` is unset, treat
 
 ## 1. Gather Context
 
+{% if claude_code %}
 Resolve the workspace root, then Read `context.md` and `voice-profile.md` from it using the Claude Read tool:
+{% else %}
+Resolve the workspace root, then read `context.md` and `voice-profile.md` from it:
+{% endif %}
 
 ```bash
 daily-driver paths root
@@ -35,12 +39,17 @@ Read `<root>/context.md` and `<root>/voice-profile.md`. If either file is missin
 
 ## 2. Gather Calendar and Activity
 
+{% if claude_code %}
 Collect today's calendar events, recent Claude Code sessions, and git activity:
+{% else %}
+Collect today's calendar events and git activity:
+{% endif %}
 
 ```bash
 daily-driver gather calendar
 ```
 
+{% if claude_code %}
 For Claude Code sessions, list recent JSONL files directly (avoid context-heavy CLI scans):
 
 ```bash
@@ -49,6 +58,7 @@ ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 
 Read the most recent few that match today's window. Skim for cwd + first user prompt to identify what was worked on.
 
+{% endif %}
 ```bash
 daily-driver gather git
 ```
@@ -61,7 +71,11 @@ Resolve yesterday's notes path and Read it:
 daily-driver paths daily-notes --date $(date -v-1d +%Y-%m-%d)
 ```
 
+{% if claude_code %}
 Read the file at the printed path with the Claude Read tool. If it does not exist, there is no carry-forward — proceed.
+{% else %}
+Read the file at the printed path. If it does not exist, there is no carry-forward — proceed.
+{% endif %}
 
 Extract structured carry-forward items from the notes file. Items labeled `BLOCKED`, `STALE`, or `CARRY-OVER` should be surfaced:
 

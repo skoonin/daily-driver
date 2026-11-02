@@ -7,7 +7,11 @@ End-of-day review session. Follow these steps in order.
 
 ## 1. Read Today's Plan
 
+{% if claude_code %}
 Resolve today's plan path and Read it with the Claude Read tool:
+{% else %}
+Resolve today's plan path and read it:
+{% endif %}
 
 ```bash
 daily-driver paths daily-plan
@@ -17,6 +21,7 @@ Read the file at the printed path. Parse the YAML frontmatter for `plan_items` a
 
 ## 2. Gather Session Activity
 
+{% if claude_code %}
 For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
 
 ```bash
@@ -24,6 +29,9 @@ ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 ```
 
 Read the most recent few whose mtimes fall in today's window. Skim for cwd + first user prompt to identify what was worked on.
+{% else %}
+No session logs are available here; rely on the git activity in the next step.
+{% endif %}
 
 ## 3. Gather Git Activity
 
@@ -53,7 +61,11 @@ Resolve the workspace root and Read `context.md` from it:
 daily-driver paths root
 ```
 
+{% if claude_code %}
 Read `<root>/context.md` with the Claude Read tool. If it is missing, note it and proceed.
+{% else %}
+Read `<root>/context.md`. If it is missing, note it and proceed.
+{% endif %}
 
 ## 6. Review the Day
 
@@ -131,6 +143,7 @@ Write the notes to `$NOTES_PATH` with YAML frontmatter followed by the markdown 
 
 See the work-planner agent's "Plan File Frontmatter" and "Day-end Status Rules" sections for the exact schema.
 
+{% if claude_code %}
 ## 10. Learn
 
 After saving, write memory entries for non-obvious patterns using the project memory system at `~/.claude/projects/.../memory/`. Only save what would not be obvious from reading the code or git history.
@@ -142,3 +155,4 @@ Ask yourself:
 - Did you learn something about a tool or integration that will affect future sessions? Save a `reference` or `project` memory.
 
 If nothing non-obvious emerged today, skip this step — do not write memory entries for things that are self-evident or already in the codebase.
+{% endif %}

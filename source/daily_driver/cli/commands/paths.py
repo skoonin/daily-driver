@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
-from pathlib import Path
 
 from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.cli.commands._utils import resolve_date
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import state_path as daily_state_path
-from daily_driver.core.workspace import Workspace, WorkspaceError
+from daily_driver.core.workspace import WorkspaceError, daily_dir, daily_file
 
 _CHOICES = (
     "root",
@@ -57,10 +55,6 @@ def add_parser(
     return parser
 
 
-def _daily_dir(workspace: Workspace, when: date) -> Path:
-    return workspace.output_dir / f"{when.year:04d}" / f"{when.month:02d}"
-
-
 def run(args: argparse.Namespace) -> int:
     try:
         workspace = resolve_workspace(args)
@@ -76,7 +70,7 @@ def run(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         from daily_driver.core.tracker import Tracker
 
-        daily = _daily_dir(workspace, when)
+        daily = daily_dir(workspace.output_dir, when)
         payload = {
             "root": str(workspace.root),
             "output_dir": str(workspace.output_dir),
@@ -84,8 +78,8 @@ def run(args: argparse.Namespace) -> int:
             "ephemeral_dir": str(workspace.ephemeral_dir),
             "tracker": str(Tracker(workspace).path),
             "daily": str(daily),
-            "daily_plan": str(daily / f"{when.isoformat()}-plan.md"),
-            "daily_notes": str(daily / f"{when.isoformat()}-notes.md"),
+            "daily_plan": str(daily_file(workspace.output_dir, when, "plan")),
+            "daily_notes": str(daily_file(workspace.output_dir, when, "notes")),
             "daily_state": str(daily_state_path(workspace, when)),
         }
         Console.emit_json(payload)
@@ -104,11 +98,11 @@ def run(args: argparse.Namespace) -> int:
 
         print(Tracker(workspace).path)
     elif args.kind == "daily":
-        print(_daily_dir(workspace, when))
+        print(daily_dir(workspace.output_dir, when))
     elif args.kind == "daily-plan":
-        print(_daily_dir(workspace, when) / f"{when.isoformat()}-plan.md")
+        print(daily_file(workspace.output_dir, when, "plan"))
     elif args.kind == "daily-notes":
-        print(_daily_dir(workspace, when) / f"{when.isoformat()}-notes.md")
+        print(daily_file(workspace.output_dir, when, "notes"))
     elif args.kind == "daily-state":
         print(daily_state_path(workspace, when))
     return 0

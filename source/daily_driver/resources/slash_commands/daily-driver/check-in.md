@@ -13,7 +13,11 @@ description: Mid-day check-in - review progress against plan and update status
 >
 > > Note: no day-start plan recorded for today. Continuing without a plan baseline.
 >
+{% if claude_code %}
 > Then proceed normally — the user decides whether to abort and run /daily-driver:day-start.
+{% else %}
+> Then proceed normally — the user decides whether to abort and run `daily-driver day-start`.
+{% endif %}
 
 Mid-day check-in session. Follow these steps in order.
 
@@ -27,7 +31,11 @@ Use `current_time` throughout this check-in to determine which plan blocks are p
 
 ## 1. Read Today's Plan
 
+{% if claude_code %}
 Resolve today's plan path and Read it with the Claude Read tool:
+{% else %}
+Resolve today's plan path and read it:
+{% endif %}
 
 ```bash
 daily-driver paths daily-plan
@@ -47,6 +55,7 @@ daily-driver gather calendar
 daily-driver gather git
 ```
 
+{% if claude_code %}
 For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
 
 ```bash
@@ -54,6 +63,9 @@ ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
 ```
 
 Read the most recent few whose mtimes fall in today's window. Use them together with git commits to infer what was actually worked on since the morning plan.
+{% else %}
+Use the git commits to infer what was actually worked on since the morning plan.
+{% endif %}
 
 ## 3. Review Tracker
 
@@ -72,7 +84,11 @@ daily-driver tracker list
 Using the gathered data, present:
 
 1. **Current Time vs Remaining Blocks** — Using `current_time` from step 0, show what was planned for this window, what blocks are done/past, and what remains today
+{% if claude_code %}
 2. **Sessions + Commits Since Last Check-in** — Claude Code sessions and git commits since the session start; use these together to infer what was actually worked on
+{% else %}
+2. **Commits Since Last Check-in** — git commits since the session start; use them to infer what was actually worked on
+{% endif %}
 3. **Tracker Status** — Active entries, any responses received, follow-ups due{% if "job_search" in plugins %}; for `job` entries, active applications by stage{% endif +%}
 
 ## 5. Interactive Review

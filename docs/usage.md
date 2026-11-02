@@ -36,9 +36,10 @@ Things you can say in a chat:
 
 Options:
 
-- `check-in` starts a new chat each time. To continue your most recent chat instead, set `claude.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
+- `check-in` starts a new chat each time. To continue your most recent chat instead, set `ai.interactive.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
 - If you close a chat by mistake, run `daily-driver resume` to reopen the most recent one.
-- Each command runs a Claude command of the same name, such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-claude-launchers).
+- Each command runs a Claude command of the same name, such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-launchers).
+- The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](configuration.md#ai).
 
 See also: [Connect your other tools](../README.md#connect-your-other-tools).
 
@@ -193,7 +194,7 @@ daily-driver jobs verify                        # close saved jobs that are no l
 
 ### Choosing an AI provider
 
-By default, job search uses Claude to fill in job details. You can use a free AI model on your own computer instead (Ollama). This suits large runs of `jobs backfill`. Interactive chats always use Claude. For setup, see [Local AI setup](ollama-setup.md).
+By default, job search uses Claude to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.provider` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [Settings](configuration.md#ai).
 
 ## Summary
 
@@ -205,13 +206,16 @@ daily-driver summary -r week --detail high
 daily-driver summary -r 2026-05-01:2026-05-09 --match project --match budget
 ```
 
+While the AI works, a status line on stderr shows the provider and the seconds elapsed. If the period has no plans, notes, or tracker, `summary` prints a note and does not call the AI.
+
 | Option | What it does |
 |---|---|
 | `-r`, `--range` | The period. Use a date word from [Date words](#date-words), one date, or two dates such as `2026-05-01:2026-05-09`. |
 | `--detail` | How much detail: `low`, `med`, or `high` |
 | `--match` | Limits the summary to a keyword. Repeat the option for more keywords. |
 | `--no-clipboard` | Skips copying to the clipboard |
-| `--timeout SECONDS` | How long to wait for Claude. The default is 180 seconds. |
+| `--model NAME` | The model for this run. Any model name. It overrides the `model` of the provider. |
+| `--timeout SECONDS` | How long to wait for the AI. The default is the `timeout` of the provider, else 900 seconds. |
 
 ## Voice updates
 
@@ -305,12 +309,12 @@ Full guide: [Troubleshooting](troubleshooting.md). This table shows where to sta
 | `doctor` shows an ERROR | Run `daily-driver doctor --fix`. Then see [`doctor` reports ERROR](troubleshooting.md#doctor-reports-error). |
 | Scheduled reminders do not run, or run the wrong program | Run `daily-driver scheduler install` again. Then see [launchd plist won't load](troubleshooting.md#launchd-plist-wont-load). |
 | Focus mode is stuck on | Run `daily-driver focus off`. Then see [Focus mode stuck on](troubleshooting.md#focus-mode-stuck-on). |
-| Ollama connection refused, or model not downloaded | [Local AI setup](ollama-setup.md#troubleshooting) |
+| A model server (LM Studio or ollama) is not reachable, or the model is not loaded | [Local models](local-models.md#troubleshooting) |
 | Settings error after an upgrade | Read `CHANGELOG.md`, edit `.dd-config.yaml`, then run `daily-driver doctor`. Daily Driver does not change your settings for you. |
 
 ## More guides
 
 - [Commands](commands.md): every command and option, plus a [command tree](cli-tree.md).
 - [Settings](configuration.md): every setting in `.dd-config.yaml`.
-- [Local AI setup](ollama-setup.md): run some AI tasks on your own computer.
+- [Local models](local-models.md): run some AI tasks on your own computer.
 - [Troubleshooting](troubleshooting.md): fixes for common problems.

@@ -17,13 +17,13 @@ daily-driver gather calendar -vv       # DEBUG: resolved since/until window
 Read these lines first when filing a bug or before deeper digging:
 
 - `-v` is enough to see which scraper produced zero rows, how many jobs were filtered by location, how many were eligible for enrichment, and the final `done: X enriched, Y failed, Z skipped` line.
-- `-vv` adds the prompt sent to the AI provider, the raw response, the parsed values, and whether each field was actually written (`wrote_fit=true/false`). This is the layer to use when ollama enrichment "succeeds" but the column stays empty.
+- `-vv` adds the prompt sent to the AI provider, the raw response, the parsed values, and whether each field was actually written (`wrote_fit=true/false`). This is the layer to use when a job review call "succeeds" but the column stays empty.
 
 If a script that consumes Daily Driver output starts misbehaving, run it without `-q` first — quiet mode hides warnings that often explain the issue (e.g. config drift, unknown statuses).
 
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it regenerates the drifted managed files (`.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`), restores managed files you may have deleted, and resolves most "missing file" errors. If an error row names a missing Python package (`dep:pydantic`, `dep:pyyaml`, `dep:rich`, `dep:jinja2`), install it and re-run. A missing `claude` command shows as a `cli:claude` WARNING.
+Run `doctor --fix` first — it regenerates the drifted managed files (`.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`), restores managed files you may have deleted, and resolves most "missing file" errors. If an error row names a missing Python package (`dep:pydantic`, `dep:pyyaml`, `dep:rich`, `dep:jinja2`), install it and re-run. A provider whose program is missing, or whose model server does not answer, shows as an `ai:<provider>` WARNING.
 
 ```bash
 daily-driver doctor
@@ -41,7 +41,20 @@ The managed files were generated for a different package version, or for a diffe
 
 ## Config "has settings that daily-driver no longer uses"
 
-Every command except `help` stops with this message when `.dd-config.yaml` contains `user_profile` or `recurring_tasks`. The message names each of these settings and says where its content goes. Delete the setting and the indented lines under it. Move your background into `context.md`, and list recurring tasks under `## Recurring Tasks` in `context.md`. If the file has other mistakes, the message lists them too. Run `daily-driver doctor` to see the message again.
+Every command except `help` stops with this message when `.dd-config.yaml` contains a setting that was removed. The message names each removed setting and says what replaces it. Delete the setting and the indented lines under it, then make the change the message names.
+
+| Removed setting | What to do |
+| --- | --- |
+| `user_profile` | Put your background in `context.md`. |
+| `recurring_tasks` | List recurring tasks under `## Recurring Tasks` in `context.md`. |
+| `claude.resume_check_in` | Use `ai.interactive.resume_check_in`. |
+| `ai.provider`, `ai.summary`, `ai.voice_update` | List the task under `tasks` of a provider in `ai.providers`. |
+| `ai.model`, `ai.interactive.model` | Set `model` on a provider in `ai.providers`. |
+| `ai.claude` | Set `ai.providers.claude.max_parallel`. |
+| `ai.ollama` | Set `model` and `tasks` on `ai.providers.ollama`. The built-in `ollama` provider uses `http://localhost:11434/v1`. |
+| `plugins.job_search.enrichment.provider`, `.model`, `.fit_notes` | Set `plugins.job_search.provider` or `plugins.job_search.tasks.fit_notes` to a provider in `ai.providers`. |
+
+If the file has other mistakes, the message lists them too. Run `daily-driver doctor` to see the message again.
 
 ## `jobs` says "job search is off in this workspace"
 
@@ -155,9 +168,19 @@ A version mismatch between `pydantic` and `pydantic-core`. Fix it with:
 pipx reinstall daily-driver
 ```
 
-## Ollama provider issues
+## An AI call fails or times out
 
-If you routed `plugins.job_search.enrichment.provider`, `ai.summary.provider`, or `ai.voice_update.provider` to `ollama`, see [ollama-setup.md](ollama-setup.md#troubleshooting). Common cases: server not running (`connection refused on 11434`), model not pulled (visible in `doctor` as a WARNING row), first request slow (cold load).
+A failed call prints the task and the provider, such as `summary via claude failed`, with the last lines of the program's error output.
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `summary via claude timed out after 900s` | The call ran past its time limit. | Run again with `--timeout SECONDS`, or set `timeout` on the provider in `ai.providers`. For job reviews, raise `plugins.job_search.enrichment.enrich_timeout`. |
+| `<program> not found on PATH` | The program of the provider is not installed, or not on `PATH`. | Install it, or move the task to another provider. `daily-driver doctor` shows the `ai:<provider>` row. |
+| `<provider> not reachable at <url>` | The model server is not running. | Start LM Studio or ollama. See [Local models](local-models.md#troubleshooting). |
+| `<provider> serves <task> but has no model` | An HTTP provider needs a `model` once it runs a task. | Set `ai.providers.<provider>.model`. |
+| `the last session was started with <provider>` | `resume` found a saved session from another provider. | Run `day-start`, or `check-in --no-resume`. |
+
+For model server problems, see [Local models](local-models.md#troubleshooting).
 
 ## Resetting a workspace
 

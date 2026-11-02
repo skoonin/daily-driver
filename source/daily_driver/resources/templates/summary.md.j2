@@ -11,4 +11,9 @@ Provide a comprehensive narrative: accomplishments with context, blockers with r
 Provide a balanced summary: accomplishments, blockers, and next actions in short paragraphs.
 {% endif %}
 
-Use the workspace context (tracker.yaml, daily notes, plans) to populate the content.
+Read these files. They are the record of the period; report only what they contain, and cite the day an item comes from.
+{% for path in files %}
+- {{ path }}
+{% endfor %}
+
+Reply with the summary only, in Markdown, with no preamble.

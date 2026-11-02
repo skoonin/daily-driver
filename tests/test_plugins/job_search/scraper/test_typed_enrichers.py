@@ -12,9 +12,10 @@ import io
 import pytest
 from rich.console import Console as RichConsole
 
-from daily_driver.core.config_models import AIConfig
 from daily_driver.core.progress import RunProgress
-from daily_driver.integrations import ai_provider
+from daily_driver.core.providers import Provider, default_provider
+from daily_driver.integrations import provider as ai
+from daily_driver.plugins.job_search import FIT_NOTES
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import (
     enrich_fit_and_notes,
@@ -26,6 +27,7 @@ from daily_driver.plugins.job_search.scraper.models import (
     RawScrapedJob,
 )
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+from tests.test_plugins.job_search.scraper import claude_provider, ollama_provider
 
 
 def _enriched(**overrides: object) -> EnrichedJob:
@@ -84,18 +86,13 @@ def test_fit_enrich_score_survives_round_trip(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "k8s"}'
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 7, "notes": "k8s"}')
     j = _enriched(description_text="Kubernetes-heavy SRE role")
     out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
     assert out[0].fit == 7
@@ -112,18 +109,15 @@ def test_fit_enriched_counter_not_incremented_on_empty_write(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
+        ai,
+        "invoke",
         lambda *a, **k: '{"fit": 7, "notes": "", "remote": ""}',
     )
     # fit already set, notes blank -> eligible; model gives no new notes.
@@ -136,15 +130,12 @@ def test_fit_enriched_counter_not_incremented_on_empty_write(
 
 def _fit_ctx(**enrichment: object) -> ScrapeContext:
     base: dict[str, object] = {
-        "provider": "ollama",
-        "model": "qwen2.5:14b",
         "max_enrich_fit": 5,
         "enrich_timeout": 5,
     }
     base.update(enrichment)
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate({"enrichment": base}),
-        ai=AIConfig(),
     )
 
 
@@ -170,7 +161,7 @@ def test_fit_notes_phase_skipped_when_either_toggle_off(
     def fake_invoke(*a: object, **k: object) -> str:
         raise AssertionError("no fit/notes call expected when a toggle is off")
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     j = _enriched(description_text="Kubernetes-heavy SRE role", notes="orig")
     out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
     assert out[0].fit is None  # unchanged
@@ -180,9 +171,7 @@ def test_fit_notes_phase_skipped_when_either_toggle_off(
 def test_fit_notes_phase_runs_when_both_on(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both toggles on (the default) lets the fit/notes wave write both cells."""
     ctx = _fit_ctx(enrich_fit=True, enrich_notes=True)
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 8, "notes": "infra"}'
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 8, "notes": "infra"}')
     j = _enriched(description_text="Platform role")
     out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
     assert out[0].fit == 8
@@ -203,23 +192,21 @@ def test_persona_and_home_city_reach_fit_prompt(
             "persona": "Staff Data Engineer",
             "locations": {"home_city": "Berlin, Germany"},
             "enrichment": {
-                "provider": "ollama",
-                "model": "qwen2.5:14b",
                 "max_enrich_fit": 5,
                 "enrich_timeout": 5,
             },
         }
     )
-    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    ctx = ScrapeContext(plugin=plugin)
     systems: list[str] = []
 
-    def fake_invoke(prompt, *a, **k):
+    def fake_invoke(provider, task, prompt, **k):
         # persona + home_city now live in the cached system prompt, not the
         # per-job user prompt.
         systems.append(k.get("system") or "")
         return '{"fit": 6, "notes": "x"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     enrich_fit_and_notes([_enriched(description_text="desc")], ctx, budget=5)
 
     assert systems
@@ -239,21 +226,19 @@ def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
             "persona": "Staff SRE",
             "locations": {"home_city": "Vancouver, BC"},
             "enrichment": {
-                "provider": "ollama",
-                "model": "qwen2.5:14b",
                 "max_enrich_fit": 5,
                 "enrich_timeout": 5,
             },
         }
     )
-    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
+    ctx = ScrapeContext(plugin=plugin)
     calls: list[tuple[str, str]] = []
 
-    def fake_invoke(prompt, *a, **k):
+    def fake_invoke(provider, task, prompt, **k):
         calls.append((k.get("system") or "", prompt))
         return '{"fit": 6, "notes": "x"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = [
         _enriched(company="Acme", url="https://x/1", description_text="d1"),
         _enriched(company="Bravo", url="https://x/2", description_text="d2"),
@@ -271,70 +256,104 @@ def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
     assert calls[0][1] != calls[1][1]
 
 
-def test_fit_notes_call_sets_safe_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The enrichment call passes safe_mode=True: no workspace customizations
-    (CLAUDE.md, settings, hooks, MCP, custom commands/agents) load for this
-    narrow, structured-output call. Auth/model selection are unaffected --
-    safe_mode only adds a CLI flag, it does not change how invoke_for dispatches."""
-    plugin = JobSearchPlugin.model_validate(
-        {
-            "enrichment": {
-                "provider": "ollama",
-                "model": "qwen2.5:14b",
-                "max_enrich_fit": 5,
-            }
-        }
+def test_fit_notes_call_is_a_text_task_on_the_context_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The enrichment call is the fit_notes text task on the context's provider.
+
+    A text task on claude runs the built-in text template, which passes
+    --safe-mode: no workspace customizations (CLAUDE.md, settings, hooks, MCP,
+    custom commands/agents) load for this narrow, structured-output call."""
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate({"enrichment": {"max_enrich_fit": 5}}),
+        provider=default_provider(),
     )
-    ctx = ScrapeContext(plugin=plugin, ai=AIConfig())
     captured: dict[str, object] = {}
 
-    def fake_invoke(prompt, *a, **k):
-        captured["safe_mode"] = k.get("safe_mode")
+    def fake_invoke(provider, task, prompt, **k):
+        captured["provider"] = provider
+        captured["task"] = task
         return '{"fit": 6, "notes": "x"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
-    jobs = [_enriched(url="https://x/1", description_text="d1")]
-    enrich_fit_and_notes(jobs, ctx, budget=5)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
+    enrich_fit_and_notes(
+        [_enriched(url="https://x/1", description_text="d1")], ctx, budget=5
+    )
 
-    assert captured["safe_mode"] is True
+    assert captured["provider"] is ctx.provider
+    assert captured["task"] is FIT_NOTES
+    assert FIT_NOTES.mode == "text"
+    text_template = ctx.provider.settings.text
+    assert text_template is not None
+    assert "--safe-mode" in text_template
 
 
 @pytest.mark.parametrize(
     "provider, expect_warning",
-    [("ollama", True), ("claude", False)],
+    [(ollama_provider(), True), (claude_provider(), False)],
+    ids=["http", "command"],
 )
-def test_large_context_token_warning_is_ollama_only(
+def test_large_context_token_warning_is_http_only(
     monkeypatch: pytest.MonkeyPatch,
     caplog,
-    provider: str,
+    provider: Provider,
     expect_warning: bool,
 ) -> None:
-    """The per-call context-token-cost warning fires only on the ollama path.
+    """The per-call context-token-cost warning fires only on an HTTP provider.
 
-    On claude the static block (incl. context.md) rides the cached system prompt
-    -- sent once per run -- so the per-job multiplication the warning projects no
-    longer applies; on ollama it is re-sent every call, so the warning stands."""
+    On a command provider such as claude the static block (incl. context.md)
+    rides the cached system prompt -- sent once per run -- so the per-job
+    multiplication the warning projects no longer applies; on an HTTP server it
+    is re-sent every call, so the warning stands and names the provider."""
     import logging
 
     big_context = "x " * 4000  # ~2000 tokens, above the 1500-token warn floor
-    plugin = JobSearchPlugin.model_validate(
-        {"enrichment": {"provider": provider, "model": "m", "enrich_timeout": 5}}
-    )
-    ctx = ScrapeContext(plugin=plugin, ai=AIConfig(), context_text=big_context)
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 6, "notes": "x"}'
-    )
-    # claude path guards on the CLI being present before it reaches the warning.
-    monkeypatch.setattr(
-        "daily_driver.plugins.job_search.scraper.enrichment.llm.shutil.which",
-        lambda _: "/usr/bin/claude",
-    )
+    plugin = JobSearchPlugin.model_validate({"enrichment": {"enrich_timeout": 5}})
+    ctx = ScrapeContext(plugin=plugin, provider=provider, context_text=big_context)
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 6, "notes": "x"}')
 
     with caplog.at_level(logging.WARNING, logger="daily_driver"):
         enrich_fit_and_notes([_enriched(description_text="d")], ctx, budget=5)
 
-    warned = any("context.md is ~" in r.getMessage() for r in caplog.records)
-    assert warned is expect_warning
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if "context.md is ~" in record.getMessage()
+    ]
+    assert bool(warnings) is expect_warning
+    if expect_warning:
+        assert "ollama enrichment calls" in warnings[0]
+
+
+def test_fit_notes_skips_when_provider_program_missing(
+    monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """A command provider whose program is not on PATH makes no calls and
+    leaves the jobs untouched, with one warning naming the provider."""
+    import logging
+
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate({"enrichment": {"max_enrich_fit": 5}}),
+        provider=claude_provider(),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ai,
+        "invoke",
+        lambda *a, **k: calls.append("x") or '{"fit": 7, "notes": "n"}',
+    )
+    monkeypatch.setattr(ai, "available", lambda provider: False)
+    jobs = [_enriched(description_text="d")]
+
+    with caplog.at_level(logging.WARNING, logger="daily_driver"):
+        out, _stats = enrich_fit_and_notes(jobs, ctx, budget=5)
+
+    assert calls == []
+    assert out[0].fit == jobs[0].fit
+    assert any(
+        "not found on PATH" in r.getMessage() and "claude" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_fit_budget_zero_makes_no_calls_despite_config_cap(
@@ -346,18 +365,16 @@ def test_fit_budget_zero_makes_no_calls_despite_config_cap(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     calls: list[str] = []
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
+        ai,
+        "invoke",
         lambda *a, **k: calls.append("x") or '{"fit": 7, "notes": "n"}',
     )
     jobs = [_enriched(url=f"https://x/{i}") for i in range(3)]
@@ -375,18 +392,16 @@ def test_fit_budget_none_uses_config_default(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 1,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     calls: list[str] = []
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
+        ai,
+        "invoke",
         lambda *a, **k: calls.append("x") or '{"fit": 7, "notes": "n"}',
     )
     jobs = [
@@ -494,16 +509,14 @@ def test_fit_parses_markdown_fenced_json(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     fenced = '```json\n{"fit": 6, "notes": "aligned with SRE roles"}\n```'
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: fenced)
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: fenced)
     j = _enriched(url="https://x/1", description_text="d")
     out, stats = enrich_fit_and_notes([j], ctx)
     assert out[0].fit == 6
@@ -518,18 +531,16 @@ def test_fit_parses_prose_wrapped_json(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     wrapped = (
         'Here is the assessment:\n{"fit": 8, "notes": "strong match"}\nHope that helps.'
     )
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: wrapped)
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: wrapped)
     j = _enriched(url="https://x/1", description_text="d")
     out, stats = enrich_fit_and_notes([j], ctx)
     assert out[0].fit == 8
@@ -546,16 +557,14 @@ def test_fit_parses_leading_brace_with_trailing_prose(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     chatty = '{"fit": 7, "notes": "strong SRE match"} hope that helps'
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda *a, **k: chatty)
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: chatty)
     j = _enriched(url="https://x/1", description_text="d")
     out, stats = enrich_fit_and_notes([j], ctx)
     assert out[0].fit == 7
@@ -569,17 +578,13 @@ def test_fit_truly_non_json_still_counted_failed(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: "I cannot assess this role."
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: "I cannot assess this role.")
     j = _enriched(url="https://x/1", description_text="d")
     out, stats = enrich_fit_and_notes([j], ctx)
     assert out[0].fit == j.fit
@@ -595,17 +600,13 @@ def test_fit_on_planned_reports_budget_capped_count(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 2,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 7, "notes": "n"}')
     planned: list[int] = []
     jobs = [_enriched(url=f"https://x/{i}", description_text="d") for i in range(5)]
     enrich_fit_and_notes(jobs, ctx, on_planned=planned.append)
@@ -625,17 +626,13 @@ def test_fit_set_total_rebases_live_phase_to_budget_cap(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
                     "max_enrich_fit": 2,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 7, "notes": "n"}')
     jobs = [_enriched(url=f"https://x/{i}", description_text="d") for i in range(5)]
 
     # Plain (non-TTY) RunProgress: phases hold their denominator in ``_total``
@@ -665,20 +662,18 @@ def test_fit_no_description_row_skips_llm_call_and_counts_stat(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     calls: list[str] = []
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
-        lambda prompt, **k: calls.append(prompt) or '{"fit": 7, "notes": "n"}',
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **k: calls.append(prompt)
+        or '{"fit": 7, "notes": "n"}',
     )
     no_desc_job = _enriched(url="https://x/1", description_text="")
     out, stats = enrich_fit_and_notes([no_desc_job], ctx, budget=5)
@@ -700,20 +695,18 @@ def test_fit_row_with_description_still_enriches_normally(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
     calls: list[str] = []
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
-        lambda prompt, **k: calls.append(prompt) or '{"fit": 7, "notes": "k8s"}',
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **k: calls.append(prompt)
+        or '{"fit": 7, "notes": "k8s"}',
     )
     described_job = _enriched(
         url="https://x/1", description_text="Kubernetes-heavy SRE role"
@@ -747,18 +740,13 @@ def test_fit_phase_summary_includes_no_description_count(
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": 5,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig(),
     )
-    monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda *a, **k: '{"fit": 7, "notes": "n"}'
-    )
+    monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 7, "notes": "n"}')
     jobs = [
         _enriched(url="https://x/1", description_text="d"),
         _enriched(url="https://x/2", description_text=""),
@@ -774,7 +762,6 @@ def test_fit_phase_summary_includes_no_description_count(
         fit_phase = group.phase("Fit and notes", total=len(jobs))
         _run_llm_enrichment(
             ctx.plugin,
-            ctx.ai,
             jobs,
             ctx,
             _NoopSink(),  # type: ignore[arg-type]

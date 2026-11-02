@@ -94,10 +94,6 @@ tracker:
 #   # Length when `focus on` has no --for, for example "25m" or "1h".
 #   default_duration: "25m"
 
-# check-in continues your last Claude session instead of starting a new one.
-# claude:
-#   resume_check_in: true
-
 # Copies your plan's time blocks into the macOS Calendar app
 # (`calendar sync`).
 # calendar:
@@ -111,45 +107,40 @@ tracker:
 #     search_paths: ["~/git"]
 
 # Which AI runs each feature. Leave this off to use Claude for everything.
-# Claude models are sonnet, opus, and haiku. Ollama runs AI on your computer;
-# its models have names such as "qwen2.5:14b".
-# To set up Ollama, see
-# https://github.com/skoonin/daily-driver/blob/main/docs/ollama-setup.md
+# The features, called tasks: interactive (day-start, day-end, check-in,
+# resume), summary, and voice_update.
+{% if "job_search" in plugins %}
+# Job search routes its own task under job_search below.
+{% endif %}
 # ai:
-#   # Which AI runs summary and voice-update, claude or ollama.
-{% if "job_search" in plugins %}
-#   # Job search uses it too, unless set under job_search below.
-{% endif %}
-#   provider: claude
-#   # Model for those features. It must match the provider.
-#   # model: sonnet
-#
-#   # Model for day-start, check-in, and day-end. These always use Claude.
-#   # --model on the command line overrides it.
 #   interactive:
-#     model: sonnet
+#     # check-in continues your last session instead of starting a new one.
+#     resume_check_in: true
 #
-#   # Use a different AI for one feature only.
-#   # summary:
-#   #   provider: ollama
-#   #   model: "qwen2.5:14b"
-#   # voice_update:
-#   #   provider: claude
-#   #   model: opus
-#
-#   ollama:
-#     # Address of the Ollama app.
-#     endpoint: "http://localhost:11434"
-#     # Seconds to wait for an answer.
-#     timeout: 60
+#   # Programs and servers that run tasks. These four are built in, shown as
+#   # shipped. claude and opencode are programs; lmstudio and ollama are model
+#   # servers on this computer.
 {% if "job_search" in plugins %}
-#     # How many job reviews run at the same time.
-#     max_parallel: 4
-#
-#   claude:
-#     # How many job reviews run at the same time.
-#     max_parallel: 4
+#   # A model server runs voice_update and job reviews only.
+{% else %}
+#   # A model server runs voice_update only.
 {% endif %}
+#   # An entry with a built-in's name changes only the settings it lists, and
+#   # `tasks` picks what it runs. Anything no entry claims runs on claude. To
+#   # move day-start and the rest to opencode, add
+#   # `opencode: {tasks: [interactive]}` here.
+#   providers:
+{% for line in builtin_providers.splitlines() %}
+#     {{ line }}
+{% endfor %}
+#     # Your own entry. extends starts it from another entry's settings.
+#     lmstudio-coder:
+#       extends: lmstudio
+#       # The model name as LM Studio lists it.
+#       model: qwen3-coder
+#       # Seconds before one answer gives up.
+#       timeout: 300
+#       tasks: [voice_update]
 {% if plugins %}
 
 # Add-ons. Only "enabled" is on; turn on any other setting to change it.
@@ -159,6 +150,11 @@ plugins:
   job_search:
     # false turns job search off and keeps these settings.
     enabled: true
+#     # AI for job reviews: a name under ai.providers. Left out, claude.
+#     provider: lmstudio-coder
+#     # A different AI for one task. fit_notes scores and notes each job.
+#     tasks:
+#       fit_notes: claude
 #     # Who you are as a candidate. The AI uses it to score each job.
 #     persona: "Senior SRE / Platform Engineer"
 #     # Job titles to keep. "*" matches anything; a leading "!" rules a
@@ -225,15 +221,6 @@ plugins:
 #       criteria:
 #         - label: Sponsorship
 #           assess: "Does the role offer visa sponsorship?"
-#       # AI for job reviews: claude or ollama, and its model. Left out, the
-#       # ai section decides.
-#       # provider: claude
-#       # model: sonnet
-#       # fit_notes also sets the AI for job reviews, and wins over the two
-#       # lines above.
-#       # fit_notes:
-#       #   provider: ollama
-#       #   model: "qwen2.5:7b"
 #       # Seconds before one review gives up.
 #       enrich_timeout: 30
 #       # Words of each posting the AI reads. Pay and visa details are often

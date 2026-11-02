@@ -160,14 +160,14 @@ class _JobSink:
         # Optional one-shot hook fired inside ``flush`` immediately before the
         # first ``atomic_write_rows``. backfill uses it to take the pre-mutation
         # backup LAZILY -- only when a write actually happens -- so a no-op
-        # backfill (e.g. ollama down, nothing to persist) neither backs up nor
+        # backfill (e.g. server down, nothing to persist) neither backs up nor
         # rewrites the file. ``_pre_write_done`` makes it fire exactly once.
         self.pre_write_hook: Callable[[], None] | None = None
         self._pre_write_done = False
         # When set (backfill), ``flush`` reads the current file and SKIPS the
         # write -- and so the lazy backup -- when the rendered rows are byte-for-
         # byte identical to what is already on disk. This is the no-churn
-        # guarantee: an ollama-down / nothing-changed backfill must not rewrite
+        # guarantee: a server-down / nothing-changed backfill must not rewrite
         # the file or drop a backup. The run path leaves this False -- it always
         # appends new rows, so its flush always has something to persist, and
         # paying a per-flush full-file read+compare there would be wasted work.

@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from daily_driver.plugins._base import PluginConfigBase
+
 
 class Locations(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -230,39 +232,15 @@ class Criterion(BaseModel):
         return cleaned
 
 
-class PhaseRoute(BaseModel):
-    """Per-phase AI provider/model override for one enrichment pass.
-
-    A local 2-field mirror of core's `AITaskConfig`, defined here rather than
-    imported: `core/config_models.py` eagerly imports the plugin config chain
-    before `AITaskConfig` is bound, so importing it from core would raise an
-    ImportError at startup. Plugins never import core (see module docstring of
-    `plugins/config.py`). Both fields default to None (= "inherit from the
-    resolution chain"); the resolver supplies the terminal claude fallback.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    provider: Literal["claude", "ollama"] | None = None
-    model: str | None = None
-
-
 class EnrichmentConfig(BaseModel):
     """Knobs for the post-scrape enrichment pass (comp, fit, notes).
 
-    Owns its own AI provider routing: enrichment is plugin-specific, so the
-    provider/model selection lives here rather than leaking into core's `ai:`
-    block. The provider-connection blocks (parallelism, ollama endpoint /
-    timeout) are still shared core infra under `ai.claude:` / `ai.ollama:`.
-    The single LLM pass — `fit_notes` (fit / notes / remote / criteria) — takes
-    an optional per-phase route block that overrides these domain defaults.
+    The AI that runs the fit_notes task is routed by `plugins.job_search.provider`
+    and `plugins.job_search.tasks` (PluginConfigBase), not here.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] | None = None
-    model: str | None = None
-    fit_notes: PhaseRoute = PhaseRoute()
     enrich_timeout: int = 30
     enrich_fit: bool = True
     enrich_notes: bool = True
@@ -375,7 +353,7 @@ class DiscoveryConfig(BaseModel):
         return value
 
 
-class JobSearchPlugin(BaseModel):
+class JobSearchPlugin(PluginConfigBase):
     model_config = ConfigDict(extra="forbid")
 
     # Defaults on: having the block at all is the opt-in, so existing configs

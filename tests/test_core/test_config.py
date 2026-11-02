@@ -111,6 +111,9 @@ _TRACKER = "tracker:\n  categories:\n    task: {required: [title]}\n"
     [
         ("user_profile:\n  name: A\n", "context.md"),
         ("recurring_tasks:\n  - {name: x, cadence: daily}\n", "## Recurring Tasks"),
+        ("claude:\n  resume_check_in: true\n", "ai.interactive.resume_check_in"),
+        ("ai:\n  summary:\n    provider: ollama\n", "ai.providers"),
+        ("ai:\n  ollama:\n    timeout: 60\n", "ai.providers.ollama.model"),
     ],
 )
 def test_load_names_removed_setting_and_its_fix(tmp_path, block, fix):
@@ -145,3 +148,23 @@ def test_load_reports_removed_and_other_problems_together(tmp_path):
         load(cfg_file)
     assert "user_profile" in str(excinfo.value)
     assert "focus.bogus" in str(excinfo.value)
+
+
+def test_load_names_a_removed_nested_setting_by_its_path(tmp_path):
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        _TRACKER
+        + "ai:\n  summary: {provider: ollama}\n  interactive: {model: opus}\n"
+        + "plugins:\n  job_search:\n    enrichment:\n      provider: claude\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load(cfg_file)
+    message = str(excinfo.value)
+    for dotted in (
+        "ai.summary",
+        "ai.interactive.model",
+        "plugins.job_search.enrichment.provider",
+    ):
+        assert f"  - {dotted}:" in message
+    assert "It also has these problems" not in message

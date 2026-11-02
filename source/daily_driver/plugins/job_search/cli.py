@@ -7,33 +7,19 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from daily_driver.cli._common import add_global_flags, resolve_workspace
+from daily_driver.cli._common import (
+    add_global_flags,
+    int_at_least,
+    resolve_workspace,
+)
 from daily_driver.core.console import Console
 from daily_driver.plugins.job_search.scraper.models import FIT_MAX, FIT_MIN
-
-
-def _int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
-    """Build an argparse ``type=`` callable parsing an integer >= ``minimum``.
-
-    argparse turns the ArgumentTypeError into a clean exit 2.
-    """
-
-    def _parse(value: str) -> int:
-        try:
-            n = int(value)
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
-        if n < minimum:
-            raise argparse.ArgumentTypeError(f"{flag} must be >= {minimum} (got {n})")
-        return n
-
-    return _parse
 
 
 def _int_in_range(minimum: int, maximum: int, flag: str) -> Callable[[str], int]:
     """Build an argparse ``type=`` callable parsing an integer in a closed range."""
 
-    at_least = _int_at_least(minimum, flag)
+    at_least = int_at_least(minimum, flag)
 
     def _parse(value: str) -> int:
         n = at_least(value)
@@ -47,7 +33,7 @@ def _int_in_range(minimum: int, maximum: int, flag: str) -> Callable[[str], int]
 # A 0 limit would mean "spend nothing" (budget 0 = no calls) -- a pointless
 # backfill better expressed by not running it -- and a negative limit is
 # nonsense, so reject both at the parser.
-_positive_limit = _int_at_least(1, "--limit")
+_positive_limit = int_at_least(1, "--limit")
 
 
 def _cooldown_hours(value: str) -> int | str:
@@ -357,7 +343,7 @@ def add_parser(
     )
     p_verify.add_argument(
         "--reverify-days",
-        type=_int_at_least(1, "--reverify-days"),
+        type=int_at_least(1, "--reverify-days"),
         default=None,
         metavar="N",
         help=(
@@ -367,7 +353,7 @@ def add_parser(
     )
     p_verify.add_argument(
         "--unverified-age-days",
-        type=_int_at_least(1, "--unverified-age-days"),
+        type=int_at_least(1, "--unverified-age-days"),
         default=None,
         metavar="N",
         help=(
@@ -417,7 +403,9 @@ def add_parser(
 
 
 def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def]
-    """Resolve (plugin, ai, context_text) or return an int exit code on error.
+    """Resolve (plugin, provider, context_text) or return an int exit code on error.
+
+    `provider` runs the fit_notes task, routed under plugins.job_search.
 
     context.md, when present, rides every fit/notes enrichment prompt so the fit
     score reflects the candidate's real background (see enrich_fit_and_notes).
@@ -433,7 +421,11 @@ def _resolve_plugin_and_context(args, workspace):  # type: ignore[no-untyped-def
     context_path = workspace.root / "context.md"
     if context_path.is_file():
         context_text = context_path.read_text(encoding="utf-8").strip()
-    return plugins.job_search, workspace.config.ai, context_text
+    from daily_driver.core.providers import provider_for
+    from daily_driver.plugins.job_search import FIT_NOTES
+
+    provider = provider_for(workspace.config, FIT_NOTES, plugin="job_search")
+    return plugins.job_search, provider, context_text
 
 
 def _emit_run_manifest(output_dir) -> None:  # type: ignore[no-untyped-def]
@@ -499,7 +491,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
     if isinstance(resolved, int):
         return resolved
-    plugin, ai, context_text = resolved
+    plugin, provider, context_text = resolved
     output_dir = workspace.output_dir
     ephemeral_dir = workspace.ephemeral_dir
     emit_json = getattr(args, "json", False)
@@ -514,7 +506,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
             plugin,
             output_dir,
             ephemeral_dir,
-            ai=ai,
+            provider=provider,
             context_text=context_text,
             dry_run=args.dry_run,
             no_enrich=args.no_enrich,
@@ -566,7 +558,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
     resolved = _resolve_plugin_and_context(args, workspace)  # type: ignore[no-untyped-call]
     if isinstance(resolved, int):
         return resolved
-    plugin, ai, context_text = resolved
+    plugin, provider, context_text = resolved
     csv_path = workspace.output_dir / "jobs.csv"
     ephemeral_dir = workspace.ephemeral_dir
     emit_json = getattr(args, "json", False)
@@ -577,7 +569,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             plugin,
             csv_path,
             ephemeral_dir,
-            ai=ai,
+            provider=provider,
             context_text=context_text,
             dry_run=args.dry_run,
             limit=args.limit,

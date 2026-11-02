@@ -230,13 +230,13 @@ def test_voice_update_no_from_exits_2(tmp_path: Path) -> None:
     assert exc_info.value.code == 2
 
 
-def test_voice_update_append_calls_claude_headless(
+def test_voice_update_append_merges_observations(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
@@ -244,12 +244,11 @@ def test_voice_update_append_calls_claude_headless(
     profile_path = ws / "voice-profile.md"
     profile_path.write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     # Append mode: the model returns JSON observations, merged into the profile.
     monkeypatch.setattr(
-        claude_cli,
+        provider,
         "invoke",
-        lambda **kw: '[{"section": "Tone", "bullet": "Direct and concise."}]',
+        lambda *a, **kw: '[{"section": "Tone", "bullet": "Direct and concise."}]',
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -268,15 +267,14 @@ def test_voice_update_dry_run_does_not_write(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample text")
     profile_path = ws / "voice-profile.md"
     profile_path.write_text("# Preserved\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Would be new\n")
+    monkeypatch.setattr(provider, "invoke", lambda *a, **kw: "# Would be new\n")
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(
@@ -289,25 +287,24 @@ def test_voice_update_dry_run_does_not_write(
     assert "dry-run" in err.lower() or "dry run" in err.lower()
 
 
-def test_voice_update_dry_run_does_not_invoke_claude(
+def test_voice_update_dry_run_does_not_invoke_the_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--dry-run must short-circuit before claude (review §9)."""
+    """--dry-run must short-circuit before the provider (review §9)."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample text")
 
     invoked = {"count": 0}
 
-    def _boom(**kw):
+    def _boom(*a, **kw):
         invoked["count"] += 1
-        raise AssertionError("claude must not be invoked under --dry-run")
+        raise AssertionError("the provider must not be invoked under --dry-run")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", _boom)
+    monkeypatch.setattr(provider, "invoke", _boom)
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(
@@ -322,15 +319,14 @@ def test_voice_update_replace_creates_bak(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample text")
     profile_path = ws / "voice-profile.md"
     profile_path.write_text("# Original\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Replaced\n")
+    monkeypatch.setattr(provider, "invoke", lambda *a, **kw: "# Replaced\n")
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(
@@ -349,15 +345,14 @@ def test_voice_update_no_clipboard_suppresses_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     (ws / "voice-profile.md").write_text("## Tone\n\n- p\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "new"}]'
+        provider, "invoke", lambda *a, **kw: '[{"section": "Tone", "bullet": "new"}]'
     )
     monkeypatch.setattr(clipboard, "available", lambda: True)
 
@@ -384,15 +379,14 @@ def test_voice_update_copies_to_clipboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     (ws / "voice-profile.md").write_text("## Tone\n\n- old\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "fresh"}]'
+        provider, "invoke", lambda *a, **kw: '[{"section": "Tone", "bullet": "fresh"}]'
     )
     monkeypatch.setattr(clipboard, "available", lambda: True)
 
@@ -412,7 +406,7 @@ def test_voice_update_directory_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     samples_dir = tmp_path / "samples"
@@ -423,12 +417,11 @@ def test_voice_update_directory_source(
 
     captured_prompts: list[str] = []
 
-    def fake_invoke(**kw):
-        captured_prompts.append(kw.get("prompt", ""))
+    def fake_invoke(*a, **kw):
+        captured_prompts.append(a[2])
         return '[{"section": "Tone", "bullet": "updated"}]'
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", fake_invoke)
+    monkeypatch.setattr(provider, "invoke", fake_invoke)
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(samples_dir)])
@@ -440,24 +433,28 @@ def test_voice_update_directory_source(
     assert "Writing B" in captured_prompts[0]
 
 
-def test_voice_update_claude_not_found_exits_1(
+def test_voice_update_program_not_found_exits_1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
-
-    monkeypatch.setattr(claude_cli, "available", lambda: False)
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(
+        cfg_path.read_text()
+        + "\nai:\n  providers:\n    mine:\n      text: [dd-no-such-program]\n"
+        + "      tasks: [voice_update]\n",
+        encoding="utf-8",
+    )
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "claude" in captured.err.lower()
+    assert "dd-no-such-program not found on PATH" in captured.err
 
 
 def test_voice_update_timeout_exits_1(
@@ -466,19 +463,18 @@ def test_voice_update_timeout_exits_1(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
-    from daily_driver.integrations.claude_cli import ClaudeTimeoutError
+    from daily_driver.integrations import provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     (ws / "voice-profile.md").write_text("# p\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
+    def raise_timeout(*a, **kw):
+        raise provider.AITimeoutError(
+            "claude timed out after 60s", provider="claude", timeout_seconds=60
+        )
 
-    def raise_timeout(**kw):
-        raise ClaudeTimeoutError(60, ["claude"])
-
-    monkeypatch.setattr(claude_cli, "invoke", raise_timeout)
+    monkeypatch.setattr(provider, "invoke", raise_timeout)
 
     rc = app(
         [
@@ -503,10 +499,8 @@ def test_voice_update_missing_source_file_exits_1(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
 
     rc = app(
         [
@@ -553,7 +547,7 @@ def test_voice_update_missing_voice_profile_creates_it(
 ) -> None:
     """If voice-profile.md doesn't exist yet, voice-update creates it."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample")
@@ -561,12 +555,11 @@ def test_voice_update_missing_voice_profile_creates_it(
     # Ensure it doesn't exist
     assert not profile_path.exists()
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     # Append to a non-existent profile: observations seed new sections.
     monkeypatch.setattr(
-        claude_cli,
+        provider,
         "invoke",
-        lambda **kw: '[{"section": "Tone", "bullet": "Warm and direct."}]',
+        lambda *a, **kw: '[{"section": "Tone", "bullet": "Warm and direct."}]',
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -586,7 +579,7 @@ def test_voice_update_append_unparseable_output_leaves_profile_intact(
     """In append mode, model output that is not a JSON observations array is
     rejected (rc 1) and the existing profile is left untouched."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
@@ -594,9 +587,8 @@ def test_voice_update_append_unparseable_output_leaves_profile_intact(
     original = "## Tone\n\n- Warm.\n"
     profile_path.write_text(original, encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli, "invoke", lambda **kw: "Sorry, I could not produce observations."
+        provider, "invoke", lambda *a, **kw: "Sorry, I could not produce observations."
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -616,7 +608,7 @@ def test_voice_update_append_no_new_observations_is_noop(
     """An empty observations array reports a no-op and leaves the profile and
     its .bak untouched (no needless rewrite)."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
@@ -624,8 +616,7 @@ def test_voice_update_append_no_new_observations_is_noop(
     original = "## Tone\n\n- Warm.\n"
     profile_path.write_text(original, encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "[]")
+    monkeypatch.setattr(provider, "invoke", lambda *a, **kw: "[]")
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
@@ -636,25 +627,22 @@ def test_voice_update_append_no_new_observations_is_noop(
     assert "no new observations" in capsys.readouterr().err.lower()
 
 
-def test_voice_update_ollama_route_honors_config_timeout_not_cli(
+def test_voice_update_http_provider_gets_model_and_timeout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end: the ollama route is bounded by ai.ollama.timeout, not --timeout.
+    """End-to-end over HTTP: the routed provider's model and --timeout arrive."""
+    from unittest.mock import MagicMock
 
-    Regression for M2 — voice-update used to pass --timeout to invoke_for,
-    shadowing ai.ollama.timeout end-to-end. With an explicit --timeout 60, the
-    ollama client must still receive the configured 137s.
-    """
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import clipboard, ollama_client
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     cfg_path = ws / ".dd-config.yaml"
     cfg_path.write_text(
         cfg_path.read_text()
-        + "\nai:\n  voice_update:\n    provider: ollama\n    model: phi4\n"
-        + "  ollama:\n    timeout: 137\n",
+        + "\nai:\n  providers:\n    lmstudio:\n      model: phi4\n"
+        + "      tasks: [voice_update]\n",
         encoding="utf-8",
     )
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
@@ -662,11 +650,17 @@ def test_voice_update_ollama_route_honors_config_timeout_not_cli(
 
     seen: dict[str, object] = {}
 
-    def fake_generate(prompt, *, model, endpoint, timeout, system=None):
-        seen.update(model=model, timeout=timeout)
-        return '[{"section": "Tone", "bullet": "Direct and concise."}]'
+    def fake_post(url, *, json, timeout):
+        seen.update(url=url, model=json["model"], timeout=timeout)
+        resp = MagicMock(ok=True)
+        resp.json.return_value = {
+            "choices": [
+                {"message": {"content": '[{"section": "Tone", "bullet": "Direct."}]'}}
+            ]
+        }
+        return resp
 
-    monkeypatch.setattr(ollama_client, "generate", fake_generate)
+    monkeypatch.setattr(provider.requests, "post", fake_post)
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(
@@ -682,8 +676,12 @@ def test_voice_update_ollama_route_honors_config_timeout_not_cli(
     )
 
     assert rc == 0
-    assert seen["timeout"] == 137
-    assert seen["model"] == "phi4"
+    assert seen == {
+        "url": "http://localhost:1234/v1/chat/completions",
+        "model": "phi4",
+        "timeout": 60,
+    }
+    assert "- Direct." in (ws / "voice-profile.md").read_text(encoding="utf-8")
 
 
 def test_voice_update_rereads_profile_under_lock_after_model_call(
@@ -696,22 +694,21 @@ def test_voice_update_rereads_profile_under_lock_after_model_call(
     section another writer added while the model was running survives the merge.
     """
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
     profile_path = ws / "voice-profile.md"
     profile_path.write_text("## Tone\n\n- Warm.\n", encoding="utf-8")
 
-    def fake_invoke(**kw):
+    def fake_invoke(*a, **kw):
         # Simulate a concurrent writer landing during the (slow) model call.
         profile_path.write_text(
             "## Tone\n\n- Warm.\n\n## Energy\n\n- Lively.\n", encoding="utf-8"
         )
         return '[{"section": "Tone", "bullet": "Direct and concise."}]'
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", fake_invoke)
+    monkeypatch.setattr(provider, "invoke", fake_invoke)
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(["--workspace", str(ws), "voice-update", "--from", str(sample)])
@@ -730,15 +727,14 @@ def test_voice_update_lock_lives_in_ephemeral_dir(
 ) -> None:
     """The lock sentinel is under ephemeral_dir, not the user-visible output (L2)."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     (ws / "voice-profile.md").write_text("## Tone\n\n- old\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "new"}]'
+        provider, "invoke", lambda *a, **kw: '[{"section": "Tone", "bullet": "new"}]'
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -758,15 +754,14 @@ def test_voice_update_write_failure_exits_1(
     """A backup/lock/write OSError surfaces as a friendly message, not a traceback."""
     from daily_driver.cli.cli import app
     from daily_driver.cli.commands import voice_update as vu
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     sample = _make_sample(tmp_path, "x.md", "text")
     (ws / "voice-profile.md").write_text("# Original profile\n", encoding="utf-8")
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
     monkeypatch.setattr(
-        claude_cli, "invoke", lambda **kw: '[{"section": "Tone", "bullet": "x"}]'
+        provider, "invoke", lambda *a, **kw: '[{"section": "Tone", "bullet": "x"}]'
     )
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
@@ -788,7 +783,7 @@ def test_voice_update_writes_profile_at_workspace_root(
     """The profile lives at the workspace root, where init, status and the
     prompts look for it, even when output_dir points elsewhere."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard, provider
 
     ws = _init_workspace(tmp_path)
     cfg = ws / ".dd-config.yaml"
@@ -797,8 +792,7 @@ def test_voice_update_writes_profile_at_workspace_root(
         encoding="utf-8",
     )
     sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "# Replaced\n")
+    monkeypatch.setattr(provider, "invoke", lambda *a, **kw: "# Replaced\n")
     monkeypatch.setattr(clipboard, "available", lambda: False)
 
     rc = app(

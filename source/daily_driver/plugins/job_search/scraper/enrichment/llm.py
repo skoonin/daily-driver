@@ -1,4 +1,4 @@
-"""Claude/LLM enricher: fit/notes (+criteria fold).
+"""LLM enricher: fit/notes (+criteria fold).
 
 The enricher operates on ``EnrichedJob`` directly and fans out through one
 pooled implementation: ``ThreadPoolExecutor(max_workers=pool_size)`` where
@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
-import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
@@ -30,8 +28,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.logging import get_logger
-from daily_driver.integrations import ai_provider, claude_cli
-from daily_driver.integrations.ai_provider import AIInvocationError, AITimeoutError
+from daily_driver.integrations import provider as ai
+from daily_driver.plugins.job_search import FIT_NOTES
 from daily_driver.plugins.job_search.config import Criterion, EnrichmentConfig
 from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _enrich_pool_size,
@@ -50,39 +48,6 @@ if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.context import ScrapeContext
 
 log = get_logger(__name__)
-
-# Ollama serializes calls beyond OLLAMA_NUM_PARALLEL, so queued requests still
-# count against the per-call timeout — a wide fan-out can time out purely from
-# queueing. The remedy is server-side, so the full hint is logged ONCE per run
-# (not per timed-out call, which would flood the log). Guarded by a lock since
-# enrichment fans out across a thread pool.
-_OLLAMA_HINT_LOCK = threading.Lock()
-_ollama_hint_logged = False
-
-_OLLAMA_QUEUE_HINT = (
-    "queued requests count against the timeout; ensure OLLAMA_NUM_PARALLEL >= "
-    "max_parallel on the server or set ai.ollama.max_parallel: 1"
-)
-
-
-def _reset_ollama_hint() -> None:
-    """Re-arm the once-per-run ollama queue hint at the start of an enrich run."""
-    global _ollama_hint_logged
-    with _OLLAMA_HINT_LOCK:
-        _ollama_hint_logged = False
-
-
-def _log_provider_timeout(tag: str, label: str, provider: str, seconds: int) -> None:
-    """Log a provider-named timeout; for ollama, append the queue hint once."""
-    global _ollama_hint_logged
-    log.warning("%s %s: %s timed out after %ds", tag, label, provider, seconds)
-    if provider != "ollama":
-        return
-    with _OLLAMA_HINT_LOCK:
-        if _ollama_hint_logged:
-            return
-        _ollama_hint_logged = True
-    log.warning("%s %s", tag, _OLLAMA_QUEUE_HINT)
 
 
 def _extract_json_payload(raw: str) -> str:
@@ -439,32 +404,20 @@ def _fetch_fit_notes_for_job(
         prompt,
     )
 
-    provider, model = ai_provider.resolve_route(
-        ctx.ai, task="fit_notes", domain_cfg=enrichment_cfg
-    )
     try:
-        stdout = ai_provider.invoke_for(
-            prompt,
-            provider=provider,
-            model=model,
-            ai=ctx.ai,
-            timeout=timeout,
-            system=system_prompt,
-            # Fit/notes is a narrow, structured-output call with no need for the
-            # user's workspace CLAUDE.md / settings / MCP / custom commands --
-            # --safe-mode skips them (auth and model selection still work) so the
-            # call is faster and never picks up unrelated workspace behavior.
-            safe_mode=True,
+        stdout = ai.invoke(
+            ctx.provider, FIT_NOTES, prompt, system=system_prompt, timeout=timeout
         )
-    except AITimeoutError as exc:
-        _log_provider_timeout(
+    except ai.AITimeoutError as exc:
+        log.warning(
+            "%s %s: %s timed out after %ds",
             _enrich_tag("enrich-fit-notes"),
             company,
             exc.provider,
             exc.timeout_seconds or timeout,
         )
         return None, "", "", True
-    except AIInvocationError as exc:
+    except ai.AIInvocationError as exc:
         stdout_tail = (exc.stdout or "").strip()[-200:]
         stderr_tail = (exc.stderr or "").strip()[-200:]
         log.warning(
@@ -476,9 +429,6 @@ def _fetch_fit_notes_for_job(
             stdout_tail,
             stderr_tail,
         )
-        return None, "", "", True
-    except (FileNotFoundError, PermissionError, claude_cli.ClaudeNotFoundError) as exc:
-        log.warning("%s %s failed: %s", _enrich_tag("enrich-fit-notes"), company, exc)
         return None, "", "", True
 
     raw = stdout.strip()
@@ -630,8 +580,8 @@ def _build_fit_plan(
 ) -> _FitPlan | None:
     """Resolve the fit/notes enricher's work, or ``None`` to skip the pass.
 
-    Returns ``None`` when the claude CLI is missing or fit/notes are disabled in
-    config — the caller then returns the untouched jobs with empty stats.
+    Returns ``None`` when the provider's program is missing or fit/notes are
+    disabled in config — the caller then returns the untouched jobs with empty stats.
 
     ``exclude_urls`` are rows a prior wave already ATTEMPTED (enriched or failed);
     they are not retried here so a wave-1 failure is not re-charged against the
@@ -646,9 +596,12 @@ def _build_fit_plan(
     # periodically, so partial results survive).
     out = jobs
     cfg = ctx.plugin.enrichment
-    provider, _ = ai_provider.resolve_route(ctx.ai, task="fit_notes", domain_cfg=cfg)
-    if provider == "claude" and shutil.which("claude") is None:
-        log.warning("[enrich-fit-notes] claude CLI not found on PATH, skipping")
+    if not ai.available(ctx.provider):
+        log.warning(
+            "[enrich-fit-notes] %s not found on PATH (provider %s), skipping",
+            ai.program(ctx.provider.settings),
+            ctx.provider.name,
+        )
         return None
 
     if not cfg.enrich_fit or not cfg.enrich_notes:
@@ -669,8 +622,8 @@ def _build_fit_plan(
     include_remote = cfg.enrich_is_remote
     # Build the static instruction block (incl. context.md) ONCE per run: it is
     # identical for every job, so passing it as the provider system prompt lets
-    # Claude Code prompt-cache it server-side -- reprocessed once, then read from
-    # cache on every subsequent job instead of riding each per-job request.
+    # a provider with prompt caching (Claude Code caches it server-side) process
+    # it once and read it from cache on every subsequent job.
     system_prompt = _build_fit_notes_system(
         role_persona, loc_summary, hc, crit_list, context_text, include_remote
     )
@@ -695,24 +648,24 @@ def _build_fit_plan(
     ]
     eligible_count = len(eligible_idx)
     no_desc = sum(1 for i in eligible_idx if not out[i].description_text.strip())
-    # Cost warning is provider-specific. On ollama there is no cross-call prompt
-    # cache, so context.md is re-sent and reprocessed in full on every per-job
-    # call -- a large file multiplies input tokens by the job count, so warn. On
-    # the claude path context.md rides the cached system prompt (sent/processed
-    # once per run, then read from cache), so the per-call multiplication does not
-    # apply and no warning is emitted. The projection counts only jobs that will
-    # actually reach the provider: no-description rows are skipped entirely (see
-    # the no_desc handling in _fetch below), so they are subtracted out here.
-    if context_text and provider == "ollama":
+    # A local HTTP server has no cross-call prompt cache, so context.md is
+    # re-sent and reprocessed in full on every per-job call -- a large file
+    # multiplies input tokens by the job count, so warn. A command provider such
+    # as claude keeps it in a cached system prompt, so no warning. The projection
+    # counts only jobs that will actually reach the provider: no-description rows
+    # are skipped entirely (see the no_desc handling in _fetch below), so they
+    # are subtracted out here.
+    if context_text and ctx.provider.settings.base_url is not None:
         ctx_tokens = len(context_text) // 4  # ~4 chars/token heuristic
         if ctx_tokens >= _CONTEXT_WARN_TOKENS:
             jobs_to_enrich = max(0, min(budget, eligible_count) - no_desc)
             log.warning(
                 "[enrich-fit-notes] context.md is ~%d tokens, sent on each of ~%d "
-                "ollama enrichment calls this run (~%d input tokens); trim it if "
+                "%s enrichment calls this run (~%d input tokens); trim it if "
                 "that's more than you want to spend",
                 ctx_tokens,
                 jobs_to_enrich,
+                ctx.provider.name,
                 ctx_tokens * jobs_to_enrich,
             )
     log.info(
@@ -886,7 +839,6 @@ def enrich_fit_and_notes(
     progress: ProgressCallback | None = None,
     flush: Callable[[], None] | None = None,
     flush_every: int = 25,
-    _reset_hint: bool = True,
     exclude_urls: frozenset[str] = frozenset(),
     attempted: dict[str, set[str]] | None = None,
     on_planned: Callable[[int], None] | None = None,
@@ -908,8 +860,6 @@ def enrich_fit_and_notes(
     results every ``flush_every`` applied results, never racing a worker. The
     caller flushes again per completed phase and on interrupt.
 
-    ``_reset_hint`` re-arms the once-per-run ollama queue hint.
-
     ``exclude_urls`` are rows a prior wave attempted (not retried); ``attempted``
     (out-param) records this pass's attempted row URLs under ``"fit_urls"`` for
     cross-wave budget accounting.
@@ -923,8 +873,6 @@ def enrich_fit_and_notes(
     Returns ``(jobs, stats)`` with stats keys: enriched, skipped_budget,
     no_description, failed.
     """
-    if _reset_hint:
-        _reset_ollama_hint()
     # Compose the periodic flush onto the progress callback; the per-result
     # signal already runs on the single coordinator thread that applies results,
     # so wrapping it keeps the rewrite off the worker threads.
@@ -1026,7 +974,7 @@ def enrich_fit_and_notes(
         # Cooperative stop, mirroring the parallel branch: during the
         # scrape/enrich overlap this serial loop runs on the wave-1 background
         # thread, which never receives the KeyboardInterrupt -- ctx.stop_event is
-        # its only stop signal. Without this check a provider=ollama,
+        # its only stop signal. Without this check a
         # max_parallel=1 run would keep issuing per-job LLM calls for the full
         # remaining budget after the user pressed Ctrl-C. Results applied so far
         # stay in plan.out for the caller's flush.

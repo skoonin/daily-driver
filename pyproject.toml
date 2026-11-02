@@ -30,7 +30,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "python-jobspy>=1.1.82,<1.4",
     "playwright>=1.40.0",
-    "httpx>=0.27.0",
+    "requests>=2.31.0,<3",
+    "beautifulsoup4>=4.12.2,<5",
 ]
 
 [project.optional-dependencies]
@@ -92,7 +93,7 @@ target-version = ["py311"]
 profile = "black"
 line_length = 88
 known_first_party = ["daily_driver"]
-known_third_party = ["pydantic", "yaml", "jinja2", "rich", "enlighten", "jobspy", "httpx", "pytest"]
+known_third_party = ["pydantic", "yaml", "jinja2", "rich", "enlighten", "jobspy", "requests", "bs4", "pytest"]
 
 [tool.mypy]
 python_version = "3.11"

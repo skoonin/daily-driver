@@ -127,7 +127,10 @@ def _render_package_md(
             skipped.append(rel)
             continue
 
-        content = render_text(entry.read_text(encoding="utf-8"), config)
+        # These files are read by Claude Code only, so Claude-only lines stay in.
+        content = render_text(
+            entry.read_text(encoding="utf-8"), config, claude_code=True
+        )
         _atomic_write_text(dest_file, content)
         written.append(dest_file)
         count += 1

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
@@ -35,6 +36,24 @@ class HelpfulArgumentParser(argparse.ArgumentParser):
         sys.stderr.write(f"{self.prog}: error: {message}\n")
         sys.stderr.write(f"\nRun: {self.prog} --help\n")
         sys.exit(2)
+
+
+def int_at_least(minimum: int, flag: str) -> Callable[[str], int]:
+    """Build an argparse ``type=`` callable parsing an integer >= ``minimum``.
+
+    argparse turns the ArgumentTypeError into a clean exit 2.
+    """
+
+    def _parse(value: str) -> int:
+        try:
+            n = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+        if n < minimum:
+            raise argparse.ArgumentTypeError(f"{flag} must be >= {minimum} (got {n})")
+        return n
+
+    return _parse
 
 
 def add_global_flags(parser: argparse.ArgumentParser) -> None:
@@ -71,7 +90,7 @@ def add_global_flags(parser: argparse.ArgumentParser) -> None:
 
 
 def add_session_args(parser: argparse.ArgumentParser) -> None:
-    """Register the Claude-session flags shared by the interactive launchers.
+    """Register the session flags shared by the interactive launchers.
 
     day-start, day-end, check-in, and the generic launcher factory all expose
     the same `--session-name` / `--agent` / `--model` trio; this keeps their
@@ -81,18 +100,17 @@ def add_session_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--session-name",
         default=None,
-        help="Custom name for this Claude session (defaults to a timestamped name)",
+        help="Custom name for this session (defaults to a timestamped name)",
     )
     parser.add_argument(
         "--agent",
         default="work-planner",
-        help="Claude agent to load (default: work-planner)",
+        help="Agent to load, where the provider supports one (default: work-planner)",
     )
     parser.add_argument(
         "--model",
         default=None,
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use.",
+        help="Model for this session; overrides the provider's model.",
     )
 
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+from daily_driver.tasks import Task
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,22 @@ class PackageDataDir:
     source_package: str
     # subdir under the workspace .claude/ (e.g. "commands/daily-driver")
     dest: str
+
+
+class PluginConfigBase(BaseModel):
+    """Base for the config model of a plugin that declares AI tasks.
+
+    The plugin system, not each plugin, owns these two fields, so every plugin
+    routes its tasks the same way. Provider names are checked against
+    `ai.providers` by core when the whole config loads.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Provider for every task this plugin declares.
+    provider: str | None = None
+    # Per-task override: task name -> provider name.
+    tasks: dict[str, str] = {}
 
 
 @dataclass(frozen=True)
@@ -56,3 +74,6 @@ class Plugin:
     # .claude/ tree on generate while it is on (slash-commands / agents). Empty
     # means the plugin ships none; core writes only its own baseline dirs.
     package_data_dirs: tuple[PackageDataDir, ...] = ()
+    # AI tasks this plugin hands to a provider, routed under plugins.<name>.
+    # A plugin with tasks needs a config_model subclassing PluginConfigBase.
+    tasks: tuple[Task, ...] = ()

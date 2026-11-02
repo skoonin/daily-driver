@@ -11,7 +11,6 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-import yaml
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -19,11 +18,16 @@ import yaml
 
 
 def _init_workspace(tmp_path: Path) -> Path:
-    from daily_driver.core.workspace import Workspace
+    """A workspace with today's notes, so `--range today` has a file to read."""
+    from daily_driver.core.clock import today
+    from daily_driver.core.workspace import Workspace, daily_file
 
     ws = tmp_path / "ws"
     ws.mkdir(parents=True, exist_ok=True)
-    Workspace.init(ws)
+    workspace = Workspace.init(ws)
+    notes = daily_file(workspace.output_dir, today(), "notes")
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    notes.write_text("- did things\n", encoding="utf-8")
     return ws
 
 
@@ -83,27 +87,41 @@ class TestParseRange:
 # ---------------------------------------------------------------------------
 
 
-def test_summary_json_skips_claude_and_emits_bundle(
+def _stub_provider(monkeypatch: pytest.MonkeyPatch, answer: str = "Summary output\n"):
+    """Replace the provider call; returns the list of recorded calls."""
+    from daily_driver.integrations import clipboard, provider
+
+    calls: list[dict[str, object]] = []
+
+    def fake_invoke(chosen, task, prompt, **kwargs):
+        calls.append({"provider": chosen, "task": task, "prompt": prompt, **kwargs})
+        return answer
+
+    monkeypatch.setattr(provider, "invoke", fake_invoke)
+    monkeypatch.setattr(clipboard, "available", lambda: False)
+    return calls
+
+
+def _add_config(ws: Path, text: str) -> None:
+    cfg_path = ws / ".dd-config.yaml"
+    cfg_path.write_text(cfg_path.read_text() + text, encoding="utf-8")
+
+
+def test_summary_json_skips_the_provider_and_emits_bundle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    # claude should NOT be called for --json
-    monkeypatch.setattr(
-        claude_cli,
-        "invoke",
-        lambda **kw: (_ for _ in ()).throw(AssertionError("claude invoked for --json")),
-    )
+    calls = _stub_provider(monkeypatch)
 
     rc = app(["--workspace", str(ws), "summary", "--range", "today", "--json"])
 
     assert rc == 0
-    out = capsys.readouterr().out
-    bundle = json.loads(out)
+    assert calls == []
+    bundle = json.loads(capsys.readouterr().out)
     assert bundle["schema"] == 1
     assert "data" in bundle
 
@@ -113,107 +131,108 @@ def test_summary_json_skips_claude_and_emits_bundle(
 # ---------------------------------------------------------------------------
 
 
-def test_summary_default_invokes_claude_headless(
+def test_summary_runs_as_an_agent_task_in_the_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.tasks import SUMMARY
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(
-        claude_cli,
-        "invoke",
-        lambda **kw: "Summary output\n",
-    )
-    monkeypatch.setattr(clipboard, "available", lambda: False)
+    calls = _stub_provider(monkeypatch)
 
     rc = app(["--workspace", str(ws), "summary", "--range", "today"])
 
     assert rc == 0
+    assert "Summary output" in capsys.readouterr().out
+    (call,) = calls
+    assert call["provider"].name == "claude"  # type: ignore[attr-defined]
+    assert call["task"] == SUMMARY
+    assert call["workspace"] == ws
+    assert call["timeout"] is None
+    assert call["model"] is None
+
+
+def test_summary_prompt_lists_the_files_in_range(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    month = ws / "2026" / "05"
+    month.mkdir(parents=True)
+    notes = month / "2026-05-04-notes.md"
+    notes.write_text("- shipped the thing\n", encoding="utf-8")
+    outside = month / "2026-05-20-plan.md"
+    outside.write_text("later\n", encoding="utf-8")
+    calls = _stub_provider(monkeypatch)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "2026-05-01:2026-05-07"])
+
+    assert rc == 0
+    prompt = str(calls[0]["prompt"])
+    assert str(notes) in prompt
+    assert str(outside) not in prompt
+
+
+def test_summary_routes_to_the_provider_claiming_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _add_config(ws, "\nai:\n  providers:\n    opencode:\n      tasks: [summary]\n")
+    calls = _stub_provider(monkeypatch)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "today", "--model", "x/y"])
+
+    assert rc == 0
+    assert calls[0]["provider"].name == "opencode"  # type: ignore[attr-defined]
+    assert calls[0]["model"] == "x/y"
+
+
+def test_summary_on_an_http_provider_is_a_config_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _add_config(
+        ws,
+        "\nai:\n  providers:\n    lmstudio:\n      model: m\n"
+        "      tasks: [summary]\n",
+    )
+    calls = _stub_provider(monkeypatch)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "today"])
+
+    # A config error is a usage error (exit 2), as for every other bad config.
+    assert rc == 2
+    assert calls == []
+    assert "text tasks only" in capsys.readouterr().err
+
+
+def test_summary_shows_start_and_finish_lines_when_piped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _stub_provider(monkeypatch)
+
+    rc = app(["--workspace", str(ws), "summary", "--range", "today"])
+
     captured = capsys.readouterr()
-    assert "Summary output" in captured.out
-
-
-def test_summary_provider_ollama_routes_through_ai_provider(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """ai.summary.provider: ollama routes summary through ai_provider.invoke_for.
-
-    The configured provider AND model must reach the dispatch call; the claude
-    headless path must NOT be taken.
-    """
-    from daily_driver.cli.cli import app
-    from daily_driver.integrations import ai_provider, claude_cli, clipboard
-
-    ws = _init_workspace(tmp_path)
-    cfg_path = ws / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text()
-        + "\nai:\n  summary:\n    provider: ollama\n    model: phi4\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(clipboard, "available", lambda: False)
-    monkeypatch.setattr(
-        claude_cli,
-        "invoke",
-        lambda **kw: (_ for _ in ()).throw(AssertionError("claude must not be used")),
-    )
-
-    seen: dict[str, object] = {}
-
-    def fake_invoke_for(prompt, *, provider, model, ai, timeout=None):
-        seen.update(provider=provider, model=model)
-        return "ollama summary\n"
-
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke_for)
-
-    rc = app(["--workspace", str(ws), "summary", "--range", "today"])
-
     assert rc == 0
-    assert seen == {"provider": "ollama", "model": "phi4"}
-
-
-def test_summary_ollama_route_honors_config_timeout_not_cli(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """End-to-end: the ollama route is bounded by ai.ollama.timeout, not --timeout.
-
-    Regression for M2 — every production caller used to pass --timeout to
-    invoke_for, shadowing ai.ollama.timeout end-to-end. With an explicit
-    --timeout 60 on the command line, the ollama client must still receive the
-    configured 137s, not 60.
-    """
-    from daily_driver.cli.cli import app
-    from daily_driver.integrations import clipboard, ollama_client
-
-    ws = _init_workspace(tmp_path)
-    cfg_path = ws / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text()
-        + "\nai:\n  summary:\n    provider: ollama\n    model: phi4\n"
-        + "  ollama:\n    timeout: 137\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(clipboard, "available", lambda: False)
-
-    seen: dict[str, object] = {}
-
-    def fake_generate(prompt, *, model, endpoint, timeout, system=None):
-        seen.update(model=model, endpoint=endpoint, timeout=timeout)
-        return "ollama summary\n"
-
-    monkeypatch.setattr(ollama_client, "generate", fake_generate)
-
-    rc = app(["--workspace", str(ws), "summary", "--range", "today", "--timeout", "60"])
-
-    assert rc == 0
-    assert seen["timeout"] == 137
-    assert seen["model"] == "phi4"
+    assert "summary via claude" in captured.err
+    assert "summary via claude" not in captured.out
 
 
 def test_summary_copies_to_clipboard_when_available(
@@ -221,13 +240,11 @@ def test_summary_copies_to_clipboard_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "summary text\n")
+    _stub_provider(monkeypatch, "summary text\n")
     monkeypatch.setattr(clipboard, "available", lambda: True)
-
     copied: list[str] = []
     monkeypatch.setattr(clipboard, "copy", lambda t: copied.append(t))
 
@@ -242,13 +259,11 @@ def test_summary_no_clipboard_suppresses_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
+    from daily_driver.integrations import clipboard
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "x\n")
+    _stub_provider(monkeypatch, "x\n")
     monkeypatch.setattr(clipboard, "available", lambda: True)
-
     calls: list[str] = []
     monkeypatch.setattr(clipboard, "copy", lambda t: calls.append(t))
 
@@ -270,24 +285,19 @@ def test_summary_detail_levels_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", lambda **kw: "ok\n")
-    monkeypatch.setattr(clipboard, "available", lambda: False)
+    calls = _stub_provider(monkeypatch, "ok\n")
 
     rc = app(
         ["--workspace", str(ws), "summary", "--range", "today", "--detail", detail]
     )
 
     assert rc == 0
+    assert f"{detail}-detail" in str(calls[0]["prompt"])
 
 
-def test_summary_detail_invalid_exits_2(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_summary_detail_invalid_exits_2(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
@@ -308,22 +318,11 @@ def test_summary_detail_invalid_exits_2(
 def test_summary_match_filters_included_in_prompt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, clipboard
 
     ws = _init_workspace(tmp_path)
-
-    captured_kw: dict[str, object] = {}
-
-    def fake_invoke(**kw):
-        captured_kw.update(kw)
-        return "result\n"
-
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "invoke", fake_invoke)
-    monkeypatch.setattr(clipboard, "available", lambda: False)
+    calls = _stub_provider(monkeypatch, "result\n")
 
     rc = app(
         [
@@ -340,11 +339,7 @@ def test_summary_match_filters_included_in_prompt(
     )
 
     assert rc == 0
-    # The prompt passed to claude should contain the match keywords
-    prompt = captured_kw.get("prompt", "")
-    assert (
-        "python" in str(prompt).lower() or True
-    )  # prompt is rendered; just verify rc=0
+    assert "python, sre" in str(calls[0]["prompt"])
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +347,7 @@ def test_summary_match_filters_included_in_prompt(
 # ---------------------------------------------------------------------------
 
 
-def test_summary_missing_range_exits_2(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_summary_missing_range_exits_2(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
@@ -366,46 +358,76 @@ def test_summary_missing_range_exits_2(
     assert exc_info.value.code == 2
 
 
-def test_summary_claude_not_found_exits_1(
+def test_summary_program_not_found_exits_1(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: False)
+    _add_config(
+        ws,
+        "\nai:\n  providers:\n    mine:\n      agent: [dd-no-such-program]\n"
+        "      tasks: [summary]\n",
+    )
 
     rc = app(["--workspace", str(ws), "summary", "--range", "today"])
 
-    captured = capsys.readouterr()
     assert rc == 1
-    assert "claude CLI not found" in captured.err
+    err = capsys.readouterr().err
+    assert "dd-no-such-program not found on PATH" in err
+    assert "give summary to another provider under ai.providers" in err
 
 
-def test_summary_timeout_exits_1(
+@pytest.mark.parametrize("value", ["0", "-5"])
+def test_summary_timeout_below_one_exits_2(
+    tmp_path: Path, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    with pytest.raises(SystemExit) as exc_info:
+        app(["--workspace", str(ws), "summary", "--range", "today", "--timeout", value])
+
+    assert exc_info.value.code == 2
+    assert "--timeout must be >= 1" in capsys.readouterr().err
+
+
+def test_summary_timeout_names_both_ways_to_raise_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
-    from daily_driver.integrations.claude_cli import ClaudeTimeoutError
+    from daily_driver.integrations import provider
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
 
-    def raise_timeout(**kw):
-        raise ClaudeTimeoutError(60, ["claude"])
+    def raise_timeout(*args, **kwargs):
+        raise provider.AITimeoutError(
+            "claude timed out after 900s", provider="claude", timeout_seconds=900
+        )
 
-    monkeypatch.setattr(claude_cli, "invoke", raise_timeout)
+    monkeypatch.setattr(provider, "invoke", raise_timeout)
 
-    rc = app(["--workspace", str(ws), "summary", "--range", "today", "--timeout", "60"])
+    rc = app(["--workspace", str(ws), "summary", "--range", "today"])
 
-    captured = capsys.readouterr()
     assert rc == 1
-    assert "timed out" in captured.err
+    assert (
+        "summary via claude timed out after 900s; raise with --timeout or "
+        "ai.providers.claude.timeout"
+    ) in capsys.readouterr().err
+
+
+def test_summary_has_no_session_or_agent_flags(tmp_path: Path) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    for flag in ("--session-name", "--agent"):
+        with pytest.raises(SystemExit) as exc_info:
+            app(["--workspace", str(ws), "summary", "--range", "today", flag, "x"])
+        assert exc_info.value.code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -422,37 +444,19 @@ def test_standup_subcommand_no_longer_registered() -> None:
     assert "summary" in names
 
 
-def test_summary_provider_propagates_yaml_error(tmp_path):
-    """Malformed YAML in .dd-config.yaml must NOT silently default to claude.
+def test_summary_with_no_files_makes_no_ai_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
 
-    Regression test for the silent-failure pattern flagged in PR #31 sk-review.
-    """
-    from daily_driver.cli.commands.summary import _resolve_summary_route
+    ws = _init_workspace(tmp_path)
+    (ws / "tracker.yaml").unlink(missing_ok=True)
+    calls = _stub_provider(monkeypatch)
 
-    (tmp_path / ".dd-config.yaml").write_text(": : : invalid\n", encoding="utf-8")
+    rc = app(["--workspace", str(ws), "summary", "--range", "2020-01-01"])
 
-    with pytest.raises(yaml.YAMLError):
-        _resolve_summary_route(tmp_path)
-
-
-def test_summary_provider_propagates_validation_error(tmp_path):
-    """Typo'd `ai.summary.provider: oloma` must raise, not silently fall back."""
-    from pydantic import ValidationError
-
-    from daily_driver.cli.commands.summary import _resolve_summary_route
-
-    (tmp_path / ".dd-config.yaml").write_text(
-        "tracker:\n  default_category: task\n  categories:\n    task: {required: [title]}\n"
-        "ai:\n  summary:\n    provider: oloma\n",  # typo
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ValidationError):
-        _resolve_summary_route(tmp_path)
-
-
-def test_summary_provider_missing_file_returns_claude(tmp_path):
-    """Missing config file is the only acceptable claude fallback (default)."""
-    from daily_driver.cli.commands.summary import _resolve_summary_route
-
-    assert _resolve_summary_route(tmp_path) == ("claude", None)
+    assert rc == 0
+    assert calls == []
+    assert "no daily notes, plans or tracker" in capsys.readouterr().err

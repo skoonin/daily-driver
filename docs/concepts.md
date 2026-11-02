@@ -42,6 +42,7 @@ The workspace is an ordinary folder. Everything is saved in files that you can r
 ## Good to know
 
 - **Claude is the front end. Daily Driver keeps your data.** Claude changes your list by running `daily-driver` commands. It writes your plan and notes files itself. A new chat starts without memory of earlier chats, so each chat begins by reading your files.
+- **Providers run the AI.** A provider is a program (Claude Code or opencode) or a model server (LM Studio or ollama). Each feature runs on the provider you choose in `.dd-config.yaml`, and on Claude Code when you choose none. See [AI providers](configuration.md#ai).
 - **Run commands inside your workspace folder or one of its subfolders.** To run them from anywhere, add `--workspace PATH` (or `-w PATH`) to a command.
 - **Daily Driver manages some files in `.claude/`.** It updates them after an upgrade when you run `daily-driver doctor --fix`. Put your own Claude commands and agents in `.claude/commands/user/` and `.claude/agents/user/`. Daily Driver never changes those folders. See [`.claude/` ownership](configuration.md#claude-ownership).
-- **Settings do not change on their own.** If an upgrade removes or renames a setting, commands stop and name it. `CHANGELOG.md` says what to change.
+- **Settings do not change on their own.** If an upgrade removes or renames a setting, commands stop, name it, and say what replaces it. `CHANGELOG.md` lists the changes of each release.

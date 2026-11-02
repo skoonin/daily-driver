@@ -142,33 +142,31 @@ daily-driver/
 ├── day-start
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   ├── --model {sonnet,opus,haiku}
+│   ├── --model NAME
 │   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── day-end
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   ├── --model {sonnet,opus,haiku}
+│   ├── --model NAME
 │   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── check-in
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   ├── --model {sonnet,opus,haiku}
+│   ├── --model NAME
 │   ├── --no-resume
 │   └── --launch {terminal,notify}  (scheduler firing mode)
 ├── resume
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
-│   └── --model {sonnet,opus,haiku}
+│   └── --model NAME
 ├── summary
 │   ├── -r, --range SPEC (required)
 │   ├── --detail {low,med,high}
 │   ├── --match KW (repeatable)
 │   ├── -j, --json
 │   ├── --no-clipboard
-│   ├── --session-name NAME
-│   ├── --agent NAME (default: work-planner)
-│   ├── --model {sonnet,opus,haiku}
-│   └── --timeout SECONDS
+│   ├── --model NAME
+│   └── --timeout SECONDS (default: provider timeout, else 900)
 ├── scheduler
 │   ├── install [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label; jobs and jobs-discover need job search on)
 │   ├── uninstall [job ...] (checkin, day-start, day-end, jobs, jobs-discover, or full label)
@@ -178,9 +176,8 @@ daily-driver/
 │   ├── --append | --replace
 │   ├── -n, --dry-run
 │   ├── --no-clipboard
-│   ├── --session-name NAME
-│   ├── --model {sonnet,opus,haiku}
-│   └── --timeout SECONDS
+│   ├── --model NAME
+│   └── --timeout SECONDS (default: provider timeout, else 180)
 └── help
     ├── [topic: commands|statuses|categories|sources|dates]
     └── -j, --json

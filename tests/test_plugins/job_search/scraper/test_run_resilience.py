@@ -16,14 +16,13 @@ from typing import Any
 
 import pytest
 
-from daily_driver.core.config_models import AIConfig
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import context as context_mod
 from daily_driver.plugins.job_search.scraper import rows as rows_mod
 from daily_driver.plugins.job_search.scraper import runner, scrape_all
 from daily_driver.plugins.job_search.scraper import sink as sink_mod
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-from tests.test_plugins.job_search.scraper import make_enriched
+from tests.test_plugins.job_search.scraper import claude_provider, make_enriched
 
 
 def _scraped(url: str, company: str, role: str = "SRE", **extra: Any) -> dict[str, Any]:
@@ -449,7 +448,6 @@ def _enrich_plugin(budget: int = 50) -> JobSearchPlugin:
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "max_enrich_fit": budget,
                 "enrich_timeout": 5,
             },
@@ -461,7 +459,7 @@ def _serial_ctx(budget: int = 50) -> ScrapeContext:
     # max_parallel=1 -> serial provider path: deterministic ordering, no threads.
     return ScrapeContext(
         plugin=_enrich_plugin(budget),
-        ai=AIConfig.model_validate({"claude": {"max_parallel": 1}}),
+        provider=claude_provider(max_parallel=1),
     )
 
 
@@ -474,13 +472,13 @@ def test_concurrent_enrichment_flushes_every_n_results(
     the loop, then once on phase completion by the caller -- but the pass itself
     triggers at the 3-result boundaries.
     """
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
     from daily_driver.plugins.job_search.scraper import enrichment
 
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
-        lambda prompt, **kw: '{"fit": 6, "notes": "ok"}',
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 6, "notes": "ok"}',
     )
     jobs = [make_enriched(company=f"Co{i}", url=f"https://x/{i}") for i in range(7)]
     flush_calls: list[int] = []
@@ -517,14 +515,20 @@ def test_run_flushes_enrichment_progress_to_disk(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 8, "notes": "great"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 8, "notes": "great"}',
     )
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
     rows = _read_csv(tmp_path / "jobs.csv")
@@ -550,7 +554,6 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,
             },
@@ -570,20 +573,22 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
 
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     calls = [0]
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         calls[0] += 1
         if calls[0] >= 2:
             raise KeyboardInterrupt
         return '{"fit": 7, "notes": "first"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
 
     with pytest.raises(KeyboardInterrupt):
-        runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
+        runner.run(
+            plugin, tmp_path, tmp_path, provider=_serial_ctx().provider, no_enrich=False
+        )
 
     rows = _read_csv(tmp_path / "jobs.csv")
     # All rows still present (appended during scraping); at least one enriched
@@ -600,7 +605,6 @@ def _overlap_plugin(budget: int) -> JobSearchPlugin:
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "max_enrich_fit": budget,
                 "enrich_timeout": 5,
             },
@@ -692,7 +696,7 @@ def _overlap_run(
         _overlap_plugin(budget=budget),
         tmp_path,
         tmp_path,
-        ai=_serial_ctx().ai,
+        provider=_serial_ctx().provider,
         no_enrich=False,
     )
     assert rc == 0
@@ -776,17 +780,19 @@ def test_overlap_wave1_enrichment_reaches_disk(
         return phase1 + apple, [], [("remoteok", phase1), ("apple", apple)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 9, "notes": "match"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 9, "notes": "match"}',
     )
 
     rc = runner.run(
         _overlap_plugin(budget=10),
         tmp_path,
         tmp_path,
-        ai=_serial_ctx().ai,
+        provider=_serial_ctx().provider,
         no_enrich=False,
     )
     assert rc == 0
@@ -829,9 +835,9 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         # Mark in-flight, then keep computing past the main thread's interrupt so
         # the result is NOT yet in sink.rows when run()'s except flush fires. The
         # buggy (no-join) path returns leaving P1Co blank; the join lets it land.
@@ -839,14 +845,14 @@ def test_overlap_interrupt_joins_wave1_so_its_enrichment_lands(
         time.sleep(0.4)
         return '{"fit": 6, "notes": "match"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
 
     with pytest.raises(KeyboardInterrupt):
         runner.run(
             _overlap_plugin(budget=10),
             tmp_path,
             tmp_path,
-            ai=_serial_ctx().ai,
+            provider=_serial_ctx().provider,
             no_enrich=False,
         )
 
@@ -897,9 +903,9 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         # Block well past the shortened join bound so wave 1 is still alive when
         # the handler gives up. The coordinator's stop_event check cannot cancel a
         # call already in flight, so this models a stuck in-flight LLM call.
@@ -907,7 +913,7 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
         release.wait(timeout=5)
         return '{"fit": 6, "notes": "match"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
 
     with caplog.at_level(logging.WARNING):
         with pytest.raises(KeyboardInterrupt):
@@ -915,7 +921,7 @@ def test_overlap_interrupt_warns_when_wave1_outlives_join_bound(
                 _overlap_plugin(budget=10),
                 tmp_path,
                 tmp_path,
-                ai=_serial_ctx().ai,
+                provider=_serial_ctx().provider,
                 no_enrich=False,
             )
     release.set()
@@ -978,7 +984,7 @@ def test_overlap_interrupt_logs_relayed_wave1_exception(
                 _overlap_plugin(budget=10),
                 tmp_path,
                 tmp_path,
-                ai=_serial_ctx().ai,
+                provider=_serial_ctx().provider,
                 no_enrich=False,
             )
 
@@ -1010,11 +1016,11 @@ def test_disabled_passes_render_no_bars(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
+        ai,
+        "invoke",
         lambda *a, **k: (_ for _ in ()).throw(
             AssertionError("no LLM call expected with fit/notes off")
         ),
@@ -1023,14 +1029,15 @@ def test_disabled_passes_render_no_bars(
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "enrich_fit": False,
                 "enrich_notes": False,
                 "enrich_timeout": 5,
             },
         }
     )
-    rc = runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False)
+    rc = runner.run(
+        plugin, tmp_path, tmp_path, provider=_serial_ctx().provider, no_enrich=False
+    )
     assert rc == 0
     err = capsys.readouterr().err
     assert "Detail pages" in err
@@ -1113,13 +1120,15 @@ def test_manifest_records_phase_reached_complete(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 5, "notes": "ok"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 5, "notes": "ok"}',
     )
 
-    runner.run(_enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+    runner.run(_enrich_plugin(), tmp_path, tmp_path, provider=_serial_ctx().provider)
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
     assert manifest["phase_reached"] == "complete"
     assert manifest["interrupted"] is False
@@ -1140,7 +1149,6 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,
             },
@@ -1159,20 +1167,20 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     calls = [0]
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         calls[0] += 1
         if calls[0] >= 2:
             raise KeyboardInterrupt
         return '{"fit": 7, "notes": "first"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
 
     with pytest.raises(KeyboardInterrupt):
-        runner.run(plugin, tmp_path, tmp_path, ai=_serial_ctx().ai)
+        runner.run(plugin, tmp_path, tmp_path, provider=_serial_ctx().provider)
 
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
     assert manifest["interrupted"] is True
@@ -1214,7 +1222,6 @@ def _enrich_plugin_serial() -> JobSearchPlugin:
         {
             "scraper": {"enabled": True},
             "enrichment": {
-                "provider": "claude",
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,
             },
@@ -1587,14 +1594,20 @@ def test_run_enrichment_flush_preserves_preexisting_rows(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 8, "notes": "great"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 8, "notes": "great"}',
     )
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
     rows = _read_csv(csv_path)
@@ -1676,10 +1689,12 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda p, **k: '{"fit": 5, "notes": "ok"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **k: '{"fit": 5, "notes": "ok"}',
     )
 
     # Make the periodic detail-phase flush fail, but let the final flush succeed.
@@ -1698,7 +1713,9 @@ def test_periodic_flush_failure_degrades_then_final_flush_retries(
         flaky_atomic,
     )
 
-    rc = runner.run(_enrich_plugin_serial(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+    rc = runner.run(
+        _enrich_plugin_serial(), tmp_path, tmp_path, provider=_serial_ctx().provider
+    )
     assert rc == 1  # degraded run exits non-zero even though the final flush recovered
     # Final flush retried and succeeded: enrichment is on disk.
     rows = _read_csv(tmp_path / "jobs.csv")
@@ -1731,17 +1748,17 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
         return jobs, [], [("remoteok", jobs)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     calls = [0]
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         calls[0] += 1
         if calls[0] >= 2:
             raise KeyboardInterrupt
         return '{"fit": 7, "notes": "first"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     # Every flush raises -- including the wrapper's interrupt-path flush.
     monkeypatch.setattr(
         "daily_driver.plugins.job_search.scraper.csv_io.atomic_write_rows",
@@ -1750,7 +1767,9 @@ def test_interrupt_flush_failure_preserves_exit_and_manifest(
 
     # The KeyboardInterrupt must survive the flush failure on the interrupt path.
     with pytest.raises(KeyboardInterrupt):
-        runner.run(_enrich_plugin_serial(), tmp_path, tmp_path, ai=_serial_ctx().ai)
+        runner.run(
+            _enrich_plugin_serial(), tmp_path, tmp_path, provider=_serial_ctx().provider
+        )
 
     # Manifest still written despite the flush failure.
     manifest = json.loads((tmp_path / "jobs-last-run.json").read_text(encoding="utf-8"))
@@ -1992,16 +2011,16 @@ def test_cli_run_scrape_returns_130_on_interrupt(
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
 
+    from daily_driver.core.config_models import Config
+    from daily_driver.plugins.config import PluginsConfig
+
     class _Workspace:
         output_dir = tmp_path
         ephemeral_dir = tmp_path
-
-        class config:  # noqa: N801
-            ai = AIConfig()
-
-            class plugins:  # noqa: N801
-                job_search = _us_remote_plugin()
-
+        config = Config(
+            tracker={"categories": {"task": {"required": ["title"]}}},
+            plugins=PluginsConfig(job_search=_us_remote_plugin()),
+        )
         root = tmp_path
 
     args = argparse.Namespace(
@@ -2586,14 +2605,20 @@ def test_run_reports_reseen_summary_line(
         return rescan, [], [("remoteok", rescan)]
 
     monkeypatch.setattr(runner, "run_all_scrapers", fake_scrape)
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider, "invoke_for", lambda prompt, **kw: '{"fit": 7, "notes": "ok"}'
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: '{"fit": 7, "notes": "ok"}',
     )
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
     err = " ".join(capsys.readouterr().err.split())

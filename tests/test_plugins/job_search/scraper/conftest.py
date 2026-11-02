@@ -13,12 +13,12 @@ _real_which = shutil.which
 def _claude_binary_present(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pretend the claude binary is installed.
 
-    The enrichment entry points guard on ``shutil.which("claude")`` before any
-    LLM work (llm.py). These tests stub ``invoke_for`` and never spawn the real
-    binary, but on CI runners (no claude installed) the guard short-circuits
-    and every claude-path test silently does nothing. Tests that need the
-    missing-binary branch monkeypatch ``shutil.which`` themselves, overriding
-    this fixture.
+    The enrichment entry points guard on ``provider.available(ctx.provider)``
+    (a PATH lookup of the provider's program) before any LLM work (llm.py).
+    These tests stub ``provider.invoke`` and never spawn the real binary, but on
+    CI runners (no claude installed) the guard short-circuits and every
+    claude-path test silently does nothing. Tests that need the missing-binary
+    branch stub ``available`` themselves, overriding this fixture.
     """
 
     def _which(cmd: str, *args: object, **kwargs: object) -> str | None:

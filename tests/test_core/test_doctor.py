@@ -91,42 +91,143 @@ def test_run_checks_none_no_workspace_drift_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Mock shutil.which("claude") returning None → WARNING
+# 2. AI provider rows
 # ---------------------------------------------------------------------------
 
 
-def test_claude_cli_warning_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+def _which_finds(monkeypatch: pytest.MonkeyPatch, *found: str) -> None:
     original_which = shutil.which
 
     def patched_which(name: str, **kwargs):
-        if name == "claude":
-            return None
+        if name in ("claude", "opencode"):
+            return f"/usr/local/bin/{name}" if name in found else None
         return original_which(name, **kwargs)
 
     monkeypatch.setattr(shutil, "which", patched_which)
 
-    results = run_checks(None)
-    claude_result = next((r for r in results if r.name == "cli:claude"), None)
-    assert claude_result is not None
-    assert claude_result.status == "WARNING"
+
+def _rows(results: list[CheckResult]) -> dict[str, CheckResult]:
+    return {r.name: r for r in results if r.name.startswith(("ai:", "AI "))}
+
+
+def test_no_workspace_checks_the_default_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _which_finds(monkeypatch)
+    row = _rows(run_checks(None))["ai:claude"]
+    assert row.status == "WARNING"
+    assert "claude not found on PATH" in row.detail
     # Not auto-fixable: carries a manual hint, no plugin fixer.
-    assert claude_result.plugin_fixer is None
+    assert row.plugin_fixer is None
 
 
-def test_claude_cli_ok_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    original_which = shutil.which
+def test_default_provider_ok_when_its_program_is_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _which_finds(monkeypatch, "claude")
+    row = _rows(run_checks(None))["ai:claude"]
+    assert row.status == "OK"
+    assert "/usr/local/bin/claude" in row.detail
 
-    def patched_which(name: str, **kwargs):
-        if name == "claude":
-            return "/usr/local/bin/claude"
-        return original_which(name, **kwargs)
 
-    monkeypatch.setattr(shutil, "which", patched_which)
+def _workspace_with(tmp_path: Path, config: str) -> object:
+    from daily_driver.core.workspace import Workspace
 
-    results = run_checks(None)
-    claude_result = next((r for r in results if r.name == "cli:claude"), None)
-    assert claude_result is not None
-    assert claude_result.status == "OK"
+    root = tmp_path / "ws"
+    root.mkdir()
+    Workspace.init(root)
+    cfg = root / ".dd-config.yaml"
+    cfg.write_text(cfg.read_text() + config, encoding="utf-8")
+    return Workspace.discover_or_fail(override=root)
+
+
+def test_each_provider_in_use_gets_a_row_naming_its_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.integrations import provider
+
+    _which_finds(monkeypatch, "claude", "opencode")
+    monkeypatch.setattr(provider, "list_models", lambda chosen, timeout: ["phi4"])
+    ws = _workspace_with(
+        tmp_path,
+        "\nai:\n  providers:\n    opencode:\n      tasks: [interactive]\n"
+        "    lmstudio:\n      model: phi4\n      tasks: [voice_update]\n"
+        "plugins:\n  job_search:\n    provider: lmstudio\n",
+    )
+
+    rows = _rows(run_checks(ws))  # type: ignore[arg-type]
+
+    assert set(rows) == {"ai:claude", "ai:opencode", "ai:lmstudio"}
+    assert rows["ai:claude"].detail.endswith("runs summary")
+    assert rows["ai:opencode"].status == "OK"
+    assert rows["ai:lmstudio"].status == "OK"
+    assert "runs voice_update, job_search.fit_notes" in rows["ai:lmstudio"].detail
+
+
+def test_http_provider_warns_when_its_model_is_not_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.integrations import provider
+
+    _which_finds(monkeypatch, "claude")
+    monkeypatch.setattr(provider, "list_models", lambda chosen, timeout: ["other"])
+    ws = _workspace_with(
+        tmp_path,
+        "\nai:\n  providers:\n    ollama:\n      model: qwen2.5:14b\n"
+        "      tasks: [voice_update]\n",
+    )
+
+    row = _rows(run_checks(ws))["ai:ollama"]  # type: ignore[arg-type]
+
+    assert row.status == "WARNING"
+    assert "does not list model 'qwen2.5:14b'" in row.detail
+    assert "ai.providers.ollama.model" in (row.fix_hint or "")
+
+
+def test_http_provider_warns_when_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daily_driver.integrations import provider
+
+    def unreachable(chosen, timeout):
+        raise provider.AIInvocationError(
+            "lmstudio not reachable at http://localhost:1234/v1/models",
+            provider="lmstudio",
+        )
+
+    _which_finds(monkeypatch, "claude")
+    monkeypatch.setattr(provider, "list_models", unreachable)
+    ws = _workspace_with(
+        tmp_path,
+        "\nai:\n  providers:\n    lmstudio:\n      model: m\n"
+        "      tasks: [voice_update]\n",
+    )
+
+    row = _rows(run_checks(ws))["ai:lmstudio"]  # type: ignore[arg-type]
+
+    assert row.status == "WARNING"
+    assert "not reachable" in row.detail
+    assert "http://localhost:1234/v1" in (row.fix_hint or "")
+    assert "OpenAI-compatible server" in (row.fix_hint or "")
+
+
+def test_unused_user_provider_warns_but_unused_builtins_do_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _which_finds(monkeypatch, "claude")
+    ws = _workspace_with(
+        tmp_path,
+        "\nai:\n  providers:\n    spare:\n      text: [spare-tool]\n"
+        "    base:\n      text: [base-tool]\n"
+        "    child:\n      extends: base\n      tasks: [voice_update]\n",
+    )
+
+    rows = _rows(run_checks(ws))  # type: ignore[arg-type]
+
+    assert rows["ai:spare"].status == "WARNING"
+    assert rows["ai:spare"].detail == "ai.providers.spare runs no task"
+    assert "ai:base" not in rows
+    assert "ai:opencode" not in rows
 
 
 # ---------------------------------------------------------------------------

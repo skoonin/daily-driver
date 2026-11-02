@@ -1,6 +1,6 @@
 import importlib.util
 
-from daily_driver.plugins._base import Plugin
+from daily_driver.plugins._base import Plugin, PluginConfigBase
 from daily_driver.plugins.job_search import PLUGIN as _job_search
 
 PLUGINS: tuple[Plugin, ...] = (_job_search,)
@@ -64,6 +64,8 @@ def _validate_registry(plugins: tuple[Plugin, ...]) -> None:
             raise ValueError(f"duplicate plugin command_name {p.command_name!r}")
         seen_commands.add(p.command_name)
 
+        _validate_tasks(p)
+
         hook_paths = [p.command_module]
         if p.scheduled_jobs_builder:
             hook_paths.append(p.scheduled_jobs_builder.rpartition(".")[0])
@@ -75,6 +77,37 @@ def _validate_registry(plugins: tuple[Plugin, ...]) -> None:
                 raise ValueError(
                     f"plugin {p.name!r} references unknown module {module_path!r}"
                 )
+
+
+def _validate_tasks(plugin: Plugin) -> None:
+    if not plugin.tasks:
+        return
+    if plugin.config_model is None:
+        raise ValueError(
+            f"plugin {plugin.name!r} declares tasks but has no config_model "
+            "to route them"
+        )
+    if not issubclass(plugin.config_model, PluginConfigBase):
+        raise ValueError(
+            f"plugin {plugin.name!r} declares tasks, so its config_model must "
+            "subclass PluginConfigBase"
+        )
+    for field in ("provider", "tasks"):
+        if (
+            plugin.config_model.model_fields[field].annotation
+            != PluginConfigBase.model_fields[field].annotation
+        ):
+            raise ValueError(
+                f"plugin {plugin.name!r} redefines the reserved {field!r} field "
+                "of PluginConfigBase"
+            )
+    seen: set[str] = set()
+    for task in plugin.tasks:
+        if task.name in seen:
+            raise ValueError(
+                f"plugin {plugin.name!r} declares duplicate task {task.name!r}"
+            )
+        seen.add(task.name)
 
 
 _validate_registry(PLUGINS)

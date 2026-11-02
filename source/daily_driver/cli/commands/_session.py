@@ -1,9 +1,9 @@
-"""Shared launcher helpers for nested Claude Code sessions.
+"""Shared launcher helpers for interactive AI sessions.
 
-Each daily-driver subcommand that orchestrates a Claude session (day-start,
-day-end, check-in, summary) resolves the workspace, verifies auth, and
-hands control to the `claude` CLI with a generated slash command as
-the opening prompt.
+Each interactive subcommand (day-start, day-end, check-in, resume) resolves the
+workspace, finds the provider routed for the `interactive` task, and hands the
+terminal to that provider's `run` or `resume` template with the launcher's
+slash command as the opening prompt.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-import uuid
 from datetime import date
 from pathlib import Path
 
@@ -19,14 +18,20 @@ from daily_driver.core import clock, focus
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.logging import get_logger
+from daily_driver.core.prompt_file import write_prompt_file
+from daily_driver.core.providers import Provider, provider_for
 from daily_driver.core.session_pointer import (
     SessionPointer,
     SessionPointerError,
+    clear_pointer,
     read_pointer,
     write_pointer,
 )
 from daily_driver.core.workspace import Workspace, WorkspaceError
-from daily_driver.integrations import claude_cli, notify, terminal_launcher
+from daily_driver.integrations import notify
+from daily_driver.integrations import provider as ai
+from daily_driver.integrations import terminal_launcher
+from daily_driver.tasks import INTERACTIVE
 
 _log = get_logger(__name__)
 
@@ -110,11 +115,16 @@ def handle_launch_mode(
     return 0
 
 
-def require_claude_available() -> None:
-    if not claude_cli.available():
+def interactive_provider(workspace: Workspace) -> Provider:
+    """The provider routed for `interactive`, checked to be launchable."""
+    provider = provider_for(workspace.config, INTERACTIVE)
+    if not ai.available(provider):
         raise SessionError(
-            "claude CLI not found on PATH. Install: " "https://claude.ai/download"
+            f"{ai.program(provider.settings)} not found on PATH; provider "
+            f"{provider.name} runs interactive sessions. Install it, or give "
+            "another provider the interactive task under ai.providers"
         )
+    return provider
 
 
 def default_session_name(command: str, override: str | None = None) -> str:
@@ -123,116 +133,135 @@ def default_session_name(command: str, override: str | None = None) -> str:
     return f"{command}-{date.today().isoformat()}"
 
 
-def resolve_interactive_model(
-    workspace: Workspace, cli_model: str | None
-) -> str | None:
-    """Resolve which claude model an interactive launcher should use.
-
-    Interactive launchers (day-start, day-end, check-in) are claude-only, so
-    this resolves a *model* only — never a provider. A `--model` CLI flag wins;
-    otherwise the `ai.interactive.model` config default applies. Deliberately
-    does NOT fall back to the global `ai.model`: that field is provider-agnostic
-    and may hold an ollama tag, which the claude CLI cannot use.
-    """
-    return cli_model or workspace.config.ai.interactive.model
-
-
-def launch_headless(
+def _spawn(
+    provider: Provider,
+    template_name: str,
     *,
-    slash_command: str,
     workspace: Workspace,
+    command: str | None,
+    session_id: str | None,
     session_name: str,
-    agent: str = "work-planner",
-    model: str | None = None,
-    timeout: int = 180,
-) -> str:
-    """Run `slash_command` headlessly and return claude's stdout."""
-    return claude_cli.invoke(
-        prompt=slash_command,
-        agent=agent,
-        session_name=session_name,
-        headless=True,
-        add_dirs=[workspace.root],
-        model=model,
-        timeout=timeout,
-    )
+    agent: str,
+    model: str | None,
+) -> int:
+    template = getattr(provider.settings, template_name)
+    if template is None:
+        raise SessionError(
+            f"{provider.name} has no {template_name} template; daily-driver "
+            f"resume and ai.interactive.resume_check_in need one"
+        )
+    values: dict[str, str | None] = {
+        "workspace": str(workspace.root),
+        "command": command,
+        "session_id": session_id,
+        "session_name": session_name,
+        "agent": agent,
+        "model": model or provider.settings.model,
+    }
+    if command is not None and ai.uses(template, "prompt_file"):
+        values["prompt_file"] = str(
+            write_prompt_file(workspace, command=command, agent=agent)
+        )
+    argv = ai.render(template, values, provider=provider.name)
+    return ai.spawn(provider, argv)
 
 
 def launch_fresh_and_record(
     *,
     workspace: Workspace,
-    prompt: str | None,
+    provider: Provider,
+    command: str,
     session_name: str,
     agent: str,
     model: str | None,
-    session_id: str | None = None,
 ) -> int:
-    """Mint a session UUID, record it as the workspace's most-recent session, spawn.
+    """Start a fresh session, record it as the workspace's most recent, spawn.
 
     The pointer is written BEFORE the spawn so a still-running session is
-    reattachable mid-life (a crashed tab can be resumed while claude is up).
-    `session_id` lets a caller (day-start) pre-mint the UUID so it can record
-    the same id in its own per-day state; when omitted a fresh one is minted.
+    reattachable mid-life (a crashed tab can be resumed while it is up). A
+    provider with no `session_id` format gets no ID, so its session cannot be
+    resumed; the old pointer is cleared so nothing reattaches to an older one.
     """
-    resolved_id = session_id or str(uuid.uuid4())
-    write_pointer(
-        workspace,
-        SessionPointer(last_session_id=resolved_id, last_session_at=clock.now()),
-    )
-    return claude_cli.spawn_interactive(
-        prompt=prompt,
-        agent=agent,
+    session_id = ai.mint_session_id(provider.settings)
+    if session_id is None:
+        clear_pointer(workspace)
+    else:
+        write_pointer(
+            workspace,
+            SessionPointer(
+                last_session_id=session_id,
+                last_session_at=clock.now(),
+                provider=provider.name,
+            ),
+        )
+    return _spawn(
+        provider,
+        "run",
+        workspace=workspace,
+        command=command,
+        session_id=session_id,
         session_name=session_name,
-        add_dirs=[workspace.root],
+        agent=agent,
         model=model,
-        session_id=resolved_id,
     )
 
 
 def reattach_or_fresh(
     *,
     workspace: Workspace,
-    prompt: str | None,
+    provider: Provider,
+    command: str | None,
     session_name: str,
     agent: str,
     model: str | None,
 ) -> int:
     """Reattach to the most-recent workspace session, or start fresh if none exists.
 
-    Reads the workspace session pointer and, when present, reattaches via
-    `claude --resume <uuid>` (replaying `prompt` into the resumed conversation),
-    returning claude's exit code. When the recorded session can no longer be
-    resumed, claude reports it (e.g. "No conversation found with session ID")
-    and exits non-zero — that code propagates to the caller rather than silently
-    launching an untethered fresh session. When no session has been recorded
-    yet, a fresh one is started and recorded.
+    Reattaching replays `command` into the resumed conversation. When the
+    recorded session can no longer be resumed, the provider reports it and
+    exits non-zero; that code propagates rather than silently launching an
+    untethered fresh session. A session recorded by another provider means
+    nothing to this one: a launcher with a `command` (check-in) starts fresh,
+    and a plain `resume` is refused.
     """
     pointer = read_pointer(workspace)
     resume_id = pointer.last_session_id if pointer else None
-    if resume_id is None:
+    other_provider = pointer is not None and pointer.provider != provider.name
+    if pointer is None or resume_id is None or (other_provider and command):
+        if command is None:
+            raise SessionError(
+                "no prior session to resume — run day-start, day-end, or "
+                "check-in first"
+            )
         return launch_fresh_and_record(
             workspace=workspace,
-            prompt=prompt,
+            provider=provider,
+            command=command,
             session_name=session_name,
             agent=agent,
             model=model,
         )
-    return claude_cli.spawn_interactive(
-        prompt=prompt,
-        agent=agent,
+    if other_provider:
+        raise SessionError(
+            f"the last session was started with {pointer.provider}, but "
+            f"interactive sessions now run on {provider.name}; start a fresh "
+            "one with day-start or check-in --no-resume"
+        )
+    return _spawn(
+        provider,
+        "resume",
+        workspace=workspace,
+        command=command,
+        session_id=resume_id,
         session_name=session_name,
-        add_dirs=[workspace.root],
+        agent=agent,
         model=model,
-        resume_session_id=resume_id,
     )
 
 
 def handle_launch_exception(exc: BaseException) -> int:
     """Translate subprocess / launcher failures into CLI exit codes with a user-visible message."""
-    if isinstance(exc, (SessionError, WorkspaceError)):
-        Console.error(str(exc))
-        return 1
-    if isinstance(exc, claude_cli.ClaudeNotFoundError):
+    if isinstance(exc, (SessionError, WorkspaceError, ai.AIInvocationError)):
         Console.error(str(exc))
         return 1
     if isinstance(exc, (DailyStateError, SessionPointerError)):
@@ -240,19 +269,9 @@ def handle_launch_exception(exc: BaseException) -> int:
         # user can hand-edit / delete the offending YAML.
         Console.error(str(exc))
         return 1
-    if isinstance(exc, claude_cli.ClaudeTimeoutError):
-        Console.error(f"claude session timed out after {exc.timeout}s")
-        return 1
-    if isinstance(exc, claude_cli.ClaudeInvocationError):
-        stderr = (exc.stderr or "").strip()
-        msg = f"claude exited {exc.returncode}"
-        if stderr:
-            msg = f"{msg}: {stderr}"
-        Console.error(msg)
-        return exc.returncode or 1
     if isinstance(exc, ValueError):
-        # Programming-error guard surfaces (e.g. session_id + resume_session_id
-        # passed together). Exit 2 = usage error, distinct from runtime failure.
+        # Config validation errors and programming-error guards. Exit 2 = usage
+        # error, distinct from runtime failure.
         Console.error(str(exc))
         return 2
     if isinstance(exc, OSError):

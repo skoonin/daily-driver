@@ -1,19 +1,17 @@
-"""day-start subcommand: interactive morning planning session via `claude`.
+"""day-start subcommand: interactive morning planning session.
 
 Pre-launch the program writes:
   1. a plan stub at <output_dir>/YYYY/MM/YYYY-MM-DD-plan.md (only if absent —
-     never clobbers user/claude edits if day-start is re-run mid-day);
-  2. the day's state YAML with a freshly-minted `session_id` (UUID) and
-     `last_day_start_at`.
+     never clobbers user or AI edits if day-start is re-run mid-day);
+  2. the day's state YAML with `last_day_start_at` and `late_day`.
 
-Then `claude --session-id <uuid>` is launched so /daily-driver:check-in (F3) can resume the
-same conversation later in the day.
+Then the interactive provider is launched with a recorded session ID, so
+check-in and resume can continue the same conversation later in the day.
 """
 
 from __future__ import annotations
 
 import argparse
-import uuid
 from datetime import date as date_cls
 from pathlib import Path
 
@@ -22,14 +20,13 @@ from daily_driver.cli._common import (
     add_session_args,
     resolve_workspace,
 )
-from daily_driver.cli.commands._claude_session import (
+from daily_driver.cli.commands._session import (
     add_launch_mode_arg,
     default_session_name,
     handle_launch_exception,
     handle_launch_mode,
+    interactive_provider,
     launch_fresh_and_record,
-    require_claude_available,
-    resolve_interactive_model,
 )
 from daily_driver.core import clock
 from daily_driver.core.daily_state import (
@@ -38,7 +35,7 @@ from daily_driver.core.daily_state import (
     read_state,
     write_state,
 )
-from daily_driver.core.workspace import Workspace
+from daily_driver.core.workspace import Workspace, daily_file
 
 _SLASH_COMMAND = "/daily-driver:day-start"
 _SESSION_PREFIX = "day-cycle"
@@ -51,7 +48,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "day-start",
         parents=parents,
-        help="Interactive morning planning session (runs /daily-driver:day-start via claude)",
+        help="Interactive morning planning session (runs /daily-driver:day-start)",
     )
     add_session_args(parser)
     add_launch_mode_arg(parser)
@@ -61,12 +58,7 @@ def add_parser(
 
 
 def _plan_path(workspace: Workspace, day: date_cls) -> Path:
-    return (
-        workspace.output_dir
-        / f"{day.year:04d}"
-        / f"{day.month:02d}"
-        / f"{day.isoformat()}-plan.md"
-    )
+    return daily_file(workspace.output_dir, day, "plan")
 
 
 def _write_plan_stub_if_absent(path: Path, day: date_cls) -> None:
@@ -122,10 +114,9 @@ def run(args: argparse.Namespace) -> int:
         diverted = handle_launch_mode(args, workspace, "day-start")
         if diverted is not None:
             return diverted
-        require_claude_available()
+        provider = interactive_provider(workspace)
 
         today = clock.today()
-        session_id = str(uuid.uuid4())
 
         _write_plan_stub_if_absent(_plan_path(workspace, today), today)
         _record_day_start(workspace, today)
@@ -133,11 +124,11 @@ def run(args: argparse.Namespace) -> int:
         session_name = args.session_name or default_session_name(_SESSION_PREFIX, None)
         return launch_fresh_and_record(
             workspace=workspace,
-            prompt=_SLASH_COMMAND,
+            provider=provider,
+            command=_SLASH_COMMAND,
             session_name=session_name,
             agent=args.agent,
-            model=resolve_interactive_model(workspace, args.model),
-            session_id=session_id,
+            model=args.model,
         )
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)

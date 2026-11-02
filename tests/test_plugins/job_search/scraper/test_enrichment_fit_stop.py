@@ -18,13 +18,12 @@ from typing import Any
 
 import pytest
 
-from daily_driver.core.config_models import AIConfig
-from daily_driver.integrations import ai_provider
+from daily_driver.integrations import provider as ai
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment import enrich_fit_and_notes
 from daily_driver.plugins.job_search.scraper.models import EnrichedJob
 from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
-from tests.test_plugins.job_search.scraper import make_enriched
+from tests.test_plugins.job_search.scraper import make_enriched, ollama_provider
 
 _FIT_JSON = '{"fit": 7, "notes": "ok"}'
 
@@ -34,14 +33,12 @@ def _ctx(*, max_parallel: int, budget: int = 50) -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "enrichment": {
-                    "provider": "ollama",
-                    "model": "qwen2.5:14b",
                     "max_enrich_fit": budget,
                     "enrich_timeout": 5,
                 }
             }
         ),
-        ai=AIConfig.model_validate({"ollama": {"max_parallel": max_parallel}}),
+        provider=ollama_provider(max_parallel=max_parallel),
     )
 
 
@@ -57,7 +54,7 @@ def _jobs(n: int) -> list[EnrichedJob]:
 
 
 def test_total_concurrency_capped(monkeypatch: pytest.MonkeyPatch) -> None:
-    """High-water mark of simultaneous invoke_for calls must stay <= max_parallel."""
+    """High-water mark of simultaneous invoke calls must stay <= max_parallel."""
     max_parallel = 3
     n_jobs = 12
 
@@ -65,7 +62,7 @@ def test_total_concurrency_capped(monkeypatch: pytest.MonkeyPatch) -> None:
     high_water = [0]
     lock = threading.Lock()
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         with lock:
             active[0] += 1
             high_water[0] = max(high_water[0], active[0])
@@ -74,7 +71,7 @@ def test_total_concurrency_capped(monkeypatch: pytest.MonkeyPatch) -> None:
             active[0] -= 1
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
 
     out, fit_stats = enrich_fit_and_notes(
         _jobs(n_jobs), _ctx(max_parallel=max_parallel)
@@ -94,11 +91,11 @@ def test_serial_provider_runs_on_main_thread(
     """max_parallel=1 must keep every call on the main thread (no pool)."""
     thread_names: list[str] = []
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         thread_names.append(threading.current_thread().name)
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     out, _ = enrich_fit_and_notes(_jobs(3), _ctx(max_parallel=1))
 
     assert thread_names
@@ -115,7 +112,7 @@ def test_interrupt_mid_pass_drains_and_reraises_once(
     count_lock = threading.Lock()
     block = threading.Event()
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         with count_lock:
             count[0] += 1
             n = count[0]
@@ -124,7 +121,7 @@ def test_interrupt_mid_pass_drains_and_reraises_once(
         block.wait(timeout=5.0)
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = _jobs(16)
 
     def trip_sigint() -> None:
@@ -160,7 +157,7 @@ def test_stop_event_drains_completed_and_skips_pending(
     blocking_started = [0]
     block_secs = 0.3
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         with count_lock:
             count[0] += 1
             n = count[0]
@@ -171,7 +168,7 @@ def test_stop_event_drains_completed_and_skips_pending(
         block.wait(timeout=block_secs)
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = _jobs(16)
 
     def trip_stop() -> None:
@@ -200,7 +197,7 @@ def test_stop_event_unset_leaves_normal_path_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """With the event never set, the loop enriches every job as before."""
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda prompt, **k: _FIT_JSON)
+    monkeypatch.setattr(ai, "invoke", lambda provider, task, prompt, **k: _FIT_JSON)
     ctx = _ctx(max_parallel=4)
     out, fit_stats = enrich_fit_and_notes(_jobs(8), ctx)
     assert all(j.fit == 7 for j in out)
@@ -218,7 +215,7 @@ def test_stop_event_halts_serial_path_mid_loop(
     ctx = _ctx(max_parallel=1)
     count = [0]
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         count[0] += 1
         # Trip the stop after the second job's call settles; the loop's top-of-
         # iteration check then breaks before issuing the third call.
@@ -226,7 +223,7 @@ def test_stop_event_halts_serial_path_mid_loop(
             ctx.stop_event.set()
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     out, _ = enrich_fit_and_notes(_jobs(5), ctx)
 
     assert (
@@ -242,7 +239,7 @@ def test_interrupt_restores_previous_sigint_handler(
 ) -> None:
     """After the pass the prior SIGINT handler is restored (one notifier
     installed, one restored)."""
-    monkeypatch.setattr(ai_provider, "invoke_for", lambda prompt, **k: _FIT_JSON)
+    monkeypatch.setattr(ai, "invoke", lambda provider, task, prompt, **k: _FIT_JSON)
     sentinel = signal.getsignal(signal.SIGINT)
     enrich_fit_and_notes(_jobs(4), _ctx(max_parallel=4))
     assert signal.getsignal(signal.SIGINT) is sentinel
@@ -254,12 +251,12 @@ def test_nan_fit_is_one_counted_failure_others_enrich(
     """A NaN fit (parses through json.loads, finite check rejects it) must be a
     single counted failure -- not a crash that loses the whole batch."""
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         if "Co0 " in prompt or "Co0," in prompt or "at Co0" in prompt:
             return '{"fit": NaN, "notes": "x"}'
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = _jobs(5)
     out, fit_stats = enrich_fit_and_notes(jobs, _ctx(max_parallel=4))
 
@@ -273,12 +270,12 @@ def test_worker_exception_is_one_counted_failure_others_enrich(
     """An arbitrary worker exception surfacing at fut.result() must be isolated
     to one counted failure; the rest of the batch still enriches."""
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         if "Co0" in prompt:
             raise RuntimeError("worker blew up")
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = _jobs(5)
     out, fit_stats = enrich_fit_and_notes(jobs, _ctx(max_parallel=4))
 
@@ -296,7 +293,7 @@ def test_interrupt_with_failing_drain_still_reraises(
     block = threading.Event()
     four_done = threading.Event()
 
-    def fake_invoke(prompt: str, **kwargs: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         with count_lock:
             count[0] += 1
             n = count[0]
@@ -307,7 +304,7 @@ def test_interrupt_with_failing_drain_still_reraises(
         block.wait(timeout=5.0)
         return _FIT_JSON
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake_invoke)
+    monkeypatch.setattr(ai, "invoke", fake_invoke)
     jobs = _jobs(16)
 
     def trip_sigint() -> None:
@@ -329,11 +326,11 @@ def test_exclude_urls_skips_already_attempted_rows() -> None:
     excluded = frozenset({jobs[0].url, jobs[1].url})
     attempted: dict[str, set[str]] = {}
 
-    def fake_invoke(prompt: str, **kw: Any) -> str:
+    def fake_invoke(provider: Any, task: Any, prompt: str, **kw: Any) -> str:
         return '{"fit": 6, "notes": "ok"}'
 
     with pytest.MonkeyPatch().context() as mp:
-        mp.setattr(ai_provider, "invoke_for", fake_invoke)
+        mp.setattr(ai, "invoke", fake_invoke)
         out, _fn = enrich_fit_and_notes(
             jobs,
             _ctx(max_parallel=1),  # serial path

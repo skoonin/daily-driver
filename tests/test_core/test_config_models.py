@@ -39,23 +39,20 @@ def test_daily_driver_config_rejects_extra():
 
 
 # ---------------------------------------------------------------------------
-# InteractiveAIConfig (model-only; provider must be rejected, not ignored)
+# InteractiveAIConfig (routing lives in ai.providers, not here)
 # ---------------------------------------------------------------------------
 
 
-def test_interactive_ai_config_defaults_model_none():
-    assert InteractiveAIConfig().model is None
+def test_interactive_ai_config_default_resume_off():
+    assert InteractiveAIConfig().resume_check_in is False
 
 
-def test_interactive_ai_config_accepts_model():
-    assert InteractiveAIConfig(model="sonnet").model == "sonnet"
-
-
-def test_interactive_ai_config_rejects_provider():
-    # The launchers are claude-only, so a provider knob would be inert; the
-    # model rejects it loudly rather than accepting-and-ignoring it.
-    with pytest.raises(ValidationError):
-        InteractiveAIConfig(provider="ollama")
+def test_interactive_ai_config_rejects_provider_and_model():
+    # The interactive provider and its model are set under ai.providers; a
+    # knob here would be inert, so it is rejected loudly.
+    for field in ("provider", "model"):
+        with pytest.raises(ValidationError):
+            InteractiveAIConfig.model_validate({field: "x"})
 
 
 # ---------------------------------------------------------------------------
@@ -416,22 +413,8 @@ def test_config_rejects_unknown_plugin_namespace():
 
 
 # ---------------------------------------------------------------------------
-# F3 ClaudeConfig + F4 ScheduleConfig
+# F4 ScheduleConfig
 # ---------------------------------------------------------------------------
-
-
-def test_claude_config_default_resume_off():
-    from daily_driver.core.config_models import ClaudeConfig
-
-    m = ClaudeConfig()
-    assert m.resume_check_in is False
-
-
-def test_claude_config_rejects_extra():
-    from daily_driver.core.config_models import ClaudeConfig
-
-    with pytest.raises(ValidationError):
-        ClaudeConfig(resume_check_in=True, bogus=1)
 
 
 def test_schedule_config_default_both_none():
@@ -552,169 +535,45 @@ def test_days_rejects_unknown_values():
 
 
 # ---------------------------------------------------------------------------
-# AIConfig
+# AIConfig: interactive settings plus the providers map
 # ---------------------------------------------------------------------------
 
 
-def test_ai_config_defaults_to_claude_everywhere():
+def test_ai_config_defaults_to_no_user_providers():
     from daily_driver.core.config_models import AIConfig
 
     ai = AIConfig()
-    # The global default is the terminal fallback and keeps "claude"; per-task
-    # provider defaults are now None ("unset") so the global can win the chain.
-    assert ai.provider == "claude"
-    assert ai.model is None
-    assert ai.summary.provider is None
-    assert ai.summary.model is None
-    assert ai.voice_update.provider is None
-    assert ai.ollama.endpoint == "http://localhost:11434"
-    assert ai.ollama.timeout == 60
+    assert ai.providers == {}
+    assert ai.interactive.resume_check_in is False
 
 
-def test_ai_config_summary_ollama_with_model():
-    from daily_driver.core.config_models import AIConfig
-
-    ai = AIConfig.model_validate(
-        {
-            "summary": {"provider": "ollama", "model": "qwen2.5:14b"},
-            "ollama": {"endpoint": "http://10.0.0.5:11434", "timeout": 120},
-        }
-    )
-    assert ai.summary.provider == "ollama"
-    assert ai.summary.model == "qwen2.5:14b"
-    assert ai.ollama.endpoint == "http://10.0.0.5:11434"
-    assert ai.ollama.timeout == 120
-
-
-def test_ai_task_rejects_unknown_provider():
-    from daily_driver.core.config_models import AITaskConfig
-
-    with pytest.raises(ValidationError):
-        AITaskConfig(provider="vertex")  # type: ignore[arg-type]
-
-
-def test_ai_config_rejects_extra_keys():
+@pytest.mark.parametrize(
+    "old_key",
+    ["provider", "model", "summary", "voice_update", "claude", "ollama", "enrichment"],
+)
+def test_ai_config_rejects_routing_keys_replaced_by_providers(old_key: str) -> None:
     from daily_driver.core.config_models import AIConfig
 
     with pytest.raises(ValidationError):
-        AIConfig.model_validate({"unknown": {}})
+        AIConfig.model_validate({old_key: {}})
 
 
-def test_ai_task_rejects_extra_keys():
-    from daily_driver.core.config_models import AITaskConfig
+def test_root_config_omitting_ai_block_runs_everything_on_claude():
+    from daily_driver.core.providers import provider_for
+    from daily_driver.tasks import CORE_TASKS
 
-    with pytest.raises(ValidationError):
-        AITaskConfig.model_validate({"provider": "claude", "temperature": 0.1})
-
-
-def test_ollama_config_rejects_extra_keys():
-    from daily_driver.core.config_models import OllamaConfig
-
-    with pytest.raises(ValidationError):
-        OllamaConfig.model_validate({"endpoint": "x", "format": "json"})
-
-
-def test_root_config_omitting_ai_block_uses_defaults():
-    """Backwards-compat: omitting `ai:` keeps claude-only behavior."""
     c = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
-    # Unset per-task/domain providers default to None; the global terminal
-    # fallback ("claude") is what makes all-unset resolve to claude at runtime.
-    assert c.ai.provider == "claude"
-    assert c.ai.summary.provider is None
-    assert EnrichmentConfig().provider is None
+    assert {provider_for(c, task).name for task in CORE_TASKS} == {"claude"}
 
 
-# ---------------------------------------------------------------------------
-# AIConfig split: core keeps summary + provider blocks; enrichment moves to
-# the job_search plugin (PART A of the enrichment-config split).
-# ---------------------------------------------------------------------------
-
-
-def test_core_ai_config_has_no_enrichment_task():
-    """Core `ai:` no longer owns an enrichment task block."""
-    from daily_driver.core.config_models import AIConfig
-
-    assert "enrichment" not in AIConfig.model_fields
-
-
-def test_core_ai_config_rejects_enrichment_key():
-    """A stale `ai.enrichment:` block hard-fails (extra=forbid, no shim)."""
-    from daily_driver.core.config_models import AIConfig
-
+@pytest.mark.parametrize("old_key", ["provider", "model", "fit_notes"])
+def test_plugin_enrichment_rejects_routing_keys(old_key: str) -> None:
+    """Job review routing moved to plugins.job_search.provider and .tasks."""
     with pytest.raises(ValidationError):
-        AIConfig.model_validate({"enrichment": {"provider": "ollama"}})
+        EnrichmentConfig.model_validate({old_key: "claude"})
 
 
-def test_core_ai_config_constructor_rejects_enrichment_kwarg():
-    """The migration's central promise: passing enrichment= at all is rejected.
-
-    Locks the extra_forbidden break at the constructor, not only via
-    model_validate, so a stray kwarg can't silently no-op.
-    """
-    from daily_driver.core.config_models import AIConfig, AITaskConfig
-
-    with pytest.raises(ValidationError):
-        AIConfig(enrichment=AITaskConfig())  # type: ignore[call-arg]
-
-
-def test_core_config_rejects_ai_enrichment():
-    """End-to-end: a root config with `ai.enrichment:` is rejected."""
-    with pytest.raises(ValidationError):
-        Config.model_validate(
-            {
-                "tracker": {"categories": {"task": {"required": ["title"]}}},
-                "ai": {"enrichment": {"provider": "ollama"}},
-            }
-        )
-
-
-def test_core_ai_config_keeps_summary_and_providers():
-    """Summary routing + claude/ollama connection blocks survive on core."""
-    from daily_driver.core.config_models import AIConfig
-
-    m = AIConfig()
-    assert m.summary.provider is None
-    assert m.provider == "claude"
-    assert m.claude.max_parallel == 4
-    assert m.ollama.endpoint == "http://localhost:11434"
-
-
-def test_core_summary_can_route_to_ollama():
-    """Summary may route to ollama (shared provider infra)."""
-    from daily_driver.core.config_models import AIConfig
-
-    m = AIConfig.model_validate({"summary": {"provider": "ollama", "model": "phi4"}})
-    assert m.summary.provider == "ollama"
-    assert m.summary.model == "phi4"
-
-
-def test_plugin_enrichment_gains_provider_and_model():
-    """EnrichmentConfig now carries its own provider/model routing."""
-    m = EnrichmentConfig()
-    assert m.provider is None
-    assert m.model is None
-    routed = EnrichmentConfig.model_validate(
-        {"provider": "ollama", "model": "qwen2.5:14b"}
-    )
-    assert routed.provider == "ollama"
-    assert routed.model == "qwen2.5:14b"
-
-
-def test_plugin_enrichment_provider_rejects_unknown():
-    with pytest.raises(ValidationError):
-        EnrichmentConfig.model_validate({"provider": "gpt4"})
-
-
-def test_plugin_enrichment_roundtrips_with_existing_knobs():
-    """Provider/model coexist with the existing budget/timeout knobs."""
-    m = EnrichmentConfig.model_validate(
-        {
-            "provider": "ollama",
-            "model": "phi4",
-            "enrich_timeout": 45,
-            "max_enrich_fit": 10,
-        }
-    )
-    assert m.provider == "ollama"
+def test_plugin_enrichment_keeps_budget_and_timeout_knobs():
+    m = EnrichmentConfig.model_validate({"enrich_timeout": 45, "max_enrich_fit": 10})
     assert m.enrich_timeout == 45
     assert m.max_enrich_fit == 10

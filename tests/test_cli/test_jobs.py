@@ -1626,16 +1626,15 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     assert any("pruned" in k for k in keys)
 
 
-def test_jobs_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
-    """Regression: jobs `backfill` must pass the workspace's typed `AIConfig`
-    (shared provider blocks) plus the plugin's enrichment routing to enrichment.
+def test_jobs_backfill_passes_routed_provider_to_run_backfill(tmp_path: Path) -> None:
+    """Regression: jobs `backfill` must pass the provider routed for fit_notes.
+
     Without this, every backfill call silently defaults to claude regardless of
-    plugins.job_search.enrichment.provider.
+    plugins.job_search.provider.
     """
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
-    # Inject an explicit ollama config so the test fails loudly if it's dropped.
     (ws / ".dd-config.yaml").write_text(
         "daily_driver:\n"
         "  output_dir: .\n"
@@ -1645,16 +1644,14 @@ def test_jobs_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
         "    task:\n"
         "      required: [title]\n"
         "ai:\n"
-        "  ollama:\n"
-        "    endpoint: http://localhost:11434\n"
-        "    timeout: 60\n"
+        "  providers:\n"
+        "    lmstudio:\n"
+        "      model: qwen2.5:32b\n"
         "plugins:\n"
         "  job_search:\n"
+        "    provider: lmstudio\n"
         "    scraper:\n"
         "      enabled: true\n"
-        "    enrichment:\n"
-        "      provider: ollama\n"
-        "      model: qwen2.5:32b\n"
     )
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
@@ -1662,16 +1659,14 @@ def test_jobs_backfill_passes_ai_block_to_run_backfill(tmp_path: Path) -> None:
 
     assert rc == 0
     assert mock_backfill.called
-    plugin = mock_backfill.call_args.args[0]
-    assert plugin.enrichment.provider == "ollama"
-    assert plugin.enrichment.model == "qwen2.5:32b"
-    # The shared provider block still flows through for connection/tuning.
-    ai = mock_backfill.call_args.kwargs["ai"]
-    assert ai.ollama.timeout == 60
+    provider = mock_backfill.call_args.kwargs["provider"]
+    assert provider.name == "lmstudio"
+    assert provider.settings.model == "qwen2.5:32b"
+    assert provider.settings.base_url == "http://localhost:1234/v1"
 
 
-def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
-    """Same regression for the live scrape path: routing must flow through."""
+def test_jobs_run_scrape_passes_routed_provider_to_run(tmp_path: Path) -> None:
+    """Same regression for the live scrape path, routed by a per-task override."""
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
@@ -1683,13 +1678,16 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         "  categories:\n"
         "    task:\n"
         "      required: [title]\n"
+        "ai:\n"
+        "  providers:\n"
+        "    ollama:\n"
+        "      model: qwen2.5:32b\n"
         "plugins:\n"
         "  job_search:\n"
+        "    tasks:\n"
+        "      fit_notes: ollama\n"
         "    scraper:\n"
         "      enabled: true\n"
-        "    enrichment:\n"
-        "      provider: ollama\n"
-        "      model: qwen2.5:32b\n"
     )
 
     with patch(
@@ -1698,9 +1696,9 @@ def test_jobs_run_scrape_passes_ai_block_to_run(tmp_path: Path) -> None:
         rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
 
     assert rc == 0
-    plugin = mock_run.call_args.args[0]
-    assert plugin.enrichment.provider == "ollama"
-    assert plugin.enrichment.model == "qwen2.5:32b"
+    provider = mock_run.call_args.kwargs["provider"]
+    assert provider.name == "ollama"
+    assert provider.settings.model == "qwen2.5:32b"
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,8 @@ from pydantic import BaseModel
 
 from daily_driver.core.config_models import Config
 from daily_driver.plugins import _validate_registry, enabled_plugins
-from daily_driver.plugins._base import Plugin
+from daily_driver.plugins._base import Plugin, PluginConfigBase
+from daily_driver.tasks import Task
 
 
 def _plugin(**overrides) -> Plugin:
@@ -110,3 +111,58 @@ def test_config_model_without_enabled_field_is_on_when_block_present(
 
     assert enabled_plugins(on) == (sample,)
     assert enabled_plugins(off) == ()
+
+
+def test_plugin_with_tasks_needs_plugin_config_base() -> None:
+    class SampleConfig(BaseModel):
+        note: str = ""
+
+    with pytest.raises(ValueError, match="PluginConfigBase"):
+        _validate_registry(
+            (_plugin(config_model=SampleConfig, tasks=(Task("draft", "text"),)),)
+        )
+
+
+def test_plugin_with_tasks_and_no_config_model_rejected() -> None:
+    with pytest.raises(ValueError, match="config_model"):
+        _validate_registry((_plugin(tasks=(Task("draft", "text"),)),))
+
+
+def test_plugin_task_names_must_be_unique() -> None:
+    class SampleConfig(PluginConfigBase):
+        pass
+
+    with pytest.raises(ValueError, match="duplicate task 'draft'"):
+        _validate_registry(
+            (
+                _plugin(
+                    config_model=SampleConfig,
+                    tasks=(Task("draft", "text"), Task("draft", "agent")),
+                ),
+            )
+        )
+
+
+def test_plugin_with_tasks_and_config_base_passes() -> None:
+    class SampleConfig(PluginConfigBase):
+        pass
+
+    _validate_registry(
+        (_plugin(config_model=SampleConfig, tasks=(Task("draft", "text"),)),)
+    )
+
+
+def test_job_search_declares_fit_notes() -> None:
+    from daily_driver.plugins.job_search import PLUGIN
+
+    assert Task("fit_notes", "text") in PLUGIN.tasks
+
+
+def test_plugin_redefining_reserved_field_rejected() -> None:
+    class SampleConfig(PluginConfigBase):
+        tasks: list[str] = []  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="reserved 'tasks'"):
+        _validate_registry(
+            (_plugin(config_model=SampleConfig, tasks=(Task("draft", "text"),)),)
+        )

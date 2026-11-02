@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from daily_driver.core.clock import today
-from daily_driver.core.config_models import AIConfig
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import (
@@ -29,6 +28,7 @@ from daily_driver.core.logging import (
     live_log_window,
 )
 from daily_driver.core.progress import Group, Item, Phase, RunProgress
+from daily_driver.core.providers import Provider, default_provider
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.jobs_lock import (
     LOCK_GIVEUP_MESSAGE,
@@ -87,13 +87,13 @@ _SATURATION_HINTS: dict[tuple[str, str], str] = {
 }
 
 
-# ── Ollama enrichment preflight ──────────────────────────────────────────────
+# ── HTTP provider enrichment preflight ───────────────────────────────────────
 
 
 # Independent of the configured per-call enrich_timeout: this single reachability
 # probe should fail fast on a down server, not wait out a tuning value meant for
 # real generation calls.
-_OLLAMA_PREFLIGHT_TIMEOUT = 3
+_HTTP_PREFLIGHT_TIMEOUT = 3
 
 # Bound on the interrupt-path join of the overlap (wave-1) enrichment thread.
 # Long enough to let an in-flight LLM call settle and flush, short enough that a
@@ -103,7 +103,7 @@ _WAVE1_INTERRUPT_JOIN_SECONDS = 30
 
 
 def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
-    """Whether this run will make ollama LLM calls (detail pages don't count).
+    """Whether this run will make LLM calls (detail pages don't count).
 
     Detail-page enrichment is plain HTTP against the job board, so it needs no
     provider. Only the fit / notes pass routes to the LLM, so the preflight is
@@ -113,64 +113,33 @@ def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
     return cfg.enrich_fit or cfg.enrich_notes
 
 
-def _ollama_enrichment_preflight(plugin: JobSearchPlugin, ai: AIConfig) -> bool:
-    """Ping ollama once before LLM enrichment; return False (and warn) to skip.
+def _http_enrichment_preflight(provider: Provider) -> bool:
+    """Ask an HTTP provider once before LLM enrichment; return False (and warn) to skip.
 
-    Mirrors the claude which-guard intent — verify the provider is usable before
-    the per-job loop — but for ollama the check is a network probe, so it runs
-    here at run start rather than per enricher. One cheap ``list_models`` GET on
-    a short fixed timeout (:data:`_OLLAMA_PREFLIGHT_TIMEOUT`) stands in for N
-    per-call timeouts on a down server. Reuses the doctor reachability + pulled-
-    model logic.
-
-    Each enrichment phase routes independently (a global `ai.provider: ollama`
-    reaches enrichment even with the enrichment block unset), so the resolved
-    route per phase — not the raw `enrichment.provider` — decides whether to
-    probe. Returns True (proceed) when no enabled phase resolves to ollama.
+    One cheap ``GET /models`` on a short fixed timeout
+    (:data:`_HTTP_PREFLIGHT_TIMEOUT`) stands in for N per-call timeouts on a
+    down server. A command provider returns True: the enricher's own PATH check
+    covers a missing program.
     """
-    from daily_driver.integrations import ai_provider, ollama_client
+    from daily_driver.integrations import provider as ai
 
-    cfg = plugin.enrichment
-    # A phase is probed only when its own toggles are on AND it resolves to
-    # ollama: a disabled phase makes no LLM calls, so its route is moot.
-    phase_enabled = {
-        "fit_notes": cfg.enrich_fit or cfg.enrich_notes,
-    }
-    ollama_models: list[str] = []
-    for phase, enabled in phase_enabled.items():
-        if not enabled:
-            continue
-        provider, model = ai_provider.resolve_route(ai, task=phase, domain_cfg=cfg)
-        if provider == "ollama":
-            ollama_models.append(model or ollama_client.DEFAULT_MODEL)
-    if not ollama_models:
+    settings = provider.settings
+    if settings.base_url is None:
         return True
-
-    endpoint = ai.ollama.endpoint
     try:
-        pulled = ollama_client.list_models(endpoint, timeout=_OLLAMA_PREFLIGHT_TIMEOUT)
-    except ollama_client.OllamaNotReachableError:
+        served = ai.list_models(provider, timeout=_HTTP_PREFLIGHT_TIMEOUT)
+    except ai.AIInvocationError as exc:
         Console.warning(
-            f"ollama not reachable at {endpoint} -- LLM enrichment skipped this "
-            "run; start the server (ollama serve) and run jobs backfill to "
+            f"{exc} -- LLM enrichment skipped this run; start the server or fix "
+            f"ai.providers.{provider.name}.base_url, then run jobs backfill to "
             "fill these rows"
         )
         return False
-    except Exception as exc:  # noqa: BLE001
+    if settings.model not in served:
         Console.warning(
-            f"ollama at {endpoint} returned an error ({exc}) -- LLM enrichment "
-            "skipped this run; run jobs backfill once it is healthy"
-        )
-        return False
-
-    # Preserve insertion order while de-duping (both phases may share a model).
-    missing = [m for m in dict.fromkeys(ollama_models) if m not in pulled]
-    if missing:
-        model = missing[0]
-        Console.warning(
-            f"ollama model {model!r} not pulled at {endpoint} -- LLM enrichment "
-            f"skipped this run; pull it (ollama pull {model}) and run jobs "
-            "backfill to fill these rows"
+            f"{provider.name} at {settings.base_url} does not list model "
+            f"{settings.model!r} -- LLM enrichment skipped this run; load or "
+            "download it and run jobs backfill to fill these rows"
         )
         return False
     return True
@@ -254,7 +223,7 @@ def run_backfill(
     csv_path: Path,
     ephemeral_dir: Path,
     *,
-    ai: AIConfig | None = None,
+    provider: Provider | None = None,
     context_text: str = "",
     dry_run: bool = False,
     limit: int | None = None,
@@ -268,7 +237,7 @@ def run_backfill(
     Shares the run-side enrichment machinery: ``_enrich_wave`` renders the same
     Detail pages / Fit and notes phase rows under a "Job backfill"
     :class:`RunProgress` block, fans the fit/notes pass out under the provider's
-    concurrency cap, flushes every ~25 results, and runs the ollama preflight
+    concurrency cap, flushes every ~25 results, and runs the HTTP provider preflight
     before the LLM phase.
 
     The enricher itself skips already-filled fields and ENRICH_SKIP-status
@@ -296,7 +265,7 @@ def run_backfill(
     so its per-flush sections do not re-take the (non-reentrant) flock.
 
     The pre-mutation backup is LAZY: taken just before the first actual write
-    (the sink's ``pre_write_hook``), so a no-op backfill (ollama down, nothing to
+    (the sink's ``pre_write_hook``), so a no-op backfill (server down, nothing to
     persist) leaves the file untouched and writes no backup. The final rewrite is
     skipped entirely when enrichment changed no row content.
 
@@ -322,8 +291,11 @@ def run_backfill(
         raise ScraperError(f"jobs.csv not found at {csv_path}")
 
     backfill_started_at = datetime.now(timezone.utc)
-    ctx = ScrapeContext(plugin=plugin, ai=ai or AIConfig(), context_text=context_text)
-    ai_cfg = ctx.ai
+    ctx = ScrapeContext(
+        plugin=plugin,
+        provider=provider or default_provider(),
+        context_text=context_text,
+    )
     lock_path = jobs_lock_path(ephemeral_dir)
 
     # Force-update cooldown: skip rows enriched within the window so an
@@ -592,7 +564,6 @@ def run_backfill(
                 enrich_group = rp.group("Enriching jobs")
                 detail_stats, fit_stats = _enrich_wave(
                     plugin,
-                    ai_cfg,
                     jobs,
                     ctx,
                     sink,
@@ -632,7 +603,7 @@ def run_backfill(
         else:
             # Parity with run(): if periodic saves degraded mid-run, say so once,
             # then let the final flush retry. The final flush is a no-op (no
-            # write, no backup) when enrichment changed nothing -- e.g. ollama
+            # write, no backup) when enrichment changed nothing -- e.g. the server
             # down -- so a quiet run leaves the file's bytes and mtime untouched.
             # A final-flush OSError is caught here to name the backup before
             # re-raising, so the user has a rollback path even when the disk
@@ -753,7 +724,6 @@ def _print_dry_run_table(jobs: list[EnrichedJob]) -> None:  # noqa: F821
 
 def _run_llm_enrichment(
     plugin: JobSearchPlugin,
-    ai_cfg: AIConfig,
     typed_jobs: list[EnrichedJob],  # noqa: F821
     ctx: ScrapeContext,
     sink: _JobSink,
@@ -768,13 +738,13 @@ def _run_llm_enrichment(
 ) -> dict[str, int]:
     """Run the fit/notes LLM pass, flushing as it goes.
 
-    Returns ``fn_stats``. ``run_preflight`` gates the ollama reachability probe
-    -- run it before the FIRST wave only; later waves skip it (the server state
-    cannot change mid-run). On a failed probe the LLM phase renders as a
+    Returns ``fn_stats``. ``run_preflight`` gates the HTTP provider reachability
+    probe -- run it before the FIRST wave only; later waves skip it (the server
+    state cannot change mid-run). On a failed probe the LLM phase renders as a
     zero-count done bar and zero counters (the same shape ``--no-enrich``
     records), so the manifest stays honest and the user fills the rows later with
-    ``jobs backfill``. The claude provider is untouched (its which-guard inside
-    the enricher already covers a missing CLI). ``sink.flush_periodic`` is the
+    ``jobs backfill``. A command provider is not probed (the enricher's PATH
+    check already covers a missing program). ``sink.flush_periodic`` is the
     periodic resilience hook, invoked every ~25 results on the coordinator
     thread. ``fit_budget`` is the SHARED running total's remaining allowance for
     this wave (None = the config cap; an explicit 0 spends nothing).
@@ -785,7 +755,7 @@ def _run_llm_enrichment(
 
     run_llm = True
     if run_preflight and _llm_enrichment_requested(plugin):
-        run_llm = _ollama_enrichment_preflight(plugin, ai_cfg)
+        run_llm = _http_enrichment_preflight(ctx.provider)
 
     if run_llm:
         # A None phase means the pass is disabled by config: no bar exists and
@@ -824,7 +794,6 @@ def _run_llm_enrichment(
 
 def _enrich_wave(
     plugin: JobSearchPlugin,
-    ai_cfg: AIConfig,
     jobs: list[EnrichedJob],  # noqa: F821
     ctx: ScrapeContext,
     sink: _JobSink,
@@ -896,7 +865,6 @@ def _enrich_wave(
 
     fn_stats = _run_llm_enrichment(
         plugin,
-        ai_cfg,
         jobs,
         ctx,
         sink,
@@ -1059,7 +1027,7 @@ def run(
     output_dir: Path,
     ephemeral_dir: Path,
     *,
-    ai: AIConfig | None = None,
+    provider: Provider | None = None,
     context_text: str = "",
     dry_run: bool = False,
     no_enrich: bool = False,
@@ -1096,7 +1064,7 @@ def run(
             plugin,
             output_dir,
             ephemeral_dir,
-            ai=ai,
+            provider=provider,
             context_text=context_text,
             dry_run=dry_run,
             no_enrich=no_enrich,
@@ -1186,7 +1154,7 @@ def _run_impl(
     output_dir: Path,
     ephemeral_dir: Path,
     *,
-    ai: AIConfig | None = None,
+    provider: Provider | None = None,
     context_text: str = "",
     dry_run: bool = False,
     no_enrich: bool = False,
@@ -1206,7 +1174,6 @@ def _run_impl(
 
     csv_path = output_dir / "jobs.csv"
     lock_path = jobs_lock_path(ephemeral_dir)
-    ai_cfg = ai or AIConfig()
 
     if not plugin.scraper.enabled:
         Console.warning(
@@ -1342,7 +1309,7 @@ def _run_impl(
     # pagination instead of waiting for the post-scrape filter below.
     ctx = ScrapeContext(
         plugin=plugin,
-        ai=ai_cfg,
+        provider=provider or default_provider(),
         context_text=context_text,
         known_urls=frozenset(known_urls),
         discovered_boards=discovered_boards,
@@ -1520,7 +1487,6 @@ def _run_impl(
                 attempted: dict[str, set[str]] = {}
                 d, f = _enrich_wave(
                     plugin,
-                    ai_cfg,
                     phase1_jobs,
                     ctx,
                     sink,
@@ -1747,7 +1713,6 @@ def _run_impl(
                     wave2_attempted: dict[str, set[str]] = {}
                     _, f2 = _enrich_wave(
                         plugin,
-                        ai_cfg,
                         typed_jobs,
                         ctx,
                         sink,
@@ -1774,7 +1739,6 @@ def _run_impl(
                 single_attempted: dict[str, set[str]] = {}
                 _, f1 = _enrich_wave(
                     plugin,
-                    ai_cfg,
                     typed_jobs,
                     ctx,
                     sink,
@@ -1848,7 +1812,6 @@ def _run_impl(
                 folded_group = rp.group("Enriching backlog")
                 _, folded_stats = _enrich_wave(
                     plugin,
-                    ai_cfg,
                     folded_candidates,
                     ctx,
                     sink,
