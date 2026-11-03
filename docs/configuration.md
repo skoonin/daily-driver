@@ -293,11 +293,16 @@ A template is a list that Daily Driver turns into the command to run. Daily Driv
 - A string. It becomes one argument. A placeholder in it, such as `{workspace}`, is filled in. A placeholder takes no format spec or conversion, such as `{model:>10}` or `{model!r}`. Write `{{` and `}}` for a literal brace.
 - A group: a list of strings inside the list. The whole group is dropped when any placeholder in it has no value.
 
-A placeholder outside a group that has no value is an error.
+A placeholder outside a group that has no value is an error. Some placeholders can have no value, so Daily Driver requires a group for them when the config loads:
+
+- `{model}`, when the provider sets no `model`.
+- `{system}`, in `agent`, `text`, and `cleanup`.
+- `{command}` and `{prompt_file}`, in `resume`.
+- `{workspace}`, in `cleanup`, when the provider has a `text` template.
 
 | Placeholder | Templates | Value |
 | --- | --- | --- |
-| `{workspace}` | `run`, `resume`, `agent`, `cleanup` | The workspace folder. A text task has none, so a provider with a `text` template must put `{workspace}` in a group in `cleanup`. |
+| `{workspace}` | `run`, `resume`, `agent`, `cleanup` | The workspace folder. Empty in `cleanup` after a text task. |
 | `{command}` | `run`, `resume` | The slash command of the launcher, such as `/daily-driver:day-start`. Empty for `resume`. |
 | `{prompt_file}` | `run`, `resume` | Path of the file that holds the launcher's instructions. Empty for `resume`. Daily Driver writes the file only when the template uses this placeholder. |
 | `{session_id}` | all | The session ID that was made or saved. The provider must have a `session_id` format. |

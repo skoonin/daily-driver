@@ -99,7 +99,7 @@ Each parallel request uses extra memory. On a Mac with 32 GB of memory, set `max
 | State | Status | Hint |
 | --- | --- | --- |
 | The server answers, and the model is in its list | `OK` | none |
-| The server does not answer, or its model list is unreadable | `WARNING` | `Start the server at <base_url>, or check that base_url points at an OpenAI-compatible server.` |
+| The server does not answer, answers with an error, or sends an unreadable model list | `WARNING` | `Start the server at <base_url>, or check that ai.providers.<provider>.base_url points at an OpenAI-compatible server.` |
 | The model is not in the list | `WARNING` | `Load or download <model>, or change ai.providers.<provider>.model.` |
 
 No row appears for a built-in provider that runs no task.
@@ -107,8 +107,11 @@ No row appears for a built-in provider that runs no task.
 ## Troubleshooting
 
 - **`not reachable at` or `connection refused`.** The model server is not running. Start LM Studio's server, or open the ollama app.
-- **`enrichment skipped this run`.** `jobs run` checks the server once, at the start of the job review. If the server is not running or does not list the model, `jobs run` skips the review of new jobs. It prints one warning that names the address or the model. The new jobs are still saved to `jobs.csv`. Start the server and load the model. Then run `jobs backfill` to fill the empty cells.
+- **`enrichment skipped this run`.** `jobs run` checks the server once, at the start of the job review. If the server is not running or does not list the model, `jobs run` skips the review of new jobs. It prints one warning that names the address or the model. The new jobs are still saved to `jobs.csv`. Start the server and load the model, or fix `ai.providers.<provider>.base_url`. Then run `jobs backfill` to fill the empty cells.
 - **`has no model`.** A provider that runs a task needs a `model`. Set `ai.providers.<provider>.model`.
+- **`returned no answer (finish_reason: length)`.** The model used all of its context window before it wrote an answer. Give the model a larger context window in LM Studio or ollama, or use a model with a larger one.
+- **`returned no answer (refusal: ...)`.** The model refused the prompt. Try another model.
+- **`sent an unreadable reply`.** The address answers, but not as an OpenAI-compatible server. Check that `ai.providers.<provider>.base_url` ends in `/v1`.
 - **Cells stay empty after `jobs backfill`.** Run it again with `-vv`. See [Start with -v or -vv](troubleshooting.md#start-with--v-or--vv).
 - **A review times out.** Raise `plugins.job_search.enrichment.enrich_timeout`. A model that loads on its first request is slow at first and fast after.
 - **Answers are weaker than Claude's.** Try a larger model. Or keep job review on Claude and use the local model only for `voice-update`.

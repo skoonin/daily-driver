@@ -1,7 +1,7 @@
 """Root conftest: import paths and the autouse guards every test suite shares.
 
-Puts source/ and the repo root on the import path when pytest runs directly,
-pins the console width, bridges caplog to the daily_driver logger, and stops
+Puts source/ and the repo root on the import path (and on PYTHONPATH for
+multiprocessing spawn workers), pins the console width, bridges caplog to the daily_driver logger, and stops
 any test from launching a real AI program.
 """
 
@@ -34,10 +34,10 @@ if str(ROOT_DIR) not in _existing_pp.split(os.pathsep):
 def _fixed_console_width(monkeypatch):
     """Render Rich output at CI's width whatever terminal runs the tests.
 
-    Rich takes its width from COLUMNS, and tox sets COLUMNS to the width of
-    the terminal that started it, so a table cell wraps differently per
-    terminal and a substring assertion can pass in CI (no terminal, 80
-    columns) and fail locally.
+    Rich takes its width from COLUMNS, which tox sets to the width of the
+    terminal that started it and a developer shell may export, so a table
+    cell wraps differently per terminal and a substring assertion can pass
+    in CI (no terminal, 80 columns) and fail locally.
     """
     monkeypatch.setenv("COLUMNS", "80")
 

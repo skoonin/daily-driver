@@ -50,14 +50,30 @@ _LAUNCH = frozenset(
 _HEADLESS = frozenset({"workspace", "model", "system", "session_id"})
 # The values each template is rendered with. A text task runs in an empty
 # directory, so `text` never gets `{workspace}`; `cleanup` runs after an agent
-# or a text call, with that call's values, so after a text call its
-# `{workspace}` is empty (`_check_shape` requires a group then).
+# or a text call, with that call's values.
 PLACEHOLDERS: Mapping[str, frozenset[str]] = {
     "run": _LAUNCH,
     "resume": _LAUNCH,
     "agent": _HEADLESS,
     "text": _HEADLESS - {"workspace"},
     "cleanup": _HEADLESS,
+}
+# Why a placeholder can have no value, so `_check_shape` can require a group.
+# `{model}` counts only when the provider sets no model, and `{workspace}` only
+# in a cleanup that can follow a text call.
+_EMPTY_BECAUSE: Mapping[str, str] = {
+    "model": "the provider sets no model",
+    "system": "some calls pass no system text",
+    "command": "daily-driver resume passes none",
+    "prompt_file": "daily-driver resume passes none",
+    "workspace": "a text task has no workspace",
+}
+_CAN_BE_EMPTY: Mapping[str, frozenset[str]] = {
+    "run": frozenset(),
+    "resume": frozenset({"command", "prompt_file"}),
+    "agent": frozenset({"system"}),
+    "text": frozenset({"system"}),
+    "cleanup": frozenset({"system"}),
 }
 _TEMPLATE_FIELDS = tuple(PLACEHOLDERS)
 _CORE_TASK_NAMES = tuple(task.name for task in CORE_TASKS)
@@ -217,17 +233,24 @@ def _check_shape(name: str, entry: ProviderConfig) -> None:
                     f"ai.providers.{name}.{field} uses {{session_id}}, but the "
                     'provider has no session_id format; add one, such as "{uuid}"'
                 )
-    if entry.text and entry.cleanup:
-        ungrouped = {
+    for field in launched:
+        can_be_empty = set(_CAN_BE_EMPTY[field])
+        if entry.model is None:
+            can_be_empty.add("model")
+        if field == "cleanup" and entry.text:
+            can_be_empty.add("workspace")
+        ungrouped = [
             placeholder
-            for element in entry.cleanup
+            for element in getattr(entry, field)
             if isinstance(element, str)
             for placeholder in placeholder_names(element)
-        }
-        if "workspace" in ungrouped:
+            if placeholder in can_be_empty
+        ]
+        if ungrouped:
+            first = ungrouped[0]
             raise ValueError(
-                f"ai.providers.{name}.cleanup uses {{workspace}} outside a group, "
-                "but a text task has no workspace; put it in a group"
+                f"ai.providers.{name}.{field} uses {{{first}}} outside a group, "
+                f"but {_EMPTY_BECAUSE[first]}; put it in a group"
             )
 
 

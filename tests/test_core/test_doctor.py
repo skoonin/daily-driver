@@ -209,6 +209,7 @@ def test_http_provider_warns_when_unreachable(
     assert "not reachable" in row.detail
     assert "http://localhost:1234/v1" in (row.fix_hint or "")
     assert "OpenAI-compatible server" in (row.fix_hint or "")
+    assert "ai.providers.lmstudio.base_url" in (row.fix_hint or "")
 
 
 def test_unused_user_provider_warns_but_unused_builtins_do_not(

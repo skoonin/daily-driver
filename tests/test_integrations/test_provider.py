@@ -222,6 +222,22 @@ def test_blank_output_is_no_answer() -> None:
         invoke(blank, VOICE_UPDATE, "x")
 
 
+def test_missing_workspace_is_reported_as_a_directory(
+    fake_tool: Path, tmp_path: Path
+) -> None:
+    gone = tmp_path / "gone"
+    with pytest.raises(AIInvocationError, match="working directory .*gone"):
+        invoke(_provider(agent=[str(fake_tool)]), SUMMARY, "x", workspace=gone)
+
+
+def test_program_that_cannot_start_raises_invocation_error(tmp_path: Path) -> None:
+    not_a_program = tmp_path / "not-a-program"
+    not_a_program.write_bytes(b"\x00\x01 not an executable format")
+    not_a_program.chmod(not_a_program.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(AIInvocationError, match="could not start"):
+        invoke(_provider(text=[str(not_a_program)]), VOICE_UPDATE, "x")
+
+
 def _session_provider(tool: Path) -> Provider:
     return _provider(
         session_id="ses_{uuid}",
@@ -373,6 +389,25 @@ def test_http_no_answer_names_the_finish_reason() -> None:
             invoke(_http(), VOICE_UPDATE, "q")
     assert str(info.value) == "fake returned no answer (finish_reason: length)"
     assert info.value.stdout == ""
+
+
+def test_http_no_answer_names_the_refusal() -> None:
+    body = {
+        "choices": [
+            {
+                "message": {"content": None, "refusal": "I cannot help with that"},
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    with patch.object(provider_mod.requests, "post") as post:
+        post.return_value = _response(200, body)
+        with pytest.raises(AIInvocationError) as info:
+            invoke(_http(), VOICE_UPDATE, "q")
+    assert str(info.value) == (
+        "fake returned no answer (finish_reason: stop; refusal: I cannot help "
+        "with that)"
+    )
 
 
 @pytest.mark.parametrize("body", [{"error": "model not loaded"}, {"choices": []}, []])

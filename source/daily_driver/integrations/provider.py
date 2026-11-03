@@ -226,8 +226,8 @@ def _run(
 ) -> str:
     """Run `argv` with `prompt` on stdin and return its stdout.
 
-    `cleanup` runs once the program has exited, whatever the outcome, and not
-    at all when the program never started.
+    `cleanup` runs when the call ends, whatever the outcome, and not at all
+    when the program never started.
     """
     try:
         # No start_new_session: the child shares our foreground process group,
@@ -241,12 +241,21 @@ def _run(
             cwd=cwd,
         )
     except FileNotFoundError as exc:
-        raise AIInvocationError(
-            f"{argv[0]} not found on PATH (provider {name})", provider=name
-        ) from exc
+        # Popen raises the same error for a missing working directory, and
+        # names that directory as the missing file.
+        if cwd is not None and str(exc.filename) == str(cwd):
+            message = f"{name}: working directory {cwd} does not exist"
+        else:
+            message = f"{argv[0]} not found on PATH (provider {name})"
+        raise AIInvocationError(message, provider=name) from exc
     except PermissionError as exc:
         raise AIInvocationError(
             f"{argv[0]} is not executable (provider {name})", provider=name
+        ) from exc
+    except OSError as exc:
+        raise AIInvocationError(
+            f"{argv[0]} could not start (provider {name}): {exc.strerror or exc}",
+            provider=name,
         ) from exc
     try:
         stdout, stderr = _communicate(proc, prompt, timeout)
@@ -340,10 +349,22 @@ def _post(
         )
     answer = _content(choice)
     if not answer.strip():
-        # The body of a normal completion adds only usage counts; the finish
-        # reason (often "length": the context ran out) is the diagnosis.
-        reason = choice.get("finish_reason")
-        detail = f" (finish_reason: {reason})" if reason else ""
+        # The finish reason (often "length": the context ran out) and any
+        # refusal say why there is no answer; the rest of the body is usage
+        # counts, which would crowd them out of the error tail.
+        message = choice.get("message")
+        details = [
+            f"{key}: {value}"
+            for key, value in (
+                ("finish_reason", choice.get("finish_reason")),
+                (
+                    "refusal",
+                    message.get("refusal") if isinstance(message, dict) else None,
+                ),
+            )
+            if value
+        ]
+        detail = f" ({'; '.join(details)})" if details else ""
         raise AIInvocationError(f"{name} returned no answer{detail}", provider=name)
     return answer
 

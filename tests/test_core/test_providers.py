@@ -315,17 +315,43 @@ def test_placeholder_format_spec_or_conversion_rejected(text: str) -> None:
     )
 
 
-def test_cleanup_workspace_outside_a_group_rejected_with_a_text_template() -> None:
+@pytest.mark.parametrize(
+    ("field", "fields", "placeholder", "reason"),
+    [
+        ("text", {"text": ["tool", "{model}"]}, "model", "the provider sets no model"),
+        ("agent", {"agent": ["tool", "{system}"]}, "system", "some calls pass no"),
+        (
+            "resume",
+            {"run": ["tool"], "resume": ["tool", "{command}", "{session_id}"]},
+            "command",
+            "daily-driver resume passes none",
+        ),
+        (
+            "resume",
+            {"run": ["tool"], "resume": ["tool", "--read={prompt_file}"]},
+            "prompt_file",
+            "daily-driver resume passes none",
+        ),
+        (
+            "cleanup",
+            {"text": ["tool"], "cleanup": ["tool", "rm", "{workspace}"]},
+            "workspace",
+            "a text task has no workspace",
+        ),
+        (
+            "cleanup",
+            {"agent": ["tool"], "cleanup": ["tool", "{model}", "{session_id}"]},
+            "model",
+            "the provider sets no model",
+        ),
+    ],
+)
+def test_placeholder_that_can_be_empty_must_be_in_a_group(
+    field: str, fields: dict[str, Any], placeholder: str, reason: str
+) -> None:
     _rejects(
-        "mine.cleanup uses \\{workspace\\} outside a group, but a text task has no "
-        "workspace",
-        providers={
-            "mine": {
-                "session_id": "{uuid}",
-                "text": ["tool"],
-                "cleanup": ["tool", "rm", "{workspace}", "{session_id}"],
-            }
-        },
+        rf"mine.{field} uses \{{{placeholder}\}} outside a group, but {reason}",
+        providers={"mine": {"session_id": "{uuid}", **fields}},
     )
 
 
@@ -334,9 +360,13 @@ def test_cleanup_workspace_outside_a_group_rejected_with_a_text_template() -> No
     [
         {"text": ["tool"], "cleanup": ["tool", ["--dir", "{workspace}"]]},
         {"agent": ["tool"], "cleanup": ["tool", "--dir", "{workspace}"]},
+        {"text": ["tool", "{model}"], "model": "m"},
+        {"agent": ["tool", ["--system", "{system}"]]},
+        {"run": ["tool", "{command}", "{prompt_file}", "{session_name}", "{agent}"]},
+        {"run": ["tool"], "resume": ["tool", "{workspace}", "{session_id}"]},
     ],
 )
-def test_cleanup_workspace_accepted_when_every_call_has_one(
+def test_placeholder_that_always_has_a_value_may_stand_alone(
     fields: dict[str, Any],
 ) -> None:
     assert _config({"mine": {"session_id": "{uuid}", **fields}})

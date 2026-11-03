@@ -112,7 +112,8 @@ def provider_check(provider: Provider, serves: list[str]) -> CheckResult:
             f"{exc}; it runs {runs}",
             fix_hint=(
                 f"Start the server at {settings.base_url}, or check that "
-                "base_url points at an OpenAI-compatible server."
+                f"ai.providers.{provider.name}.base_url points at an "
+                "OpenAI-compatible server."
             ),
         )
     if settings.model not in served:
