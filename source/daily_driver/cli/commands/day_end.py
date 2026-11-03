@@ -1,8 +1,8 @@
-"""day-end subcommand: interactive end-of-day review session via `claude`.
+"""day-end subcommand: interactive end-of-day review session.
 
-Like day-start, day-end mints a `--session-id` UUID and records it as the
-workspace's most-recent session so a lost tab can be reattached later via
-`daily-driver resume` (or a subsequent `check-in`).
+Like day-start, day-end records its session as the workspace's most recent, so
+a lost tab can be reattached later via `daily-driver resume` (or a subsequent
+`check-in`).
 """
 
 from __future__ import annotations
@@ -14,14 +14,13 @@ from daily_driver.cli._common import (
     add_session_args,
     resolve_workspace,
 )
-from daily_driver.cli.commands._claude_session import (
+from daily_driver.cli.commands._session import (
     add_launch_mode_arg,
     default_session_name,
     handle_launch_exception,
     handle_launch_mode,
+    interactive_provider,
     launch_fresh_and_record,
-    require_claude_available,
-    resolve_interactive_model,
 )
 
 _SLASH_COMMAND = "/daily-driver:day-end"
@@ -35,7 +34,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "day-end",
         parents=parents,
-        help="Interactive end-of-day review session (runs /daily-driver:day-end via claude)",
+        help="Interactive end-of-day review session (runs /daily-driver:day-end)",
     )
     add_session_args(parser)
     add_launch_mode_arg(parser)
@@ -50,15 +49,16 @@ def run(args: argparse.Namespace) -> int:
         diverted = handle_launch_mode(args, workspace, "day-end")
         if diverted is not None:
             return diverted
-        require_claude_available()
+        provider = interactive_provider(workspace)
 
         session_name = default_session_name(_SESSION_PREFIX, args.session_name)
         return launch_fresh_and_record(
             workspace=workspace,
-            prompt=_SLASH_COMMAND,
+            provider=provider,
+            command=_SLASH_COMMAND,
             session_name=session_name,
             agent=args.agent,
-            model=resolve_interactive_model(workspace, args.model),
+            model=args.model,
         )
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)

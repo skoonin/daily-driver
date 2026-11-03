@@ -1,0 +1,18 @@
+claude:
+  session_id: "{uuid}"
+  run: ["claude", ["--agent", "{agent}"], ["-n", "{session_name}"], ["--session-id", "{session_id}"], ["--model", "{model}"], ["{command}"], "--add-dir", "{workspace}"]
+  resume: ["claude", ["--agent", "{agent}"], ["-n", "{session_name}"], "--resume", "{session_id}", ["--model", "{model}"], ["{command}"], "--add-dir", "{workspace}"]
+  agent: ["claude", "-p", "--no-session-persistence", ["--model", "{model}"], "--add-dir", "{workspace}"]
+  text: ["claude", "-p", "--no-session-persistence", "--safe-mode", ["--model", "{model}"], ["--system-prompt", "{system}"]]
+  max_parallel: 4
+opencode:
+  session_id: "ses_{uuid}"
+  run: ["opencode", "{workspace}", ["-s", "{session_id}"], ["--prompt", "Read {prompt_file} and follow its instructions."]]
+  resume: ["opencode", "{workspace}", "-s", "{session_id}", ["--prompt", "Read {prompt_file} and follow its instructions."]]
+  agent: ["opencode", "run", ["-s", "{session_id}"], ["--model", "{model}"]]
+  text: ["opencode", "run", ["-s", "{session_id}"], ["--model", "{model}"]]
+  cleanup: ["opencode", "session", "delete", "{session_id}"]
+lmstudio:
+  base_url: http://localhost:1234/v1
+ollama:
+  base_url: http://localhost:11434/v1

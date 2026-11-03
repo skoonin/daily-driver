@@ -10,8 +10,8 @@ Start with the install guide, then follow the steps in order. Use the other guid
 | [How it works](concepts.md) | The parts of Daily Driver and how they fit together |
 | [Commands](commands.md) | Every command and its options |
 | [Command tree](cli-tree.md) | All commands in one list |
-| [Settings](configuration.md) | Settings you can change in `.dd-config.yaml` |
-| [Local AI setup](ollama-setup.md) | Run some AI tasks on your own computer instead of with Claude |
+| [Settings](configuration.md) | Settings you can change in `.dd-config.yaml`, including the AI providers |
+| [Local models](local-models.md) | Run some AI tasks on your own computer with LM Studio or ollama instead of with Claude |
 | [Troubleshooting](troubleshooting.md) | Fixes for common problems |
 
 Developers: see [dev/README.md](dev/README.md).

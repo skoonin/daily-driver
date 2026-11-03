@@ -105,6 +105,7 @@ Job search is off unless you pass `--job-search`. The flag writes a `plugins.job
 Runs contract + dependency checks. Every mode needs a workspace and exits 1 without one. Exit 1 on any ERROR; WARNING exits 0. See [`.claude/` ownership](configuration.md#claude-ownership) for what `doctor --fix`, `doctor --reset`, and `init --force` keep, overwrite, and delete.
 
 - `Workspace drift` — a WARNING that shows when the managed files were generated for another package version or another set of switched-on plugins, or when a managed file is missing.
+- `ai:<provider>` — one row for each provider that runs a task, with the tasks it runs (plugin tasks read `job_search.fit_notes`). For a provider that is a program, `OK` means the program is on `PATH`. For an HTTP server, `OK` means the server answers and lists the configured model. A failure is a WARNING. A provider you define under `ai.providers` that runs no task gets a WARNING. Built-in providers that run no task get no row.
 - `--fix` — when `doctor` reports drift or a failed contract check, it re-renders the managed files you have not edited. That regeneration also deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Separately, it runs the repair that a check carries (for example installing the Playwright browser). It prints `Action:` lines, such as `regenerated 7 files (preserved 0 user-edited)`, then the table again.
 - `--reset` — rewrites every managed file, with or without drift, discarding your edits to shipped files and any file you added in the managed directories. It cannot be combined with `--fix`.
 - `-j` / `--json` — emits a `{schema, data}` envelope whose `data` carries the run `mode` (`check`/`fix`/`reset`), a `checks` list (`name`, `status`, `detail`, `fix_hint`), and the overall `exit_code` (the results table is suppressed).
@@ -185,9 +186,11 @@ daily-driver focus off
 
 `--for` is optional; when omitted, `focus.default_duration` from `.dd-config.yaml` is used (fallback `25m`). Duration grammar: `30m`, `2h`, `1h30m`, or bare minutes. `focus status --json` emits JSON.
 
-## Interactive Claude launchers
+## Interactive launchers
 
-Spawn a nested `claude` session with the `work-planner` agent, the workspace as `--add-dir`, and a timestamped session name. Each invokes a slash command:
+The three launchers start an interactive session on the provider that runs the `interactive` task. The default provider is Claude Code (`claude`). To use another provider, see [`ai`](configuration.md#ai).
+
+With the default provider, each launcher runs `claude` with the `work-planner` agent, the workspace as `--add-dir`, and a timestamped session name. Each one starts a slash command:
 
 | Command | Slash command |
 | --- | --- |
@@ -195,43 +198,81 @@ Spawn a nested `claude` session with the `work-planner` agent, the workspace as 
 | `check-in` | `/daily-driver:check-in` |
 | `day-end` | `/daily-driver:day-end` |
 
-Shared flags: `--agent NAME` (default `work-planner`), `--model NAME`, `--session-name NAME`.
+A provider whose `run` template has a `{prompt_file}` placeholder, such as opencode, gets the same instructions from a file: `.daily-driver/state/prompts/<command>.md`, for example `day-start.md`. Daily Driver writes the file before each launch. Steps that only Claude Code can do are left out of it.
 
-`check-in` additionally accepts `--no-resume`, which starts a fresh Claude session instead of resuming the workspace's most recent session (resume is controlled by `claude.resume_check_in` in `.dd-config.yaml`, default off).
+Shared flags:
 
-All three launchers accept `--launch {terminal,notify}`, used by the scheduler's launchd firings (which have no terminal to run in): `terminal` opens the session in a new iTerm2 tab (Terminal.app if iTerm2 is absent) via AppleScript, and `notify` posts a clickable macOS notification that opens the tab on click (requires `terminal-notifier`; without it the notification tells you the command to run). The scheduled plists pass `notify` for all three — from the launchd background context AppleScript cannot drive the terminal (the Apple Events handshake hangs, notably on a locked screen), so a firing nudges you and the `terminal` mode runs on click, from your own session where the one-time Automation permission is available. A scheduled check-in notification is suppressed while focus mode is on.
+| Flag | What it does |
+| --- | --- |
+| `--agent NAME` | Agent to load. Default `work-planner`. Used by a provider whose template has `{agent}`. |
+| `--model NAME` | Model for this session. Any model name. Overrides the provider's `model`. Used by a provider whose template has `{model}`. |
+| `--session-name NAME` | Name of the session. Default: the command and the date. Used by a provider whose template has `{session_name}`. |
 
-Each of these launchers records the id of the session it starts as the workspace's "most recent session", which `resume` (below) and a resuming `check-in` reattach to.
+A flag that the provider's template does not use has no effect.
+
+`check-in` also accepts `--no-resume`. It starts a new session instead of continuing the most recent session of the workspace. Continuing is set by `ai.interactive.resume_check_in` in `.dd-config.yaml`. The default is off. Continuing needs a `resume` template on the provider.
+
+All three launchers accept `--launch {terminal,notify}`. The scheduler uses it, because a scheduled run has no terminal.
+
+- `terminal` opens the session in a new iTerm2 tab, or in Terminal.app when iTerm2 is not installed. It uses AppleScript.
+- `notify` posts a macOS notification. A click on it opens the tab. Clicking needs `terminal-notifier`; without it, the notification shows the command to run.
+- The scheduled plists pass `notify` for all three launchers. From the launchd background, AppleScript cannot drive the terminal; the Apple Events handshake hangs, especially on a locked screen. A notification asks you to start the session, and `terminal` runs on your click, from your own session.
+- A scheduled check-in notification is suppressed while focus mode is on.
+
+Each launcher saves the session ID and the provider name as the "most recent session" of the workspace. `resume` and a continuing `check-in` use it. A provider with no `session_id` setting gets no ID, so nothing is saved and its session cannot be resumed.
 
 ### `resume`
 
-`resume` reattaches to the workspace's most recent Claude session via `claude --resume <uuid>` — the same session pointer a resuming `check-in` uses. Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost: it drops you back into that conversation through the normal launcher path, so the workspace's configured model, agent, and `--add-dir` still apply (unlike a bare `claude -c`). It accepts the shared session flags (`--agent`, `--model`, `--session-name`) but not `--launch` — it is a manual recovery command, not a scheduled one. With no prior session recorded it exits 1 with `no prior session to resume — run day-start, day-end, or check-in first` instead of opening an empty session; if the recorded session can no longer be resumed, claude reports that ("No conversation found with session ID") and `resume` exits with claude's code — run `day-start` to begin fresh.
+`resume` reopens the most recent session of the workspace through the `resume` template of the `interactive` provider. With Claude, that is `claude --resume <id>`. It uses the same saved session as a continuing `check-in`.
 
-## Headless Claude commands
+- Use it when a `day-start`, `day-end`, or `check-in` tab is closed or lost. The configured model, agent, and workspace still apply.
+- It accepts `--agent`, `--model`, and `--session-name`. It does not accept `--launch`, because it is a manual command.
+- With no saved session, it exits 1 with `no prior session to resume`. Run `day-start`, `day-end`, or `check-in` first.
+- When the provider of the saved session differs from the current `interactive` provider, it exits 1 and names both. Run `day-start` to begin a new session.
+- When the session can no longer be resumed, the provider reports it and `resume` exits with the provider's exit code. Claude reports `No conversation found with session ID`.
+- A provider with no `resume` template makes `resume` exit 1 and name the missing template.
+
+## Headless AI commands
+
+`summary` and `voice-update` run without a chat. Each prints a status line on stderr while it waits, such as `summary via claude`, with the seconds elapsed. On a terminal it shows a spinner. When stderr is not a terminal, the command prints one line at the start and one at the end. The result goes to stdout.
+
+Each command uses the provider that is set for its task. See [`ai`](configuration.md#ai).
+
+| Command | Task | Mode | Default time limit |
+| --- | --- | --- | --- |
+| `summary` | `summary` | Agent: the provider runs in the workspace and reads the files that Daily Driver lists | 900 seconds |
+| `voice-update` | `voice_update` | Text: the prompt holds all the data | 180 seconds |
+
+The time limit is the first of these that is set: `--timeout`, the provider's `timeout`, then the default in the table. On a timeout, the message names the task, the provider, and the limit. It also names both ways to raise the limit.
 
 ### `summary --range SPEC`
 
-Generates a period summary non-interactively and copies to clipboard.
+Writes a period summary and copies it to the clipboard. Daily Driver finds the daily plans, daily notes, and the tracker for the range, and lists those files in the prompt. The provider reads the files itself. When the range has no daily notes, plans, or tracker, the command prints a note on stderr, makes no AI call, and exits 0.
 
 | Flag | Notes |
 | --- | --- |
 | `--range SPEC` | Required. `today`, `yesterday`, `week`, `month`, `YYYY-MM-DD`, or `YYYY-MM-DD:YYYY-MM-DD` |
 | `--detail low\|med\|high` | Verbosity |
 | `--match KW` | Repeatable keyword filter |
-| `--json` | Print the resolved range, detail level, and match filters as JSON; no claude call |
+| `--json` | Print the resolved range, detail level, and match filters as JSON. No AI call. |
 | `--no-clipboard` | Skip `pbcopy` |
-| `--timeout SECONDS` | Default 180 |
+| `--model NAME` | Model for this run. Any model name. Overrides the provider's `model`. |
+| `--timeout SECONDS` | Time limit. Default: the provider's `timeout`, else 900. |
+
+The `summary` task needs a provider with an `agent` template. A provider that is an HTTP server (`base_url`) cannot run it. Daily Driver reports this when it reads the config.
 
 ### `voice-update --from PATH [PATH ...]`
 
-Updates `voice-profile.md` in the workspace directory (not `output_dir`) from writing samples via headless `claude`, or the provider set in `ai.voice_update`. Default `--append` merges new observations into the profile by section, preserving existing text; `--replace` rewrites the whole profile from scratch. Each write saves the previous file as `voice-profile.md.bak`.
+Updates `voice-profile.md` in the workspace directory (not `output_dir`) from writing samples. It runs the `voice_update` task. Default `--append` merges new observations into the profile by section, preserving existing text; `--replace` rewrites the whole profile from scratch. Each write saves the previous file as `voice-profile.md.bak`.
 
 | Flag | Notes |
 | --- | --- |
 | `--from PATH [PATH ...]` | Required. One `--from` takes one or more files or directories; repeating the flag keeps only the last one |
 | `--append` / `--replace` | Default `--append` merges new observations by section; `--replace` rewrites the whole profile |
-| `-n`, `--dry-run` | Validate sources + print target path; no model call or write |
-| `--no-clipboard`, `--timeout`, `--model`, `--session-name` | As above |
+| `-n`, `--dry-run` | Validate sources and print the target path. No AI call and no write. |
+| `--no-clipboard` | Skip copying the updated profile to the clipboard |
+| `--model NAME` | Model for this run. Any model name. Overrides the provider's `model`. |
+| `--timeout SECONDS` | Time limit. Default: the provider's `timeout`, else 180. |
 
 ## Job search plugin
 
@@ -245,7 +286,7 @@ The `jobs.csv` `Status` column shares the tracker's status machinery. The recomm
 
 ### `jobs run [-n|--dry-run | -j|--json] [--no-enrich] [--sources LIST | --list-sources]`
 
-Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields via `plugins.job_search.enrichment.provider` (`claude` by default; `ollama` if set — see [ollama-setup.md](ollama-setup.md)). Comp is filled without network cost where possible: pay-transparency text in the scraped description is parsed first (conservative — a salary-anchored, currency-marked, annual-sized figure, else the cell stays blank), and a detail page is fetched only when a row is missing a field that page can actually serve — Comp, or a description a board like Workable/Workday leaves out of its listing (fetches only ever fill blanks, never overwrite). A blank Comp that every checked source fails to fill is marked `Not listed` — so Comp reads three ways: blank (not checked yet), `Not listed` (checked, the posting states no pay), or a value. A marked row stops being re-checked; a later re-scrape or repair that finds real pay overwrites the mark. Greenhouse hosted pages are never fetched (one shared host bot-walls at run volume; the description already carries the pay text).
+Runs enabled scrapers, appends new rows to `jobs.csv`, and enriches missing fields with the provider that runs the `fit_notes` task (`claude` by default; set it with `plugins.job_search.provider` — see [local-models.md](local-models.md)). Comp is filled without network cost where possible: pay-transparency text in the scraped description is parsed first (conservative — a salary-anchored, currency-marked, annual-sized figure, else the cell stays blank), and a detail page is fetched only when a row is missing a field that page can actually serve — Comp, or a description a board like Workable/Workday leaves out of its listing (fetches only ever fill blanks, never overwrite). A blank Comp that every checked source fails to fill is marked `Not listed` — so Comp reads three ways: blank (not checked yet), `Not listed` (checked, the posting states no pay), or a value. A marked row stops being re-checked; a later re-scrape or repair that finds real pay overwrites the mark. Greenhouse hosted pages are never fetched (one shared host bot-walls at run volume; the description already carries the pay text).
 
 The run also **verifies closure** for board-backed sources (Greenhouse, Ashby, Lever, Workable, Workday): their scrapes return each company's complete listing, so a stored job absent from a successfully-fetched listing on two consecutive runs is marked `Status: closed` + `Date Closed` (the diff uses the raw pre-role-filter listing; failed, partial, or config-removed boards close nothing; only untriaged `found`/`pending` rows are touched). Closed rows are archived by `jobs prune` and re-surface loudly as `Reopened` if they ever re-appear. Miss counts persist in `board-diff-misses.json`.
 
@@ -276,7 +317,7 @@ After the new rows are enriched, the run also picks up the **backlog**: pre-exis
 
 ### `jobs backfill [-n|--dry-run] [--limit N] [--force-update] [--cooldown-hours N|missing] [-sd|--skip-descriptions] [-j|--json]`
 
-Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the ollama reachability preflight. Comp fills from the cached description at no LLM or network cost wherever the description states a pay range, and a row missing its description fetches it from the job board when the board serves one (disable with `-sd`). Blank Comps get checked: filled when a source states pay, marked `Not listed` when the sources are exhausted. A failed fetch never marks, and a response that doesn't look like a real job posting (auth wall, bot challenge) counts as failed — the row stays blank and retries next run.
+Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. Shares the `jobs run` enrichment driver: a `Job backfill` live progress block, the fit/notes coordinator under one concurrency cap, periodic saves every ~25 results, and the reachability check of an HTTP provider (LM Studio, ollama). Comp fills from the cached description at no LLM or network cost wherever the description states a pay range, and a row missing its description fetches it from the job board when the board serves one (disable with `-sd`). Blank Comps get checked: filled when a source states pay, marked `Not listed` when the sources are exhausted. A failed fetch never marks, and a response that doesn't look like a real job posting (auth wall, bot challenge) counts as failed — the row stays blank and retries next run.
 
 - Only rows in the active funnel (`found` or `pending`) are ever (re-)enriched; a triaged status (`applied`, `interviewing`, `rejected`, `dropped`, `closed`, `skipped`) or a blank status is always left untouched. Fit and Notes are one combined need, since a single call fills both.
 - `-n` / `--dry-run` — would-enrich counts, no LLM calls, no writes.
@@ -285,7 +326,7 @@ Re-enriches empty fields (Fit, Notes, Comp) on existing rows without scraping. S
 - `--cooldown-hours N|missing` — only meaningful with `--force-update`: skip rows re-enriched within the last `N` hours, so an interrupted force-update resumes instead of restarting from the first row. Defaults to the config `plugins.job_search.enrichment.force_recook_cooldown_hours` (normally 24); `0` disables the cooldown (re-enrich every eligible row every time), and `missing` re-enriches only rows with no enrichment timestamp yet. The cooldown governs the LLM fit/notes pass only; the no-cost Comp fill/repair runs regardless.
 - `-sd` / `--skip-descriptions` — don't fetch missing descriptions: descriptions stay cache-only and the detail phase fills Comp alone.
 - `-j` / `--json` — emit the completion summary (`rows`, `skipped`, `needs_before`, `needs_after`, `enriched`, `comp_filled`, `comp_repaired`, `comp_not_listed`, `descriptions_filled`, `elapsed_seconds`; `dry_run` adds `fit_cap`, `comp_needs`, `comp_check_needs`, and `description_needs`) in the `{schema, data}` envelope, with the live progress block suppressed.
-- A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. ollama is down) leaves `jobs.csv` untouched and writes no backup.
+- A pre-mutation backup lands under `backups/` only when a write actually happens, so a no-op backfill (e.g. the model server is down) leaves `jobs.csv` untouched and writes no backup.
 - Ctrl-C or `SIGTERM` saves partial progress and names the backup (`130` / `143`).
 
 Unlike `jobs run`, backfill holds the jobs lock across its whole read -> enrich -> rewrite window — it rewrites from an in-memory snapshot, so dropping the lock mid-enrichment would let a concurrent run's appended rows be clobbered.
@@ -357,7 +398,7 @@ Renders launchd plists into `~/Library/LaunchAgents/` and `launchctl load`s them
 
 Pass one or more job names to install only those, e.g. `scheduler install checkin day-start`. A job is named by its short form (`checkin`, `day-start`, `day-end`, `jobs`, `jobs-discover`) or its full launchd label (`com.daily-driver.checkin`). With no names, every configured job is installed. Naming an unknown job, or a known job that has no time configured, is an error rather than a silent no-op.
 
-Session jobs fire through the launchers' `--launch` modes (see [Interactive Claude launchers](#interactive-claude-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape and the board sweep run headless.
+Session jobs fire through the launchers' `--launch` modes (see [Interactive launchers](#interactive-launchers)): day-start, day-end, and check-in all post a clickable notification that opens the session on click (check-in's is suppressed during focus mode). The jobs scrape and the board sweep run headless.
 
 `jobs-discover` runs `jobs discover-boards` on its own cadence rather than as part of the scrape: the board universe turns over far more slowly than postings do, launchd takes a single command, and a sweep that hangs must not block the scrape. Schedule it to land the day before a scrape. Without it, nothing ever refreshes the board list — `jobs run` keeps scraping whatever the last manual sweep found, and reports how many slugs remain unprobed.
 

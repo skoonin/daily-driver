@@ -17,8 +17,7 @@ from typing import Any
 
 import pytest
 
-from daily_driver.core.config_models import AIConfig
-from daily_driver.integrations import ai_provider
+from daily_driver.integrations import provider as ai
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper import runner
 from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
@@ -48,15 +47,12 @@ def _enriched(**overrides: object) -> EnrichedJob:
 
 def _ctx(**enrichment: object) -> ScrapeContext:
     base: dict[str, object] = {
-        "provider": "ollama",
-        "model": "qwen2.5:14b",
         "max_enrich_fit": 5,
         "enrich_timeout": 5,
     }
     base.update(enrichment)
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate({"enrichment": base}),
-        ai=AIConfig(),
     )
 
 
@@ -65,10 +61,10 @@ def test_force_overwrites_existing_fit_notes_remote(
 ) -> None:
     """force=True overwrites a fully-filled active row's Fit, Notes, and Remote."""
 
-    def fake(prompt: str, *a: Any, **k: Any) -> str:
+    def fake(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake)
+    monkeypatch.setattr(ai, "invoke", fake)
     j = _enriched(fit=3, notes="old notes", remote="onsite", description_text="desc")
     out, stats = enrich_fit_and_notes(
         [j], _ctx(enrich_is_remote=True), budget=5, force=True
@@ -84,10 +80,10 @@ def test_default_leaves_existing_values_untouched(
 ) -> None:
     """Without force, a fully-filled active row is not eligible: nothing changes."""
 
-    def fake(prompt: str, *a: Any, **k: Any) -> str:
+    def fake(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake)
+    monkeypatch.setattr(ai, "invoke", fake)
     j = _enriched(fit=3, notes="old notes", remote="onsite", description_text="desc")
     out, stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
     assert out[0].fit == 3
@@ -101,10 +97,10 @@ def test_force_still_skips_enrich_skip_status_rows(
 ) -> None:
     """force never re-enriches an ENRICH_SKIP-status row (eligibility floor)."""
 
-    def fake(prompt: str, *a: Any, **k: Any) -> str:
+    def fake(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake)
+    monkeypatch.setattr(ai, "invoke", fake)
     j = _enriched(
         status="skipped",
         fit=3,
@@ -258,10 +254,10 @@ def test_enrich_stamps_date_enriched_in_local_time(
     """A successful fit/notes write stamps date_enriched in local time (tz-aware),
     so the CSV reads in the user's clock rather than UTC."""
 
-    def fake(prompt: str, *a: Any, **k: Any) -> str:
+    def fake(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
         return '{"fit": 7, "notes": "k8s", "remote": "hybrid"}'
 
-    monkeypatch.setattr(ai_provider, "invoke_for", fake)
+    monkeypatch.setattr(ai, "invoke", fake)
     j = _enriched(description_text="desc")
     assert j.date_enriched is None
     out, _ = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)

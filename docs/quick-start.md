@@ -52,7 +52,7 @@ Open `context.md` in your workspace. Describe your work, your goals, and your ro
 daily-driver day-start
 ```
 
-This opens a chat with Claude that helps you plan your day. Tell Claude what you work on and what is due. Ask it to add your tasks to your list (the tracker). Claude saves your list, plan, and notes in your workspace.
+This opens a chat with Claude that helps you plan your day. Claude Code is the default AI. To use another program, see [AI providers](configuration.md#ai). Tell Claude what you work on and what is due. Ask it to add your tasks to your list (the tracker). Claude saves your list, plan, and notes in your workspace.
 
 Run the commands from inside your workspace folder, or add `--workspace ~/daily-driver-workspace` to run them from anywhere. For ideas on what to say, see [Daily sessions](usage.md#daily-sessions).
 

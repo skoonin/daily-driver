@@ -4,7 +4,7 @@ Daily Driver is a pure-Python CLI. No compiled extensions, no non-Python assets 
 
 ## Product split
 
-The program owns the durable record (tracker entries, daily notes, job leads, focus locks, config — all plain YAML/CSV on disk). Claude owns the conversation. Claude does not retain information between sessions; the program does. Every piece of user-visible state is a file you can `cat`, diff, and commit, regardless of whether Claude was reachable when it was written.
+The program owns the durable record (tracker entries, daily notes, job leads, focus locks, config — all plain YAML/CSV on disk). The AI owns the conversation. The AI is a provider (Claude Code by default; see "AI providers" below) and does not retain information between sessions; the program does. Every piece of user-visible state is a file you can `cat`, diff, and commit, regardless of whether a provider was reachable when it was written.
 
 ## Module map
 
@@ -12,21 +12,23 @@ The program owns the durable record (tracker entries, daily notes, job leads, fo
 daily_driver/
 ├── __init__.py              # __version__ (single source of truth)
 ├── __main__.py              # python -m daily_driver entry
+├── tasks.py                 # Task(name, mode) and the core tasks (leaf module; plugins import it)
 ├── cli/
 │   ├── cli.py               # static _COMMANDS table + dispatch loop
 │   ├── _common.py           # global-flag registration + post-parse configure()
 │   └── commands/            # one module per subcommand; argparse + presentation only
 ├── core/                    # workspace, config, tracker, locking, generate, scheduler...
+│   ├── providers.py         # ProviderConfig, built-in providers, merge/extends, provider_for
+│   ├── prompt_file.py       # prompt file for providers without .claude/
 │   ├── console.py           # two-stream Rich Console (stdout + stderr)
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
 │   ├── templating.py        # Jinja rendering of shipped prompts and templates (plugin sections)
 │   └── (no subprocess calls, no TTY/clock/network deps — pure unit-testable)
 ├── gathers/                 # read-only readers: calendar, git
-├── integrations/            # subprocess + external-service boundary: claude_cli,
-│                            #   ai_provider, ollama_client, clipboard, launchd,
-│                            #   git, icalbuddy, notify, calendar_write,
-│                            #   terminal_launcher, playwright
+├── integrations/            # subprocess + external-service boundary: provider,
+│                            #   clipboard, launchd, git, icalbuddy, notify,
+│                            #   calendar_write, terminal_launcher, playwright
 ├── plugins/                 # feature slices wired through a static registry
 │   ├── __init__.py          # PLUGINS tuple, enabled_plugins(), _validate_registry (import-time check)
 │   ├── _base.py             # Plugin / PackageDataDir frozen dataclasses (the contract)
@@ -57,8 +59,8 @@ daily_driver/
 - **`core/`** — business logic. No subprocess, no TTY, no network. Unit-testable in isolation.
 - **`gathers/`** — typed readers returning pydantic models. No YAML, no printing.
 - **`plugins/`** — feature slices wired through the static `PLUGINS` registry (no runtime discovery). Each plugin owns its CLI, config, and optional scheduler / doctor / package-data under `plugins/<name>/`. `job_search` is the reference plugin; its scraper lives at `plugins/job_search/scraper/` — focused modules `comp.py`, `parsing.py`, `csv_io.py`, `enrichment/` (detail-page + LLM enrichers), `models.py`, `context.py` (`ScrapeContext` + pipeline exceptions), `rows.py` (location filter, dedup keys, the dict -> model lift), `sink.py` (`_JobSink`, the run's durable-record writer), `scrape_all.py` (source fan-out orchestration), `runner.py` (the `run`/`run_backfill` entry points, enrichment waves, and run summary), `discovery.py` (`jobs discover-boards`: sweeps the ATS slug universe and caches role-matching boards), `closure.py` (board-diff closure: a stored row absent from a full-enumeration board's successfully-fetched listing gets marked closed), `verify.py` (`jobs verify`: per-URL liveness checks for windowed sources that never re-show an old posting), `countries.py` (JobSpy-derived country tables and the Apple location resolver), `descriptions.py` (sidecar store for job-description text), `normalize_location.py` (country-first location normalization), `roles.py` (role matching and search terms), and `scraper/sources/<name>.py` (one file per source; `_http.py` and `_boards.py` hold shared helpers). `sources/__init__.py` registers each source in the `SCRAPERS` dict. Past the source-adapter boundary every job is one frozen `EnrichedJob`: adapters emit wire-format dicts, `rows._enriched_from_scraped` lifts each to an `EnrichedJob` once, and enrichers / CSV read-write / backfill all operate on that single representation through one `CANONICAL_HEADER` (derived from `EnrichedJob.CSV_COLUMN_TO_ATTR`). See "Plugins" below and [extending.md](extending.md).
-- **`integrations/`** — the single subprocess + external-service boundary. Every `claude`, `pbcopy`, `launchctl`, `git`, `icalBuddy`, and desktop-notification call goes through here, alongside the `ai_provider` / `ollama_client` adapters. Wrappers raise domain exceptions (e.g. `claude_cli` raises `ClaudeNotFoundError` / `ClaudeInvocationError` / `ClaudeTimeoutError`; `git` raises `GitCommandError`) so callers handle typed failures instead of inspecting return codes. Tests monkeypatch one module instead of many.
-- **`resources/`** — package data only, bundled into the wheel and accessed via `importlib.resources`: `slash_commands/daily-driver/` and `agents/daily-driver/` (shipped `.md`, rendered into the workspace `.claude/` tree), `launchd/` (core plist templates), and `templates/` (scaffold + settings Jinja, plus `hooks/`). No importable logic.
+- **`integrations/`** — the single subprocess + external-service boundary. Every AI program or server call (`integrations/provider.py`), `pbcopy`, `launchctl`, `git`, `icalBuddy`, and desktop-notification call goes through here. Wrappers raise domain exceptions (e.g. `provider` raises `AIInvocationError` / `AITimeoutError`; `git` raises `GitCommandError`) so callers handle typed failures instead of inspecting return codes. Tests monkeypatch one module instead of many.
+- **`resources/`** — package data only, bundled into the wheel and accessed via `importlib.resources`: `slash_commands/daily-driver/` and `agents/daily-driver/` (shipped `.md`, rendered into the workspace `.claude/` tree), `launchd/` (core plist templates), and `templates/` (scaffold + settings Jinja, plus `hooks/` and `providers.default.yaml`, the built-in AI providers). No importable logic.
 
 ## Runtime flow
 
@@ -73,6 +75,31 @@ daily_driver/
 7. Subcommand `run(args)` does the work and returns an int exit code. Errors are caught at the top of `app()`, which also saves the traceback to `<state_dir>/logs/cli-error.log` when a workspace resolves. At `-v` or higher the daily_driver logger emits a full `logger.exception()` traceback to stderr. Otherwise `Console.error` prints `ExceptionName: message` (plus a `caused by:` line when there is one), or only the message for a `ConfigError`, which already says what to change. Non-zero exit either way — no tracebacks on happy-path failures.
 
 Scheduled invocations go through the same entry point. `scheduler install` renders a `<job>.plist.j2` Jinja template with workspace-specific paths and calls `launchctl load`. Core jobs render from `resources/launchd/` (e.g. `checkin.plist.j2`); a plugin ships its own template alongside its code (`job_search` renders `plugins/job_search/templates/jobs.plist.j2`). stdout/stderr redirect to `.daily-driver/state/logs/launchd-<job>.{out,err}` via the plist.
+
+## AI providers
+
+A provider is data, not code. No AI-call code branches on a provider name. The built-in providers live in `resources/templates/providers.default.yaml` (`claude`, `opencode`, `lmstudio`, `ollama`). A user entry with a built-in's name merges over it field by field. Any other entry can start from one with `extends`, one level deep. `tasks` is never inherited.
+
+| Piece | Where | Job |
+| --- | --- | --- |
+| `Task(name, mode)`, `INTERACTIVE`, `SUMMARY`, `VOICE_UPDATE`, `CORE_TASKS` | `tasks.py` | Names the jobs. The mode is `interactive`, `agent`, or `text`. |
+| `ProviderConfig`, `resolve_providers`, `validate_routes`, `provider_for(config, task, plugin=None)` | `core/providers.py` | Loads the built-ins, merges user entries, checks routes, and returns the `Provider` that runs a task. `DEFAULT_PROVIDER` (`claude`) runs any task nobody claims. |
+| `render`, `mint_session_id`, `spawn`, `invoke`, `list_models`, `available`, `AIInvocationError`, `AITimeoutError` | `integrations/provider.py` | Fills templates, runs a command or posts to an HTTP server, and normalizes every failure into one exception type. |
+| `write_prompt_file` | `core/prompt_file.py` | Writes `.daily-driver/state/prompts/<command>.md` for providers whose `run` or `resume` template uses `{prompt_file}`. |
+| `run_ai_task` | `cli/commands/_ai_task.py` | Wraps `invoke` with the status line and the error messages for `summary` and `voice-update`. |
+| `_session.py` | `cli/commands/` | Shared launcher code: provider check, session pointer, `launch_fresh_and_record`, `reattach_or_fresh`. |
+
+Rules:
+
+- **Modes.** `interactive` uses the `run` and `resume` templates. `agent` (summary) uses `agent`, runs in the workspace, and reads the files that the program lists in the prompt. `text` (voice update, job review) uses `text` in an empty temporary directory, or an HTTP provider. The prompt goes in on stdin and stdout is the answer.
+- **Templates.** Each element is a string or a group (nested list). A group is dropped when any placeholder in it has no value. The program substitutes into each argument and starts the command without a shell.
+- **Time limits.** `invoke` uses the explicit `timeout` argument, then the provider's `timeout`, then `MODE_TIMEOUTS` (text 180 s, agent 900 s).
+- **Sessions.** A provider with `session_id` gets a minted ID per interactive launch. The session pointer stores the ID and the provider name. `invoke` mints an ID per headless call and runs `cleanup` in a `finally` block.
+- **Claude Code files.** `core/generate.py` renders the `.claude/` files with `claude_code=True` for every workspace. The prompt file renders with `claude_code=False`, so steps that only Claude Code can do are left out. Shipped prompts use `{% if claude_code %}` for those steps.
+- **Doctor.** `core/doctor.py` shows one `ai:<provider>` row for each provider in use, from `tasks_by_provider`. It warns on `unused_user_providers`. `provider_check` tests the program on `PATH`, or the HTTP server and its model list.
+- **Config.** `Config` runs `validate_routes` after load. Removed settings are listed in `_REMOVED_SETTINGS` with their replacement.
+
+To add a harness or a model server, add a config entry. No code changes.
 
 ## Generate lifecycle
 
@@ -159,6 +186,7 @@ Two separate concerns, one shared Rich color theme.
 | Success summary | `Console.success(...)` | stderr | `--quiet` |
 | Warning | `Console.warning(...)` | stderr | never |
 | Error before exit | `Console.error(...)` | stderr | never |
+| Wait on one long AI call | `Console.waiting(label)` | stderr | Spinner and elapsed time on a TTY; otherwise a start line and an end line (`info`, muted by `--quiet`) |
 | Debug trace | `logger.debug(...)` | stderr | log level (`-vv`) |
 | Long-running module log | `dd_logging.get_logger(__name__).info(...)` etc. | stderr | log level |
 
@@ -206,10 +234,10 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 `source/daily_driver/plugins/` holds feature slices that core wires through a static registry — no runtime discovery. `job_search` is the one shipped plugin; its config, CLI, scraper sources, scheduler, and doctor checks all live under `plugins/job_search/`.
 
 - **Registry.** `plugins/__init__.py` exposes `PLUGINS: tuple[Plugin, ...]`, listed explicitly. `_validate_registry` runs at import and `find_spec`-checks every declared hook module (command, scheduled-jobs builder, doctor checks, package-data sources) so a typo'd path fails at startup, not on first use.
-- **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `name` (plugin key and `plugins.<name>` config namespace); `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `launchd_labels` (every launchd label the plugin manages: swept on `scheduler uninstall`, removed by a full `scheduler install` while the plugin is off); `doctor_checks` (dotted path to `run_checks(workspace)`); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs rendered into the workspace `.claude/` tree).
+- **Contract.** `plugins/_base.py:Plugin` is a frozen dataclass describing a plugin without importing its implementation. Fields: `name` (plugin key and `plugins.<name>` config namespace); `command_name` / `command_module` / `command_help` (CLI verb, lazily imported on dispatch); `config_model` (a `BaseModel` validating the plugin's `plugins.<name>` config namespace); `scheduled_jobs_builder` (dotted path to `build_scheduled_jobs(ctx)`); `launchd_labels` (every launchd label the plugin manages: swept on `scheduler uninstall`, removed by a full `scheduler install` while the plugin is off); `doctor_checks` (dotted path to `run_checks(workspace)`); `tasks` (tuple of `Task`, the AI tasks the plugin hands to a provider; see "AI providers"); `package_data_dirs` (tuple of `PackageDataDir`, the slash-command / agent `.md` dirs rendered into the workspace `.claude/` tree).
 - **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the one on/off answer: a plugin is on when its `plugins.<name>` block exists and does not set `enabled: false`. `core.scheduler`, `core.doctor`, `core.generate`, `core.version_stamp`, and the plugin-command dispatch in `cli/cli.py` all ask it (importing lazily so core stays import-light). A full `scheduler install` also removes the launchd agents of plugins that are off. `PluginsConfig` (in `plugins/config.py`) is assembled from `PLUGINS` so the root `Config` carries no hardcoded plugin namespace; it is `extra="forbid"`, matching the strict root.
 - **Package-data extension point.** A plugin that ships slash-commands sets `package_data_dirs`; `core.generate` appends them to core's baseline (`commands/daily-driver`, `agents/daily-driver`) when the plugin is on and applies the same SHA-256 manifest + stale-removal per dest. `job_search` ships none (`package_data_dirs = ()`); its prompt content is `{% if "job_search" in plugins %}` sections inside the core prompts. The path is exercised by a synthetic-plugin test.
-- **Config template.** `resources/templates/.dd-config.yaml.j2` is hand-written for users. Each plugin's `plugins.<name>` section, and any core setting only that plugin uses (e.g. `scheduler.jobs`), sits inside a `{% if "<name>" in plugins %}` block, so `init` writes it only for chosen plugins. `tests/test_core/test_config_template.py` fails when a model field is missing from its path in the template, a job-only setting shows without job search, or an example does not validate. A field left out of the template on purpose goes in that test's `_UNTEMPLATED` set with a reason.
+- **Config template.** `resources/templates/.dd-config.yaml.j2` is hand-written for users. Each plugin's `plugins.<name>` section, and any core setting only that plugin uses (e.g. `scheduler.jobs`), sits inside a `{% if "<name>" in plugins %}` block, so `init` writes it only for chosen plugins. `tests/test_core/test_config_template.py` fails when a model field is missing from its path in the template, a job-only setting shows without job search, or an example does not validate. A field left out of the template on purpose goes in that test's `_UNTEMPLATED` set with a reason. The built-in provider block under `ai.providers` is rendered from `providers.default.yaml` (`core.workspace._render_initial_config` passes its text as `builtin_providers`), and a test turns the commented block on and compares it with the file.
 
 ## Common mistakes
 

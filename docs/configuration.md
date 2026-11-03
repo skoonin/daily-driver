@@ -12,7 +12,7 @@ How to edit the file:
 - Use each section name once. If a name appears twice, the second section replaces the first without an error.
 - Run `daily-driver doctor` after you edit the file. It reports mistakes.
 
-For the daily flow, see [usage.md](usage.md). To run AI on your own computer, see [Local AI setup](ollama-setup.md).
+For the daily flow, see [usage.md](usage.md). To run AI on your own computer, see [Local models](local-models.md).
 
 ## Sections
 
@@ -22,16 +22,15 @@ For the daily flow, see [usage.md](usage.md). To run AI on your own computer, se
 | [`schedule`](#schedule) | Times of the day-start and day-end reminders |
 | [`scheduler`](#scheduler) | Times of check-in reminders and job runs |
 | [`focus`](#focus) | Default length of focus mode |
-| [`claude`](#claude) | How `check-in` starts its chat |
 | [`gather`](#gather) | Folders that hold your git projects |
 | [`calendar`](#calendar) | Copy of your plan time blocks into the macOS Calendar app |
 | [`daily_driver`](#daily_driver) | Folder for your data files |
-| [`ai`](#ai) | Which AI runs each feature: Claude or Ollama |
+| [`ai`](#ai) | Which AI runs each feature, and how `check-in` starts its chat |
 | [`plugins`](#pluginsjob_search) | Optional features. Job search is the only one |
 
 Claude reads `context.md` when it plans your day. Put your background there, and list tasks that repeat under `## Recurring Tasks`. Do not put them in this file.
 
-Some settings matter only when job search is on: `scheduler.jobs`, `scheduler.discovery`, `ai.claude`, and `ai.ollama.max_parallel`. With job search off, they are allowed but do nothing.
+Some settings matter only when job search is on: `scheduler.jobs`, `scheduler.discovery`, and `max_parallel` on a provider. With job search off, they are allowed but do nothing.
 
 ## `tracker`
 
@@ -113,14 +112,6 @@ Focus mode pauses check-in reminders. Turn it on with `daily-driver focus on`.
 | Setting | What it does | Default |
 | --- | --- | --- |
 | `default_duration` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, or a number of minutes. | `25m` |
-
-## `claude`
-
-Controls how `check-in` starts its Claude chat.
-
-| Setting | What it does | Default |
-| --- | --- | --- |
-| `resume_check_in` | `true`: `check-in` continues the most recent chat in this workspace, from `day-start`, `day-end`, or `check-in`. `false`: `check-in` starts a new chat. | `false` |
 
 ## `gather`
 
@@ -208,61 +199,156 @@ Allow rules that Claude Code saves in `.claude/settings.local.json` are lost whe
 
 ## `ai`
 
-Chooses which AI runs each feature: Claude or Ollama. Leave this section out to use Claude for everything. Ollama runs AI models on your own computer. For setup, see [Local AI setup](ollama-setup.md).
-
-| Feature | Set its AI with | Commands |
-| --- | --- | --- |
-| Summary | `ai.summary` | `summary` |
-| Voice update | `ai.voice_update` | `voice-update` |
-| Job review | `plugins.job_search.enrichment` | `jobs run`, `jobs backfill` |
-| Daily chats | Always Claude. `ai.interactive.model` sets the model. | `day-start`, `check-in`, `day-end` |
-
-Each feature picks its provider (`claude` or `ollama`) and its model separately. For each one, the first of these that has a value wins:
-
-1. The `--model` option on the command, where the command has one.
-2. The feature's own setting, such as `ai.summary` or `plugins.job_search.enrichment.fit_notes`.
-3. For job review only, the `plugins.job_search.enrichment` settings.
-4. The `provider` and `model` of the `ai` section.
-5. For the provider, `claude`. For the model, the provider's own default.
-
-Set `ai.provider: ollama` once to use Ollama everywhere. Then set `ai.summary: { provider: claude }` to keep summaries on Claude.
-
-Claude model names are `sonnet`, `opus`, and `haiku`. For Ollama, use the name of any model you downloaded, such as `qwen2.5:14b`. A model name must fit its provider. A Claude name on an Ollama feature makes that feature report an error when it runs.
-
-`day-start`, `check-in`, and `day-end` always use Claude. Only `ai.interactive.model` changes their model. The global `ai.model` does not apply to them.
+Chooses which AI runs each feature. A provider is a program or a model server that Daily Driver calls. Leave this section out to run every feature on Claude Code. For a model server on your own computer, see [Local models](local-models.md).
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| `provider` | AI for every feature with no setting of its own: `claude` or `ollama`. | `claude` |
-| `model` | Model for those features. Left out, the provider picks its own. | none |
-| `summary.provider`, `summary.model` | AI for `summary`. | the two rows above |
-| `voice_update.provider`, `voice_update.model` | AI for `voice-update`. | the two rows above |
-| `interactive.model` | Claude model for `day-start`, `check-in`, and `day-end`. The `--model` option on the command wins. | Claude's own default |
-| `claude.max_parallel` | Job reviews that run at the same time on Claude. `1` runs one at a time. Job search only. | `4` |
-| `ollama.endpoint` | Address of the Ollama app. | `http://localhost:11434` |
-| `ollama.timeout` | Seconds to wait for an answer. | `60` |
-| `ollama.max_parallel` | Job reviews that run at the same time on Ollama. `1` runs one at a time. Job search only. See [Local AI setup](ollama-setup.md) for memory limits. | `4` |
+| `interactive.resume_check_in` | `true`: `check-in` continues the most recent chat in this workspace, from `day-start`, `day-end`, or `check-in`. `false`: `check-in` starts a new chat. Continuing needs a `resume` template on the provider. | `false` |
+| `providers` | Your providers, by name. See [Providers](#providers). | the four built-in providers |
+
+### Tasks
+
+A task is one job that Daily Driver hands to a provider. Each task has a mode. The mode decides which setting of the provider runs it.
+
+| Task | Commands | Mode | What the provider needs |
+| --- | --- | --- | --- |
+| `interactive` | `day-start`, `day-end`, `check-in`, `resume` | Interactive: a chat that you talk to | `run` template. `resume` needs a `resume` template too. |
+| `summary` | `summary` | Agent: the provider runs in the workspace and reads the files that Daily Driver lists, with no user | `agent` template |
+| `voice_update` | `voice-update` | Text: the prompt holds all the data, and the answer is text | `text` template, or `base_url` |
+| `job_search.fit_notes` | `jobs run`, `jobs backfill` | Text | `text` template, or `base_url`. Job search only. |
+
+### Providers
+
+Daily Driver has four built-in providers. Each is a program or a server.
+
+| Provider | Kind | Notes |
+| --- | --- | --- |
+| `claude` | Program: Claude Code | Runs every task that no provider claims. Runs up to 4 job reviews at the same time. |
+| `opencode` | Program: opencode | Runs no task until you give it `tasks`. |
+| `lmstudio` | Model server at `http://localhost:1234/v1` | Text tasks only. Has no `model`. |
+| `ollama` | Model server at `http://localhost:11434/v1` | Text tasks only. Has no `model`. |
+
+`init` writes the built-in providers into `.dd-config.yaml` as lines that start with `# `. They show the shipped settings.
+
+A provider that is a program has command templates. A provider that is a model server has a `base_url` and speaks the OpenAI-compatible chat Application Programming Interface (API). Daily Driver sends a model server a `POST` to `<base_url>/chat/completions`.
+
+| Setting | Applies to | What it does |
+| --- | --- | --- |
+| `extends` | All | Name of another provider. Its settings are used first, then the settings of this entry. One level only. |
+| `tasks` | All | Core tasks this provider runs: `interactive`, `summary`, `voice_update`. A provider that only a plugin uses needs none. |
+| `run` | Programs | Template that starts an interactive session. |
+| `resume` | Programs | Template that reopens a saved session. |
+| `agent` | Programs | Template for agent tasks. The prompt goes in on standard input. The program runs in the workspace folder, and its standard output is the answer. |
+| `text` | Programs | Template for text tasks. The prompt goes in on standard input. The program runs in an empty temporary folder, and its standard output is the answer. |
+| `cleanup` | Programs | Template that runs after each `agent` or `text` call that made a session ID, for example to delete that session. A failure is logged and does not fail the call. |
+| `session_id` | Programs | Format of the session identifiers (IDs) that Daily Driver makes, with one `{uuid}`, for example `"ses_{uuid}"`. Without it, Daily Driver makes no ID, and the `{session_id}` groups are dropped. |
+| `base_url` | Servers | Address of the OpenAI-compatible server. A provider has `base_url` or templates, not both. |
+| `model` | All | Model name. A server that runs a task needs it. The `--model` option on a command wins. |
+| `timeout` | Agent and text tasks | Seconds before a call gives up. A positive whole number. |
+| `max_parallel` | Text tasks | Job reviews that run at the same time. `1` runs one at a time. Default `4`. |
 
 `max_parallel` changes speed only. It does not change how many jobs are reviewed (`max_enrich_fit`) or the time limit for one call.
 
-Example: use Ollama by default, but keep summaries and voice updates on Claude. The `plugins` part turns job search on.
+#### Choose a provider for a task
+
+- To run a core task on a provider, list the task under that provider's `tasks`. One provider can run several tasks. Two providers cannot run the same task.
+- A core task that no provider lists runs on `claude`.
+- A plugin picks its own providers. See [`plugins.job_search`](#pluginsjob_search).
+- A provider that runs no task does nothing. `doctor` reports a provider that you defined and that runs no task.
+
+To run day-start, day-end, check-in, and summary on opencode:
 
 ```yaml
 ai:
-  provider: ollama            # AI for every feature without its own setting
-  model: qwen2.5:14b
-  summary: { provider: claude, model: sonnet }
-  voice_update: { provider: claude }
-  ollama:
-    endpoint: http://localhost:11434
-    timeout: 90
-plugins:
-  job_search:
-    enrichment:
-      provider: ollama        # AI for job review
-      model: phi4
-      fit_notes: { provider: claude, model: sonnet }   # the fit and notes call uses Claude
+  providers:
+    opencode:
+      tasks: [interactive, summary]
 ```
+
+#### Change or add a provider
+
+- An entry with the name of a built-in provider changes only the settings it lists. The other settings stay as shipped.
+- An entry with another name is a new provider. Give it `extends` to start from another provider's settings. The other provider can be a built-in provider or one of your own, as long as that one does not use `extends`.
+- `extends` does not copy `tasks`. Each entry lists its own.
+- An entry named after a built-in provider cannot use `extends`.
+
+To run `summary` on a second Claude entry that uses another model, and `voice_update` on LM Studio:
+
+```yaml
+ai:
+  providers:
+    claude-opus:
+      extends: claude
+      model: opus
+      tasks: [summary]
+    lmstudio:
+      model: qwen3-coder
+      tasks: [voice_update]
+```
+
+#### Templates
+
+A template is a list that Daily Driver turns into the command to run. Daily Driver starts the program directly and uses no shell. The first item is the program, as plain text with no braces. Each other item is one of these:
+
+- A string. It becomes one argument. A placeholder in it, such as `{workspace}`, is filled in. A placeholder takes no format spec or conversion, such as `{model:>10}` or `{model!r}`. Write `{{` and `}}` for a literal brace.
+- A group: a list of strings inside the list. The whole group is dropped when any placeholder in it has no value.
+
+A placeholder outside a group that has no value is an error. Some placeholders can have no value, so Daily Driver requires a group for them when the config loads:
+
+- `{model}`, when the provider sets no `model`.
+- `{system}`, in `agent`, `text`, and `cleanup`.
+- `{command}` and `{prompt_file}`, in `resume`.
+- `{workspace}`, in `cleanup`, when the provider has a `text` template.
+
+| Placeholder | Templates | Value |
+| --- | --- | --- |
+| `{workspace}` | `run`, `resume`, `agent`, `cleanup` | The workspace folder. Empty in `cleanup` after a text task. |
+| `{command}` | `run`, `resume` | The slash command of the launcher, such as `/daily-driver:day-start`. Empty for `resume`. |
+| `{prompt_file}` | `run`, `resume` | Path of the file that holds the launcher's instructions. Empty for `resume`. Daily Driver writes the file only when the template uses this placeholder. |
+| `{session_id}` | all | The session ID that was made or saved. The provider must have a `session_id` format. |
+| `{session_name}` | `run`, `resume` | The `--session-name` option. |
+| `{model}` | all | The `--model` option, else the provider's `model`. |
+| `{agent}` | `run`, `resume` | The `--agent` option. |
+| `{system}` | `agent`, `text`, `cleanup` | The system text of a text task. When a `text` template has no `{system}`, Daily Driver puts the system text in front of the prompt. |
+
+A template that uses a placeholder not listed for it is rejected when the config loads.
+
+For example, the shipped `claude` provider has this `agent` template. The group drops `--model` when no model is set:
+
+```yaml
+agent: ["claude", "-p", "--no-session-persistence", ["--model", "{model}"], "--add-dir", "{workspace}"]
+```
+
+#### Time limits
+
+A call to a provider gives up after the first of these that is set:
+
+1. The `--timeout` option on `summary` or `voice-update`. For job reviews, `plugins.job_search.enrichment.enrich_timeout`.
+2. The provider's `timeout`.
+3. The default for the mode: 180 seconds for a text task, 900 seconds for an agent task.
+
+An interactive session has no time limit.
+
+#### What Daily Driver checks
+
+Daily Driver checks `ai` and the plugin routes when it reads the config. A command stops and prints the problem. Examples:
+
+- A provider has both `base_url` and templates, or neither.
+- A task name is not known.
+- Two providers run the same core task.
+- A task goes to a provider that lacks the setting its mode needs. For example, `summary` goes to `lmstudio`, which is a server and cannot run agent tasks.
+- A server runs a task and has no `model`. The message names the fix, such as `set ai.providers.lmstudio.model`.
+- A `model` is blank. To set no model, leave `model` out, or set it to `null` in an entry that uses `extends`.
+- `extends` names a provider that does not exist, or one that uses `extends` itself.
+- A plugin names a provider that is not defined, or a task the plugin does not have. A plugin that is off is not checked.
+
+`daily-driver doctor` also shows one `ai:<provider>` row for each provider in use. See [`doctor`](commands.md#doctor---fix----reset--j----json).
+
+#### Sessions
+
+Each interactive session gets an ID in the provider's `session_id` format. Daily Driver saves the ID and the provider's name. `resume` and a continuing `check-in` use them. If the `interactive` provider is not the one that started the saved session, `resume` stops and says so.
+
+For Claude Code, the instructions for each launcher come from the `.claude/` files in the workspace. Daily Driver writes those files for every workspace. For a provider whose `run` template has `{prompt_file}`, Daily Driver writes the instructions to `.daily-driver/state/prompts/<command>.md` before each launch.
 
 ## `plugins.job_search`
 
@@ -277,10 +363,34 @@ Job search finds jobs on the sites you choose, removes duplicates, and scores ho
 | `seniority_keywords` | Words for your level, such as `senior`. See [Which jobs are kept](#which-jobs-are-kept). | built-in list |
 | `locations` | Which places to keep. See [`locations`](#locations). | keep all places |
 | `scraper` | How Daily Driver reads job sites. See [`scraper`](#scraper). | see below |
+| `provider` | AI for job review. The name of a provider under `ai.providers`. Left out, `claude`. | none |
+| `tasks` | AI for one task of job search. `fit_notes` is the only one. It names a provider and wins over `provider`. | none |
 | `enrichment` | The AI review of each new job. See [`enrichment`](#enrichment). | see below |
 | `verify` | When `jobs verify` checks saved jobs. See [`verify`](#verify). | see below |
 | `discovery` | How `jobs discover-boards` works. See [`discovery`](#discovery). | see below |
 | `sources` | The sites to search. See [`sources`](#sources). | none |
+
+### AI for job review
+
+Job search has one AI task, `fit_notes`. It scores each job, writes the note, and labels the job remote, hybrid, or onsite. `jobs run` and `jobs backfill` run it. It is a text task, so a provider needs a `text` template, or a `base_url` and a `model`.
+
+The provider is the first of these that is set:
+
+1. `plugins.job_search.tasks.fit_notes`
+2. `plugins.job_search.provider`
+3. `claude`
+
+Each one names a provider under `ai.providers`, or a built-in provider. Daily Driver reports a name that is not defined, and a task name that job search does not have, when it reads the config. The number of reviews that run at once is the `max_parallel` of the provider.
+
+```yaml
+ai:
+  providers:
+    lmstudio:
+      model: qwen3-coder
+plugins:
+  job_search:
+    provider: lmstudio     # job reviews run on LM Studio
+```
 
 ### Which jobs are kept
 
@@ -345,9 +455,6 @@ The review also reads `context.md` from your workspace folder. Your experience a
 
 | Setting | What it does | Default |
 | --- | --- | --- |
-| `provider` | AI for job review: `claude` or `ollama`. Left out, the `ai` section decides. | none |
-| `model` | Model for job review, such as `sonnet` or `qwen2.5:14b`. Left out, the provider picks its own. | none |
-| `fit_notes.provider`, `fit_notes.model` | AI for the fit and notes call. They win over the two rows above. | none |
 | `enrich_fit` | Scores each job from 1 to 10 for fit. Set to `false` to turn off the whole job review, including the note, the remote label, and `criteria`. | `true` |
 | `enrich_notes` | Adds a one-line note that explains the score: the main match or mismatch, and the location fit. Set to `false` to turn off the whole job review, the same as `enrich_fit`. | `true` |
 | `enrich_is_remote` | Labels each job `remote`, `hybrid`, or `onsite`. It uses the same AI call. | `true` |
@@ -358,7 +465,7 @@ The review also reads `context.md` from your workspace folder. Your experience a
 | `force_recook_cooldown_hours` | With `jobs backfill --force-update`, skips jobs reviewed within this many hours, so an interrupted run can continue. `0` reviews all jobs again. `missing` reviews only jobs with no review yet. `--cooldown-hours` overrides it for one run. | `24` |
 | `criteria` | Your own questions about each job. See [`criteria`](#criteria). | none |
 
-For `provider` and `model`, see the order in [`ai`](#ai).
+The AI that runs the review is set by `plugins.job_search.provider` and `plugins.job_search.tasks.fit_notes`, not here. See [AI for job review](#ai-for-job-review). The `enrich_timeout` setting is the time limit of one review. The `timeout` of a provider does not apply to job reviews.
 
 #### `criteria`
 
@@ -521,5 +628,5 @@ plugins:
 ## See also
 
 - [usage.md](usage.md): the daily flow.
-- [Local AI setup](ollama-setup.md): run some AI tasks on your own computer.
+- [Local models](local-models.md): run some AI tasks on your own computer.
 - [commands.md](commands.md): every command and option.

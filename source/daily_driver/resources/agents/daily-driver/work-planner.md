@@ -255,7 +255,11 @@ When asked to draft an email, message, {% if "job_search" in plugins %}cover let
 response, reply to a recruiter or hiring manager, {% endif %}or any other professional
 communication on behalf of the user:
 
+{% if claude_code %}
 1. Read the voice profile before writing anything. Resolve its path, then Read with the Claude Read tool:
+{% else %}
+1. Read the voice profile before writing anything. Resolve its path, then read it:
+{% endif %}
 
 ```bash
 daily-driver paths root
@@ -266,9 +270,15 @@ Read `<root>/voice-profile.md`. If the file is missing or empty, note it and con
 2. Apply the profile's patterns, language preferences, structural
    conventions, and explicit avoidances
 3. If no voice profile exists, proceed but note it is missing
+{% if claude_code %}
 4. After the user approves or substantially edits a draft, remind
    them to run `/daily-driver:voice-update` with this file to keep the voice
    profile current.
+{% else %}
+4. After the user approves or substantially edits a draft, remind
+   them to run `daily-driver voice-update --from <file>` with this file to
+   keep the voice profile current.
+{% endif %}
 
 The voice profile is the source of truth for tone and style. Do not
 default to generic professional writing conventions when the profile

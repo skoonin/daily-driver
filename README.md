@@ -25,14 +25,14 @@ If you close a chat by accident, run `daily-driver resume` to reopen the most re
 
 ## Connect your other tools
 
-Each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell claude to use them or put it in `context.md`, and every chat can use them.
+With the default provider, each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell claude to use them or put it in `context.md`, and every chat can use them.
 
 ## What you need
 
 - **A Mac.** Daily Driver is built for Macs with Apple silicon. Intel Macs probably work but are untested. Windows and Linux are not supported.
 - **Homebrew**, an app installer for macOS. See [brew.sh](https://brew.sh).
 - **pipx**, a tool that installs Python programs. It installs Daily Driver in its own folder, so Daily Driver does not change other Python programs.
-- **Claude Code**, installed and signed in. Every chat runs through it.
+- **Claude Code**, installed and signed in. It is the default AI: every chat runs through it unless you choose another provider, such as opencode. See [AI providers](docs/configuration.md#ai).
 - **Optional: icalBuddy**, a small tool that lets Daily Driver read your calendar. Reading the calendar can fail in the built-in terminal of Visual Studio Code (VS Code) on recent versions of macOS. See [Troubleshooting](docs/troubleshooting.md#calendar-events-are-missing-in-vs-code).
 
 ## Install
@@ -92,7 +92,7 @@ Run the commands from inside your workspace folder, or add `--workspace ~/daily-
 
 - **Reminders.** Run `daily-driver scheduler install` to get a check-in reminder at 11:00 and 15:00. Click the reminder to open the chat. Clicking needs one optional tool; see the [install guide](docs/install.md).
 - **Job search.** Daily Driver can search the job sites you choose, remove duplicates, and score how well each job fits you. Turn it on with `--job-search` when you create a workspace. The [guide](docs/usage.md#jobs) also shows how to add it to an existing workspace.
-- **Local AI.** Run some AI tasks on your own computer with Ollama instead of Claude. See [Local AI setup](docs/ollama-setup.md).
+- **Other AI providers.** Run chats on opencode, or run some AI tasks on your own computer with LM Studio or ollama, instead of Claude. See [AI providers](docs/configuration.md#ai) and [Local models](docs/local-models.md).
 
 ## Commands you can run yourself
 
@@ -151,7 +151,7 @@ Your workspace folder stays. Delete it yourself if you do not want your data. Th
 | [How it works](docs/concepts.md) | The ideas behind the workspace, tracker, and AI chats |
 | [Commands](docs/commands.md) | Every command and option, plus a [command tree](docs/cli-tree.md) |
 | [Settings](docs/configuration.md) | Every setting in your settings file |
-| [Local AI setup](docs/ollama-setup.md) | Run some AI tasks on your own computer |
+| [Local models](docs/local-models.md) | Run some AI tasks on your own computer with LM Studio or ollama |
 | [Troubleshooting](docs/troubleshooting.md) | Fixes for common problems |
 
 **Developers:** run `make setup-dev` to create the development environment and `make test` to run the tests. See the [developer docs](docs/dev/README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

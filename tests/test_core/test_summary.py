@@ -79,3 +79,42 @@ def test_build_json_bundle_carries_detail_and_match() -> None:
 def test_build_json_bundle_none_match_serializes_as_empty_list() -> None:
     bundle = summary.build_json_bundle(range_start=_START, range_end=_END, match=None)
     assert bundle["data"]["match"] == []
+
+
+def test_render_prompt_lists_files_to_read(tmp_path) -> None:
+    notes = tmp_path / "2026-05-02-notes.md"
+    out = summary.render_prompt(range_start=_START, range_end=_END, files=[notes])
+    assert f"- {notes}" in out
+
+
+def test_summary_files_picks_existing_daily_files_in_range(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    workspace = SimpleNamespace(root=tmp_path, output_dir=tmp_path / "out")
+    may = workspace.output_dir / "2026" / "05"
+    june = workspace.output_dir / "2026" / "06"
+    may.mkdir(parents=True)
+    june.mkdir(parents=True)
+    first_plan = may / "2026-05-01-plan.md"
+    first_notes = may / "2026-05-01-notes.md"
+    last_notes = may / "2026-05-24-notes.md"
+    before = may / "2026-04-30-notes.md"
+    after = june / "2026-06-01-notes.md"
+    for path in (first_plan, first_notes, last_notes, before, after):
+        path.write_text("x", encoding="utf-8")
+    tracker = tmp_path / "tracker.yaml"
+    tracker.write_text("entries: []\n", encoding="utf-8")
+
+    files = summary.summary_files(workspace, _START, _END, tracker=tracker)
+
+    assert files == [first_plan, first_notes, last_notes, tracker]
+
+
+def test_summary_files_skips_a_missing_tracker(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    workspace = SimpleNamespace(root=tmp_path, output_dir=tmp_path)
+    files = summary.summary_files(
+        workspace, _START, _END, tracker=tmp_path / "tracker.yaml"
+    )
+    assert files == []

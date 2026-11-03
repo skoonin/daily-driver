@@ -225,7 +225,7 @@ def test_worker_folds_criteria_into_notes() -> None:
         {"fit": 8, "notes": "k8s shop", "criteria": {"Sponsorship": "Yes, H-1B"}}
     )
     with patch(
-        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
+        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai.invoke",
         return_value=payload,
     ):
         fit, notes, _remote, failed = _fetch_fit_notes_for_job(
@@ -243,7 +243,7 @@ def test_worker_folds_criteria_into_notes() -> None:
 def test_worker_missing_criteria_key_leaves_notes_unchanged() -> None:
     payload = json.dumps({"fit": 7, "notes": "k8s shop"})
     with patch(
-        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
+        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai.invoke",
         return_value=payload,
     ):
         _fit, notes, _remote, failed = _fetch_fit_notes_for_job(
@@ -260,7 +260,7 @@ def test_worker_missing_criteria_key_leaves_notes_unchanged() -> None:
 def test_worker_malformed_criteria_value_does_not_crash() -> None:
     payload = json.dumps({"fit": 7, "notes": "k8s shop", "criteria": "not-a-dict"})
     with patch(
-        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai_provider.invoke_for",
+        "daily_driver.plugins.job_search.scraper.enrichment.llm.ai.invoke",
         return_value=payload,
     ):
         _fit, notes, _remote, failed = _fetch_fit_notes_for_job(

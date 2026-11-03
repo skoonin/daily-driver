@@ -1,24 +1,61 @@
-"""Tests for nested-claude launcher subcommands (day-start/end, check-in).
+"""Tests for the interactive launcher subcommands (day-start/end, check-in, resume).
 
-These commands delegate to `claude` via ``daily_driver.integrations.claude_cli``.
-Tests stub out ``claude_cli.spawn_interactive`` and ``claude_cli.invoke`` so no
-actual subprocess ever runs.
+The launchers hand the terminal to the provider routed for the `interactive`
+task. Tests stub ``daily_driver.integrations.provider.spawn`` and record the
+argv it receives, so no actual subprocess ever runs. Exact argv lists for the
+built-in claude and opencode providers are pinned in ``test_interactive_launch.py``.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 
-def _init_workspace(tmp_path: Path) -> Path:
+def _init_workspace(tmp_path: Path, config: str = "") -> Path:
     from daily_driver.core.workspace import Workspace
 
     ws = tmp_path / "ws"
     ws.mkdir(parents=True, exist_ok=True)
     Workspace.init(ws)
+    if config:
+        cfg_path = ws / ".dd-config.yaml"
+        cfg_path.write_text(
+            cfg_path.read_text(encoding="utf-8") + config, encoding="utf-8"
+        )
     return ws
+
+
+def _stub_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code_for: Callable[[list[str]], int] = lambda argv: 0,
+) -> list[list[str]]:
+    """Make the provider launchable and record each spawned argv.
+
+    ``exit_code_for`` picks the exit code the fake session returns for an argv.
+    """
+    from daily_driver.integrations import provider
+
+    calls: list[list[str]] = []
+
+    def fake_spawn(chosen: object, argv: list[str]) -> int:
+        calls.append(argv)
+        return exit_code_for(argv)
+
+    monkeypatch.setattr(provider, "available", lambda chosen: True)
+    monkeypatch.setattr(provider, "spawn", fake_spawn)
+    return calls
+
+
+@pytest.fixture
+def spawned(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    return _stub_provider(monkeypatch)
+
+
+def _flag_value(argv: list[str], flag: str) -> str:
+    return argv[argv.index(flag) + 1]
 
 
 # ---------------------------------------------------------------------------
@@ -39,30 +76,21 @@ def test_interactive_launcher_invokes_claude_with_slash_command(
     slash: str,
     session_prefix: str,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     rc = app(["--workspace", str(ws), command])
 
     assert rc == 0
-    assert captured["prompt"] == slash
-    assert captured["agent"] == "work-planner"
-    assert captured["add_dirs"] == [ws]
-    assert captured["session_name"].startswith(f"{session_prefix}-")
+    (argv,) = spawned
+    assert argv[0] == "claude"
+    assert argv[-3] == slash
+    assert _flag_value(argv, "--agent") == "work-planner"
+    assert argv[-2:] == ["--add-dir", str(ws)]
+    assert _flag_value(argv, "-n").startswith(f"{session_prefix}-")
 
 
 def test_launcher_slash_prefix_matches_install_namespace() -> None:
@@ -89,22 +117,11 @@ def test_launcher_slash_prefix_matches_install_namespace() -> None:
 
 
 def test_day_start_overrides_agent_model_and_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     rc = app(
         [
@@ -121,9 +138,10 @@ def test_day_start_overrides_agent_model_and_session(
     )
 
     assert rc == 0
-    assert captured["agent"] == "custom-agent"
-    assert captured["model"] == "opus"
-    assert captured["session_name"] == "my-session"
+    (argv,) = spawned
+    assert _flag_value(argv, "--agent") == "custom-agent"
+    assert _flag_value(argv, "--model") == "opus"
+    assert _flag_value(argv, "-n") == "my-session"
 
 
 @pytest.mark.parametrize(
@@ -131,103 +149,38 @@ def test_day_start_overrides_agent_model_and_session(
     ["day-start", "day-end", "check-in"],
 )
 def test_interactive_launcher_uses_config_model_default(
-    command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    command: str, tmp_path: Path, spawned: list[list[str]]
 ) -> None:
-    """ai.interactive.model is passed to claude when no --model flag is given."""
+    """The claude provider's configured model is passed when no --model flag is given."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
-    ws = _init_workspace(tmp_path)
-    cfg_path = ws / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text(encoding="utf-8")
-        + "\nai:\n  interactive:\n    model: sonnet\n",
-        encoding="utf-8",
+    ws = _init_workspace(
+        tmp_path, "\nai:\n  providers:\n    claude:\n      model: sonnet\n"
     )
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     rc = app(["--workspace", str(ws), command])
 
     assert rc == 0
-    assert captured["model"] == "sonnet"
+    (argv,) = spawned
+    assert _flag_value(argv, "--model") == "sonnet"
 
 
 def test_interactive_cli_model_overrides_config_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
-    """An explicit --model flag wins over the ai.interactive.model default."""
+    """An explicit --model flag wins over the provider's configured model."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
-    ws = _init_workspace(tmp_path)
-    cfg_path = ws / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text(encoding="utf-8")
-        + "\nai:\n  interactive:\n    model: sonnet\n",
-        encoding="utf-8",
+    ws = _init_workspace(
+        tmp_path, "\nai:\n  providers:\n    claude:\n      model: sonnet\n"
     )
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     rc = app(["--workspace", str(ws), "day-start", "--model", "opus"])
 
     assert rc == 0
-    assert captured["model"] == "opus"
-
-
-def test_resolve_interactive_model_ignores_global_ai_model(
-    tmp_path: Path,
-) -> None:
-    """The resolver must not fall back to the provider-agnostic global ai.model:
-    that field can hold an ollama tag the claude CLI cannot run."""
-    from daily_driver.cli.commands._claude_session import resolve_interactive_model
-    from daily_driver.core.workspace import Workspace
-
-    ws_root = _init_workspace(tmp_path)
-    cfg_path = ws_root / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text(encoding="utf-8") + "\nai:\n  model: llama3.1\n",
-        encoding="utf-8",
-    )
-    workspace = Workspace.discover_or_fail(override=ws_root)
-
-    # No interactive default and no CLI flag → None, never the global ai.model.
-    assert resolve_interactive_model(workspace, None) is None
-    # A CLI flag still wins.
-    assert resolve_interactive_model(workspace, "opus") == "opus"
-
-
-def test_interactive_launcher_missing_claude_exits_1(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
-
-    ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: False)
-
-    rc = app(["--workspace", str(ws), "day-start"])
-
-    captured = capsys.readouterr()
-    assert rc == 1
-    assert "claude CLI not found" in captured.err
+    (argv,) = spawned
+    assert argv.count("--model") == 1
+    assert _flag_value(argv, "--model") == "opus"
 
 
 def test_interactive_launcher_missing_workspace_exits_1(
@@ -247,7 +200,7 @@ def test_interactive_launcher_missing_workspace_exits_1(
 
 
 def test_day_start_writes_plan_stub_and_records_session_id(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """F2: day-start mints UUID, writes plan stub + state YAML, then launches."""
 
@@ -256,24 +209,14 @@ def test_day_start_writes_plan_stub_and_records_session_id(
     from daily_driver.core.daily_state import read_state
     from daily_driver.core.session_pointer import read_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     today = clock.today()
     rc = app(["--workspace", str(ws_root), "day-start"])
 
     assert rc == 0
+    (argv,) = spawned
 
     # 1. plan stub on disk under output_dir/YYYY/MM/YYYY-MM-DD-plan.md
     ws = Workspace.discover_or_fail(override=ws_root)
@@ -298,58 +241,44 @@ def test_day_start_writes_plan_stub_and_records_session_id(
     assert pointer is not None
     assert pointer.last_session_id is not None
     assert pointer.last_session_at is not None
-    assert captured.get("session_id") == pointer.last_session_id
+    assert _flag_value(argv, "--session-id") == pointer.last_session_id
 
     # 3. session-name carries the day-cycle prefix + ISO date
-    assert isinstance(captured["session_name"], str)
-    assert today.isoformat() in captured["session_name"]
+    assert today.isoformat() in _flag_value(argv, "-n")
 
 
 def test_day_end_records_session_pointer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """day-end mints a --session-id and records the workspace session pointer."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import read_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     rc = app(["--workspace", str(ws_root), "day-end"])
     assert rc == 0
 
+    (argv,) = spawned
     ws = Workspace.discover_or_fail(override=ws_root)
     pointer = read_pointer(ws)
     assert pointer is not None
     assert pointer.last_session_id is not None
     # The recorded pointer matches the --session-id handed to claude.
-    assert captured.get("session_id") == pointer.last_session_id
-    assert captured.get("resume_session_id") is None
+    assert _flag_value(argv, "--session-id") == pointer.last_session_id
+    assert "--resume" not in argv
 
 
 def test_day_start_does_not_clobber_existing_plan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """F2: re-running day-start mid-day must preserve user/claude edits."""
     from daily_driver.cli.cli import app
     from daily_driver.core import clock
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     today = clock.today()
     ws = Workspace.discover_or_fail(override=ws_root)
@@ -369,7 +298,7 @@ def test_day_start_does_not_clobber_existing_plan(
 
 
 def test_day_start_writes_late_day_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spawned: list[list[str]]
 ) -> None:
     """F4: day-start records late_day=True when run past schedule.day_start + 2h."""
     from datetime import datetime, timezone
@@ -378,16 +307,8 @@ def test_day_start_writes_late_day_metadata(
     from daily_driver.core import clock
     from daily_driver.core.daily_state import read_state
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
-    ws_root = _init_workspace(tmp_path)
-    cfg = ws_root / ".dd-config.yaml"
-    cfg.write_text(
-        cfg.read_text() + "\nschedule:\n  day_start: '07:00'\n", encoding="utf-8"
-    )
-
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
+    ws_root = _init_workspace(tmp_path, "\nschedule:\n  day_start: '07:00'\n")
 
     fake_now = datetime(2026, 5, 8, 10, 0, tzinfo=timezone.utc)  # 3h past 07:00
     monkeypatch.setattr(clock, "FROZEN_TIME", fake_now)
@@ -404,7 +325,7 @@ def test_day_start_writes_late_day_metadata(
 
 
 def test_day_start_preserves_prior_check_in_in_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """F2: a re-run of day-start must not nuke last_check_in_at written earlier."""
     from datetime import datetime, timezone
@@ -413,11 +334,8 @@ def test_day_start_preserves_prior_check_in_in_state(
     from daily_driver.core import clock
     from daily_driver.core.daily_state import DailyState, read_state, write_state
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     today = clock.today()
     ws = Workspace.discover_or_fail(override=ws_root)
@@ -439,7 +357,7 @@ def test_day_start_preserves_prior_check_in_in_state(
 
 def test_day_start_surfaces_daily_state_error_cleanly(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """F2: a corrupted state YAML must produce 'error: <path>: ...' not a traceback."""
@@ -448,11 +366,8 @@ def test_day_start_surfaces_daily_state_error_cleanly(
     from daily_driver.core import clock
     from daily_driver.core.daily_state import state_path
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     target = state_path(ws, clock.today())
@@ -472,16 +387,14 @@ def test_day_start_surfaces_daily_state_error_cleanly(
 def test_day_start_surfaces_oserror_from_plan_stub_cleanly(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """F2: a disk error during plan-stub write becomes 'error: ...' (no traceback)."""
     from daily_driver.cli.cli import app
     from daily_driver.cli.commands import day_start as day_start_mod
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     def boom(_path: Path, _day: object) -> None:
         raise PermissionError("simulated read-only filesystem")
@@ -498,57 +411,36 @@ def test_day_start_surfaces_oserror_from_plan_stub_cleanly(
 
 
 def test_check_in_does_not_resume_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
-    """F3: claude.resume_check_in defaults False; no --resume even with a pointer."""
+    """F3: ai.interactive.resume_check_in defaults False; no --resume even with a pointer."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     write_pointer(ws, SessionPointer(last_session_id="some-uuid-from-morning"))
 
     rc = app(["--workspace", str(ws_root), "check-in"])
     assert rc == 0
-    assert captured.get("resume_session_id") is None
+    (argv,) = spawned
+    assert "--resume" not in argv
+    assert "some-uuid-from-morning" not in argv
 
 
 def test_check_in_resumes_when_config_enabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
-    """F3: with claude.resume_check_in=true and a pointer, --resume <uuid> is passed."""
+    """F3: with ai.interactive.resume_check_in=true and a pointer, --resume <uuid> is passed."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
-    ws_root = _init_workspace(tmp_path)
-    cfg_path = ws_root / ".dd-config.yaml"
-    existing = cfg_path.read_text(encoding="utf-8")
-    cfg_path.write_text(
-        existing + "\nclaude:\n  resume_check_in: true\n", encoding="utf-8"
+    ws_root = _init_workspace(
+        tmp_path, "\nai:\n  interactive:\n    resume_check_in: true\n"
     )
-
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     sid = "11111111-2222-3333-4444-555555555555"
@@ -556,12 +448,13 @@ def test_check_in_resumes_when_config_enabled(
 
     rc = app(["--workspace", str(ws_root), "check-in"])
     assert rc == 0
-    assert captured.get("resume_session_id") == sid
+    (argv,) = spawned
+    assert _flag_value(argv, "--resume") == sid
+    assert "--session-id" not in argv
 
 
 def test_check_in_propagates_resume_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """F3: an unresumable id — claude exits non-zero — propagates, no second spawn.
 
@@ -571,28 +464,16 @@ def test_check_in_propagates_resume_failure(
     """
     from daily_driver.cli.cli import app
     from daily_driver.core import clock
+    from daily_driver.core.daily_state import read_state
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
-    ws_root = _init_workspace(tmp_path)
-    cfg_path = ws_root / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text() + "\nclaude:\n  resume_check_in: true\n",
-        encoding="utf-8",
+    ws_root = _init_workspace(
+        tmp_path, "\nai:\n  interactive:\n    resume_check_in: true\n"
     )
 
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    calls: list[dict[str, object]] = []
-
-    def fake_spawn(prompt=None, **kwargs):
-        calls.append(dict(kwargs))
-        # Real spawn_interactive returns claude's exit code; a bad --resume id
-        # makes claude exit 1. It never raises ClaudeInvocationError.
-        return 1 if kwargs.get("resume_session_id") else 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+    # A bad --resume id makes claude exit 1; the spawn call itself never raises.
+    calls = _stub_provider(monkeypatch, lambda argv: 1 if "--resume" in argv else 0)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     sid = "11111111-2222-3333-4444-555555555555"
@@ -602,28 +483,23 @@ def test_check_in_propagates_resume_failure(
     assert rc == 1
     # Exactly one spawn (the resume attempt); no silent fresh re-launch.
     assert len(calls) == 1
-    assert calls[0]["resume_session_id"] == sid
+    assert _flag_value(calls[0], "--resume") == sid
 
     # A failed run records no check-in.
-    from daily_driver.core.daily_state import read_state as _read_state
-
-    after = _read_state(ws, clock.today())
+    after = read_state(ws, clock.today())
     assert after is None
 
 
 def test_check_in_records_last_check_in_at_on_success(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """F3: a successful check-in updates last_check_in_at, preserving prior fields."""
     from daily_driver.cli.cli import app
     from daily_driver.core import clock
     from daily_driver.core.daily_state import DailyState, read_state, write_state
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     sid = "abc"
@@ -652,11 +528,9 @@ def test_check_in_skips_state_update_on_nonzero_exit(
     from daily_driver.core import clock
     from daily_driver.core.daily_state import read_state
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 7)
+    _stub_provider(monkeypatch, lambda argv: 7)
 
     rc = app(["--workspace", str(ws_root), "check-in"])
     assert rc == 7
@@ -670,16 +544,14 @@ def test_check_in_skips_state_update_on_nonzero_exit(
 def test_check_in_state_write_failure_does_not_mask_session_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """F3: a state-write failure post-session must warn, not flip rc to 1."""
     from daily_driver.cli.cli import app
     from daily_driver.cli.commands import check_in as check_in_mod
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 0)
 
     def boom(_workspace: object) -> None:
         raise PermissionError("simulated read-only state dir")
@@ -697,47 +569,34 @@ def test_check_in_state_write_failure_does_not_mask_session_success(
 
 
 def test_check_in_no_resume_flag_overrides_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     """F3: --no-resume forces a fresh session even when config says resume."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
-    ws_root = _init_workspace(tmp_path)
-    cfg_path = ws_root / ".dd-config.yaml"
-    cfg_path.write_text(
-        cfg_path.read_text() + "\nclaude:\n  resume_check_in: true\n",
-        encoding="utf-8",
+    ws_root = _init_workspace(
+        tmp_path, "\nai:\n  interactive:\n    resume_check_in: true\n"
     )
-
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     write_pointer(ws, SessionPointer(last_session_id="abc"))
 
     rc = app(["--workspace", str(ws_root), "check-in", "--no-resume"])
     assert rc == 0
-    assert captured.get("resume_session_id") is None
+    (argv,) = spawned
+    assert "--resume" not in argv
+    assert _flag_value(argv, "--session-id") != "abc"
 
 
 def test_interactive_launcher_propagates_claude_exit_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    monkeypatch.setattr(claude_cli, "spawn_interactive", lambda **kw: 42)
+    _stub_provider(monkeypatch, lambda argv: 42)
 
     rc = app(["--workspace", str(ws), "check-in"])
 
@@ -750,11 +609,11 @@ def test_interactive_launcher_propagates_claude_exit_code(
 
 
 @pytest.mark.parametrize("command", ["day-start", "day-end", "check-in"])
-def test_launch_terminal_opens_tab_and_never_spawns_claude(
+def test_launch_terminal_opens_tab_and_never_spawns_session(
     command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, notify, terminal_launcher
+    from daily_driver.integrations import notify, provider, terminal_launcher
 
     ws = _init_workspace(tmp_path)
     opened: dict[str, list[str]] = {}
@@ -765,10 +624,10 @@ def test_launch_terminal_opens_tab_and_never_spawns_claude(
     )
     monkeypatch.setattr(notify, "desktop_notify", lambda *a, **k: True)
 
-    def never_spawn(**kwargs):  # pragma: no cover - failure path only
-        raise AssertionError("claude must not spawn on a --launch firing")
+    def never_spawn(*args, **kwargs):  # pragma: no cover - failure path only
+        raise AssertionError("a session must not spawn on a --launch firing")
 
-    monkeypatch.setattr(claude_cli, "spawn_interactive", never_spawn)
+    monkeypatch.setattr(provider, "spawn", never_spawn)
 
     rc = app(["--workspace", str(ws), command, "--launch", "terminal"])
 
@@ -826,7 +685,7 @@ def test_launch_notify_posts_clickable_notification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli, notify
+    from daily_driver.integrations import notify, provider
 
     ws = _init_workspace(tmp_path)
     captured: dict[str, object] = {}
@@ -838,9 +697,9 @@ def test_launch_notify_posts_clickable_notification(
 
     monkeypatch.setattr(notify, "desktop_notify", fake_notify)
     monkeypatch.setattr(
-        claude_cli,
-        "spawn_interactive",
-        lambda **kw: (_ for _ in ()).throw(AssertionError("must not spawn")),
+        provider,
+        "spawn",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not spawn")),
     )
 
     rc = app(["--workspace", str(ws), "check-in", "--launch", "notify"])
@@ -942,20 +801,13 @@ def test_launch_notify_focus_does_not_gate_day_bookends(
 
 def test_resume_errors_cleanly_when_no_pointer(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """resume with no recorded session errors, never opens an untethered session."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    spawned = []
-    monkeypatch.setattr(
-        claude_cli, "spawn_interactive", lambda **kw: spawned.append(kw) or 0
-    )
 
     rc = app(["--workspace", str(ws_root), "resume"])
     err = capsys.readouterr().err
@@ -965,26 +817,13 @@ def test_resume_errors_cleanly_when_no_pointer(
     assert spawned == [], "resume must not spawn a session when none is recorded"
 
 
-def test_resume_reattaches_to_pointer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_resume_reattaches_to_pointer(tmp_path: Path, spawned: list[list[str]]) -> None:
     """resume passes --resume <uuid> (from the pointer) and no opening prompt."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-
-    captured: dict[str, object] = {}
-
-    def fake_spawn(prompt=None, **kwargs):
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     sid = "11111111-2222-3333-4444-555555555555"
@@ -992,15 +831,16 @@ def test_resume_reattaches_to_pointer(
 
     rc = app(["--workspace", str(ws_root), "resume"])
     assert rc == 0
-    assert captured.get("resume_session_id") == sid
+    (argv,) = spawned
+    assert _flag_value(argv, "--resume") == sid
     # Reattach drops the user back into the conversation: no slash prompt replayed.
-    assert captured.get("prompt") is None
-    assert captured.get("session_id") is None
+    assert not any(arg.startswith("/daily-driver:") for arg in argv)
+    assert "--session-id" not in argv
+    assert argv[-2:] == ["--add-dir", str(ws_root)]
 
 
 def test_resume_propagates_reattach_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A stale/unresumable id — claude exits non-zero — propagates, no fresh spawn.
 
@@ -1011,20 +851,11 @@ def test_resume_propagates_reattach_failure(
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import SessionPointer, write_pointer
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
 
-    calls: list[dict[str, object]] = []
-
-    def fake_spawn(prompt=None, **kwargs):
-        calls.append(dict(kwargs))
-        # Real spawn_interactive returns claude's exit code; a bad --resume id
-        # makes claude exit 1. It never raises ClaudeInvocationError.
-        return 1 if kwargs.get("resume_session_id") else 0
-
-    monkeypatch.setattr(claude_cli, "spawn_interactive", fake_spawn)
+    # A bad --resume id makes claude exit 1; the spawn call itself never raises.
+    calls = _stub_provider(monkeypatch, lambda argv: 1 if "--resume" in argv else 0)
 
     ws = Workspace.discover_or_fail(override=ws_root)
     sid = "11111111-2222-3333-4444-555555555555"
@@ -1035,26 +866,20 @@ def test_resume_propagates_reattach_failure(
     assert rc == 1
     # Exactly one spawn (the resume attempt); no silent fresh re-launch.
     assert len(calls) == 1
-    assert calls[0]["resume_session_id"] == sid
+    assert _flag_value(calls[0], "--resume") == sid
 
 
 def test_resume_reports_corrupt_pointer_cleanly(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    spawned: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A corrupt session.yaml yields a clean error with the path, not a traceback."""
     from daily_driver.cli.cli import app
     from daily_driver.core.session_pointer import pointer_path
     from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import claude_cli
 
     ws_root = _init_workspace(tmp_path)
-    monkeypatch.setattr(claude_cli, "available", lambda: True)
-    spawned = []
-    monkeypatch.setattr(
-        claude_cli, "spawn_interactive", lambda **kw: spawned.append(kw) or 0
-    )
 
     ws = Workspace.discover_or_fail(override=ws_root)
     target = pointer_path(ws)

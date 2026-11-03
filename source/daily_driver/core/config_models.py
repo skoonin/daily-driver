@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from daily_driver.core.providers import ProviderConfig, validate_routes
 
 # PluginsConfig is assembled in the plugins package from PLUGINS metadata, not
 # here, so core need not hardcode plugin namespaces. Safe one-directional
@@ -167,96 +169,40 @@ class SchedulerConfig(BaseModel):
     discovery: JobSchedule | None = None
 
 
-class ClaudeConfig(BaseModel):
-    """Knobs for how daily-driver invokes the `claude` CLI."""
+class InteractiveAIConfig(BaseModel):
+    """Behaviour of the interactive launchers, whichever provider runs them."""
 
     model_config = ConfigDict(extra="forbid")
 
+    # check-in continues the last session instead of starting a new one.
     resume_check_in: bool = False
 
 
-class AITaskConfig(BaseModel):
-    """Provider + model selection for a single headless AI task."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    provider: Literal["claude", "ollama"] | None = None
-    # Provider and model resolve separately (ai_provider.resolve_route), so an
-    # inherited `ai.model` meant for the other provider fails at call time.
-    model: str | None = None
-
-
-class OllamaConfig(BaseModel):
-    """Settings consulted when a task is routed to the ollama provider."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    endpoint: str = "http://localhost:11434"
-    timeout: int = 60
-    max_parallel: int = Field(
-        default=4,
-        ge=1,
-    )
-
-
-class InteractiveAIConfig(BaseModel):
-    """Model selection for the claude-only interactive launchers.
-
-    Distinct from AITaskConfig (which carries a `provider`): the interactive
-    launchers always run on the claude CLI, so a `provider` here would be inert.
-    Omitting it from the model — with `extra="forbid"` — means a stray
-    `ai.interactive.provider:` is rejected loudly at config-load rather than
-    accepted and silently ignored.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: str | None = None
-
-
-class ClaudeProviderConfig(BaseModel):
-    """Settings consulted when a task is routed to the claude provider.
-
-    Distinct from ClaudeConfig (top-level `claude:` session behavior) — this is
-    the `ai.claude:` block parallel to `ai.ollama:`.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    max_parallel: int = Field(
-        default=4,
-        ge=1,
-        # Kept modest: claude is a rate-limited API reached through a CLI
-        # subprocess per call, so wide fan-out trades throughput for throttling
-        # and process overhead rather than the RAM ceiling ollama hits.
-    )
-
-
 class AIConfig(BaseModel):
-    """Provider routing for the core `summary` task plus shared provider blocks.
+    """AI providers and the settings of the interactive launchers.
 
-    Default resolves to `provider: claude`, so omitting the `ai:` block in
-    `.dd-config.yaml` preserves the existing claude-only behavior. The
-    `claude:` / `ollama:` blocks are shared connection/tuning infra consulted
-    by whichever provider a task routes to — `summary` here, and the
-    job_search plugin's own `enrichment` routing
-    (`plugins.job_search.enrichment.provider`). Interactive launchers
-    (day-start, check-in, day-end) ignore this block — they always use the
-    `claude` CLI directly for session / agent / workspace-context features
-    Ollama doesn't have.
+    `providers` entries merge over the built-in providers (claude, opencode,
+    lmstudio, ollama); see core.providers. With no `ai:` block every task
+    runs on the built-in claude.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["claude", "ollama"] = "claude"
-    model: str | None = None
-    summary: AITaskConfig = AITaskConfig()
-    voice_update: AITaskConfig = AITaskConfig()
     interactive: InteractiveAIConfig = InteractiveAIConfig()
-    # Only job search enrichment reads this block (its sole setting is
-    # max_parallel), so a plain workspace config leaves it out.
-    claude: ClaudeProviderConfig = ClaudeProviderConfig()
-    ollama: OllamaConfig = OllamaConfig()
+    providers: dict[str, ProviderConfig] = {}
+
+    @field_validator("providers", mode="before")
+    @classmethod
+    def _empty_providers(cls, value: Any) -> Any:
+        # `providers:` or `opencode:` with every line commented out loads as
+        # null; treat it as no entries, or an entry that changes nothing.
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {
+                name: {} if entry is None else entry for name, entry in value.items()
+            }
+        return value
 
 
 class FocusConfig(BaseModel):
@@ -309,7 +255,6 @@ class Config(BaseModel):
     tracker: TrackerConfig
     scheduler: SchedulerConfig | None = None
     schedule: ScheduleConfig = ScheduleConfig()
-    claude: ClaudeConfig = ClaudeConfig()
     ai: AIConfig = AIConfig()
     focus: FocusConfig = FocusConfig()
     gather: GatherConfig = GatherConfig()
@@ -322,3 +267,10 @@ class Config(BaseModel):
         # `plugins:` with every plugin block commented out loads as null, a
         # natural way to switch every plugin off; treat it as no plugins.
         return {} if value is None else value
+
+    @model_validator(mode="after")
+    def _routes_resolve(self) -> Config:
+        # Here, not on AIConfig: plugin routes live under `plugins`, which
+        # AIConfig cannot see.
+        validate_routes(self)
+        return self

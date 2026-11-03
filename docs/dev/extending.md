@@ -4,7 +4,7 @@ Three patterns: adding a subcommand, adding a plugin, and adding a scraper sourc
 
 ## Adding a subcommand
 
-Two shapes: pure-Python (argparse + `core/`) and Claude-launcher (spawn a nested `claude` session).
+Three shapes: pure-Python (argparse + `core/`), interactive launcher (start a session on the `interactive` provider), and headless AI command (one call to a provider; see [AI tasks in a plugin](#ai-tasks-in-a-plugin)).
 
 ### Pure-Python
 
@@ -39,14 +39,14 @@ Register in `_CORE_COMMANDS` in `cli/cli.py` (`_COMMANDS` is built from it and t
 
 CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`. The first line of the module docstring is the summary that `daily-driver help commands` shows; without a docstring it shows "(no description)".
 
-### Claude launcher
+### Interactive launcher
 
-Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace).
+Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace). Put any step that only Claude Code can do inside `{% if claude_code %}`. A provider without `.claude/` gets the file as a prompt file with `claude_code` false.
 
-Create `source/daily_driver/cli/commands/review.py`. Wire the parser by hand and call `launch_fresh_and_record` from `_claude_session` — it mints a `--session-id` and records it as the workspace's most-recent session so `resume` can reattach later (see `day_end.py` for the canonical shape):
+Create `source/daily_driver/cli/commands/review.py`. Wire the parser by hand. Get the provider with `interactive_provider`, and call `launch_fresh_and_record` from `_session`. It mints a session ID in the provider's `session_id` format and records the ID and the provider name as the workspace's most-recent session, so `resume` can reattach later (see `day_end.py` for the canonical shape):
 
 ```python
-"""review subcommand: interactive review session via claude."""
+"""review subcommand: interactive review session."""
 
 from __future__ import annotations
 import argparse
@@ -56,14 +56,13 @@ from daily_driver.cli._common import (
     add_session_args,
     resolve_workspace,
 )
-from daily_driver.cli.commands._claude_session import (
+from daily_driver.cli.commands._session import (
     add_launch_mode_arg,
     default_session_name,
     handle_launch_exception,
     handle_launch_mode,
+    interactive_provider,
     launch_fresh_and_record,
-    require_claude_available,
-    resolve_interactive_model,
 )
 
 _SLASH_COMMAND = "/daily-driver:review"
@@ -85,19 +84,22 @@ def run(args: argparse.Namespace) -> int:
         diverted = handle_launch_mode(args, workspace, "review")
         if diverted is not None:
             return diverted
-        require_claude_available()
+        provider = interactive_provider(workspace)
         return launch_fresh_and_record(
             workspace=workspace,
-            prompt=_SLASH_COMMAND,
+            provider=provider,
+            command=_SLASH_COMMAND,
             session_name=default_session_name(_SESSION_PREFIX, args.session_name),
             agent=args.agent,
-            model=resolve_interactive_model(workspace, args.model),
+            model=args.model,
         )
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
 ```
 
-To reattach to an existing session instead of starting fresh, call `reattach_or_fresh` (see `check_in.py` and `resume.py`). For headless flows, call `launch_headless()` from `_claude_session` with captured stdout.
+To reattach to an existing session instead of starting fresh, call `reattach_or_fresh` (see `check_in.py` and `resume.py`). It refuses a session that another provider started.
+
+For a headless call, do not use a launcher. Resolve the provider with `provider_for(workspace.config, TASK)` and run it with `run_ai_task` from `_ai_task` (see `summary.py` and `voice_update.py`). `run_ai_task` shows the status line and prints the error.
 
 ### Checklist
 
@@ -106,7 +108,7 @@ To reattach to an existing session instead of starting fresh, call `reattach_or_
 - [ ] Test in `tests/test_cli/`; core logic test in `tests/test_core/`
 - [ ] Entry in `docs/commands.md`
 - [ ] `[Unreleased]` note in `CHANGELOG.md`
-- [ ] (Launcher) shipped slash command in `source/daily_driver/resources/slash_commands/daily-driver/`
+- [ ] (Launcher) shipped slash command in `source/daily_driver/resources/slash_commands/daily-driver/`, with Claude-only steps inside `{% if claude_code %}`
 
 ## Adding a plugin
 
@@ -312,10 +314,87 @@ Core stays import-light: it imports `PLUGINS` lazily inside the functions that i
 - [ ] `plugins/<name>/__init__.py` exposes `PLUGIN`
 - [ ] Added to `PLUGINS` in `plugins/__init__.py`
 - [ ] `config_model` is a `BaseModel`; tests in `tests/test_plugins/<name>/`
+- [ ] (AI tasks) `tasks` on the descriptor, `config_model` subclasses `PluginConfigBase`, calls go through `provider_for` and `ai.invoke`
 - [ ] Plugin-specific text in shipped prompts sits inside `{% if "<name>" in plugins %}` blocks
 - [ ] Its settings are in `.dd-config.yaml.j2` inside a `{% if "<name>" in plugins %}` block, with any core setting only this plugin uses. `tests/test_core/test_config_template.py` checks the gating for job search only; extend it for the new plugin
 - [ ] (Optional) an `init` flag in `cli/commands/init.py` that adds the plugin to the `plugins` set passed to `Workspace.init`
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`
+
+### AI tasks in a plugin
+
+A plugin that calls an AI declares a task for each kind of call. The plugin system routes the task to a provider. The plugin has no routing code and does not branch on a provider name.
+
+Declare the task on the descriptor, and subclass `PluginConfigBase` for the config model:
+
+```python
+# plugins/reminders/__init__.py
+from daily_driver.plugins._base import Plugin
+from daily_driver.plugins.reminders.config import RemindersPlugin
+from daily_driver.tasks import Task
+
+# mode: "text" (prompt in, text out), "agent" (reads workspace files), or "interactive"
+PHRASE = Task("phrase", "text")
+
+PLUGIN = Plugin(
+    name="reminders",
+    # ... the other fields ...
+    config_model=RemindersPlugin,
+    tasks=(PHRASE,),
+)
+```
+
+```python
+# plugins/reminders/config.py
+from pydantic import ConfigDict
+
+from daily_driver.plugins._base import PluginConfigBase
+
+
+class RemindersPlugin(PluginConfigBase):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[str] = []
+```
+
+`PluginConfigBase` adds two keys to `plugins.reminders`. Do not define them yourself.
+
+| Key | Meaning |
+| --- | --- |
+| `provider` | Provider for every task of the plugin. Left out, `claude`. |
+| `tasks` | Per-task override: task name to provider name. Every key must be a task the plugin declares. |
+
+Core checks the names when the whole config loads (`core.providers.validate_routes`). A plugin that is off is not checked. `_validate_registry` rejects a plugin that declares tasks and has no `config_model`, one whose `config_model` does not subclass `PluginConfigBase`, one that redefines `provider` or `tasks`, and one that declares a task name twice.
+
+At run time, use the provider layer:
+
+```python
+from daily_driver.core.providers import provider_for
+from daily_driver.integrations import provider as ai
+from daily_driver.plugins.reminders import PHRASE
+
+provider = provider_for(workspace.config, PHRASE, plugin="reminders")
+try:
+    answer = ai.invoke(provider, PHRASE, prompt, system="Reply in one line.", timeout=60)
+except ai.AITimeoutError:
+    ...  # exc.timeout_seconds holds the limit
+except ai.AIInvocationError as exc:
+    ...  # exc.stdout, exc.stderr, exc.returncode hold the details
+```
+
+| Surface | What it does |
+| --- | --- |
+| `provider_for(config, task, plugin=None)` | Returns the `Provider` for a task. For a plugin task: `plugins.<name>.tasks.<task>`, then `plugins.<name>.provider`, then `claude`. For a core task: the provider that lists it under `tasks`, else `claude`. |
+| `ai.invoke(provider, task, prompt, *, workspace=None, system=None, model=None, timeout=None)` | Runs a text or agent task and returns the answer. A command provider gets the prompt on stdin. An HTTP provider gets a chat completion request. A text task runs in an empty temporary directory, so put all data in the prompt. |
+| `ai.AIInvocationError`, `ai.AITimeoutError` | The only exceptions to catch, whichever provider ran. |
+| `provider.settings.max_parallel` | Calls to run at the same time, for batch work. |
+
+Rules:
+
+- The config model imports only `daily_driver.plugins._base` and `daily_driver.tasks`. Core imports the config model while it loads, so a config module must not import `core`. Runtime modules (CLI, scraper) can import `core.providers` and `integrations.provider`.
+- The time limit of a call is the `timeout` argument, then the provider's `timeout`, then the default of the mode. Pass your own limit only when the plugin has a setting for it, as `job_search` does with `enrich_timeout`.
+- Check an HTTP provider before a batch with `ai.list_models(provider, timeout=...)`. `job_search` does this once per run and skips the AI step when the server is down.
+- Doctor lists the plugin tasks on the `ai:<provider>` row as `<plugin>.<task>`. The `job_search` task is `job_search.fit_notes`.
+- Add the `provider` and `tasks` keys to the plugin block of `.dd-config.yaml.j2`.
 
 ### Plugin or tracker category?
 
@@ -337,7 +416,7 @@ run_all_scrapers:
 _JobSink.append_source: dedup (URL + company+role key) → location filter → lift to EnrichedJob → append_jobs_typed (flock-guarded)
     ↓
 enrichment waves, in place on the sink's rows:
-    enrich_job_details (HTML/JSON-LD) → enrich_fit_and_notes (headless claude, optional) → _JobSink.flush (atomic rewrite of jobs.csv)
+    enrich_job_details (HTML/JSON-LD) → enrich_fit_and_notes (the `fit_notes` text task, optional) → _JobSink.flush (atomic rewrite of jobs.csv)
 ```
 
 Phase assignment is code-driven: a source listed in `scraper.scrape_all._PLAYWRIGHT_SOURCES` routes to phase 2. (`SourceToggle` is `extra="forbid"`, so there is no `type:` config knob for this.)
@@ -395,7 +474,7 @@ Do not write CSS-selector scrapers against rendered pages unless the API and JSO
 - [ ] `tests/test_plugins/job_search/scraper/test_<name>.py` — fixture-backed happy path
 - [ ] Skips missing/malformed postings without raising
 - [ ] Returns empty or partial list on 5xx / timeout
-- [ ] No live network (grep for `requests.get`, `httpx.get`, `sync_playwright` in test output)
+- [ ] No live network (grep for `requests.get`, `sync_playwright` in test output)
 - [ ] `SCRAPERS` and `SOURCE_CAPABILITIES` updated (`sources/__init__.py`)
 - [ ] Source and its options added to `.dd-config.yaml.j2` under `plugins.job_search.sources`
 - [ ] Source entry in `docs/commands.md` or `docs/configuration.md` (whichever is nearer to user usage)

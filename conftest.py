@@ -1,8 +1,9 @@
-"""Root conftest — pytest fixtures shared across all test suites.
+"""Root conftest: import paths and the autouse guards every test suite shares.
 
-Full fixture set (tmp_workspace, sample_workspace, mock_claude, mock_icalbuddy,
-mock_jobspy) lands later as each layer is ported. For P0, this file only
-ensures PYTHONPATH points at source/ when pytest is invoked directly.
+Puts source/ and the repo root on the import path, and the repo root on
+PYTHONPATH for multiprocessing spawn workers. Pins the console width, bridges
+caplog to the daily_driver logger, and stops any test from launching a real AI
+program.
 """
 
 from __future__ import annotations
@@ -31,6 +32,18 @@ if str(ROOT_DIR) not in _existing_pp.split(os.pathsep):
 
 
 @pytest.fixture(autouse=True)
+def _fixed_console_width(monkeypatch):
+    """Render Rich output at CI's width whatever terminal runs the tests.
+
+    Rich takes its width from COLUMNS, which tox sets to the width of the
+    terminal that started it and a developer shell may export, so a table
+    cell wraps differently per terminal and a substring assertion can pass
+    in CI (no terminal, 80 columns) and fail locally.
+    """
+    monkeypatch.setenv("COLUMNS", "80")
+
+
+@pytest.fixture(autouse=True)
 def _bridge_caplog_to_dd_logger(request):
     """Mirror pytest's caplog handler onto the `daily_driver` logger.
 
@@ -56,3 +69,53 @@ def _bridge_caplog_to_dd_logger(request):
     finally:
         dd_logger.removeHandler(handler)
         dd_logger.setLevel(prev_level)
+
+
+# Real AI programs a provider template can name. Tests launch fake programs by
+# absolute path; reaching one of these means a test forgot to stub the provider
+# layer and would spend real model calls.
+_REAL_AI_PROGRAMS = frozenset({"claude", "opencode"})
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ai_programs(monkeypatch):
+    from daily_driver.integrations import provider
+
+    real_run = provider._run
+    real_cleanup = provider._cleanup
+
+    def _refuse(argv0: str) -> None:
+        if Path(argv0).name in _REAL_AI_PROGRAMS:
+            raise AssertionError(
+                f"test tried to launch the real {argv0!r}; stub "
+                "daily_driver.integrations.provider.invoke instead"
+            )
+
+    def guarded_run(name, argv, prompt, **kwargs):
+        _refuse(argv[0])
+        return real_run(name, argv, prompt, **kwargs)
+
+    def guarded_cleanup(name, template, values):
+        first = template[0] if template else ""
+        _refuse(first if isinstance(first, str) else "")
+        return real_cleanup(name, template, values)
+
+    monkeypatch.setattr(provider, "_run", guarded_run)
+    monkeypatch.setattr(provider, "_cleanup", guarded_cleanup)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_interactive_programs(monkeypatch):
+    from daily_driver.integrations import provider
+
+    real_spawn = provider.spawn
+
+    def guarded_spawn(chosen, argv):
+        if Path(argv[0]).name in _REAL_AI_PROGRAMS:
+            raise AssertionError(
+                f"test tried to launch the real {argv[0]!r}; stub "
+                "daily_driver.integrations.provider.spawn instead"
+            )
+        return real_spawn(chosen, argv)
+
+    monkeypatch.setattr(provider, "spawn", guarded_spawn)

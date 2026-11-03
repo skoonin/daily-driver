@@ -1,20 +1,17 @@
-"""voice-update subcommand: update voice-profile.md from writing samples via claude."""
+"""voice-update subcommand: update voice-profile.md from writing samples."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from daily_driver.cli._common import add_global_flags, resolve_workspace
-from daily_driver.cli.commands._claude_session import (
-    default_session_name,
-    handle_launch_exception,
-    launch_headless,
-    require_claude_available,
-)
+from daily_driver.cli._common import add_global_flags, int_at_least, resolve_workspace
+from daily_driver.cli.commands._ai_task import run_ai_task
+from daily_driver.cli.commands._session import handle_launch_exception
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.providers import provider_for
 from daily_driver.core.voice import (
     VoiceUpdateError,
     apply_update,
@@ -24,6 +21,7 @@ from daily_driver.core.voice import (
     parse_observations,
 )
 from daily_driver.integrations import clipboard
+from daily_driver.tasks import VOICE_UPDATE
 
 log = get_logger(__name__)
 
@@ -35,7 +33,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "voice-update",
         parents=parents,
-        help="Update voice-profile.md from writing samples (uses Claude)",
+        help="Update voice-profile.md from writing samples (uses AI)",
     )
     parser.add_argument(
         "--from",
@@ -81,23 +79,17 @@ def add_parser(
         help="Skip copying the updated profile to the clipboard.",
     )
     parser.add_argument(
-        "--session-name",
-        default=None,
-        help="Custom name for this Claude session (defaults to a timestamped name).",
-    )
-    parser.add_argument(
         "--model",
         default=None,
-        choices=["sonnet", "opus", "haiku"],
-        help="Claude model to use.",
+        help="Model for this run; overrides the provider's model.",
     )
     parser.add_argument(
         "--timeout",
-        type=int,
-        default=180,
+        type=int_at_least(1, "--timeout"),
+        default=None,
         help=(
-            "Seconds to wait for the Claude route before giving up (default: "
-            "180); the ollama route is bounded by ai.ollama.timeout instead."
+            "Seconds to wait for an answer (default: the provider's timeout, "
+            "else 180)."
         ),
     )
     add_global_flags(parser)
@@ -105,12 +97,6 @@ def add_parser(
 
 
 def run(args: argparse.Namespace) -> int:
-    from daily_driver.integrations import ai_provider
-    from daily_driver.integrations.ai_provider import (
-        AIInvocationError,
-        AITimeoutError,
-    )
-
     source_paths = [Path(p) for p in args.sources]
     mode = args.mode or "append"
 
@@ -125,12 +111,7 @@ def run(args: argparse.Namespace) -> int:
     except Exception as exc:  # noqa: BLE001
         return handle_launch_exception(exc)
 
-    # voice-update is a routable task: claude (the default) keeps its workspace
-    # / session / agent context via launch_headless; any other provider has no
-    # such concept and goes through the plain dispatch layer.
-    provider, model = ai_provider.resolve_route(
-        workspace.config.ai, task="voice_update", cli_model=args.model
-    )
+    provider = provider_for(workspace.config, VOICE_UPDATE)
 
     profile_path = workspace.root / "voice-profile.md"
     # Read once for prompt context only; the authoritative merge base is re-read
@@ -143,44 +124,23 @@ def run(args: argparse.Namespace) -> int:
     prompt = build_prompt(source_files, current_profile=profile_for_prompt, mode=mode)
 
     if args.dry_run:
-        Console.info(f"dry-run: would invoke {provider} with {len(prompt)} char prompt")
+        Console.info(
+            f"dry-run: would invoke {provider.name} with {len(prompt)} char prompt"
+        )
         Console.info(f"dry-run: would write to {profile_path}")
         return 0
 
-    try:
-        if provider == "claude":
-            require_claude_available()
-            new_content = launch_headless(
-                slash_command=prompt,
-                workspace=workspace,
-                session_name=default_session_name("voice-update", args.session_name),
-                model=model,
-                timeout=args.timeout,
-            )
-        else:
-            # Pass timeout=None so the ollama route is governed by
-            # ai.ollama.timeout; --timeout bounds only the claude route above.
-            new_content = ai_provider.invoke_for(
-                prompt,
-                provider=provider,
-                model=model,
-                ai=workspace.config.ai,
-                timeout=None,
-            )
-    except AITimeoutError as exc:
-        Console.error(
-            f"{exc.provider} voice-update timed out after {exc.timeout_seconds}s"
-        )
+    new_content = run_ai_task(
+        "voice-update",
+        provider,
+        VOICE_UPDATE,
+        prompt,
+        workspace=workspace.root,
+        model=args.model,
+        timeout=args.timeout,
+    )
+    if new_content is None:
         return 1
-    except AIInvocationError as exc:
-        msg = f"{exc.provider} voice-update failed: {exc}"
-        tail = (exc.stderr or exc.stdout or "").strip()[-200:]
-        if tail:
-            msg = f"{msg}\n{tail}"
-        Console.error(msg)
-        return 1
-    except Exception as exc:  # noqa: BLE001
-        return handle_launch_exception(exc)
 
     # Read-modify-write under the lock so the merge base and the write are
     # atomic against concurrent runs (L1). The sentinel lives under

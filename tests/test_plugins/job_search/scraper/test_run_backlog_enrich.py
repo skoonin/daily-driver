@@ -57,12 +57,14 @@ def _no_archive(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _stub_fit(monkeypatch: pytest.MonkeyPatch, fit: int = 8) -> None:
-    from daily_driver.integrations import ai_provider
+    from daily_driver.integrations import provider as ai
 
     monkeypatch.setattr(
-        ai_provider,
-        "invoke_for",
-        lambda prompt, **kw: json.dumps({"fit": fit, "notes": "scored"}),
+        ai,
+        "invoke",
+        lambda provider, task, prompt, **kw: json.dumps(
+            {"fit": fit, "notes": "scored"}
+        ),
     )
 
 
@@ -93,7 +95,11 @@ def test_run_enriches_preexisting_unenriched_rows_in_place(
     _stub_fit(monkeypatch)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 
@@ -139,7 +145,11 @@ def test_run_skips_enriched_and_ineligible_preexisting_rows(
     _stub_fit(monkeypatch, fit=7)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 
@@ -169,7 +179,7 @@ def test_backlog_consumes_only_leftover_budget_new_rows_first(
         _enrich_plugin(budget=1),
         tmp_path,
         tmp_path,
-        ai=_serial_ctx(budget=1).ai,
+        provider=_serial_ctx(budget=1).provider,
         no_enrich=False,
     )
     assert rc == 0
@@ -227,7 +237,11 @@ def test_reseen_and_folded_row_keeps_fresh_date_verified(
     _stub_fit(monkeypatch)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 
@@ -258,7 +272,11 @@ def test_backlog_row_without_description_left_unscored(
     _stub_fit(monkeypatch, fit=6)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 
@@ -303,7 +321,11 @@ def test_backlog_row_without_description_healed_by_detail_fetch(
     monkeypatch.setattr(enrichment_pkg, "enrich_job_details", fake_detail)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 
@@ -351,7 +373,7 @@ def test_backlog_skip_descriptions_keeps_no_desc_rows_out(
         _enrich_plugin(),
         tmp_path,
         tmp_path,
-        ai=_serial_ctx().ai,
+        provider=_serial_ctx().provider,
         no_enrich=False,
         fetch_descriptions=False,
     )
@@ -379,7 +401,11 @@ def test_legacy_scored_rows_not_counted_as_backlog(
     _stub_fit(monkeypatch)
 
     rc = runner.run(
-        _enrich_plugin(), tmp_path, tmp_path, ai=_serial_ctx().ai, no_enrich=False
+        _enrich_plugin(),
+        tmp_path,
+        tmp_path,
+        provider=_serial_ctx().provider,
+        no_enrich=False,
     )
     assert rc == 0
 

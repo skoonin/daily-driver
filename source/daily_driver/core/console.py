@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Literal
 
 import rich.console as rich_console
@@ -162,11 +165,51 @@ class Console:
         cls.get_log_console().print(message, style="success")
 
     @classmethod
+    @contextmanager
+    def waiting(cls, label: str) -> Iterator[None]:
+        """Show `label` with elapsed time on stderr while a long call runs.
+
+        A spinner and a running clock on a terminal; otherwise one line when
+        the call starts and one when it ends, so a piped run still shows it is
+        alive. stdout is untouched.
+        """
+        started = time.monotonic()
+        if cls.live_progress_enabled():
+            from rich.progress import (
+                Progress,
+                SpinnerColumn,
+                TextColumn,
+                TimeElapsedColumn,
+            )
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("{task.description}"),
+                TimeElapsedColumn(),
+                console=cls.get_log_console(),
+                transient=True,
+            ) as progress:
+                progress.add_task(label, total=None)
+                yield
+            return
+        cls.info(f"{label}: started")
+        try:
+            yield
+        finally:
+            cls.info(f"{label}: ended after {time.monotonic() - started:.0f}s")
+
+    @classmethod
     def warning(cls, message: str) -> None:
-        """Print a warning to stderr. Always visible."""
-        cls.get_log_console().print(f"Warning: {message}", style="warning")
+        """Print a warning to stderr. Always visible.
+
+        Printed without Rich markup: messages carry config text and validation
+        details such as `[summary]` or `[type=...]` that markup would drop.
+        """
+        cls.get_log_console().print(
+            f"Warning: {message}", style="warning", markup=False
+        )
 
     @classmethod
     def error(cls, message: str) -> None:
-        """Print an error to stderr. Always visible."""
-        cls.get_log_console().print(f"Error: {message}", style="error")
+        """Print an error to stderr. Always visible. Printed without Rich markup."""
+        cls.get_log_console().print(f"Error: {message}", style="error", markup=False)

@@ -17,15 +17,21 @@ import yaml
 from pydantic import BaseModel
 
 from daily_driver.core.config_models import Config, SchedulerConfig
+from daily_driver.core.providers import (
+    builtin_providers,
+    builtin_providers_text,
+    provider_for,
+)
 from daily_driver.core.templating import render_for_plugins
 from daily_driver.plugins import enabled_plugins
 from daily_driver.plugins.job_search.config import _SOURCE_TOGGLE_TYPES
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
+from daily_driver.tasks import VOICE_UPDATE, Task
 from tests.test_core.test_generate import JOB_TEXT
 
 # A line whose content, once every leading "# " is removed, is a YAML key:
 # `key:`, `- key:`, or a two-letter country code such as `CA:`.
-_SETTING_RE = re.compile(r"^ *(?:- )?(?:[a-z_][a-z0-9_]*|[A-Z]{2}):(?:\s|$)")
+_SETTING_RE = re.compile(r"^ *(?:- )?(?:[a-z_][a-z0-9_-]*|[A-Z]{2}):(?:\s|$)")
 _COMMENT_MARKER_RE = re.compile(r"^( *)# ?(.*)$")
 
 
@@ -42,7 +48,9 @@ def _shipped_template() -> str:
 def _workspace_config(*, job_search: bool) -> str:
     """The .dd-config.yaml `init` writes, with or without --job-search."""
     return render_for_plugins(
-        _shipped_template(), {"job_search"} if job_search else set()
+        _shipped_template(),
+        {"job_search"} if job_search else set(),
+        builtin_providers=builtin_providers_text(),
     )
 
 
@@ -94,9 +102,18 @@ def test_render_validates_against_config_model(job_search: bool) -> None:
 def test_every_setting_validates_when_turned_on(job_search: bool) -> None:
     """Every example, including nested optional ones, is valid config."""
     config = _every_setting_config(job_search=job_search)
-    assert config.ai.summary.provider == "ollama"
+    assert provider_for(config, VOICE_UPDATE).name == "lmstudio-coder"
     if job_search:
         assert config.plugins.job_search.persona  # type: ignore[attr-defined]
+        fit_notes = Task("fit_notes", "text")
+        assert provider_for(config, fit_notes, plugin="job_search").name == "claude"
+
+
+def test_template_builtin_providers_match_the_shipped_file() -> None:
+    """The commented block, turned on, is exactly the built-in providers."""
+    shown = _every_setting_config(job_search=False).ai.providers
+    builtins = builtin_providers()
+    assert {name: shown[name] for name in builtins} == builtins
 
 
 def test_template_scheduler_times_match_the_defaults() -> None:
@@ -156,9 +173,6 @@ _UNTEMPLATED: frozenset[str] = frozenset(
 # only when job search is on.
 _JOB_SEARCH_ONLY: frozenset[str] = frozenset(
     {
-        "ai.claude",
-        "ai.claude.max_parallel",
-        "ai.ollama.max_parallel",
         "scheduler.jobs",
         "scheduler.jobs.days",
         "scheduler.jobs.time",

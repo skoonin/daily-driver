@@ -17,13 +17,11 @@ from daily_driver.core.workspace import Workspace
 
 if TYPE_CHECKING:
     from daily_driver.core.config_models import Config
+    from daily_driver.core.providers import Provider
 
 Status = Literal["OK", "WARNING", "ERROR"]
 
 _REQUIRED_DEPS = ["pydantic", "pyyaml", "rich", "jinja2"]
-_OPTIONAL_CLIS = [
-    ("claude", "Install from https://claude.ai/download"),
-]
 
 
 @dataclass
@@ -80,28 +78,57 @@ def _check_python_deps() -> list[CheckResult]:
     return results
 
 
-def _check_optional_clis() -> list[CheckResult]:
-    results = []
-    for cmd, hint in _OPTIONAL_CLIS:
-        path = shutil.which(cmd)
+def provider_check(provider: Provider, serves: list[str]) -> CheckResult:
+    """Whether one provider can run: its program on PATH, or its server up.
+
+    An HTTP server must also list the provider's model. Failures are WARNING,
+    matching the drift convention: doctor reports, the run decides.
+    """
+    from daily_driver.integrations import provider as ai
+
+    name = f"ai:{provider.name}"
+    runs = ", ".join(serves)
+    settings = provider.settings
+    program = ai.program(settings)
+    if program is not None:
+        path = shutil.which(program)
         if path:
-            results.append(
-                CheckResult(
-                    name=f"cli:{cmd}",
-                    status="OK",
-                    detail=f"{cmd} found at {path}",
-                )
-            )
-        else:
-            results.append(
-                CheckResult(
-                    name=f"cli:{cmd}",
-                    status="WARNING",
-                    detail=f"{cmd} not found on PATH",
-                    fix_hint=hint,
-                )
-            )
-    return results
+            return CheckResult(name, "OK", f"{program} at {path}; runs {runs}")
+        return CheckResult(
+            name,
+            "WARNING",
+            f"{program} not found on PATH; it runs {runs}",
+            fix_hint=(
+                f"Install {program}, or route these tasks to another provider "
+                "under ai.providers."
+            ),
+        )
+    try:
+        served = ai.list_models(provider, timeout=5)
+    except ai.AIInvocationError as exc:
+        return CheckResult(
+            name,
+            "WARNING",
+            f"{exc}; it runs {runs}",
+            fix_hint=(
+                f"Start the server at {settings.base_url}, or check that "
+                f"ai.providers.{provider.name}.base_url points at an "
+                "OpenAI-compatible server."
+            ),
+        )
+    if settings.model not in served:
+        return CheckResult(
+            name,
+            "WARNING",
+            f"{settings.base_url} does not list model {settings.model!r}; it runs {runs}",
+            fix_hint=(
+                f"Load or download {settings.model}, or change "
+                f"ai.providers.{provider.name}.model."
+            ),
+        )
+    return CheckResult(
+        name, "OK", f"{settings.base_url} serves {settings.model}; runs {runs}"
+    )
 
 
 def _check_workspace_drift(workspace: Workspace) -> CheckResult:
@@ -227,82 +254,45 @@ def _load_workspace_config(workspace: Workspace) -> Config | str | Exception:
         return exc
 
 
-def _check_ai_providers(workspace: Workspace) -> CheckResult | None:
-    """Verify Ollama reachability + model presence for core routable tasks.
+def _check_ai_providers(workspace: Workspace) -> list[CheckResult]:
+    """One row per provider that runs a task, then unused user entries.
 
-    Covers the core tasks `summary` and `voice_update` (each resolved through
-    the routing chain), returning None when neither resolves to ollama.
-    Enrichment routing is plugin-specific and validated by the job_search
-    plugin's own doctor check, not here (the honest boundary: core knows
-    about its own tasks + the shared provider blocks, not plugin tasks).
-    Drift convention: failures are WARNING (exit 0), matching the workspace
-    drift / contract checks added in PR #30.
+    Plugin tasks are routed through the same providers, so their rows appear
+    here too, named `<plugin>.<task>`.
     """
+    from daily_driver.core.providers import (
+        resolved_provider,
+        tasks_by_provider,
+        unused_user_providers,
+    )
+
     cfg = _load_workspace_config(workspace)
     if isinstance(cfg, str):  # "missing" sentinel: no config file present
-        return None
+        return []
     if isinstance(cfg, Exception):
-        # User has a broken .dd-config.yaml. Don't silently skip the AI
-        # row — that's exactly the failure mode where a misrouted task
-        # (e.g. typo'd `ai.summary.provdier: ollama`) would surprise
-        # the user with no explanation.
-        return CheckResult(
-            name="AI providers",
+        # A broken config would otherwise drop the AI rows without a word.
+        return [
+            CheckResult(
+                name="AI providers",
+                status="WARNING",
+                detail=f".dd-config.yaml failed to load: {cfg}",
+                fix_hint="Fix the YAML / schema in .dd-config.yaml.",
+            )
+        ]
+    results = [
+        provider_check(resolved_provider(cfg, name), serves)
+        for name, serves in tasks_by_provider(cfg).items()
+    ]
+    results.extend(
+        CheckResult(
+            name=f"ai:{name}",
             status="WARNING",
-            detail=f".dd-config.yaml failed to parse: {cfg}",
-            fix_hint="Fix the YAML / schema in .dd-config.yaml.",
+            detail=f"ai.providers.{name} runs no task",
+            fix_hint="Give it `tasks`, route a plugin to it, or delete it.",
         )
-
-    from daily_driver.integrations import ai_provider, ollama_client
-    from daily_driver.integrations.ollama_client import OllamaNotReachableError
-
-    ai_cfg = cfg.ai
-    ollama_tasks: list[tuple[str, str]] = []
-    for task in ("summary", "voice_update"):
-        provider, model = ai_provider.resolve_route(ai_cfg, task=task)
-        if provider == "ollama":
-            ollama_tasks.append((task, model or ollama_client.DEFAULT_MODEL))
-    if not ollama_tasks:
-        return None
-
-    endpoint = ai_cfg.ollama.endpoint
-    summary = ", ".join(f"{t}: ollama {m}" for t, m in ollama_tasks)
-
-    try:
-        pulled = ollama_client.list_models(endpoint, timeout=5)
-    except OllamaNotReachableError:
-        return CheckResult(
-            name="AI providers",
-            status="WARNING",
-            detail=f"ollama at {endpoint} not reachable ({summary})",
-            fix_hint="Start the server: ollama serve",
-        )
-    except Exception as exc:  # noqa: BLE001
-        return CheckResult(
-            name="AI providers",
-            status="WARNING",
-            detail=f"ollama at {endpoint} returned an error: {exc}",
-            fix_hint="Verify `ollama serve` is healthy on the configured endpoint.",
-        )
-
-    missing = [(t, m) for t, m in ollama_tasks if m not in pulled]
-    if missing:
-        miss_str = ", ".join(f"{m} ({t})" for t, m in missing)
-        first_missing_model = missing[0][1]
-        return CheckResult(
-            name="AI providers",
-            status="WARNING",
-            detail=f"ollama reachable at {endpoint}; model(s) not pulled: {miss_str}",
-            fix_hint=f"Pull the model: ollama pull {first_missing_model}",
-        )
-    return CheckResult(
-        name="AI providers",
-        status="OK",
-        detail=(
-            f"ollama at {endpoint} reachable; {summary}, "
-            f"parallel={ai_cfg.ollama.max_parallel}"
-        ),
+        for name in unused_user_providers(cfg)
     )
+    return results
 
 
 def _plugin_checks(workspace: Workspace) -> list[CheckResult]:
@@ -330,14 +320,16 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
     results: list[CheckResult] = []
     results.append(_check_python_version())
     results.extend(_check_python_deps())
-    results.extend(_check_optional_clis())
-    if workspace is not None:
+    if workspace is None:
+        # Without a workspace every task would run on the default provider.
+        from daily_driver.core.providers import default_provider
+
+        results.append(provider_check(default_provider(), ["every task"]))
+    else:
         results.append(_check_workspace_drift(workspace))
         results.append(_check_daily_state_writable(workspace))
         results.extend(_check_init_contract(workspace))
-        ai_row = _check_ai_providers(workspace)
-        if ai_row is not None:
-            results.append(ai_row)
+        results.extend(_check_ai_providers(workspace))
         results.extend(_plugin_checks(workspace))
     return results
 

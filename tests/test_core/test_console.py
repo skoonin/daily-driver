@@ -114,3 +114,47 @@ def test_live_progress_enabled_gates_on_tty_quiet_and_suppress(
     # A non-animatable stderr forces it off regardless of the other flags.
     monkeypatch.setattr(Console, "is_tty", classmethod(lambda cls: False))
     assert Console.live_progress_enabled() is False
+
+
+def test_waiting_prints_start_and_end_lines_when_not_a_terminal(capsys):
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
+    with Console.waiting("summary via claude"):
+        pass
+    captured = capsys.readouterr()
+    assert "summary via claude: started" in captured.err
+    assert "summary via claude: ended after 0s" in captured.err
+    assert captured.out == ""
+
+
+def test_waiting_prints_the_end_line_when_the_call_fails(capsys):
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
+    with pytest.raises(RuntimeError), Console.waiting("summary via claude"):
+        raise RuntimeError("boom")
+    assert "ended after" in capsys.readouterr().err
+
+
+def test_waiting_is_silent_in_quiet_mode(capsys):
+    Console.setup_for_user(quiet=True, verbose=False, no_color=True)
+    with Console.waiting("summary via claude"):
+        pass
+    assert capsys.readouterr().err == ""
+
+
+def test_waiting_shows_a_transient_spinner_on_a_terminal(monkeypatch):
+    rich = RichConsole(force_terminal=True, record=True, width=80)
+    monkeypatch.setattr(Console, "_log_console", rich)
+    monkeypatch.setattr(Console, "quiet_mode", False)
+    with Console.waiting("summary via claude"):
+        pass
+    # Transient: the live line is erased, and no start/end lines are printed.
+    assert "started" not in rich.export_text()
+
+
+def test_error_and_warning_print_brackets_literally(capsys):
+    Console.setup_for_user(quiet=False, verbose=False, no_color=True)
+    Console.error("use `opencode: {tasks: [summary]}` [type=value_error]")
+    Console.warning("keep [bold]this[/bold]")
+    err = capsys.readouterr().err
+    assert "{tasks: [summary]}" in err
+    assert "[type=value_error]" in err
+    assert "[bold]this[/bold]" in err

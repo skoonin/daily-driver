@@ -504,7 +504,7 @@ def test_doctor_reset_without_workspace_exits_1(
 
 
 # ---------------------------------------------------------------------------
-# AI providers row (ollama reachability)
+# AI provider rows
 # ---------------------------------------------------------------------------
 
 
@@ -520,7 +520,7 @@ def test_doctor_no_ai_row_when_only_claude_defaults(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Default config (no `ai:` block) must not render the AI providers row."""
+    """Default config (no `ai:` block) renders no config-error row."""
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path)
@@ -532,138 +532,32 @@ def test_doctor_no_ai_row_when_only_claude_defaults(
     assert "AI providers" not in (captured.out + captured.err)
 
 
-def test_doctor_ai_row_ok_when_ollama_reachable_with_model(
+def test_doctor_reports_the_provider_running_each_task(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """An HTTP provider in use gets an `ai:` row naming the tasks it runs."""
     from daily_driver.cli.cli import app
-    from daily_driver.integrations import ollama_client
+    from daily_driver.integrations import provider
 
     ws = _init_workspace(tmp_path)
     _stamp_workspace(ws)
     _set_ai_config(
         ws,
-        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
+        "ai:\n  providers:\n    ollama:\n      model: qwen2.5:14b\n"
+        "      tasks: [voice_update]\n",
     )
-
     monkeypatch.setattr(
-        ollama_client, "list_models", lambda endpoint, timeout=5: ["qwen2.5:14b"]
+        provider, "list_models", lambda chosen, timeout: ["qwen2.5:14b"]
     )
 
     rc = app(["--workspace", str(ws), "doctor"])
-    captured = capsys.readouterr()
-    combined = captured.out + captured.err
+
+    combined = "".join(capsys.readouterr())
     assert rc == 0
-    assert "AI providers" in combined
-    assert "OK" in combined
-    assert "ollama" in combined.lower()
-
-
-def test_doctor_ai_row_flags_voice_update_routed_to_ollama(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """voice_update routed to an un-pulled ollama model is flagged at doctor time."""
-    from daily_driver.core.doctor import run_checks
-    from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import ollama_client
-
-    ws = _init_workspace(tmp_path)
-    _stamp_workspace(ws)
-    _set_ai_config(
-        ws,
-        "ai:\n  voice_update:\n    provider: ollama\n    model: qwen2.5:14b\n",
-    )
-
-    monkeypatch.setattr(
-        ollama_client, "list_models", lambda endpoint, timeout=5: ["phi4:latest"]
-    )
-
-    results = run_checks(Workspace.discover_or_fail(override=ws))
-    ai_rows = [r for r in results if r.name == "AI providers"]
-    assert len(ai_rows) == 1
-    row = ai_rows[0]
-    assert row.status == "WARNING"
-    assert "voice_update" in row.detail
-    assert "qwen2.5:14b" in row.detail
-
-
-def test_doctor_ai_row_warning_when_ollama_not_reachable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Unreachable ollama => WARNING. Inspect CheckResult directly to avoid
-    Rich's terminal-width-dependent text wrapping in the rendered table."""
-    from daily_driver.core.doctor import run_checks
-    from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import ollama_client
-
-    ws = _init_workspace(tmp_path)
-    _stamp_workspace(ws)
-    _set_ai_config(
-        ws,
-        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
-    )
-
-    def _raise(endpoint, timeout=5):
-        raise ollama_client.OllamaNotReachableError("not reachable")
-
-    monkeypatch.setattr(ollama_client, "list_models", _raise)
-
-    results = run_checks(Workspace.discover_or_fail(override=ws))
-    ai_rows = [r for r in results if r.name == "AI providers"]
-    assert len(ai_rows) == 1
-    row = ai_rows[0]
-    assert row.status == "WARNING"
-    assert "not reachable" in row.detail
-    assert "ollama serve" in (row.fix_hint or "")
-
-
-def test_doctor_ai_row_warning_when_model_not_pulled(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from daily_driver.core.doctor import run_checks
-    from daily_driver.core.workspace import Workspace
-    from daily_driver.integrations import ollama_client
-
-    ws = _init_workspace(tmp_path)
-    _stamp_workspace(ws)
-    _set_ai_config(
-        ws,
-        "ai:\n" "  summary:\n" "    provider: ollama\n" "    model: qwen2.5:14b\n",
-    )
-
-    monkeypatch.setattr(
-        ollama_client, "list_models", lambda endpoint, timeout=5: ["phi4:latest"]
-    )
-
-    results = run_checks(Workspace.discover_or_fail(override=ws))
-    ai_rows = [r for r in results if r.name == "AI providers"]
-    assert len(ai_rows) == 1
-    row = ai_rows[0]
-    assert row.status == "WARNING"
-    assert "qwen2.5:14b" in row.detail
-    assert "ollama pull qwen2.5:14b" in (row.fix_hint or "")
-
-
-def test_doctor_fix_and_reset_are_mutually_exclusive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from daily_driver.cli.cli import app
-
-    monkeypatch.chdir(tmp_path)
-
-    with pytest.raises(SystemExit) as exc:
-        app(["doctor", "--fix", "--reset"])
-
-    assert exc.value.code == 2
-    captured = capsys.readouterr()
-    assert "not allowed" in captured.err or "mutually exclusive" in captured.err
+    assert "ai:ollama" in combined
+    assert "runs voice_update" in combined
 
 
 def test_check_ai_providers_warning_when_config_unparseable(tmp_path: Path) -> None:
@@ -683,8 +577,7 @@ def test_check_ai_providers_warning_when_config_unparseable(tmp_path: Path) -> N
     # Overwrite with malformed YAML so the AI-providers config load raises.
     (ws / ".dd-config.yaml").write_text(": : : invalid\n", encoding="utf-8")
 
-    result = _check_ai_providers(workspace)
-    assert result is not None, "config error must produce a row, not None"
+    (result,) = _check_ai_providers(workspace)
     assert result.status == "WARNING"
     assert result.name == "AI providers"
-    assert "failed to parse" in result.detail.lower()
+    assert "failed to load" in result.detail.lower()

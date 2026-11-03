@@ -4,6 +4,7 @@ import importlib.resources
 import logging
 from collections.abc import Collection
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from rich.console import Console
@@ -50,6 +51,7 @@ def _render_initial_config(plugins: Collection[str] = ()) -> str:
     """
     import jinja2
 
+    from daily_driver.core.providers import builtin_providers_text
     from daily_driver.core.templating import render_for_plugins
 
     tmpl_traversable = importlib.resources.files(
@@ -63,7 +65,9 @@ def _render_initial_config(plugins: Collection[str] = ()) -> str:
             "package; the wheel is broken -- reinstall daily-driver"
         ) from exc
     try:
-        return render_for_plugins(template_text, plugins)
+        return render_for_plugins(
+            template_text, plugins, builtin_providers=builtin_providers_text()
+        )
     except jinja2.TemplateError as exc:
         # The fallback has only the required settings and a default block for
         # each chosen plugin -- surface it on the terminal rather than only
@@ -82,6 +86,16 @@ def _render_initial_config(plugins: Collection[str] = ()) -> str:
 
 class WorkspaceError(Exception):
     pass
+
+
+def daily_dir(output_dir: Path, day: date) -> Path:
+    """The folder holding one day's plan and notes: ``<output>/YYYY/MM``."""
+    return output_dir / f"{day.year:04d}" / f"{day.month:02d}"
+
+
+def daily_file(output_dir: Path, day: date, kind: str) -> Path:
+    """One day's ``plan`` or ``notes`` file: ``<output>/YYYY/MM/<date>-<kind>.md``."""
+    return daily_dir(output_dir, day) / f"{day.isoformat()}-{kind}.md"
 
 
 @dataclass

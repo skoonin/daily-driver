@@ -4,6 +4,56 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: AI is now provider-agnostic. You choose a provider for each task under `ai.providers`.** Daily Driver has four built-in providers: `claude` and `opencode` (programs), and `lmstudio` and `ollama` (model servers that speak the OpenAI-compatible API). A provider lists the core tasks it runs under `tasks` (`interactive`, `summary`, `voice_update`). A task that no provider lists runs on `claude`, so a workspace with no `ai:` block works as before. For example, `ai: {providers: {opencode: {tasks: [interactive, summary]}}}` runs day-start, day-end, check-in, resume, and summary on opencode. Job search routes its own task with `plugins.job_search.provider` and `plugins.job_search.tasks.fit_notes`. You can add a provider, or change a built-in one, in `.dd-config.yaml` with command templates, `extends`, `model`, `timeout`, and `max_parallel`. See [Settings](docs/configuration.md#ai) and [Local models](docs/local-models.md). (#280)
+
+  - `--model` on `day-start`, `day-end`, `check-in`, `resume`, `summary`, and `voice-update` takes any model name. It was limited to `sonnet`, `opus`, and `haiku`.
+  - `summary` is an agent task. Daily Driver lists the daily plans, daily notes, and tracker file for the range in the prompt, and the provider reads them. With no such files in the range, `summary` prints a note and makes no AI call. `summary` no longer takes `--agent` or `--session-name`, and `voice-update` no longer takes `--session-name`. Neither runs with the `work-planner` agent now.
+  - `--timeout` on `summary` and `voice-update` defaults to the `timeout` of the provider, then 900 seconds for `summary` and 180 seconds for `voice-update`. The default was 180 seconds for both.
+  - `summary` and `voice-update` show a status line with the provider and the seconds elapsed on stderr while they wait.
+  - `resume` and a continuing `check-in` use the provider's `resume` template, and refuse a session that another provider started.
+  - For a provider without Claude Code's `.claude/` files, such as opencode, the launcher's instructions are written to `.daily-driver/state/prompts/<command>.md` before each launch.
+  - `doctor` shows one `ai:<provider>` row for each provider in use, with the tasks it runs. It warns about a provider you defined that runs no task. The `cli:claude`, `AI providers`, `Enrichment provider`, and `Ollama NUM_PARALLEL` rows are gone.
+  - ollama is reached through its OpenAI-compatible `/v1` address. Set its context window on the ollama server, and there is no `num_ctx` sizing from Daily Driver.
+  - `docs/ollama-setup.md` is now `docs/local-models.md` and covers LM Studio and ollama.
+
+  A config that uses a removed setting stops every command except `help`, and the message names the replacement:
+
+  | Removed | Use instead |
+  | --- | --- |
+  | `claude.resume_check_in` | `ai.interactive.resume_check_in` |
+  | `ai.provider`, `ai.summary`, `ai.voice_update` | `tasks` on a provider under `ai.providers` |
+  | `ai.model`, `ai.interactive.model` | `model` on a provider under `ai.providers` |
+  | `ai.claude.max_parallel` | `ai.providers.claude.max_parallel` |
+  | `ai.ollama` (`endpoint`, `timeout`, `max_parallel`) | `ai.providers.ollama` with `model`, `tasks`, `timeout`, `max_parallel`; the built-in address is `http://localhost:11434/v1` |
+  | `plugins.job_search.enrichment.provider`, `.model`, `.fit_notes` | `plugins.job_search.provider`, or `plugins.job_search.tasks.fit_notes`, naming a provider |
+
+  ```yaml
+  # Before (rejected):
+  ai:
+    summary:
+      provider: ollama
+      model: qwen2.5:14b
+  plugins:
+    job_search:
+      enrichment:
+        provider: ollama
+        model: qwen2.5:14b
+
+  # After:
+  ai:
+    providers:
+      ollama:
+        model: qwen2.5:14b
+        tasks: [voice_update]
+  plugins:
+    job_search:
+      provider: ollama
+  ```
+
+  The old `summary` route to ollama gave the model no data. `summary` now needs a program that reads files, so move `summary` to `claude` or `opencode`, and keep `ollama` for `voice_update` and job reviews.
+
 ## [1.4.1] — 2026-10-21
 
 ### Changed
