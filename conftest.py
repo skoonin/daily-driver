@@ -1,8 +1,9 @@
 """Root conftest: import paths and the autouse guards every test suite shares.
 
-Puts source/ and the repo root on the import path (and on PYTHONPATH for
-multiprocessing spawn workers), pins the console width, bridges caplog to the daily_driver logger, and stops
-any test from launching a real AI program.
+Puts source/ and the repo root on the import path, and the repo root on
+PYTHONPATH for multiprocessing spawn workers. Pins the console width, bridges
+caplog to the daily_driver logger, and stops any test from launching a real AI
+program.
 """
 
 from __future__ import annotations

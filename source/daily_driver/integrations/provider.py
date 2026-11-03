@@ -139,11 +139,8 @@ def spawn(provider: Provider, argv: list[str]) -> int:
     """Hand the terminal to an interactive program; return its exit code."""
     try:
         return subprocess.run(argv, check=False).returncode
-    except (FileNotFoundError, PermissionError) as exc:
-        raise AIInvocationError(
-            f"{argv[0]} not found on PATH (provider {provider.name})",
-            provider=provider.name,
-        ) from exc
+    except OSError as exc:
+        raise _start_error(provider.name, argv[0], exc) from exc
 
 
 def invoke(
@@ -240,23 +237,8 @@ def _run(
             text=True,
             cwd=cwd,
         )
-    except FileNotFoundError as exc:
-        # Popen raises the same error for a missing working directory, and
-        # names that directory as the missing file.
-        if cwd is not None and str(exc.filename) == str(cwd):
-            message = f"{name}: working directory {cwd} does not exist"
-        else:
-            message = f"{argv[0]} not found on PATH (provider {name})"
-        raise AIInvocationError(message, provider=name) from exc
-    except PermissionError as exc:
-        raise AIInvocationError(
-            f"{argv[0]} is not executable (provider {name})", provider=name
-        ) from exc
     except OSError as exc:
-        raise AIInvocationError(
-            f"{argv[0]} could not start (provider {name}): {exc.strerror or exc}",
-            provider=name,
-        ) from exc
+        raise _start_error(name, argv[0], exc, cwd=cwd) from exc
     try:
         stdout, stderr = _communicate(proc, prompt, timeout)
     except subprocess.TimeoutExpired as exc:
@@ -281,6 +263,25 @@ def _run(
             f"{name} returned no answer", provider=name, stdout=stdout, stderr=stderr
         )
     return stdout
+
+
+def _start_error(
+    name: str, program_name: str, exc: OSError, *, cwd: Path | None = None
+) -> AIInvocationError:
+    """Say why `program_name` did not start."""
+    # Popen raises the same errors for a working directory it cannot enter,
+    # and then names that directory as the file at fault.
+    if cwd is not None and str(exc.filename) == str(cwd):
+        message = f"{name}: cannot use working directory {cwd}: {exc.strerror or exc}"
+    elif isinstance(exc, FileNotFoundError):
+        message = f"{program_name} not found on PATH (provider {name})"
+    elif isinstance(exc, PermissionError):
+        message = f"{program_name} is not executable (provider {name})"
+    else:
+        message = (
+            f"{program_name} could not start (provider {name}): {exc.strerror or exc}"
+        )
+    return AIInvocationError(message, provider=name)
 
 
 def _cleanup(name: str, template: Template, values: Mapping[str, str | None]) -> None:
@@ -353,14 +354,12 @@ def _post(
         # refusal say why there is no answer; the rest of the body is usage
         # counts, which would crowd them out of the error tail.
         message = choice.get("message")
+        refusal = message.get("refusal") if isinstance(message, dict) else None
         details = [
             f"{key}: {value}"
             for key, value in (
                 ("finish_reason", choice.get("finish_reason")),
-                (
-                    "refusal",
-                    message.get("refusal") if isinstance(message, dict) else None,
-                ),
+                ("refusal", refusal),
             )
             if value
         ]

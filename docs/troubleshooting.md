@@ -176,6 +176,9 @@ A failed call prints the task and the provider, such as `summary via claude fail
 | --- | --- | --- |
 | `summary via claude timed out after 900s` | The call ran past its time limit. | Run again with `--timeout SECONDS`, or set `timeout` on the provider in `ai.providers`. For job reviews, raise `plugins.job_search.enrichment.enrich_timeout`. |
 | `<program> not found on PATH` | The program of the provider is not installed, or not on `PATH`. | Install it, or move the task to another provider. `daily-driver doctor` shows the `ai:<provider>` row. |
+| `<program> is not executable` | The file has no execute permission, or it is a folder. | Run `chmod +x <program>`, or set the provider template to the correct program. |
+| `<program> could not start` | The file is not a program that this system can run. The message gives the system error. | Install the program again, or set the provider template to the correct program. |
+| `cannot use working directory <path>` | The workspace folder does not exist, is not a folder, or you cannot open it. | Check the `--workspace` path and its permissions. |
 | `<provider> not reachable at <url>` | The model server is not running. | Start LM Studio or ollama. See [Local models](local-models.md#troubleshooting). |
 | `<provider> serves <task> but has no model` | An HTTP provider needs a `model` once it runs a task. | Set `ai.providers.<provider>.model`. |
 | `the last session was started with <provider>` | `resume` found a saved session from another provider. | Run `day-start`, or `check-in --no-resume`. |

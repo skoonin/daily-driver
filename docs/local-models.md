@@ -110,8 +110,8 @@ No row appears for a built-in provider that runs no task.
 - **`enrichment skipped this run`.** `jobs run` checks the server once, at the start of the job review. If the server is not running or does not list the model, `jobs run` skips the review of new jobs. It prints one warning that names the address or the model. The new jobs are still saved to `jobs.csv`. Start the server and load the model, or fix `ai.providers.<provider>.base_url`. Then run `jobs backfill` to fill the empty cells.
 - **`has no model`.** A provider that runs a task needs a `model`. Set `ai.providers.<provider>.model`.
 - **`returned no answer (finish_reason: length)`.** The model used all of its context window before it wrote an answer. Give the model a larger context window in LM Studio or ollama, or use a model with a larger one.
-- **`returned no answer (refusal: ...)`.** The model refused the prompt. Try another model.
-- **`sent an unreadable reply`.** The address answers, but not as an OpenAI-compatible server. Check that `ai.providers.<provider>.base_url` ends in `/v1`.
+- **`returned no answer (finish_reason: stop; refusal: ...)`.** The model refused the prompt. Try another model.
+- **`HTTP 404` or `sent an unreadable reply`.** The address answers, but not as an OpenAI-compatible server. Check `ai.providers.<provider>.base_url`. For LM Studio and ollama, it ends in `/v1`.
 - **Cells stay empty after `jobs backfill`.** Run it again with `-vv`. See [Start with -v or -vv](troubleshooting.md#start-with--v-or--vv).
 - **A review times out.** Raise `plugins.job_search.enrichment.enrich_timeout`. A model that loads on its first request is slow at first and fast after.
 - **Answers are weaker than Claude's.** Try a larger model. Or keep job review on Claude and use the local model only for `voice-update`.

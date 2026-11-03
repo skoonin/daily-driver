@@ -338,6 +338,7 @@ Daily Driver checks `ai` and the plugin routes when it reads the config. A comma
 - Two providers run the same core task.
 - A task goes to a provider that lacks the setting its mode needs. For example, `summary` goes to `lmstudio`, which is a server and cannot run agent tasks.
 - A server runs a task and has no `model`. The message names the fix, such as `set ai.providers.lmstudio.model`.
+- A `model` is blank. To set no model, leave `model` out, or set it to `null` in an entry that uses `extends`.
 - `extends` names a provider that does not exist, or one that uses `extends` itself.
 - A plugin names a provider that is not defined, or a task the plugin does not have. A plugin that is off is not checked.
 

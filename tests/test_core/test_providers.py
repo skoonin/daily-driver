@@ -184,6 +184,11 @@ def test_session_id_allows_only_uuid() -> None:
     _rejects("session_id", providers={"mine": {"text": ["x"], "session_id": "{model}"}})
 
 
+@pytest.mark.parametrize("model", ["", "  "])
+def test_blank_model_rejected(model: str) -> None:
+    _rejects("cannot be blank", providers={"mine": {"text": ["x"], "model": model}})
+
+
 def test_templates_and_base_url_together_rejected() -> None:
     _rejects(
         "mine.*base_url",

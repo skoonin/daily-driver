@@ -166,6 +166,15 @@ class ProviderConfig(BaseModel):
                     )
         return value
 
+    @field_validator("model")
+    @classmethod
+    def _not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            # `null`, not "leave it out": an entry with `extends` inherits a
+            # model it leaves out.
+            raise ValueError("cannot be blank; to set no model, use null")
+        return value
+
     @field_validator("session_id")
     @classmethod
     def _uuid_only(cls, value: str | None) -> str | None:
@@ -234,23 +243,25 @@ def _check_shape(name: str, entry: ProviderConfig) -> None:
                     'provider has no session_id format; add one, such as "{uuid}"'
                 )
     for field in launched:
-        can_be_empty = set(_CAN_BE_EMPTY[field])
-        if entry.model is None:
-            can_be_empty.add("model")
-        if field == "cleanup" and entry.text:
-            can_be_empty.add("workspace")
-        ungrouped = [
-            placeholder
-            for element in getattr(entry, field)
-            if isinstance(element, str)
-            for placeholder in placeholder_names(element)
-            if placeholder in can_be_empty
-        ]
-        if ungrouped:
-            first = ungrouped[0]
+        can_be_empty = (
+            _CAN_BE_EMPTY[field]
+            | ({"model"} if entry.model is None else set())
+            | ({"workspace"} if field == "cleanup" and entry.text else set())
+        )
+        ungrouped = next(
+            (
+                placeholder
+                for element in getattr(entry, field)
+                if isinstance(element, str)
+                for placeholder in placeholder_names(element)
+                if placeholder in can_be_empty
+            ),
+            None,
+        )
+        if ungrouped is not None:
             raise ValueError(
-                f"ai.providers.{name}.{field} uses {{{first}}} outside a group, "
-                f"but {_EMPTY_BECAUSE[first]}; put it in a group"
+                f"ai.providers.{name}.{field} uses {{{ungrouped}}} outside a group, "
+                f"but {_EMPTY_BECAUSE[ungrouped]}; put it in a group"
             )
 
 

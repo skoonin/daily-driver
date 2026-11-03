@@ -230,6 +230,45 @@ def test_missing_workspace_is_reported_as_a_directory(
         invoke(_provider(agent=[str(fake_tool)]), SUMMARY, "x", workspace=gone)
 
 
+def test_unenterable_workspace_is_reported_as_a_directory(
+    fake_tool: Path, tmp_path: Path
+) -> None:
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        with pytest.raises(AIInvocationError, match="working directory .*locked"):
+            invoke(_provider(agent=[str(fake_tool)]), SUMMARY, "x", workspace=locked)
+    finally:
+        locked.chmod(stat.S_IRWXU)
+
+
+def test_workspace_that_is_a_file_is_reported_as_a_directory(
+    fake_tool: Path, tmp_path: Path
+) -> None:
+    a_file = tmp_path / "a-file"
+    a_file.write_text("")
+    with pytest.raises(AIInvocationError, match="working directory .*a-file"):
+        invoke(_provider(agent=[str(fake_tool)]), SUMMARY, "x", workspace=a_file)
+
+
+@pytest.mark.parametrize(
+    ("content", "mode", "message"),
+    [
+        (b"#!/bin/sh\n", 0o644, "is not executable"),
+        (b"\x00\x01 not an executable format", 0o755, "could not start"),
+    ],
+)
+def test_spawn_of_a_program_that_cannot_start_says_why(
+    tmp_path: Path, content: bytes, mode: int, message: str
+) -> None:
+    tool = tmp_path / "tool"
+    tool.write_bytes(content)
+    tool.chmod(mode)
+    with pytest.raises(AIInvocationError, match=message):
+        provider_mod.spawn(_provider(run=[str(tool)]), [str(tool)])
+
+
 def test_program_that_cannot_start_raises_invocation_error(tmp_path: Path) -> None:
     not_a_program = tmp_path / "not-a-program"
     not_a_program.write_bytes(b"\x00\x01 not an executable format")
