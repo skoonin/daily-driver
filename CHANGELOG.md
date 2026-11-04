@@ -4,6 +4,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ## [Unreleased]
 
+### Added
+
+- **`ai.providers.opencode.model` now sets the model of opencode sessions too.** The opencode session screen has no model option, so day-start, day-end, check-in, and resume used the model from opencode's own config. Before each opencode session, Daily Driver now sets `model` in `opencode.json` in the workspace and changes nothing else in that file: the other settings, layout, and permissions stay. A `--model` option wins. With no model set, the file is not touched. A provider of your own can do the same for another program with the new `model_file` setting. See [Sessions](docs/configuration.md#sessions).
+
 ### Changed
 
 - **BREAKING: AI is now provider-agnostic. You choose a provider for each task under `ai.providers`.** Daily Driver has four built-in providers: `claude` and `opencode` (programs), and `lmstudio` and `ollama` (model servers that speak the OpenAI-compatible API). A provider lists the core tasks it runs under `tasks` (`interactive`, `summary`, `voice_update`). A task that no provider lists runs on `claude`, so a workspace with no `ai:` block works as before. For example, `ai: {providers: {opencode: {tasks: [interactive, summary]}}}` runs day-start, day-end, check-in, resume, and summary on opencode. Job search routes its own task with `plugins.job_search.provider` and `plugins.job_search.tasks.fit_notes`. You can add a provider, or change a built-in one, in `.dd-config.yaml` with command templates, `extends`, `model`, `timeout`, and `max_parallel`. See [Settings](docs/configuration.md#ai) and [Local models](docs/local-models.md). (#280)

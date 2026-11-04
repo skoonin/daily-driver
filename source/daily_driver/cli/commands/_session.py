@@ -18,8 +18,9 @@ from daily_driver.core import clock, focus
 from daily_driver.core.console import Console
 from daily_driver.core.daily_state import DailyStateError
 from daily_driver.core.logging import get_logger
+from daily_driver.core.model_file import ModelFileError, set_model
 from daily_driver.core.prompt_file import write_prompt_file
-from daily_driver.core.providers import Provider, provider_for
+from daily_driver.core.providers import Provider, Template, provider_for
 from daily_driver.core.session_pointer import (
     SessionPointer,
     SessionPointerError,
@@ -133,6 +134,34 @@ def default_session_name(command: str, override: str | None = None) -> str:
     return f"{command}-{date.today().isoformat()}"
 
 
+def _session_model(
+    provider: Provider, workspace: Workspace, model: str | None
+) -> str | None:
+    """The session's model: `--model`, else the provider's; set in its model file.
+
+    Called before the session pointer is written, so a model file that cannot
+    be changed stops the launch with the last session still resumable.
+    """
+    model = model or provider.settings.model
+    model_file = provider.settings.model_file
+    if model_file is not None and model is not None:
+        try:
+            set_model(workspace.root / model_file.path, model_file.key, model)
+        except ModelFileError as exc:
+            raise SessionError(str(exc)) from exc
+    return model
+
+
+def _template(provider: Provider, template_name: str) -> Template:
+    template = getattr(provider.settings, template_name)
+    if template is None:
+        raise SessionError(
+            f"{provider.name} has no {template_name} template; daily-driver "
+            f"resume and ai.interactive.resume_check_in need one"
+        )
+    return template
+
+
 def _spawn(
     provider: Provider,
     template_name: str,
@@ -144,19 +173,14 @@ def _spawn(
     agent: str,
     model: str | None,
 ) -> int:
-    template = getattr(provider.settings, template_name)
-    if template is None:
-        raise SessionError(
-            f"{provider.name} has no {template_name} template; daily-driver "
-            f"resume and ai.interactive.resume_check_in need one"
-        )
+    template = _template(provider, template_name)
     values: dict[str, str | None] = {
         "workspace": str(workspace.root),
         "command": command,
         "session_id": session_id,
         "session_name": session_name,
         "agent": agent,
-        "model": model or provider.settings.model,
+        "model": model,
     }
     if command is not None and ai.uses(template, "prompt_file"):
         values["prompt_file"] = str(
@@ -182,6 +206,7 @@ def launch_fresh_and_record(
     provider with no `session_id` format gets no ID, so its session cannot be
     resumed; the old pointer is cleared so nothing reattaches to an older one.
     """
+    model = _session_model(provider, workspace, model)
     session_id = ai.mint_session_id(provider.settings)
     if session_id is None:
         clear_pointer(workspace)
@@ -247,6 +272,8 @@ def reattach_or_fresh(
             f"interactive sessions now run on {provider.name}; start a fresh "
             "one with day-start or check-in --no-resume"
         )
+    # Before the model file is set, so a launch that cannot happen changes nothing.
+    _template(provider, "resume")
     return _spawn(
         provider,
         "resume",
@@ -255,7 +282,7 @@ def reattach_or_fresh(
         session_id=resume_id,
         session_name=session_name,
         agent=agent,
-        model=model,
+        model=_session_model(provider, workspace, model),
     )
 
 

@@ -18,6 +18,7 @@ import importlib.resources
 import string
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -111,6 +112,39 @@ def _template_texts(template: Template) -> list[str]:
     ]
 
 
+class ModelFile(BaseModel):
+    """A JSON file in the workspace that sets the model of interactive sessions.
+
+    For a program whose interactive mode takes no model flag but reads one from
+    its own config, such as opencode's `opencode.json`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    key: str
+
+    @field_validator("path")
+    @classmethod
+    def _inside_workspace(cls, value: str) -> str:
+        parts = PurePosixPath(value).parts
+        if (
+            not value.strip()
+            or not parts
+            or value.startswith(("/", "~"))
+            or ".." in parts
+        ):
+            raise ValueError("must be a file path relative to the workspace, inside it")
+        return value
+
+    @field_validator("key")
+    @classmethod
+    def _key_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("cannot be blank")
+        return value
+
+
 class ProviderConfig(BaseModel):
     """One `ai.providers.<name>` entry; the map key is the provider's name."""
 
@@ -126,6 +160,7 @@ class ProviderConfig(BaseModel):
     session_id: str | None = None
     base_url: str | None = None
     model: str | None = None
+    model_file: ModelFile | None = None
     timeout: int | None = Field(default=None, ge=1)
     max_parallel: int = Field(default=4, ge=1)
 
@@ -234,6 +269,11 @@ def _check_shape(name: str, entry: ProviderConfig) -> None:
     if entry.base_url is None and not (entry.run or entry.agent or entry.text):
         raise ValueError(
             f"ai.providers.{name}: needs a run, agent or text template, or a base_url"
+        )
+    if entry.model_file is not None and not entry.run:
+        raise ValueError(
+            f"ai.providers.{name}.model_file needs a run template; it sets the "
+            "model of interactive sessions"
         )
     if entry.session_id is None:
         for field in launched:
