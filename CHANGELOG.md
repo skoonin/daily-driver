@@ -6,7 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
-- **`ai.providers.opencode.model` now sets the model of opencode sessions too.** The opencode session screen has no model option, so day-start, day-end, check-in, and resume used the model from opencode's own config. Before each opencode session, Daily Driver now sets `model` in `opencode.json` in the workspace and changes nothing else in that file: the other settings, layout, and permissions stay. A `--model` option wins. With no model set, the file is not touched. A provider of your own can do the same for another program with the new `model_file` setting. See [Sessions](docs/configuration.md#sessions).
+- **`ai.providers.opencode.model` now sets the model of opencode sessions too.** The opencode session screen has no model option, so day-start, day-end, check-in, and resume used the model from opencode's own config. Before each opencode session, Daily Driver now sets `model` in `opencode.json` in the workspace and changes nothing else in that file: the other settings, layout, and permissions stay. A `--model` option wins. With no model set, the file is not touched. A provider of your own can do the same for another program with the new `model_file` setting. See [Sessions](docs/configuration.md#sessions). (#281)
 
 ### Changed
 
