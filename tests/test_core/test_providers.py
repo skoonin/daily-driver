@@ -13,6 +13,7 @@ from daily_driver.core.providers import (
     ProviderConfig,
     builtin_providers,
     provider_for,
+    resolved_provider,
 )
 from daily_driver.tasks import CORE_TASKS, INTERACTIVE, SUMMARY, VOICE_UPDATE, Task
 
@@ -53,6 +54,19 @@ def test_http_builtins_ship_without_model() -> None:
 def test_launched_builtins_cover_every_mode(name: str) -> None:
     entry = builtin_providers()[name]
     assert entry.run and entry.resume and entry.agent and entry.text
+
+
+def test_opencode_builtin_sets_its_model_through_opencode_json() -> None:
+    model_file = builtin_providers()["opencode"].model_file
+    assert model_file is not None
+    assert (model_file.path, model_file.key) == ("opencode.json", "model")
+
+
+def test_only_opencode_builtin_has_a_model_file() -> None:
+    builtins = builtin_providers()
+    assert [name for name, entry in builtins.items() if entry.model_file] == [
+        "opencode"
+    ]
 
 
 def test_opencode_builtin_never_auto_approves() -> None:
@@ -187,6 +201,42 @@ def test_session_id_allows_only_uuid() -> None:
 @pytest.mark.parametrize("model", ["", "  "])
 def test_blank_model_rejected(model: str) -> None:
     _rejects("cannot be blank", providers={"mine": {"text": ["x"], "model": model}})
+
+
+def test_model_file_without_a_run_template_rejected() -> None:
+    _rejects(
+        "mine.model_file needs a run template",
+        providers={
+            "mine": {"text": ["x"], "model_file": {"path": "x.json", "key": "m"}}
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["/etc/x.json", "../x.json", "a/../../x.json", "", "  ", ".", "~/x.json"]
+)
+def test_model_file_path_outside_the_workspace_rejected(path: str) -> None:
+    _rejects(
+        "path\n.*relative to the workspace",
+        providers={
+            "mine": {"run": ["x"], "model_file": {"path": path, "key": "model"}}
+        },
+    )
+
+
+@pytest.mark.parametrize("key", ["", "  "])
+def test_model_file_blank_key_rejected(key: str) -> None:
+    _rejects(
+        "key\n.*cannot be blank",
+        providers={
+            "mine": {"run": ["x"], "model_file": {"path": "x.json", "key": key}}
+        },
+    )
+
+
+def test_model_file_can_be_switched_off_on_a_builtin() -> None:
+    config = _config(providers={"opencode": {"model_file": None}})
+    assert resolved_provider(config, "opencode").settings.model_file is None
 
 
 def test_templates_and_base_url_together_rejected() -> None:

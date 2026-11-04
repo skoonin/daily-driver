@@ -244,6 +244,7 @@ A provider that is a program has command templates. A provider that is a model s
 | `session_id` | Programs | Format of the session identifiers (IDs) that Daily Driver makes, with one `{uuid}`, for example `"ses_{uuid}"`. Without it, Daily Driver makes no ID, and the `{session_id}` groups are dropped. |
 | `base_url` | Servers | Address of the OpenAI-compatible server. A provider has `base_url` or templates, not both. |
 | `model` | All | Model name. A server that runs a task needs it. The `--model` option on a command wins. |
+| `model_file` | Programs | For a program that reads the model of an interactive session from its own JSON config file. `path` is the file, relative to the workspace. `key` is the setting in it. See [Sessions](#sessions). `null` turns it off. |
 | `timeout` | Agent and text tasks | Seconds before a call gives up. A positive whole number. |
 | `max_parallel` | Text tasks | Job reviews that run at the same time. `1` runs one at a time. Default `4`. |
 
@@ -339,6 +340,7 @@ Daily Driver checks `ai` and the plugin routes when it reads the config. A comma
 - A task goes to a provider that lacks the setting its mode needs. For example, `summary` goes to `lmstudio`, which is a server and cannot run agent tasks.
 - A server runs a task and has no `model`. The message names the fix, such as `set ai.providers.lmstudio.model`.
 - A `model` is blank. To set no model, leave `model` out, or set it to `null` in an entry that uses `extends`.
+- A `model_file` is on a provider with no `run` template, its `path` is outside the workspace, or its `key` is blank.
 - `extends` names a provider that does not exist, or one that uses `extends` itself.
 - A plugin names a provider that is not defined, or a task the plugin does not have. A plugin that is off is not checked.
 
@@ -349,6 +351,16 @@ Daily Driver checks `ai` and the plugin routes when it reads the config. A comma
 Each interactive session gets an ID in the provider's `session_id` format. Daily Driver saves the ID and the provider's name. `resume` and a continuing `check-in` use them. If the `interactive` provider is not the one that started the saved session, `resume` stops and says so.
 
 For Claude Code, the instructions for each launcher come from the `.claude/` files in the workspace. Daily Driver writes those files for every workspace. For a provider whose `run` template has `{prompt_file}`, Daily Driver writes the instructions to `.daily-driver/state/prompts/<command>.md` before each launch.
+
+The opencode session screen has no model option. It reads the model from `opencode.json` in the workspace. Before each opencode session, Daily Driver sets `model` in that file to the model of the session: the `--model` option, else `ai.providers.opencode.model`.
+
+- Only the value of `model` changes. The other settings, the layout, the line endings, and the file permissions stay the same. If `opencode.json` is a link to a file in another folder, that file changes and the link stays. A link to a file that does not exist stops the session.
+- If the file has no `model`, Daily Driver adds it as the last setting. If there is no file, Daily Driver makes one that holds only `model`.
+- Daily Driver does not write the file when `model` already has that value, or when the session has no model.
+- A model from `--model` stays in the file after the session. The next session with a model sets it again.
+- If the file is not a valid JSON object, for example because it has comments, the session does not start and the message names the file.
+
+The built-in `model_file` setting of `opencode` does this.
 
 ## `plugins.job_search`
 

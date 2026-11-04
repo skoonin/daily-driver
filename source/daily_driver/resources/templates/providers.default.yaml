@@ -12,6 +12,7 @@ opencode:
   agent: ["opencode", "run", ["-s", "{session_id}"], ["--model", "{model}"]]
   text: ["opencode", "run", ["-s", "{session_id}"], ["--model", "{model}"]]
   cleanup: ["opencode", "session", "delete", "{session_id}"]
+  model_file: {path: opencode.json, key: model}
 lmstudio:
   base_url: http://localhost:1234/v1
 ollama:

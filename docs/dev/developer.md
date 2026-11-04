@@ -20,6 +20,7 @@ daily_driver/
 ├── core/                    # workspace, config, tracker, locking, generate, scheduler...
 │   ├── providers.py         # ProviderConfig, built-in providers, merge/extends, provider_for
 │   ├── prompt_file.py       # prompt file for providers without .claude/
+│   ├── model_file.py        # sets the model key in a program's JSON config
 │   ├── console.py           # two-stream Rich Console (stdout + stderr)
 │   ├── logging.py           # stdlib logger with plain counting StreamHandler on stderr
 │   ├── progress.py          # domain-neutral live progress display (enlighten)
@@ -86,6 +87,7 @@ A provider is data, not code. No AI-call code branches on a provider name. The b
 | `ProviderConfig`, `resolve_providers`, `validate_routes`, `provider_for(config, task, plugin=None)` | `core/providers.py` | Loads the built-ins, merges user entries, checks routes, and returns the `Provider` that runs a task. `DEFAULT_PROVIDER` (`claude`) runs any task nobody claims. |
 | `render`, `mint_session_id`, `spawn`, `invoke`, `list_models`, `available`, `AIInvocationError`, `AITimeoutError` | `integrations/provider.py` | Fills templates, runs a command or posts to an HTTP server, and normalizes every failure into one exception type. |
 | `write_prompt_file` | `core/prompt_file.py` | Writes `.daily-driver/state/prompts/<command>.md` for providers whose `run` or `resume` template uses `{prompt_file}`. |
+| `set_model`, `ModelFileError` | `core/model_file.py` | Sets one key in a JSON config before an interactive launch, for a provider with `model_file`, such as `opencode.json` for opencode. It edits the text in place, so every other byte stays. |
 | `run_ai_task` | `cli/commands/_ai_task.py` | Wraps `invoke` with the status line and the error messages for `summary` and `voice-update`. |
 | `_session.py` | `cli/commands/` | Shared launcher code: provider check, session pointer, `launch_fresh_and_record`, `reattach_or_fresh`. |
 

@@ -344,6 +344,155 @@ def test_opencode_plain_resume_sends_no_prompt(
     assert spawned[1] == ["opencode", str(ws), "-s", session_id]
 
 
+_OPENCODE_ON_SONNET = (
+    "\nai:\n  providers:\n    opencode:\n      tasks: [interactive]\n"
+    "      model: anthropic/claude-sonnet-5-5\n"
+)
+
+
+def _opencode_json(ws: Path) -> Any:
+    import json
+
+    return json.loads((ws / "opencode.json").read_text(encoding="utf-8"))
+
+
+def test_opencode_session_gets_the_model_through_opencode_json(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, _OPENCODE_ON_SONNET)
+
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+
+    assert _opencode_json(ws) == {"model": "anthropic/claude-sonnet-5-5"}
+    assert "--model" not in spawned[0]
+
+
+def test_opencode_resume_sets_the_model_too(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, _OPENCODE_ON_SONNET)
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+    (ws / "opencode.json").write_text('{"model": "other/model"}', encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "resume"]) == 0
+
+    assert _opencode_json(ws) == {"model": "anthropic/claude-sonnet-5-5"}
+
+
+def test_model_flag_wins_in_opencode_json(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, _OPENCODE_ON_SONNET)
+
+    assert app(["--workspace", str(ws), "day-start", "--model", "x/flag"]) == 0
+
+    assert _opencode_json(ws) == {"model": "x/flag"}
+
+
+def test_opencode_without_a_model_leaves_opencode_json_alone(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(
+        tmp_path, "\nai:\n  providers:\n    opencode:\n      tasks: [interactive]\n"
+    )
+    (ws / "opencode.json").write_text('{"model": "mine/model"}', encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+
+    assert (ws / "opencode.json").read_text() == '{"model": "mine/model"}'
+
+
+def test_unreadable_opencode_json_stops_the_launch(
+    tmp_path: Path, spawned: list[list[str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, _OPENCODE_ON_SONNET)
+    (ws / "opencode.json").write_text("{ // comment\n}", encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "day-start"]) == 1
+
+    assert spawned == []
+    err = capsys.readouterr().err
+    assert "opencode.json is not valid JSON" in err
+    assert "ModelFileError" not in err
+    assert (ws / "opencode.json").read_text() == "{ // comment\n}"
+
+
+def test_unreadable_opencode_json_keeps_the_last_session_resumable(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path, _OPENCODE_ON_SONNET)
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+    before = _pointer(ws)
+    (ws / "opencode.json").write_text("{ // comment\n}", encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "day-end"]) == 1
+
+    assert _pointer(ws) == before
+
+
+def test_resume_without_a_resume_template_leaves_the_model_file_alone(
+    tmp_path: Path, spawned: list[list[str]], capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(
+        tmp_path,
+        "\nai:\n  providers:\n    mine:\n      tasks: [interactive]\n"
+        '      run: ["mytool", "{workspace}"]\n      session_id: "{uuid}"\n'
+        "      model: my/model\n"
+        "      model_file: {path: mytool.json, key: model}\n",
+    )
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+    (ws / "mytool.json").write_text('{"model": "other"}', encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "resume"]) == 1
+
+    assert "mine has no resume template" in capsys.readouterr().err
+    assert (ws / "mytool.json").read_text() == '{"model": "other"}'
+
+
+def test_a_provider_that_extends_opencode_sets_the_model_too(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(
+        tmp_path,
+        "\nai:\n  providers:\n    oc-work:\n      extends: opencode\n"
+        "      tasks: [interactive]\n      model: work/model\n",
+    )
+
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+
+    assert _opencode_json(ws) == {"model": "work/model"}
+
+
+def test_claude_writes_no_opencode_json(
+    tmp_path: Path, spawned: list[list[str]]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(
+        tmp_path, "\nai:\n  providers:\n    claude:\n      model: haiku\n"
+    )
+
+    assert app(["--workspace", str(ws), "day-start"]) == 0
+
+    assert not (ws / "opencode.json").exists()
+
+
 def test_claude_writes_no_prompt_file(tmp_path: Path, spawned: list[list[str]]) -> None:
     from daily_driver.cli.cli import app
 
