@@ -281,7 +281,7 @@ def test_install_after_switching_job_search_off_reports_removed_agents(
 
     out = " ".join(capsys.readouterr().out.split())
     assert rc == 0
-    assert "Removed launchd agents (job search is off)" in out
+    assert "Removed launchd agents (turned off in .dd-config.yaml)" in out
     assert "com.daily-driver.jobs-discover" in out
 
 
@@ -305,7 +305,7 @@ def test_failed_install_still_reports_agents_it_removed(
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "Removed launchd agents (job search is off)" in " ".join(
+    assert "Removed launchd agents (turned off in .dd-config.yaml)" in " ".join(
         captured.out.split()
     )
     assert "launchctl load failed" in captured.err
@@ -331,7 +331,7 @@ def test_install_crash_after_sweep_still_reports_removed_agents(
 
     captured = capsys.readouterr()
     assert rc == 1
-    assert "Removed launchd agents (job search is off)" in " ".join(
+    assert "Removed launchd agents (turned off in .dd-config.yaml)" in " ".join(
         captured.out.split()
     )
     assert "PermissionError" in captured.err
@@ -387,7 +387,7 @@ def test_status_table_flags_agents_left_installed_after_job_search_off(
 
     out = " ".join(capsys.readouterr().out.split())
     assert rc == 0
-    assert "yes, job search off" in out
+    assert "yes, turned off" in out
     assert "Run `daily-driver scheduler install` to remove" in out
 
 
@@ -407,11 +407,60 @@ def test_status_lists_agents_left_installed_after_job_search_off(
     rows = {row["label"]: row for row in json.loads(capsys.readouterr().out)["data"]}
     assert rc == 0
     assert rows["com.daily-driver.jobs"]["installed"] is True
-    assert rows["com.daily-driver.jobs"]["plugin_off"] is True
-    assert rows["com.daily-driver.checkin"]["plugin_off"] is False
+    assert rows["com.daily-driver.jobs"]["turned_off"] is True
+    assert rows["com.daily-driver.checkin"]["turned_off"] is False
 
 
-def test_install_named_job_of_switched_off_plugin_names_the_cause(
+@pytest.mark.parametrize("action", ["install", "uninstall"])
+def test_scheduler_help_names_no_plugin_job(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], action: str
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    with pytest.raises(SystemExit):
+        app(["--workspace", str(ws), "scheduler", action, "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "jobs-discover" not in out
+    assert "jobs," not in out
+    assert "plugin" not in out
+
+
+def test_uninstall_unknown_job_lists_no_job_of_a_plugin_that_is_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+
+    rc = app(["--workspace", str(ws), "scheduler", "uninstall", "bogus"])
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert rc == 1
+    assert "unknown scheduler job: 'bogus'" in err
+    assert "jobs" not in err
+
+
+def test_uninstall_removes_an_installed_job_of_a_plugin_that_is_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.integrations import launchd as launchd_int
+
+    ws = _init_workspace(tmp_path)
+    _patch_launchd(monkeypatch, tmp_path)
+    plist = launchd_int.plist_path("com.daily-driver.jobs")
+    plist.write_text("<plist/>", encoding="utf-8")
+
+    assert app(["--workspace", str(ws), "scheduler", "uninstall", "jobs"]) == 0
+    assert not plist.exists()
+
+
+def test_install_named_job_of_a_plugin_that_is_off_is_unknown(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -425,7 +474,9 @@ def test_install_named_job_of_switched_off_plugin_names_the_cause(
 
     err = " ".join(capsys.readouterr().err.split())
     assert rc == 1
-    assert "jobs: job search is off in this workspace" in err
+    assert "unknown scheduler job: 'jobs'" in err
+    assert "job search" not in err
+    assert "jobs-discover" not in err
 
 
 def test_scheduler_bare_action_prints_usage(
@@ -466,3 +517,33 @@ def test_no_scheduled_runs_says_where_to_set_a_time(
     assert rc == 0
     assert "No scheduler jobs configured." in out
     assert "Set a time under `schedule:` or `scheduler:`" in out
+
+
+def test_status_flags_a_run_turned_off_after_it_was_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from tests.workspaces import enable_job_search
+
+    ws = _init_workspace(tmp_path)
+    enable_job_search(ws)
+    _patch_launchd(monkeypatch, tmp_path)
+    app(["--workspace", str(ws), "scheduler", "install"])
+    cfg = ws / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8").replace(
+            "scheduler:\n  checkin:\n    enabled: true",
+            "scheduler:\n  checkin:\n    enabled: false",
+        ),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    rc = app(["--workspace", str(ws), "scheduler", "status"])
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert rc == 0
+    assert "com.daily-driver.checkin" in out
+    assert "yes, turned off" in out

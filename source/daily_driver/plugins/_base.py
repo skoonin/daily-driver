@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict
 
@@ -37,6 +38,16 @@ class PluginConfigBase(BaseModel):
     provider: str | None = None
     # Per-task override: task name -> provider name.
     tasks: dict[str, str] = {}
+
+
+@dataclass(frozen=True)
+class HelpTopic:
+    """A `daily-driver help <name>` topic that a plugin adds."""
+
+    name: str
+    header: str  # Rich-formatted section heading in the full reference
+    values: str  # dotted path to a no-argument function returning a list[str]
+    consumers: tuple[str, ...]  # the commands and settings that take these values
 
 
 @dataclass(frozen=True)
@@ -77,3 +88,16 @@ class Plugin:
     # AI tasks this plugin hands to a provider, routed under plugins.<name>.
     # A plugin with tasks needs a config_model subclassing PluginConfigBase.
     tasks: tuple[Task, ...] = ()
+    # Recommended statuses for each tracker category this plugin owns. An entry
+    # in one of these categories warns on a status outside this set.
+    tracker_statuses: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # Topics this plugin adds to `daily-driver help`.
+    help_topics: tuple[HelpTopic, ...] = ()
+    # Flags of this plugin's commands that take a date spec, for `help dates`.
+    date_consumers: tuple[str, ...] = ()
+    # Help for `init --<name>` (underscores as dashes), the flag that writes
+    # this plugin's block into a new config. Empty means `init` has no flag.
+    init_flag_help: str = ""
+    # Settings this plugin used to read, by dotted path from the config root,
+    # each with what to do instead. The config load warns and ignores them.
+    removed_settings: Mapping[str, str] = field(default_factory=dict)

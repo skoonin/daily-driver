@@ -30,7 +30,7 @@ def test_min_agents_covers_current_shipped_set() -> None:
 def _scaffold_valid_workspace(root: Path) -> None:
     """Create all files required by the contract for testing."""
     (root / ".dd-config.yaml").write_text(
-        "daily_driver:\n  output_dir: .\ntracker:\n  default_category: task\n  categories:\n    task: {required: [title]}\n",
+        "tracker:\n  default_category: task\n  categories:\n    task: {required: [title]}\n",
         encoding="utf-8",
     )
     state = root / ".daily-driver"
@@ -186,11 +186,6 @@ def _fake_workspace(root: Path):
         @property
         def ephemeral_dir(self) -> Path:
             return self.state_dir / "state"
-
-        @property
-        def output_dir(self) -> Path:
-            # Mirrors the scaffolded `output_dir: .` resolving to the root.
-            return self.root
 
     return _FakeWorkspace(
         root=root,

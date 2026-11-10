@@ -1,19 +1,19 @@
 # Daily guide
 
-How to use Daily Driver each day. You chat with Claude, and Claude keeps your list (the tracker), plans, and notes. This guide covers the daily chats, your list, focus mode, job search, summaries, your writing voice, and the scheduler.
+How to use Daily Driver each day. You chat with an AI, and the AI keeps your list (the tracker), plans, and notes. This guide covers the daily chats, your list, focus mode, job search, summaries, your writing voice, and the scheduler.
 
 - Set up your workspace first: [Quick start](quick-start.md)
 - What the parts are and how they fit together: [How it works](concepts.md)
 
 ## Daily sessions
 
-After the [quick start](quick-start.md), use three chats with Claude each day. Type each command in the Terminal app, inside your workspace folder. Claude manages your data for you: it adds and updates items in your list and writes your plans and notes.
+After the [quick start](quick-start.md), use three chats with the AI each day. Type each command in the Terminal app, inside your workspace folder. The AI manages your data for you: it adds and updates items in your list and writes your plans and notes.
 
 | When | Start the chat | What happens |
 | --- | --- | --- |
-| Morning | `daily-driver day-start` | Claude reviews your list, and your calendar if you connect it, and helps you plan the day. |
-| Midday | `daily-driver check-in` | Tell Claude what you finished or what is stuck. It updates your list and adjusts the plan. |
-| Evening | `daily-driver day-end` | Claude compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
+| Morning | `daily-driver day-start` | The AI reviews your list, and your calendar if you connect it, and helps you plan the day. |
+| Midday | `daily-driver check-in` | Tell the AI what you finished or what is stuck. It updates your list and adjusts the plan. |
+| Evening | `daily-driver day-end` | The AI compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
 
 To connect your calendar, see [Calendar access](install.md#calendar-access-optional).
 
@@ -21,9 +21,7 @@ Each chat saves files in your workspace folder:
 
 - `day-start` saves the plan in a file such as `2026/11/2026-11-02-plan.md`. Run `daily-driver paths daily-plan` to print the path.
 - `day-end` saves the notes in a file such as `2026/11/2026-11-02-notes.md`. Run `daily-driver paths daily-notes` to print the path.
-- Your list is in `tracker.yaml`. Claude updates it during the chat.
-
-To save these files in another folder, change `daily_driver.output_dir` in `.dd-config.yaml`.
+- Your list is in `tracker.yaml`. The AI updates it during the chat.
 
 Things you can say in a chat:
 
@@ -38,18 +36,18 @@ Options:
 
 - `check-in` starts a new chat each time. To continue your most recent chat instead, set `ai.interactive.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
 - If you close a chat by mistake, run `daily-driver resume` to reopen the most recent one.
-- Each command runs a Claude command of the same name, such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-launchers).
+- Each command runs a command of the same name. With Claude Code, that is a slash command such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-launchers).
 - The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](configuration.md#ai).
 
 See also: [Connect your other tools](../README.md#connect-your-other-tools).
 
 ## Your list (the tracker)
 
-Your list holds the things you follow up on. Claude keeps it up to date in your chats. You can also work with it yourself. Each item has a category (`task`, `errand`, `contact`, `ticket`, or any name you choose), a title, a status, and an identifier (ID). An ID is the category, a dash, and a number, such as `errand-001`.
+Your list holds the things you follow up on. The AI keeps it up to date in your chats. You can also work with it yourself. Each item has a category (`task`, `errand`, `contact`, `ticket`, or any name you choose), a title, a status, and an identifier (ID). An ID is the category, a dash, and a number, such as `errand-001`.
 
 To require fields for a category, or to show it in `daily-driver help categories`, list it under `tracker.categories` in `.dd-config.yaml`. See [Settings](configuration.md#custom-tracker-categories).
 
-Claude runs these commands for you in a chat. You can also run them yourself:
+The AI runs these commands for you in a chat. You can also run them yourself:
 
 | Command | What it does |
 |---|---|
@@ -121,7 +119,7 @@ Job search is optional. It looks for new job postings on the sites you choose an
 Job search is off by default. Until you switch it on, every `jobs` command prints a message and stops.
 
 1. For a new workspace, run `daily-driver init --job-search PATH`.
-2. For an existing workspace, add `plugins: {job_search: {}}` to `.dd-config.yaml`. Then run `daily-driver doctor --fix`. This adds job search to your Claude commands.
+2. For an existing workspace, add `plugins: {job_search: {}}` to `.dd-config.yaml`. Then run `daily-driver doctor --fix`. This adds job search to the prompts the AI reads.
 3. Open `context.md`. Add the places you want to work and the roles you want. Daily Driver does not add these for you.
 4. If you use the scheduler, run `daily-driver scheduler install`. This adds the job search tasks.
 5. Add `scraper.enabled: true` and your sources to `.dd-config.yaml`, as in the example below. Do not add a second `plugins:` line. Add these lines under the one that exists.
@@ -129,7 +127,6 @@ Job search is off by default. Until you switch it on, every `jobs` command print
 ```yaml
 plugins:
   job_search:
-    persona: "Experienced project coordinator, open to remote roles"
     roles: [project coordinator, project manager]
     domain_keywords: [project, program, operations]
     seniority_keywords: [senior, lead]
@@ -148,7 +145,7 @@ plugins:
       hn_who_is_hiring: {}
 ```
 
-`roles`, `domain_keywords`, and `seniority_keywords` decide which job titles are kept. If you leave `domain_keywords` or `seniority_keywords` empty, job search uses built-in keywords for infrastructure jobs. For every job search setting, see [Settings](configuration.md#pluginsjob_search).
+`roles`, `domain_keywords`, and `seniority_keywords` decide which job titles are kept. If you leave `domain_keywords` or `seniority_keywords` empty, job search uses built-in keywords for infrastructure jobs. For every job search setting, see [Job search settings](job-search.md).
 
 To switch job search off, set `enabled: false` under `plugins.job_search` and run `daily-driver doctor --fix`. If you use the scheduler, run `daily-driver scheduler install` to remove the job search tasks. Your settings stay.
 
@@ -194,11 +191,11 @@ daily-driver jobs verify                        # close saved jobs that are no l
 
 ### Choosing an AI provider
 
-By default, job search uses Claude to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.provider` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [Settings](configuration.md#ai).
+By default, job search uses the default provider (Claude Code) to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.provider` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [AI providers](providers.md).
 
 ## Summary
 
-`daily-driver summary` writes a summary of any period and copies it to your clipboard. You can also ask Claude for a summary in a chat.
+`daily-driver summary` writes a summary of any period and copies it to your clipboard. You can also ask the AI for a summary in a chat.
 
 ```bash
 daily-driver summary -r today
@@ -219,7 +216,7 @@ While the AI works, a status line on stderr shows the provider and the seconds e
 
 ## Voice updates
 
-`voice-profile.md` tells Claude how you write, so drafts sound like you. Update it from your own writing, such as Slack exports, emails, or blog posts:
+`voice-profile.md` tells the AI how you write, so drafts sound like you. Update it from your own writing, such as Slack exports, emails, or blog posts:
 
 ```bash
 daily-driver voice-update --from ~/exports/slack.txt ~/blog/
@@ -232,11 +229,11 @@ daily-driver voice-update --from ~/exports/slack.txt --replace
 - By default, new observations are added to your profile (`--append`). `--replace` starts over. Both save the old profile as `voice-profile.md.bak`.
 - `-n` (`--dry-run`) checks that your files can be read. It does not change anything and does not show the new profile.
 
-Use writing that you wrote yourself, not AI-generated text. The profile records your voice, not Claude's.
+Use writing that you wrote yourself, not AI-generated text. The profile records your voice, not the AI's.
 
 ## Other commands
 
-Claude runs many of these for you in a chat. You can also run them yourself:
+The AI runs many of these for you in a chat. You can also run them yourself:
 
 | Command | What it does |
 |---|---|
@@ -245,7 +242,7 @@ Claude runs many of these for you in a chat. You can also run them yourself:
 | `gather calendar` | Shows your macOS Calendar events |
 | `gather git` | Shows recent Git commits from your projects |
 | `calendar sync` | Copies today's plan time blocks to a macOS Calendar. Off until you set `calendar.sync_enabled: true`. The calendar named in `calendar.plan_calendar_name` (default `Daily Plan`) must exist. `day-start` runs it for you. |
-| `help` | Shows lists of valid values: `help commands`, `help statuses`, `help categories`, `help sources`, `help dates` |
+| `help` | Shows lists of valid values: `help commands`, `help statuses`, `help categories`, `help dates`, and `help sources` with job search on |
 
 For the options of one command, run `daily-driver COMMAND --help`. For every command, see [Commands](commands.md).
 
@@ -285,19 +282,22 @@ schedule:
   days: weekdays
 scheduler:
   checkin: {times: ["10:30", "15:00"], days: weekdays}
-  jobs:    {time: "23:59", days: [sun, wed]}
+plugins:
+  job_search:
+    scheduler:
+      run: {time: "23:59", days: [sun, wed]}
 ```
 
 | Setting | Days it controls |
 |---|---|
 | `schedule.days` | `day-start` and `day-end` |
 | `scheduler.checkin.days` | Check-in |
-| `scheduler.jobs.days` | Job search run |
-| `scheduler.discovery.days` | Board discovery |
+| `plugins.job_search.scheduler.run.days` | Job search run |
+| `plugins.job_search.scheduler.discovery.days` | Board discovery |
 
 A `days` setting is `daily`, `weekdays`, or a list of day names, such as `[sun, wed]`. The default is `daily`, except board discovery, which runs on Saturday and Tuesday.
 
-After you change a setting, run `daily-driver scheduler install` again. If you switch job search off, `scheduler install` also removes its tasks. Logs are in `.daily-driver/state/logs/`.
+To stop a run and keep its settings, set `enabled: false` on it. After you change a setting, run `daily-driver scheduler install` again. It also removes the tasks of a run that you turned off, and of job search when you switch it off. Logs are in `.daily-driver/state/logs/`.
 
 ## Troubleshooting
 

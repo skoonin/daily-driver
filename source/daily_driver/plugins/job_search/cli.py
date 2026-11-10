@@ -492,7 +492,7 @@ def _run_scrape(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
     if isinstance(resolved, int):
         return resolved
     plugin, provider, context_text = resolved
-    output_dir = workspace.output_dir
+    output_dir = workspace.root
     ephemeral_dir = workspace.ephemeral_dir
     emit_json = getattr(args, "json", False)
 
@@ -559,7 +559,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
     if isinstance(resolved, int):
         return resolved
     plugin, provider, context_text = resolved
-    csv_path = workspace.output_dir / "jobs.csv"
+    csv_path = workspace.root / "jobs.csv"
     ephemeral_dir = workspace.ephemeral_dir
     emit_json = getattr(args, "json", False)
 
@@ -596,7 +596,7 @@ def _run_promote(args: argparse.Namespace, workspace) -> int:  # type: ignore[no
     from daily_driver.plugins.job_search.promote import PromoteError, promote
 
     tracker = Tracker(workspace)
-    jobs_csv = workspace.output_dir / "jobs.csv"
+    jobs_csv = workspace.root / "jobs.csv"
 
     try:
         result = promote(tracker, jobs_csv, args.selector, dry_run=args.dry_run)
@@ -660,7 +660,7 @@ def _run_prune(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-u
     else:
         statuses = DEFAULT_PRUNE_STATUSES
 
-    output_dir = workspace.output_dir
+    output_dir = workspace.root
     csv_path = output_dir / "jobs.csv"
 
     candidates, archived = prune(
@@ -762,7 +762,7 @@ def _run_verify(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
         return resolved
     plugin, _ai, _context_text = resolved
 
-    csv_path = workspace.output_dir / "jobs.csv"
+    csv_path = workspace.root / "jobs.csv"
     sigterm_prev = install_sigterm_handler()
     try:
         report = verify_jobs(
@@ -1008,7 +1008,7 @@ def _run_status(args: argparse.Namespace, workspace) -> int:  # type: ignore[no-
 
     from daily_driver.plugins.job_search.scraper_status import build_status
 
-    output_dir = workspace.output_dir
+    output_dir = workspace.root
     status = build_status(output_dir, workspace.ephemeral_dir)
 
     emit_json = getattr(args, "json", False)

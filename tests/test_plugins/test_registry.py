@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
 
+import daily_driver
 from daily_driver.core.config_models import Config
-from daily_driver.plugins import _validate_registry, enabled_plugins
+from daily_driver.plugins import PLUGINS, _validate_registry, enabled_plugins
 from daily_driver.plugins._base import Plugin, PluginConfigBase
 from daily_driver.tasks import Task
 
@@ -166,3 +169,77 @@ def test_plugin_redefining_reserved_field_rejected() -> None:
         _validate_registry(
             (_plugin(config_model=SampleConfig, tasks=(Task("draft", "text"),)),)
         )
+
+
+def _imported_modules(path: Path, root: Path) -> set[str]:
+    """Every module a file imports, with relative imports made absolute."""
+    package = path.relative_to(root.parent).with_suffix("").parts[:-1]
+    modules: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = package[: len(package) - node.level + 1] if node.level else ()
+            parent = ".".join([*base, *([node.module] if node.module else [])])
+            modules.add(parent)
+            modules.update(f"{parent}.{alias.name}" for alias in node.names)
+    return modules
+
+
+@pytest.mark.parametrize("package", ["cli", "core", "gathers", "integrations"])
+def test_program_code_reaches_a_plugin_only_through_the_registry(package: str) -> None:
+    """Core and CLI read `plugins.PLUGINS`; they never name a plugin's modules."""
+    root = Path(daily_driver.__file__).parent
+    plugin_packages = [f"daily_driver.plugins.{plugin.name}" for plugin in PLUGINS]
+    for path in (root / package).rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for plugin_package in plugin_packages:
+            assert plugin_package not in text, path
+            assert not any(
+                module == plugin_package or module.startswith(f"{plugin_package}.")
+                for module in _imported_modules(path, root)
+            ), path
+
+
+@pytest.mark.parametrize("package", ["cli", "core", "gathers", "integrations"])
+def test_program_code_never_names_a_plugin(package: str) -> None:
+    """A plugin's name appears in code only in its own package.
+
+    Docstrings may name a plugin as an example; strings and attributes that
+    the program uses may not, not even inside a longer string.
+    """
+    root = Path(daily_driver.__file__).parent
+    names = {plugin.name for plugin in PLUGINS} | {
+        plugin.name.replace("_", "-") for plugin in PLUGINS
+    }
+    for path in (root / package).rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = {
+            id(node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+        }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and id(node) not in docstrings
+            ):
+                found = [name for name in names if name in node.value]
+                assert not found, (path, node.lineno, node.value)
+            if isinstance(node, ast.Attribute):
+                assert node.attr not in names, (path, node.lineno, node.attr)
+
+
+def test_import_check_resolves_relative_and_package_imports(tmp_path: Path) -> None:
+    root = tmp_path / "daily_driver"
+    module = root / "core" / "sample.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "from ..plugins import job_search\nfrom ..plugins.job_search import cli\n",
+        encoding="utf-8",
+    )
+    assert {
+        "daily_driver.plugins.job_search",
+        "daily_driver.plugins.job_search.cli",
+    } <= _imported_modules(module, root)

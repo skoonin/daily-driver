@@ -25,7 +25,7 @@ def _init_workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "ws"
     ws.mkdir(parents=True, exist_ok=True)
     workspace = Workspace.init(ws)
-    notes = daily_file(workspace.output_dir, today(), "notes")
+    notes = daily_file(workspace.root, today(), "notes")
     notes.parent.mkdir(parents=True, exist_ok=True)
     notes.write_text("- did things\n", encoding="utf-8")
     return ws

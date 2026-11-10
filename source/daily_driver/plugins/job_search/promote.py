@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from daily_driver.core.statuses import normalize_status
-from daily_driver.core.tracker import JOB_RECOMMENDED_STATUSES, Tracker, TrackerEntry
+from daily_driver.core.tracker import Tracker, TrackerEntry
+from daily_driver.plugins.job_search import JOBS_RECOMMENDED_STATUSES
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows
 
 # A row promoted because it needs active driving but carrying no status (or one
@@ -24,7 +25,7 @@ from daily_driver.plugins.job_search.scraper.csv_io import read_rows
 # promotion means the user is acting on the row, past pure triage.
 _FALLBACK_STATUS = "applied"
 
-_JOB_STATUS_SET = {normalize_status(s) for s in JOB_RECOMMENDED_STATUSES}
+_JOB_STATUS_SET = {normalize_status(s) for s in JOBS_RECOMMENDED_STATUSES}
 
 
 class PromoteError(Exception):

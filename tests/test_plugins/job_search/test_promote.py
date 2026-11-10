@@ -30,7 +30,7 @@ def workspace(tmp_path: Path) -> Workspace:
 
 @pytest.fixture
 def jobs_csv(workspace: Workspace) -> Path:
-    path = workspace.output_dir / "jobs.csv"
+    path = workspace.root / "jobs.csv"
     _write_jobs_csv(
         path,
         [
@@ -124,7 +124,7 @@ def test_promote_unknown_status_falls_back_and_flags(
     workspace: Workspace,
 ) -> None:
     tracker = Tracker(workspace)
-    path = tracker._workspace.output_dir / "jobs.csv"  # type: ignore[attr-defined]
+    path = tracker._workspace.root / "jobs.csv"  # type: ignore[attr-defined]
     _write_jobs_csv(
         path,
         [
@@ -187,7 +187,7 @@ def test_promote_does_not_mutate_jobs_csv(workspace: Workspace, jobs_csv: Path) 
 
 def test_promote_empty_csv_raises(workspace: Workspace) -> None:
     tracker = Tracker(workspace)
-    missing = workspace.output_dir / "jobs.csv"
+    missing = workspace.root / "jobs.csv"
     with pytest.raises(PromoteError):
         promote(tracker, missing, "anything")
 
@@ -196,7 +196,7 @@ def test_promote_empty_link_row_sets_has_link_false(
     workspace: Workspace,
 ) -> None:
     tracker = Tracker(workspace)
-    path = workspace.output_dir / "jobs.csv"
+    path = workspace.root / "jobs.csv"
     _write_jobs_csv(
         path,
         [
@@ -221,7 +221,7 @@ def test_promote_empty_link_row_is_idempotent_on_company_role(
 ) -> None:
     """A blank-Link row re-promotes as a no-op via the (company, role) key."""
     tracker = Tracker(workspace)
-    path = workspace.output_dir / "jobs.csv"
+    path = workspace.root / "jobs.csv"
     _write_jobs_csv(
         path,
         [
@@ -249,7 +249,7 @@ def test_promote_two_distinct_empty_link_rows_both_promote(
 ) -> None:
     """Two blank-Link rows with different company/role both promote (no false dedup)."""
     tracker = Tracker(workspace)
-    path = workspace.output_dir / "jobs.csv"
+    path = workspace.root / "jobs.csv"
     _write_jobs_csv(
         path,
         [

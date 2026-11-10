@@ -39,9 +39,14 @@ The managed files were generated for a different package version, or for a diffe
 
 `doctor --fix` keeps your edits to shipped files. It deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. It also replaces the allow rules saved in `.claude/settings.local.json`. Keep your own commands in `.claude/commands/user/`. See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
 
-## Config "has settings that daily-driver no longer uses"
+## Warning: "ignoring" a setting
 
-Every command except `help` stops with this message when `.dd-config.yaml` contains a setting that was removed. The message names each removed setting and says what replaces it. Delete the setting and the indented lines under it, then make the change the message names.
+Daily Driver ignores a setting in `.dd-config.yaml` that it does not recognize, and keeps running. The warning names the setting and says what to do. `daily-driver doctor` fails until the setting is gone.
+
+- A spelling mistake: correct the setting. Until you do, Daily Driver uses the default.
+- A setting that was removed: delete it and the indented lines under it, then make the change the warning names.
+
+A value of the wrong type still stops every command, because Daily Driver has no value to use. So does a `daily_driver.output_dir` that is not `.`: move the files from that folder into the workspace folder, then delete the section.
 
 | Removed setting | What to do |
 | --- | --- |
@@ -53,16 +58,20 @@ Every command except `help` stops with this message when `.dd-config.yaml` conta
 | `ai.claude` | Set `ai.providers.claude.max_parallel`. |
 | `ai.ollama` | Set `model` and `tasks` on `ai.providers.ollama`. The built-in `ollama` provider uses `http://localhost:11434/v1`. |
 | `plugins.job_search.enrichment.provider`, `.model`, `.fit_notes` | Set `plugins.job_search.provider` or `plugins.job_search.tasks.fit_notes` to a provider in `ai.providers`. |
+| `plugins.job_search.persona` | Keep your job titles in `roles` and your background in `context.md`. |
+| `scheduler.jobs` | Use `plugins.job_search.scheduler.run`. The run is on unless it sets `enabled: false`, so a `time: null` that kept it off now needs `enabled: false`. |
+| `scheduler.discovery` | Use `plugins.job_search.scheduler.discovery`. The run is on unless it sets `enabled: false`, so a `time: null` that kept it off now needs `enabled: false`. |
+| `daily_driver` | Delete it. Data files are always in the workspace folder. |
 
-If the file has other mistakes, the message lists them too. Run `daily-driver doctor` to see the message again.
+Run `daily-driver doctor` to see the warnings again.
 
-## `jobs` says "job search is off in this workspace"
+## `jobs` is an invalid choice
 
-Job search is opt-in. The message says which step fits your config: add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the Claude prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` also needs `scraper.enabled: true` and a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on.
+Job search is opt-in. While it is off, and outside a workspace, `jobs` is not a command. To switch it on, add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` also needs `scraper.enabled: true` and a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on.
 
-## Jobs agents still installed after switching job search off
+## Agents still installed after you turn a run off
 
-`scheduler status` marks them `yes, job search off`. They keep firing `jobs run`, which exits 1. Run `daily-driver scheduler install` to remove them.
+`scheduler status` marks them `yes, turned off`. They keep firing until you run `daily-driver scheduler install`, which removes them. This applies to a run with `enabled: false` and to the runs of a plugin that is off.
 
 ## `Job boards` (WARNING, not ERROR)
 

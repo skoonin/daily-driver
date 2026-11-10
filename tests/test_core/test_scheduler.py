@@ -63,6 +63,7 @@ class _FakeWorkspace:
         scheduler_cfg: dict | None = None,
         schedule: _FakeSchedule | None = None,
         job_search: bool = True,
+        job_runs: dict | None = None,
     ) -> _FakeWorkspace:
         scheduler_model = (
             SchedulerConfig.model_validate(scheduler_cfg)
@@ -74,6 +75,10 @@ class _FakeWorkspace:
         )
         if not job_search:
             config.plugins = SimpleNamespace(job_search=None)
+        elif job_runs is not None:
+            config.plugins = SimpleNamespace(
+                job_search=JobSearchPlugin.model_validate({"scheduler": job_runs})
+            )
         return cls(root=root, state_dir=root / ".daily-driver", config=config)
 
 
@@ -116,10 +121,28 @@ class TestBuildJobs:
         jobs = scheduler.build_jobs(ws)
         assert all(j.label != "com.daily-driver.checkin" for j in jobs)
 
-    def test_cleared_scrape_time_omits_job(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {"time": None}})
-        jobs = scheduler.build_jobs(ws)
-        assert all(j.label != "com.daily-driver.jobs" for j in jobs)
+    def test_checkin_enabled_false_omits_job(self, tmp_path: Path) -> None:
+        ws = _FakeWorkspace.make(
+            tmp_path, scheduler_cfg={"checkin": {"enabled": False}}
+        )
+        labels = [j.label for j in scheduler.build_jobs(ws)]
+        assert "com.daily-driver.checkin" not in labels
+
+    @pytest.mark.parametrize(
+        ("run", "label"),
+        [
+            ("run", "com.daily-driver.jobs"),
+            ("discovery", "com.daily-driver.jobs-discover"),
+        ],
+    )
+    def test_job_run_enabled_false_omits_only_that_job(
+        self, tmp_path: Path, run: str, label: str
+    ) -> None:
+        ws = _FakeWorkspace.make(tmp_path, job_runs={run: {"enabled": False}})
+        labels = [j.label for j in scheduler.build_jobs(ws)]
+        assert label not in labels
+        other = {"com.daily-driver.jobs", "com.daily-driver.jobs-discover"} - {label}
+        assert other <= set(labels)
 
     def test_checkin_days_alone_keeps_default_times(self, tmp_path: Path) -> None:
         ws = _FakeWorkspace.make(
@@ -134,15 +157,13 @@ class TestBuildJobs:
         assert {e["weekday"] for e in checkin.context["times"]} == {1, 2, 3, 4, 5}
 
     def test_jobs_days_alone_keeps_default_time(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(tmp_path, scheduler_cfg={"jobs": {"days": ["mon"]}})
+        ws = _FakeWorkspace.make(tmp_path, job_runs={"run": {"days": ["mon"]}})
         jobs = scheduler.build_jobs(ws)
         scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
         assert scrape.context["times"] == [{"hour": 7, "minute": 0, "weekday": 1}]
 
     def test_discovery_time_alone_keeps_default_days(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(
-            tmp_path, scheduler_cfg={"discovery": {"time": "02:00"}}
-        )
+        ws = _FakeWorkspace.make(tmp_path, job_runs={"discovery": {"time": "02:00"}})
         jobs = scheduler.build_jobs(ws)
         sweep = next(j for j in jobs if j.label == "com.daily-driver.jobs-discover")
         assert sweep.context["times"] == [
@@ -195,13 +216,10 @@ class TestBuildJobs:
         Closes a coverage gap: no prior test exercised user-config-driven
         scheduling end-to-end (config -> merge -> build_jobs contexts).
         """
-        cfg = SchedulerConfig.model_validate(
-            {"checkin": {"times": ["09:00"]}, "jobs": {"time": "06:30"}}
-        )
-        ws = _FakeWorkspace(
-            root=tmp_path,
-            state_dir=tmp_path / ".daily-driver",
-            config=_FakeConfig(scheduler=cfg),
+        ws = _FakeWorkspace.make(
+            tmp_path,
+            scheduler_cfg={"checkin": {"times": ["09:00"]}},
+            job_runs={"run": {"time": "06:30"}},
         )
         jobs = scheduler.build_jobs(ws)
         checkin = next(j for j in jobs if j.label == "com.daily-driver.checkin")
@@ -283,9 +301,9 @@ class TestBuildJobs:
             assert {e["weekday"] for e in entries} == {1, 2, 3, 4, 5}
 
     def test_jobs_days_list_expands_to_named_weekdays(self, tmp_path: Path) -> None:
-        """jobs.days=[sun, wed] -> two entries with launchd Weekday 0 and 3."""
+        """run.days=[sun, wed] -> two entries with launchd Weekday 0 and 3."""
         ws = _FakeWorkspace.make(
-            tmp_path, scheduler_cfg={"jobs": {"time": "23:59", "days": ["sun", "wed"]}}
+            tmp_path, job_runs={"run": {"time": "23:59", "days": ["sun", "wed"]}}
         )
         jobs = scheduler.build_jobs(ws)
         scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
@@ -311,8 +329,8 @@ class TestBuildJobs:
         """Discovery is a separate agent from the scrape, on its own days."""
         ws = _FakeWorkspace.make(
             tmp_path,
-            scheduler_cfg={
-                "jobs": {"time": "23:59", "days": ["sun", "wed"]},
+            job_runs={
+                "run": {"time": "23:59", "days": ["sun", "wed"]},
                 "discovery": {"time": "22:00", "days": ["sat"]},
             },
         )
@@ -327,15 +345,6 @@ class TestBuildJobs:
             {"hour": 23, "minute": 59, "weekday": 0},
             {"hour": 23, "minute": 59, "weekday": 3},
         ]
-
-    def test_discovery_without_a_time_installs_no_job(self, tmp_path: Path) -> None:
-        ws = _FakeWorkspace.make(
-            tmp_path,
-            scheduler_cfg={"jobs": {"time": "07:00"}, "discovery": {"time": None}},
-        )
-        labels = {job.label for job in scheduler.build_jobs(ws)}
-        assert "com.daily-driver.jobs-discover" not in labels
-        assert "com.daily-driver.jobs" in labels
 
     def test_session_jobs_carry_launch_modes(self, tmp_path: Path) -> None:
         """launchd has no TTY: every interactive session job passes --launch
@@ -453,7 +462,7 @@ class TestRenderPlist:
     def test_jobs_plist_renders_weekday_entries(self, tmp_path: Path) -> None:
         """days=[sun, wed] renders two calendar dicts with launchd Weekday keys."""
         ws = _FakeWorkspace.make(
-            tmp_path, scheduler_cfg={"jobs": {"time": "23:59", "days": ["sun", "wed"]}}
+            tmp_path, job_runs={"run": {"time": "23:59", "days": ["sun", "wed"]}}
         )
         jobs = scheduler.build_jobs(ws)
         scrape = next(j for j in jobs if j.label == "com.daily-driver.jobs")
@@ -588,6 +597,30 @@ class TestInstallUninstall:
         # Each install triggers unload then load for every job.
         assert calls["unload"].count("com.daily-driver.checkin") == 2
         assert calls["load"].count("com.daily-driver.checkin") == 2
+
+    def test_install_removes_the_agent_of_a_run_turned_off_in_settings(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`enabled: false` plus `scheduler install` stops a run that was installed."""
+        from daily_driver.integrations import launchd as launchd_int
+
+        monkeypatch.setattr(sys, "platform", "darwin")
+        calls = self._patch_launchd(monkeypatch, tmp_path)
+        scheduler.install_all(_FakeWorkspace.make(tmp_path))
+        for recorded in calls.values():
+            recorded.clear()
+
+        scheduler.install_all(
+            _FakeWorkspace.make(tmp_path, job_runs={"run": {"enabled": False}})
+        )
+
+        assert calls["remove"] == ["com.daily-driver.jobs"]
+        assert "com.daily-driver.jobs" in calls["unload"]
+        agents = launchd_int.launch_agents_dir()
+        assert not (agents / "com.daily-driver.jobs.plist").exists()
+        assert (agents / "com.daily-driver.jobs-discover.plist").exists()
 
     def test_install_removes_plists_of_switched_off_plugin(
         self,

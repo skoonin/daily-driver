@@ -30,25 +30,26 @@ End-user reference: `docs/commands.md`. Short list:
 
 - `daily-driver init <path> [--job-search]` — scaffold a workspace; `--job-search` switches job search on.
 - `daily-driver doctor [--fix | --reset]` — verify / repair workspace.
+- `daily-driver config defaults [--plugin NAME]` — print the settings file `init` writes, with every default.
 - `daily-driver tracker {add,list,update,show,delete,prune,stats,follow-ups}` — manage tracked tasks of any kind (jobs, errands, projects, contacts, ...) via free-form categories (`tracker.categories` adds required fields).
 - `daily-driver status` — dashboard table (Rich or JSON).
 - `daily-driver focus {on,off,status}` — flock-backed check-in suppression.
-- `daily-driver day-start | day-end | check-in` — interactive session launchers. They run on the provider that has the `interactive` task (default `claude`, launched with the read-only scaffold + `--add-dir workspace`).
+- `daily-driver day-start | day-end | check-in` — interactive session launchers (`start` and `end` are aliases). They run on the provider that has the `interactive` task (default `claude`, launched with the read-only scaffold + `--add-dir workspace`).
 - `daily-driver resume` — reattach to the workspace's most recent session through the provider's `resume` template (`claude --resume <id>` for claude) when a launcher tab is closed or lost. It refuses a session that another provider started.
 - `daily-driver summary --range SPEC` — period summary from the provider that has the `summary` task (an agent task: the program lists the files, the provider reads them); prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — rewrite of `voice-profile.md` from writing samples, run by the provider that has the `voice_update` task (a text task).
 - `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
   search the configured job boards, re-enrich empty fields on existing rows,
   promote a row into the tracker, show last-run metadata, archive stale rows, or
-  URL-check row liveness in `jobs.csv`. Exits 1 unless job search is on.
+  URL-check row liveness in `jobs.csv`. Not a command while job search is off.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths
-  (output, state, daily plan/notes).
+  (root, state, tracker, daily plan/notes).
 - `daily-driver gather {calendar,git} [--json]` — read
   external state for downstream commands.
 - `daily-driver scheduler {install,uninstall,status}` — macOS launchd
   plist install / remove / inspection.
 - `daily-driver calendar sync` — write today's plan time blocks to a local macOS Calendar (needs `calendar.sync_enabled: true`).
-- `daily-driver help [commands|statuses|categories|sources|dates]` — reference for subcommands and discoverable values.
+- `daily-driver help [commands|statuses|categories|dates|<plugin topic>]` — reference for subcommands and discoverable values. A plugin that is off adds nothing to it (job search adds `sources`).
 
 ## Architecture
 
@@ -81,7 +82,7 @@ Key conventions:
   discovery. Core iterates `PLUGINS` (lazily, by dotted path) for CLI command, config
   model, scheduled jobs, doctor checks, and package data. `job_search` is the one
   shipped plugin; its config namespace is `plugins.job_search:` in `.dd-config.yaml`.
-  The root Config and `PluginsConfig` are both pydantic `extra="forbid"`.
+  The root Config and `PluginsConfig` are both pydantic `extra="forbid"`; the config load warns about an unknown key, ignores it, and `doctor` fails on it. Core and CLI code reach a plugin only through `PLUGINS` and its `Plugin` fields, never by importing its modules, and a plugin's settings, including its schedule, live under `plugins.<name>`.
 - **Plugins are opt-in per workspace.** `plugins.enabled_plugins(config)` is the
   one on/off answer: a plugin is on when its `plugins.<name>` block exists and
   does not set `enabled: false`. Generated prompt sections, package data, doctor

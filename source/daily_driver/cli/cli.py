@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
+from pathlib import Path
 from typing import Protocol, cast
 
 import daily_driver
@@ -23,18 +24,18 @@ from daily_driver.cli._common import (
 )
 from daily_driver.core.console import Console
 from daily_driver.core.logging import get_logger
-from daily_driver.plugins import PLUGINS, off_reason, switch_on_hint
-from daily_driver.plugins._base import Plugin
+from daily_driver.plugins import PLUGINS
 
 # Table of (subcommand-name, dotted-module-path) in registration order.
 # Module-path entries must resolve when dispatched — ImportError is a
 # packaging bug, not a graceful-degradation case. Consumed by help.py to
 # walk the command set; keep the 2-tuple shape it unpacks.
 #
-# Plugin commands (PLUGINS) are appended after the core commands, so they
-# list last in `--help`.
+# Plugin commands (PLUGINS) join the core commands, and `--help` lists them all
+# in alphabetical order.
 _CORE_COMMANDS = [
     ("init", "daily_driver.cli.commands.init"),
+    ("config", "daily_driver.cli.commands.config"),
     ("doctor", "daily_driver.cli.commands.doctor"),
     ("tracker", "daily_driver.cli.commands.tracker"),
     ("status", "daily_driver.cli.commands.status"),
@@ -54,7 +55,10 @@ _CORE_COMMANDS = [
 
 _PLUGIN_COMMANDS = [(p.command_name, p.command_module) for p in PLUGINS]
 
-_COMMANDS = _CORE_COMMANDS + _PLUGIN_COMMANDS
+_COMMANDS = sorted(_CORE_COMMANDS + _PLUGIN_COMMANDS)
+
+# Shorter names for the commands people type most, by command.
+_ALIASES = {"day-start": ("start",), "day-end": ("end",)}
 
 # Top-level `daily-driver --help` summaries, mirroring each module's own
 # add_parser `help=`. Stored alongside (not in) _COMMANDS so the listing
@@ -63,6 +67,7 @@ _COMMANDS = _CORE_COMMANDS + _PLUGIN_COMMANDS
 # real `help=` only affects the top-level listing, never dispatch.
 _TOP_HELP = {
     "init": "Create a new daily-driver workspace",
+    "config": "Show the default settings file",
     "doctor": "Check installation and workspace health",
     "tracker": (
         "Manage tracker entries (add, update, delete, prune, show, list, "
@@ -70,7 +75,7 @@ _TOP_HELP = {
     ),
     "status": "Show workspace status and tracker summary",
     "focus": "Manage focus mode (on / off / status)",
-    "paths": "Print resolved workspace paths (output, state, daily plan/notes)",
+    "paths": "Print resolved workspace paths (root, state, daily plan/notes)",
     "gather": "Pull data from calendar or git",
     "day-start": "Interactive morning planning session",
     "day-end": "Interactive end-of-day review session",
@@ -85,28 +90,67 @@ _TOP_HELP = {
 _TOP_HELP.update({p.command_name: p.command_help for p in PLUGINS})
 
 _COMMAND_MODULES = {name: module_path for name, module_path in _COMMANDS}
+_COMMAND_MODULES.update(
+    {
+        alias: _COMMAND_MODULES[name]
+        for name, aliases in _ALIASES.items()
+        for alias in aliases
+    }
+)
+_ALIAS_TARGETS = {
+    alias: name for name, aliases in _ALIASES.items() for alias in aliases
+}
 
 _PLUGINS_BY_COMMAND = {p.command_name: p for p in PLUGINS}
 
 
-def _off_config(args: argparse.Namespace, plugin: Plugin) -> object | None:
-    """The workspace config when it has the plugin off, else None.
+def _workspace_flag(argv: list[str]) -> str | None:
+    """The value of `-w` / `--workspace` in argv, before argparse runs.
 
-    The command stays registered either way: the parser is built before the
-    workspace is known. A workspace that fails to resolve is left to the
-    command itself, which reports that error the usual way.
+    The last one wins, as in argparse, and the scan stops at `--`, after which
+    argparse reads every token as a positional.
     """
-    from daily_driver.cli._common import resolve_workspace
-    from daily_driver.core.workspace import WorkspaceError
+    value = None
+    for i, token in enumerate(argv):
+        if token == "--":
+            break
+        if token in _VALUE_FLAGS:
+            value = argv[i + 1] if i + 1 < len(argv) else None
+        elif token.startswith("--workspace="):
+            value = token.split("=", 1)[1]
+        elif token.startswith("-w") and not token.startswith("--"):
+            # argparse reads `-w=PATH` as `-w PATH`.
+            value = token[2:].removeprefix("=")
+    return value or None
+
+
+def _plugin_commands_off(argv: list[str], *, listing: bool) -> set[str]:
+    """The commands of the plugins that are off in this invocation's workspace.
+
+    These are not registered, so `--help` leaves them out and running one gets
+    the error of any unknown command. Outside a workspace every plugin is off.
+
+    A `--workspace` that names no workspace, or a config that cannot load,
+    hides every plugin command from the command listing (`listing`), and
+    hides none when the user runs one: the command then reports the error.
+    """
+    from daily_driver.core.workspace import Workspace, WorkspaceError
     from daily_driver.plugins import enabled_plugins
 
+    override = _workspace_flag(argv)
     try:
-        workspace = resolve_workspace(args)
+        workspace = Workspace.discover_or_fail(
+            override=Path(override) if override else None
+        )
     except WorkspaceError:
-        return None
-    if plugin in enabled_plugins(workspace.config):
-        return None
-    return workspace.config
+        return set() if override and not listing else set(_PLUGINS_BY_COMMAND)
+    except Exception:  # noqa: BLE001
+        # The listing hides every plugin command and reports nothing: no
+        # plugin can be known to be on. A command that runs loads the config
+        # again and reports the error inside the handling `app` gives it.
+        return set(_PLUGINS_BY_COMMAND) if listing else set()
+    on = enabled_plugins(workspace.config)
+    return {name for name, plugin in _PLUGINS_BY_COMMAND.items() if plugin not in on}
 
 
 class _CommandModule(Protocol):
@@ -162,7 +206,8 @@ def app(argv: list[str] | None = None) -> int:
         allow_abbrev=False,
         description=(
             "Daily Driver — Personal daily planning, focus, and "
-            "task tracking. Drives professional work, job search, and errands."
+            "task tracking. Drives professional work, errands, and anything "
+            "else you track."
         ),
     )
     parser.add_argument(
@@ -191,13 +236,32 @@ def app(argv: list[str] | None = None) -> int:
     # listing and choice validation stay complete without the imports.
     # ImportError on dispatch is a packaging defect, not a graceful-
     # degradation scenario — let it propagate so the user sees a traceback.
-    selected = _select_command(list(argv) if argv is not None else sys.argv[1:])
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+    selected = _select_command(argv_list)
+    selected = _ALIAS_TARGETS.get(selected or "", selected)
+    # Only the top-level listing and a plugin's own command depend on which
+    # plugins are on; other commands skip reading the config here.
+    off = (
+        _plugin_commands_off(argv_list, listing=selected is None)
+        if selected is None or selected in _PLUGINS_BY_COMMAND
+        else set()
+    )
     for cmd_name, module_path in _COMMANDS:
+        if cmd_name in off:
+            continue
+        aliases = _ALIASES.get(cmd_name, ())
         if cmd_name == selected:
             module = cast(_CommandModule, importlib.import_module(module_path))
-            module.add_parser(subparsers, [])  # type: ignore[arg-type]
+            real_parser = module.add_parser(subparsers, [])  # type: ignore[arg-type]
+            for alias in aliases:
+                subparsers.choices[alias] = cast(HelpfulArgumentParser, real_parser)
         else:
-            subparsers.add_parser(cmd_name, help=_TOP_HELP[cmd_name], add_help=False)
+            subparsers.add_parser(
+                cmd_name,
+                aliases=list(aliases),
+                help=_TOP_HELP[cmd_name],
+                add_help=False,
+            )
 
     # Strip hidden subcommands from the help listing. Standard argparse
     # workaround — `help=argparse.SUPPRESS` on the subparser itself renders
@@ -227,16 +291,6 @@ def app(argv: list[str] | None = None) -> int:
         _CommandModule, importlib.import_module(_COMMAND_MODULES[args.cmd])
     )
     try:
-        # Inside the try: a malformed config surfaces through the same error
-        # path as it would from the command itself.
-        plugin = _PLUGINS_BY_COMMAND.get(args.cmd)
-        off_config = _off_config(args, plugin) if plugin is not None else None
-        if plugin is not None and off_config is not None:
-            Console.error(
-                f"{off_reason(plugin.name)}. To switch it on, "
-                f"{switch_on_hint(plugin.name, off_config)}."
-            )
-            return 1
         return cmd_module.run(args)
     except Exception as exc:  # noqa: BLE001
         from daily_driver.core.config import ConfigError
