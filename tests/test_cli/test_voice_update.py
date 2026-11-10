@@ -775,30 +775,3 @@ def test_voice_update_write_failure_exits_1(
     captured = capsys.readouterr()
     assert rc == 1
     assert "original left unchanged" in captured.err.lower()
-
-
-def test_voice_update_writes_profile_at_workspace_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The profile lives at the workspace root, where init, status and the
-    prompts look for it, even when output_dir points elsewhere."""
-    from daily_driver.cli.cli import app
-    from daily_driver.integrations import clipboard, provider
-
-    ws = _init_workspace(tmp_path)
-    cfg = ws / ".dd-config.yaml"
-    cfg.write_text(
-        cfg.read_text(encoding="utf-8").replace("output_dir: .", "output_dir: out"),
-        encoding="utf-8",
-    )
-    sample = _make_sample(tmp_path, "letter.md", "Sample writing text")
-    monkeypatch.setattr(provider, "invoke", lambda *a, **kw: "# Replaced\n")
-    monkeypatch.setattr(clipboard, "available", lambda: False)
-
-    rc = app(
-        ["--workspace", str(ws), "voice-update", "--from", str(sample), "--replace"]
-    )
-
-    assert rc == 0
-    assert (ws / "voice-profile.md").read_text(encoding="utf-8") == "# Replaced\n"
-    assert not (ws / "out" / "voice-profile.md").exists()

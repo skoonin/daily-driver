@@ -90,9 +90,9 @@ def test_render_prompt_lists_files_to_read(tmp_path) -> None:
 def test_summary_files_picks_existing_daily_files_in_range(tmp_path) -> None:
     from types import SimpleNamespace
 
-    workspace = SimpleNamespace(root=tmp_path, output_dir=tmp_path / "out")
-    may = workspace.output_dir / "2026" / "05"
-    june = workspace.output_dir / "2026" / "06"
+    workspace = SimpleNamespace(root=tmp_path)
+    may = workspace.root / "2026" / "05"
+    june = workspace.root / "2026" / "06"
     may.mkdir(parents=True)
     june.mkdir(parents=True)
     first_plan = may / "2026-05-01-plan.md"
@@ -113,7 +113,7 @@ def test_summary_files_picks_existing_daily_files_in_range(tmp_path) -> None:
 def test_summary_files_skips_a_missing_tracker(tmp_path) -> None:
     from types import SimpleNamespace
 
-    workspace = SimpleNamespace(root=tmp_path, output_dir=tmp_path)
+    workspace = SimpleNamespace(root=tmp_path)
     files = summary.summary_files(
         workspace, _START, _END, tracker=tmp_path / "tracker.yaml"
     )

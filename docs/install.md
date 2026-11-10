@@ -47,7 +47,7 @@ The last command prints the version number if the install worked.
 
 ## Calendar access (optional)
 
-Daily Driver can read your macOS Calendar, so Claude knows about your meetings when it plans your day. Follow these steps once:
+Daily Driver can read your macOS Calendar, so the AI knows about your meetings when it plans your day. Follow these steps once:
 
 1. Install icalBuddy with `brew install ical-buddy`. To check, run `which icalBuddy`.
 2. Open **System Settings > Privacy & Security > Calendars**.
@@ -100,7 +100,7 @@ For the full list of what `init` and `doctor` keep, replace, and delete, see [`.
 
 ### Removed or renamed settings
 
-Some releases remove or rename a setting. If `.dd-config.yaml` uses a removed setting, Daily Driver stops, names the setting, and says what replaces it. `CHANGELOG.md` lists the removed settings of each release. Edit `.dd-config.yaml`, then run `daily-driver doctor`. Daily Driver does not edit your settings for you.
+Some releases remove or rename a setting. If `.dd-config.yaml` uses a removed setting, Daily Driver ignores the setting, shows a warning that names it, and says what replaces it. `CHANGELOG.md` lists the removed settings of each release. Edit `.dd-config.yaml`, then run `daily-driver doctor`, which fails until the setting is gone. Daily Driver does not edit your settings for you.
 
 ### Reset Daily Driver files
 

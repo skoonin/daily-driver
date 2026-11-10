@@ -165,7 +165,7 @@ def _fold_criteria_values(
 
 
 def _build_fit_notes_system(
-    role_persona: str,
+    target_roles: str,
     loc_summary: str,
     hc: str,
     criteria: Sequence[Criterion] = (),
@@ -174,7 +174,7 @@ def _build_fit_notes_system(
 ) -> str:
     """Build the STATIC fit/notes instruction block (the system prompt).
 
-    Depends only on run-level constants (persona, locations, criteria, the
+    Depends only on run-level constants (roles, locations, criteria, the
     candidate's context.md, the remote toggle) -- never on the job -- so it is
     byte-identical for every job in a run. Passed as the provider's system
     prompt, which Claude Code prompt-caches server-side: the candidate's full
@@ -211,11 +211,12 @@ def _build_fit_notes_system(
             "assess, return 5.\n"
         )
 
+    targeting = f"targeting: {target_roles}, " if target_roles else ""
     prompt = (
         "You are evaluating how well a specific candidate fits a job. Be honest "
         "and calibrated -- most jobs are average fits. Reserve 8-10 for genuinely "
         "strong matches, 1-3 for clear mismatches.\n"
-        f"The candidate is targeting: {role_persona}, based in {hc}.\n"
+        f"The candidate is {targeting}based in {hc}.\n"
         f"Location preferences: {loc_summary}\n"
     )
     # The candidate's full context.md is injected when the workspace has one;
@@ -588,6 +589,7 @@ def _build_fit_plan(
     shared budget in wave 2. Backfill is the retry path for those rows.
     """
     from daily_driver.plugins.job_search.scraper.context import home_city
+    from daily_driver.plugins.job_search.scraper.roles import _split_roles
 
     stats = {"enriched": 0, "skipped_budget": 0, "no_description": 0, "failed": 0}
     # Replace slots in the caller's list (not a copy) so a KeyboardInterrupt
@@ -614,7 +616,7 @@ def _build_fit_plan(
         budget = cfg.max_enrich_fit
     budget = max(0, budget)
     loc_summary = _location_summary(ctx)
-    role_persona = ctx.plugin.persona or "SRE/Platform/Infra engineer"
+    target_roles = ", ".join(_split_roles(ctx.plugin.roles)[0])
     hc = home_city(ctx.plugin)
     crit_list = list(cfg.criteria)
     context_text = ctx.context_text
@@ -625,7 +627,7 @@ def _build_fit_plan(
     # a provider with prompt caching (Claude Code caches it server-side) process
     # it once and read it from cache on every subsequent job.
     system_prompt = _build_fit_notes_system(
-        role_persona, loc_summary, hc, crit_list, context_text, include_remote
+        target_roles, loc_summary, hc, crit_list, context_text, include_remote
     )
     # The per-job user prompt is logged per call in _fetch_fit_notes_for_job; log
     # the (identical) system block ONCE here so a -vv trace is complete without

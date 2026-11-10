@@ -1,21 +1,21 @@
 # Daily Driver Workspace
 
-This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace. It holds your background, your task tracker, {% if "job_search" in plugins %}your job search data, {% endif %}and the files that set up your chats with Claude.
+This directory is a [daily-driver](https://github.com/skoonin/daily-driver) workspace. It holds your background, your task tracker, {% if "job_search" in plugins %}your job search data, {% endif %}and the files that set up your chats with the AI.
 
-## Chat with Claude
+## Chat with the AI
 
-Most of the time, you start a chat with Claude. Type one of these commands in the Terminal app, inside this folder. Claude adds and updates your tasks and writes your plans and notes.
+Most of the time, you start a chat with the AI. Type one of these commands in the Terminal app, inside this folder. The AI adds and updates your tasks and writes your plans and notes.
 
 ```
-daily-driver day-start        # start a chat with Claude to plan your day
-daily-driver check-in         # midday chat: tell Claude what is done or stuck
+daily-driver day-start        # start a chat to plan your day
+daily-driver check-in         # midday chat: tell the AI what is done or stuck
 daily-driver day-end          # end-of-day chat: review the day and save notes
 daily-driver resume           # reopen your most recent chat
 ```
 
 ## Task tracker
 
-Claude keeps your task tracker up to date during a chat. You can also run these commands yourself.
+The AI keeps your task tracker up to date during a chat. You can also run these commands yourself.
 
 ```
 daily-driver tracker add      # add a task ({% if "job_search" in plugins %}job, {% endif %}errand, milestone, or similar)

@@ -189,12 +189,11 @@ def run(args):
 ```
 
 `scheduler.py` — the `scheduled_jobs_builder` hook.
-`SchedulerContext` carries the scheduler-namespace config and resolved primitives, not the plugin's own config, so the builder rediscovers the workspace from `ctx.workspace_root` to read `plugins.reminders.at`:
+`SchedulerContext` carries resolved primitives and the plugin's own settings as `ctx.plugin_config`, so the builder reads `plugins.reminders.at` from there. To let users turn a run off and set its days, subclass `core.schedule_fields.ScheduledRun`, as `job_search` does:
 
 ```python
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -205,12 +204,9 @@ LABEL = "com.daily-driver.reminders"
 
 def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
     from daily_driver.core.scheduler import ScheduledJob
-    from daily_driver.core.workspace import Workspace
 
-    workspace = Workspace.discover_or_fail(override=Path(ctx.workspace_root))
-    plugins = workspace.config.plugins
-    cfg = plugins.reminders if plugins else None
-    if cfg is None or not cfg.at:  # no time configured -> no launchd job
+    cfg = ctx.plugin_config
+    if not cfg.at:  # no time configured -> no launchd job
         return []
 
     stdout, stderr = ctx.log_paths("reminders")
@@ -234,7 +230,7 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
 ```
 
 OPTIONAL `config.py` — the `config_model`.
-A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so an unknown key fails validation).
+A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so the config load warns about an unknown key and ignores it).
 
 A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists. `init` writes a plugin's block only for plugins it is told to switch on: `cli/commands/init.py` builds `plugins = {"job_search"} if args.job_search else set()`, so a new plugin needs its own flag there, or users add the block by hand. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and write `enabled: true` as the one live line of the plugin's block in `.dd-config.yaml.j2`; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
 

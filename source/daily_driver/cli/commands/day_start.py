@@ -1,7 +1,7 @@
 """day-start subcommand: interactive morning planning session.
 
 Pre-launch the program writes:
-  1. a plan stub at <output_dir>/YYYY/MM/YYYY-MM-DD-plan.md (only if absent —
+  1. a plan stub at <workspace>/YYYY/MM/YYYY-MM-DD-plan.md (only if absent —
      never clobbers user or AI edits if day-start is re-run mid-day);
   2. the day's state YAML with `last_day_start_at` and `late_day`.
 
@@ -58,7 +58,7 @@ def add_parser(
 
 
 def _plan_path(workspace: Workspace, day: date_cls) -> Path:
-    return daily_file(workspace.output_dir, day, "plan")
+    return daily_file(workspace.root, day, "plan")
 
 
 def _write_plan_stub_if_absent(path: Path, day: date_cls) -> None:

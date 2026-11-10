@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from daily_driver.core.config_models import (
     Config,
-    DailyDriverConfig,
     InteractiveAIConfig,
     PluginsConfig,
     TrackerCategoryConfig,
@@ -17,26 +16,6 @@ from daily_driver.plugins.job_search.config import (
     Locations,
     ScraperConfig,
 )
-
-# ---------------------------------------------------------------------------
-# DailyDriverConfig
-# ---------------------------------------------------------------------------
-
-
-def test_daily_driver_config_defaults():
-    m = DailyDriverConfig()
-    assert m.output_dir == "."
-
-
-def test_daily_driver_config_custom():
-    m = DailyDriverConfig(output_dir="/home/user/notes")
-    assert m.output_dir == "/home/user/notes"
-
-
-def test_daily_driver_config_rejects_extra():
-    with pytest.raises(ValidationError):
-        DailyDriverConfig(output_dir=".", bogus_field=True)
-
 
 # ---------------------------------------------------------------------------
 # InteractiveAIConfig (routing lives in ai.providers, not here)
@@ -117,7 +96,6 @@ def test_locations_defaults():
 
 def test_job_search_plugin_minimal():
     m = JobSearchPlugin()
-    assert m.persona is None
     assert m.sources == {}
     assert m.roles == []
     assert m.domain_keywords == []
@@ -134,13 +112,11 @@ def test_job_search_plugin_with_sources():
 
 def test_job_search_plugin_full():
     m = JobSearchPlugin(
-        persona="Staff SRE",
         roles=["Senior SRE", "Staff Platform Engineer"],
         domain_keywords=["kubernetes", "terraform"],
         seniority_keywords=["staff", "senior"],
         scraper=ScraperConfig(enabled=True, timeout=60, parallel_workers=2),
     )
-    assert m.persona == "Staff SRE"
     assert m.roles == ["Senior SRE", "Staff Platform Engineer"]
     assert m.scraper.enabled is True
     assert m.scraper.timeout == 60
@@ -389,7 +365,6 @@ def test_plugins_config_rejects_unknown_plugin():
 
 def test_config_minimal_valid():
     m = Config(tracker=TrackerConfig(categories={"task": TrackerCategoryConfig()}))
-    assert m.daily_driver.output_dir == "."
     assert m.plugins.job_search is None
 
 
@@ -446,7 +421,8 @@ def test_schedule_config_coerces_yaml_int():
 def test_schedule_config_rejects_invalid_hhmm():
     from daily_driver.core.config_models import ScheduleConfig
 
-    for bad in ("9:99", "25:00", "noon", 99999):
+    # An unquoted HH:MM reaches the validator as 60 or more, so 9 is not a time.
+    for bad in ("9:99", "25:00", "noon", 99999, 9, 59, True):
         with pytest.raises(ValidationError):
             ScheduleConfig(day_start=bad)
 
@@ -456,22 +432,17 @@ def test_schedule_config_rejects_invalid_hhmm():
 # ---------------------------------------------------------------------------
 
 
-def test_scheduler_config_default_both_none():
+def test_scheduler_config_default_none():
     from daily_driver.core.config_models import SchedulerConfig
 
-    m = SchedulerConfig()
-    assert m.checkin is None
-    assert m.jobs is None
+    assert SchedulerConfig().checkin is None
 
 
 def test_scheduler_config_typed_round_trip():
     from daily_driver.core.config_models import SchedulerConfig
 
-    m = SchedulerConfig.model_validate(
-        {"checkin": {"times": ["09:00", "13:00"]}, "jobs": {"time": "06:30"}}
-    )
+    m = SchedulerConfig.model_validate({"checkin": {"times": ["09:00", "13:00"]}})
     assert m.checkin is not None and m.checkin.times == ["09:00", "13:00"]
-    assert m.jobs is not None and m.jobs.time == "06:30"
 
 
 def test_scheduler_config_rejects_extra_top_level_key():
@@ -496,30 +467,51 @@ def test_checkin_schedule_rejects_extra_key():
         CheckinSchedule.model_validate({"times": ["09:00"], "bogus": 1})
 
 
-def test_job_schedule_rejects_extra_key():
-    from daily_driver.core.config_models import JobSchedule
+def test_scheduled_run_rejects_extra_key():
+    from daily_driver.core.schedule_fields import ScheduledRun
 
     with pytest.raises(ValidationError):
-        JobSchedule.model_validate({"time": "07:00", "bogus": 1})
+        ScheduledRun.model_validate({"time": "07:00", "bogus": 1})
+
+
+def test_scheduled_run_rejects_a_bad_time():
+    from daily_driver.core.schedule_fields import ScheduledRun
+
+    with pytest.raises(ValidationError, match="HH:MM"):
+        ScheduledRun.model_validate({"time": "7am"})
+
+
+def test_job_search_runs_have_their_own_defaults():
+    plugin = JobSearchPlugin()
+    assert plugin.scheduler.run.enabled is True
+    assert (plugin.scheduler.run.time, plugin.scheduler.run.days) == ("07:00", "daily")
+    assert plugin.scheduler.discovery.enabled is True
+    assert plugin.scheduler.discovery.time == "23:59"
+    assert plugin.scheduler.discovery.days == ["sat", "tue"]
+
+
+def test_job_search_run_keeps_its_default_time_when_only_days_is_set():
+    plugin = JobSearchPlugin.model_validate(
+        {"scheduler": {"discovery": {"days": ["mon"]}}}
+    )
+    assert plugin.scheduler.discovery.time == "23:59"
 
 
 def test_days_defaults_to_daily():
-    from daily_driver.core.config_models import (
-        CheckinSchedule,
-        JobSchedule,
-        ScheduleConfig,
-    )
+    from daily_driver.core.config_models import CheckinSchedule, ScheduleConfig
+    from daily_driver.core.schedule_fields import ScheduledRun
 
     assert ScheduleConfig().days == "daily"
     assert CheckinSchedule().days == "daily"
-    assert JobSchedule().days == "daily"
+    assert ScheduledRun(time="07:00").days == "daily"
 
 
 def test_days_accepts_weekdays_shortcut_and_day_names():
-    from daily_driver.core.config_models import JobSchedule, ScheduleConfig
+    from daily_driver.core.config_models import ScheduleConfig
+    from daily_driver.core.schedule_fields import ScheduledRun
 
     assert ScheduleConfig.model_validate({"days": "weekdays"}).days == "weekdays"
-    m = JobSchedule.model_validate({"time": "23:59", "days": ["Sunday", "WED"]})
+    m = ScheduledRun.model_validate({"time": "23:59", "days": ["Sunday", "WED"]})
     assert m.days == ["sun", "wed"]  # normalized to canonical three-letter names
 
 

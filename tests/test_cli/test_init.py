@@ -18,7 +18,7 @@ def _args(
     return argparse.Namespace(
         path=path,
         force=force,
-        job_search=job_search,
+        plugin_job_search=job_search,
         verbose=False,
         quiet=False,
         no_color=False,
@@ -108,19 +108,86 @@ def test_init_job_search_with_enabled_false_says_to_remove_it(
     assert "plugins: {job_search: {}}" not in err
 
 
-@pytest.mark.parametrize(
-    ("job_search", "expected"),
-    [
-        (False, "Job search: off (to switch on, add `plugins: {job_search: {}}`"),
-        (True, "Job search: on"),
-    ],
-)
-def test_init_summary_states_job_search(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], job_search: bool, expected: str
+def test_init_summary_says_job_search_is_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    run(_args(str(tmp_path), job_search=job_search))
+    run(_args(str(tmp_path), job_search=True))
 
-    assert expected in " ".join(capsys.readouterr().err.split())
+    assert "Job search: on" in capsys.readouterr().err
+
+
+def test_force_says_when_it_switched_job_search_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path), job_search=True))
+    capsys.readouterr()
+
+    assert run(_args(str(tmp_path), force=True)) == 0
+
+    err = " ".join(capsys.readouterr().err.split())
+    assert "Job search: off" in err
+    # Running --force again would reset every setting; adding the block does not.
+    assert "add `plugins: {job_search: {}}`" in err
+    assert "doctor --fix" in err
+    assert "--force" not in err
+
+
+def test_a_plugin_flag_never_replaces_an_init_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plugin named like an `init` argument must not overwrite it."""
+    from daily_driver.cli import commands
+    from daily_driver.cli.cli import app
+    from daily_driver.plugins._base import Plugin
+
+    clash = Plugin(
+        name="path",
+        command_name="clash",
+        command_module="daily_driver.cli.commands.status",
+        command_help="x",
+        init_flag_help="x",
+    )
+    init_module = commands.init
+    monkeypatch.setattr(init_module, "PLUGINS", (*init_module.PLUGINS, clash))
+
+    target = tmp_path / "ws"
+    assert app(["init", str(target), "--path"]) == 0
+    assert (target / ".dd-config.yaml").exists()
+
+
+def test_force_with_job_search_keeps_it_on_and_says_nothing_about_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path), job_search=True))
+    capsys.readouterr()
+
+    assert run(_args(str(tmp_path), force=True, job_search=True)) == 0
+
+    err = capsys.readouterr().err
+    assert "Job search: on" in err
+    assert "Job search: off" not in err
+
+
+def test_force_replaces_a_config_that_does_not_load(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path), job_search=True))
+    config = tmp_path / ".dd-config.yaml"
+    config.write_text("schedule: [\n", encoding="utf-8")
+    capsys.readouterr()
+
+    assert run(_args(str(tmp_path), force=True)) == 0
+
+    assert "schedule: [" not in config.read_text(encoding="utf-8")
+    assert "Job search" not in capsys.readouterr().err
+
+
+def test_init_summary_says_nothing_about_job_search_when_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(_args(str(tmp_path)))
+
+    assert "job" not in capsys.readouterr().err.lower()
 
 
 def test_plain_reinit_does_not_warn_about_job_search(
@@ -202,7 +269,6 @@ def test_init_scaffolds_time_hook(tmp_path: Path) -> None:
 def test_init_config_parses_via_load(tmp_path: Path) -> None:
     run(_args(str(tmp_path)))
     config = load(tmp_path / ".dd-config.yaml")
-    assert config.daily_driver.output_dir == "."
     assert "task" in config.tracker.categories
 
 

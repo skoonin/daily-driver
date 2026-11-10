@@ -95,4 +95,9 @@ SOURCE_CAPABILITIES: dict[str, SourceCapability] = {
 }
 
 
-__all__ = ["SCRAPERS", "SOURCE_CAPABILITIES", "SourceCapability"]
+__all__ = ["SCRAPERS", "SOURCE_CAPABILITIES", "SourceCapability", "source_names"]
+
+
+def source_names() -> list[str]:
+    """The source names for `daily-driver help sources`."""
+    return sorted(SCRAPERS)

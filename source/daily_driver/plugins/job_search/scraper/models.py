@@ -32,6 +32,7 @@ from pydantic import (
 
 from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status
+from daily_driver.plugins.job_search import JOBS_RECOMMENDED_STATUSES
 
 if TYPE_CHECKING:
     from daily_driver.plugins.job_search.scraper.context import ScrapeContext
@@ -56,18 +57,6 @@ def clamp_fit(score: int) -> int:
 # not match the tracker's generic set. `found` is the default for a freshly
 # scraped row.
 JOBS_DEFAULT_STATUS = "found"
-JOBS_RECOMMENDED_STATUSES: tuple[str, ...] = (
-    "found",
-    "pending",
-    "skipped",
-    "applied",
-    "interviewing",
-    "rejected",
-    "dropped",
-    # `closed` is a shipped jobs_archive.DEFAULT_PRUNE_STATUSES target, so it
-    # must be recognized or every prune would warn about the tool's own default.
-    "closed",
-)
 
 
 # Statuses surfaced in jobs.csv but excluded from the costly LLM enrichment

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic_core import PydanticCustomError
 
+from daily_driver.core.schedule_fields import ScheduledRun
 from daily_driver.plugins._base import PluginConfigBase
 
 
@@ -353,13 +355,38 @@ class DiscoveryConfig(BaseModel):
         return value
 
 
+class RunSchedule(ScheduledRun):
+    time: str = "07:00"
+
+
+class DiscoverySchedule(ScheduledRun):
+    """A sweep lands before a scrape rather than inside one, and less often: the
+    set of job boards changes far more slowly than postings do."""
+
+    time: str = "23:59"
+    days: str | list[str] = ["sat", "tue"]
+
+
+class JobSearchScheduler(BaseModel):
+    """Launchd cadence for `jobs run` and `jobs discover-boards`.
+
+    Discovery is its own job rather than part of `run`: launchd takes a single
+    command (so chaining would need a wrapper), and a sweep that hangs must not
+    block the scrape.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    run: RunSchedule = RunSchedule()
+    discovery: DiscoverySchedule = DiscoverySchedule()
+
+
 class JobSearchPlugin(PluginConfigBase):
     model_config = ConfigDict(extra="forbid")
 
     # Defaults on: having the block at all is the opt-in, so existing configs
     # keep working. `enabled: false` switches job search off and keeps settings.
     enabled: bool = True
-    persona: str | None = None
     roles: list[str] = []
     domain_keywords: list[str] = []
     seniority_keywords: list[str] = []
@@ -369,6 +396,7 @@ class JobSearchPlugin(PluginConfigBase):
     # Board-backed rows are verified by board diff on every run instead.
     verify: VerifyConfig = VerifyConfig()
     discovery: DiscoveryConfig = DiscoveryConfig()
+    scheduler: JobSearchScheduler = JobSearchScheduler()
     sources: dict[str, SourceToggle] = Field(
         default_factory=dict,
     )
@@ -384,7 +412,32 @@ class JobSearchPlugin(PluginConfigBase):
             if isinstance(val, bool):
                 out[key] = toggle_cls(enabled=val)
             elif isinstance(val, dict):
-                out[key] = toggle_cls.model_validate(val)
+                out[key] = _validate_source(toggle_cls, key, val)
             else:
                 out[key] = val
         return out
+
+
+def _validate_source(
+    toggle_cls: type[SourceToggle], key: str, value: dict[str, Any]
+) -> SourceToggle:
+    """Validate one source's settings, keeping the source name in error paths.
+
+    Pydantic reports an error raised inside a field validator at the field, so
+    without the name a typo under `sources.linkedin` reads as `sources.<typo>`
+    and the config load cannot find the key to ignore it.
+    """
+    try:
+        return toggle_cls.model_validate(value)
+    except ValidationError as exc:
+        # A custom error keeps any type name, including one that pydantic does
+        # not know, and the message already formatted.
+        details: list[Any] = [
+            {
+                "type": PydanticCustomError(error["type"], error["msg"]),
+                "loc": (key, *error["loc"]),
+                "input": error["input"],
+            }
+            for error in exc.errors()
+        ]
+        raise ValidationError.from_exception_data(exc.title, details) from None

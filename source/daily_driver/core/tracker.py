@@ -15,6 +15,7 @@ from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
 from daily_driver.core.statuses import normalize_status, warn_unknown_statuses
 from daily_driver.core.workspace import Workspace
+from daily_driver.plugins import PLUGINS
 
 _logger = get_logger("tracker")
 
@@ -30,26 +31,9 @@ RECOMMENDED_STATUSES: tuple[str, ...] = (
     "ruled-out",
 )
 
-# job-category lifecycle mirrors the job_search plugin's JOBS_RECOMMENDED_STATUSES
-# (scraper.models), kept aligned so a `job`-category tracker entry and a jobs.csv
-# row share one vocabulary.
-JOB_RECOMMENDED_STATUSES: tuple[str, ...] = (
-    "found",
-    "pending",
-    "skipped",
-    "applied",
-    "interviewing",
-    "rejected",
-    "dropped",
-    "closed",
-)
-
-
 # Terminal lifecycle states (entry won't progress): union across categories.
 # status.py uses this to exclude entries from "stalled". Scope is tracker
-# entries only — the job-prune default (jobs_archive.DEFAULT_PRUNE_STATUSES)
-# governs jobs.csv rows independently and is not derived from this set; it also
-# carries `skipped`, which is settled for a scraped row but not for a task. A
+# entries only; a plugin's own data files have their own rules. A
 # workspace can extend (never shrink) this set via `tracker.terminal_statuses`;
 # resolve the effective set with `terminal_statuses_for`.
 TERMINAL_STATUSES: frozenset[str] = frozenset(
@@ -66,8 +50,9 @@ def terminal_statuses_for(tracker_cfg: TrackerConfig) -> frozenset[str]:
 
 
 def _recommended_for_category(category: str) -> tuple[str, ...]:
-    if category == "job":
-        return JOB_RECOMMENDED_STATUSES
+    for plugin in PLUGINS:
+        if category in plugin.tracker_statuses:
+            return plugin.tracker_statuses[category]
     return RECOMMENDED_STATUSES
 
 
@@ -105,17 +90,15 @@ def _serialize_entry(entry: TrackerEntry) -> dict[str, Any]:
 
 
 class Tracker:
-    """Facade: owns load / save / CRUD against {output_dir}/tracker.yaml.
+    """Facade: owns load / save / CRUD against {workspace.root}/tracker.yaml.
 
-    The tracker is bound to a Workspace and resolves its storage path as
-    {workspace.root}/{config.daily_driver.output_dir}/tracker.yaml.
     All timestamps use daily_driver.core.clock so FROZEN_TIME applies in tests.
     Writes are protected by an exclusive flock on ephemeral_dir/tracker.lock.
     """
 
     def __init__(self, workspace: Workspace) -> None:
         self._workspace = workspace
-        self._path = workspace.output_dir / "tracker.yaml"
+        self._path = workspace.root / "tracker.yaml"
 
     @property
     def path(self) -> Path:

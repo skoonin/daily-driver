@@ -35,8 +35,6 @@ def workspace(tmp_path: Path) -> Workspace:
 def workspace_with_job_required(tmp_path: Path) -> Workspace:
     """Workspace whose TrackerConfig requires 'company' extra for category 'job'."""
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   categories:
     task: {required: [title]}
@@ -238,8 +236,6 @@ def test_terminal_statuses_for_merges_custom_with_builtins(tmp_path: Path) -> No
     """`tracker.terminal_statuses` extends the built-in set; it never shrinks it,
     and custom spellings are normalized."""
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   terminal_statuses: [Cancelled, on_hold]
   categories:
@@ -259,8 +255,6 @@ def test_follow_ups_excludes_custom_terminal_status(tmp_path: Path) -> None:
     """A workspace-defined terminal status (e.g. `cancelled`) drops its entries
     from follow-ups, the same as the built-in terminal states."""
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   terminal_statuses: [cancelled]
   categories:
@@ -461,39 +455,6 @@ def test_empty_workspace_load_returns_empty_file(workspace: Workspace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 13. Tracker._path resolves tilde output_dir via workspace.output_dir
-# ---------------------------------------------------------------------------
-
-
-def test_tracker_path_resolves_tilde_output_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Tracker must use workspace.output_dir so ~/notes expands correctly."""
-    import os.path as osp
-
-    # Redirect ~ expansion so ~/notes resolves inside tmp_path.
-    original_expanduser = osp.expanduser
-
-    def fake_expanduser(p: str) -> str:
-        if p.startswith("~"):
-            return str(tmp_path) + p[1:]
-        return original_expanduser(p)
-
-    monkeypatch.setattr(osp, "expanduser", fake_expanduser)
-
-    config_text = "daily_driver:\n  output_dir: ~/notes\ntracker:\n  categories:\n    task: {required: [title]}\n"
-    marker = tmp_path / ".dd-config.yaml"
-    marker.write_text(config_text, encoding="utf-8")
-    state_dir = tmp_path / ".daily-driver"
-    state_dir.mkdir(exist_ok=True)
-
-    ws = Workspace.discover_or_fail(override=tmp_path)
-    tracker = Tracker(ws)
-
-    assert tracker.path == tmp_path / "notes" / "tracker.yaml"
-
-
-# ---------------------------------------------------------------------------
 # 14. RECOMMENDED_STATUSES + warn-on-unknown-status
 # ---------------------------------------------------------------------------
 
@@ -604,8 +565,6 @@ def test_warn_silenced_by_config_flag(
 ) -> None:
     """Setting tracker.warn_unknown_status: false silences the warning."""
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   warn_unknown_status: false
   categories:
@@ -635,8 +594,6 @@ def test_extra_statuses_extends_recommended_set(
 ) -> None:
     """A status listed in tracker.extra_statuses must not warn."""
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   extra_statuses: [waiting, snoozed]
   categories:

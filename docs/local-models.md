@@ -1,6 +1,6 @@
 # Local models
 
-LM Studio and ollama are apps that run AI models on your own computer. Each one runs a server that Daily Driver calls over the Hypertext Transfer Protocol (HTTP). Both are built-in providers. Local models have no rate limits, which suits high-volume work such as `jobs backfill`. Their answers can be weaker than Claude's. You do not need this page to use Daily Driver.
+LM Studio and ollama are apps that run AI models on your own computer. Each one runs a server that Daily Driver calls over the Hypertext Transfer Protocol (HTTP). Both are built-in providers. Local models have no rate limits, which suits high-volume work such as `jobs backfill`. Their answers can be weaker than those of a hosted model such as Claude. You do not need this page to use Daily Driver.
 
 A model server runs text tasks only:
 
@@ -75,9 +75,9 @@ ai:
 To use ollama, change `lmstudio` to `ollama` and use an ollama model name, such as `qwen2.5:14b`.
 
 - The time limit of a job review is `enrich_timeout`. The `timeout` of the provider does not apply to job reviews.
-- Leave out `plugins.job_search.provider` to keep job review on Claude.
-- To use a second model on the same server, add an entry with `extends`. See [Settings](configuration.md#ai).
-- For every `ai` setting, see [Settings](configuration.md#ai).
+- Leave out `plugins.job_search.provider` to keep job review on the default provider.
+- To use a second model on the same server, add an entry with `parent_provider`. See [AI providers](providers.md#change-or-add-a-provider).
+- For every provider setting, see [AI providers](providers.md).
 
 ## Choose a model
 
@@ -114,9 +114,9 @@ No row appears for a built-in provider that runs no task.
 - **`HTTP 404` or `sent an unreadable reply`.** The address answers, but not as an OpenAI-compatible server. Check `ai.providers.<provider>.base_url`. For LM Studio and ollama, it ends in `/v1`.
 - **Cells stay empty after `jobs backfill`.** Run it again with `-vv`. See [Start with -v or -vv](troubleshooting.md#start-with--v-or--vv).
 - **A review times out.** Raise `plugins.job_search.enrichment.enrich_timeout`. A model that loads on its first request is slow at first and fast after.
-- **Answers are weaker than Claude's.** Try a larger model. Or keep job review on Claude and use the local model only for `voice-update`.
+- **Answers are weaker than those of a hosted model.** Try a larger model. Or keep job review on the default provider and use the local model only for `voice-update`.
 - **Ctrl-C during a long `jobs backfill`.** Press it once to stop. The run prints `Stopping` and waits for the model calls in progress, up to `enrich_timeout` seconds each. It then saves your progress and exits. A second Ctrl-C quits at once and loses the work in progress.
-- **Many `jobs.csv.bak.*` files.** See [Settings](configuration.md#daily_driver) for where they are and when `doctor` warns.
+- **Many `jobs.csv.bak.*` files.** They are in `<workspace>/backups/`. `doctor` warns when more than 5 exist. See [Job search](job-search.md#enrichment).
 
 ## Advanced: ollama server settings
 
@@ -147,5 +147,5 @@ If you leave `OLLAMA_NUM_PARALLEL` at its default of 1, set `max_parallel: 1` on
 
 ## See also
 
-- [Settings](configuration.md#ai): every `ai` setting.
-- [Daily guide](usage.md#choosing-an-ai-provider): when to pick Claude or a local model.
+- [AI providers](providers.md): every provider setting.
+- [Daily guide](usage.md#choosing-an-ai-provider): when to pick a hosted provider or a local model.
