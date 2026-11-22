@@ -12,7 +12,6 @@ from daily_driver.core.workspace import WorkspaceError, daily_dir, daily_file
 
 _CHOICES = (
     "root",
-    "output",
     "state",
     "ephemeral",
     "tracker",
@@ -30,7 +29,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "paths",
         parents=parents,
-        help="Print resolved workspace paths (output, state, daily plan/notes)",
+        help="Print resolved workspace paths (root, state, daily plan/notes)",
     )
     parser.add_argument(
         "kind",
@@ -70,16 +69,15 @@ def run(args: argparse.Namespace) -> int:
     if getattr(args, "json", False):
         from daily_driver.core.tracker import Tracker
 
-        daily = daily_dir(workspace.output_dir, when)
+        daily = daily_dir(workspace.root, when)
         payload = {
             "root": str(workspace.root),
-            "output_dir": str(workspace.output_dir),
             "state_dir": str(workspace.state_dir),
             "ephemeral_dir": str(workspace.ephemeral_dir),
             "tracker": str(Tracker(workspace).path),
             "daily": str(daily),
-            "daily_plan": str(daily_file(workspace.output_dir, when, "plan")),
-            "daily_notes": str(daily_file(workspace.output_dir, when, "notes")),
+            "daily_plan": str(daily_file(workspace.root, when, "plan")),
+            "daily_notes": str(daily_file(workspace.root, when, "notes")),
             "daily_state": str(daily_state_path(workspace, when)),
         }
         Console.emit_json(payload)
@@ -87,8 +85,6 @@ def run(args: argparse.Namespace) -> int:
 
     if args.kind == "root":
         print(workspace.root)
-    elif args.kind == "output":
-        print(workspace.output_dir)
     elif args.kind == "state":
         print(workspace.state_dir)
     elif args.kind == "ephemeral":
@@ -98,11 +94,11 @@ def run(args: argparse.Namespace) -> int:
 
         print(Tracker(workspace).path)
     elif args.kind == "daily":
-        print(daily_dir(workspace.output_dir, when))
+        print(daily_dir(workspace.root, when))
     elif args.kind == "daily-plan":
-        print(daily_file(workspace.output_dir, when, "plan"))
+        print(daily_file(workspace.root, when, "plan"))
     elif args.kind == "daily-notes":
-        print(daily_file(workspace.output_dir, when, "notes"))
+        print(daily_file(workspace.root, when, "notes"))
     elif args.kind == "daily-state":
         print(daily_state_path(workspace, when))
     return 0

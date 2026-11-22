@@ -254,6 +254,25 @@ def _load_workspace_config(workspace: Workspace) -> Config | str | Exception:
         return exc
 
 
+def _check_ignored_settings(workspace: Workspace) -> list[CheckResult]:
+    """One row per setting the load ignores.
+
+    The workspace has loaded this file already, so reading it again succeeds.
+    """
+    from daily_driver.core.config import read_settings
+
+    _, ignored = read_settings(workspace.root / ".dd-config.yaml")
+    return [
+        CheckResult(
+            f"setting: {setting.path}",
+            "ERROR",
+            f"ignored; {setting.fix}",
+            "edit .dd-config.yaml",
+        )
+        for setting in ignored
+    ]
+
+
 def _check_ai_providers(workspace: Workspace) -> list[CheckResult]:
     """One row per provider that runs a task, then unused user entries.
 
@@ -329,6 +348,7 @@ def run_checks(workspace: Workspace | None = None) -> list[CheckResult]:
         results.append(_check_workspace_drift(workspace))
         results.append(_check_daily_state_writable(workspace))
         results.extend(_check_init_contract(workspace))
+        results.extend(_check_ignored_settings(workspace))
         results.extend(_check_ai_providers(workspace))
         results.extend(_plugin_checks(workspace))
     return results

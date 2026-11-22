@@ -75,7 +75,7 @@ CANONICAL_HEADER = EnrichedJob.CANONICAL_HEADER
 
 
 def _make_backup(csv_path: Path) -> Path:
-    """Snapshot jobs.csv into <output_dir>/backups/ with a UTC ISO-8601 stamp.
+    """Snapshot jobs.csv into <workspace>/backups/ with a UTC ISO-8601 stamp.
 
     Filename pattern: jobs.csv.bak.YYYY-MM-DDTHH-MM-SS-ffffffZ. Colons in the
     time portion are replaced with hyphens so the filename is portable across

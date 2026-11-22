@@ -11,7 +11,7 @@ from daily_driver.plugins.job_search import doctor
 
 @dataclass
 class _FakeWorkspace:
-    output_dir: Path
+    root: Path
 
 
 def _ws_with_sources(**toggles: bool) -> SimpleNamespace:
@@ -36,19 +36,19 @@ def _make_baks(backups_dir: Path, count: int) -> None:
 
 
 def test_no_backups_dir_returns_empty(tmp_path: Path) -> None:
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
     assert doctor.run_checks(ws) == []
 
 
 def test_few_backups_below_threshold_no_row(tmp_path: Path) -> None:
     _make_baks(tmp_path / "backups", 5)
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
     assert doctor.run_checks(ws) == []
 
 
 def test_accumulated_backups_warns(tmp_path: Path) -> None:
     _make_baks(tmp_path / "backups", 8)
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
     results = doctor.run_checks(ws)
     assert len(results) == 1
     row = results[0]
@@ -67,7 +67,7 @@ def _write_header(path: Path, columns: list[str]) -> None:
 
 
 def test_custom_columns_check_skipped_without_jobs_csv(tmp_path: Path) -> None:
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
     assert doctor._check_jobs_csv_custom_columns(ws) is None
 
 
@@ -75,7 +75,7 @@ def test_canonical_header_reports_nothing(tmp_path: Path) -> None:
     from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 
     _write_header(tmp_path / "jobs.csv", CANONICAL_HEADER)
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
     assert doctor._check_jobs_csv_custom_columns(ws) is None
 
 
@@ -84,7 +84,7 @@ def test_column_outside_the_canonical_header_is_named(tmp_path: Path) -> None:
     from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 
     _write_header(tmp_path / "jobs.csv", [*CANONICAL_HEADER, "Date Last Seen"])
-    ws = _FakeWorkspace(output_dir=tmp_path)
+    ws = _FakeWorkspace(root=tmp_path)
 
     row = doctor._check_jobs_csv_custom_columns(ws)
 

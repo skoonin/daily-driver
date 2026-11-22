@@ -33,8 +33,6 @@ def _init_workspace(
     if scraper_enabled is not None:
         enabled_str = "true" if scraper_enabled else "false"
         (ws_root / ".dd-config.yaml").write_text(
-            "daily_driver:\n"
-            "  output_dir: .\n"
             "tracker:\n"
             "  default_category: task\n"
             "  categories:\n"
@@ -53,20 +51,22 @@ def _init_workspace(
 # ---------------------------------------------------------------------------
 
 
-def test_jobs_help_exits_0() -> None:
+def test_jobs_help_exits_0(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["jobs", "--help"])
+        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "--help"])
 
     assert exc.value.code == 0
 
 
-def test_jobs_help_lists_core_actions(capsys: pytest.CaptureFixture[str]) -> None:
+def test_jobs_help_lists_core_actions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit):
-        app(["jobs", "--help"])
+        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "--help"])
 
     captured = capsys.readouterr()
     combined = (captured.out + captured.err).lower()
@@ -88,20 +88,20 @@ def test_jobs_no_action_exits_2(
     assert rc == 2
 
 
-def test_jobs_run_help_exits_0() -> None:
+def test_jobs_run_help_exits_0(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["jobs", "run", "--help"])
+        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "run", "--help"])
 
     assert exc.value.code == 0
 
 
-def test_jobs_status_help_exits_0() -> None:
+def test_jobs_status_help_exits_0(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["jobs", "status", "--help"])
+        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "status", "--help"])
 
     assert exc.value.code == 0
 
@@ -127,67 +127,69 @@ def test_jobs_run_missing_workspace_exits_1(
     assert "is off" not in err
 
 
+def _assert_unknown_command(
+    capsys: pytest.CaptureFixture[str], argv: list[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    with pytest.raises(SystemExit) as exc:
+        app(argv)
+    assert exc.value.code == 2
+    err = " ".join(capsys.readouterr().err.split())
+    assert "invalid choice: 'jobs'" in err
+    assert "job search" not in err
+
+
 @pytest.mark.parametrize(
     "action", ["run", "backfill", "status", "prune", "verify", "discover-boards"]
 )
-def test_jobs_exits_1_when_job_search_off(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], action: str
+@pytest.mark.parametrize(
+    "block", ["", "\nplugins:\n  job_search:\n    enabled: false\n    roles: [SRE]\n"]
+)
+def test_jobs_is_an_unknown_command_when_job_search_off(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], action: str, block: str
 ) -> None:
-    """Every jobs action refuses on a fresh workspace and says how to switch on."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, job_search=False)
-
-    rc = app(["--workspace", str(ws), "jobs", action])
-
-    captured = capsys.readouterr()
-    assert rc == 1
-    err = " ".join(captured.err.split())
-    assert "job search is off" in err
-    assert "`plugins: {job_search: {}}`" in err
-
-
-def test_following_the_off_message_switches_job_search_on(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The line the message tells you to add works, pasted as-is."""
-    import re
-
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, job_search=False)
-    app(["--workspace", str(ws), "jobs", "status"])
-    line = re.search(r"add `([^`]+)`", capsys.readouterr().err)
-    assert line is not None
-    config = ws / ".dd-config.yaml"
-    config.write_text(
-        config.read_text(encoding="utf-8") + f"\n{line.group(1)}\n", encoding="utf-8"
-    )
-
-    assert app(["--workspace", str(ws), "jobs", "status"]) == 0
-
-
-def test_jobs_with_enabled_false_says_to_remove_it_not_to_add_a_block(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Appending a second `plugins:` would silently drop the block's settings."""
-    from daily_driver.cli.cli import app
-
+    """With job search off, `jobs` looks like a command that does not exist."""
     ws = _init_workspace(tmp_path, job_search=False)
     config = ws / ".dd-config.yaml"
-    config.write_text(
-        config.read_text(encoding="utf-8")
-        + '\nplugins:\n  job_search:\n    enabled: false\n    persona: "SRE"\n',
-        encoding="utf-8",
-    )
+    config.write_text(config.read_text(encoding="utf-8") + block, encoding="utf-8")
 
-    rc = app(["--workspace", str(ws), "jobs", "status"])
+    _assert_unknown_command(capsys, ["--workspace", str(ws), "jobs", action])
 
-    err = " ".join(capsys.readouterr().err.split())
-    assert rc == 1
-    assert "job search is off" in err
-    assert "remove `enabled: false`" in err
-    assert "plugins: {job_search: {}}" not in err
+
+def test_jobs_is_an_unknown_command_outside_a_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _assert_unknown_command(capsys, ["jobs", "status"])
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["-w{ws}", "jobs", "status"],
+        ["--workspace={ws}", "jobs", "status"],
+        ["jobs", "status", "-w", "{ws}"],
+        ["jobs", "status", "-w={ws}"],
+    ],
+)
+def test_jobs_finds_the_workspace_in_every_flag_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert app([token.format(ws=ws) for token in argv]) == 0
+
+
+def test_the_last_workspace_flag_wins_as_in_argparse(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    on = _init_workspace(tmp_path / "on")
+    off = _init_workspace(tmp_path / "off", job_search=False)
+
+    _assert_unknown_command(capsys, ["-w", str(on), "jobs", "status", "-w", str(off)])
 
 
 def test_jobs_run_scraper_disabled_returns_zero(
@@ -358,13 +360,21 @@ def test_jobs_backfill_limit_negative_rejected(
 
 
 def test_jobs_backfill_help_states_limit_minimum(
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The --limit help text states the minimum of 1."""
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit):
-        app(["jobs", "backfill", "--help"])
+        app(
+            [
+                "--workspace",
+                str(_init_workspace(tmp_path)),
+                "jobs",
+                "backfill",
+                "--help",
+            ]
+        )
     assert "minimum 1" in capsys.readouterr().out
 
 
@@ -1636,8 +1646,6 @@ def test_jobs_backfill_passes_routed_provider_to_run_backfill(tmp_path: Path) ->
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
     (ws / ".dd-config.yaml").write_text(
-        "daily_driver:\n"
-        "  output_dir: .\n"
         "tracker:\n"
         "  default_category: task\n"
         "  categories:\n"
@@ -1671,8 +1679,6 @@ def test_jobs_run_scrape_passes_routed_provider_to_run(tmp_path: Path) -> None:
 
     ws = _init_workspace(tmp_path, scraper_enabled=True)
     (ws / ".dd-config.yaml").write_text(
-        "daily_driver:\n"
-        "  output_dir: .\n"
         "tracker:\n"
         "  default_category: task\n"
         "  categories:\n"
@@ -1798,11 +1804,13 @@ def _seed_promote_csv(ws_root: Path) -> Path:
     )
 
 
-def test_jobs_promote_help_exits_0() -> None:
+def test_jobs_promote_help_exits_0(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
-        app(["jobs", "promote", "--help"])
+        app(
+            ["--workspace", str(_init_workspace(tmp_path)), "jobs", "promote", "--help"]
+        )
     assert exc.value.code == 0
 
 

@@ -1,9 +1,11 @@
 """Checks on the shipped `.dd-config.yaml.j2` that `init` renders into a workspace.
 
-The template is hand-written for people editing it. These tests keep it honest
-against the pydantic models: it parses, every example validates when turned on,
-every setting in the model tree appears in it at its own path, and job search
-settings and text appear only when job search is on.
+The template is hand-written for people editing it. Each live value is the
+default, and a setting that cannot be live is a commented sample. These tests
+keep it honest against the pydantic models: it parses, each live value equals
+the default, each sample validates when turned on, every setting in the model
+tree appears at its own path, and job search settings and text appear only when
+job search is on.
 """
 
 from __future__ import annotations
@@ -19,20 +21,15 @@ from pydantic import BaseModel
 from daily_driver.core.config_models import Config, SchedulerConfig
 from daily_driver.core.providers import (
     builtin_providers,
-    builtin_providers_text,
     provider_for,
+    resolved_provider,
 )
 from daily_driver.core.templating import render_for_plugins
 from daily_driver.plugins import enabled_plugins
 from daily_driver.plugins.job_search.config import _SOURCE_TOGGLE_TYPES
 from daily_driver.plugins.job_search.scraper.sources import SCRAPERS
-from daily_driver.tasks import VOICE_UPDATE, Task
+from daily_driver.tasks import INTERACTIVE, SUMMARY, VOICE_UPDATE, Task
 from tests.test_core.test_generate import JOB_TEXT
-
-# A line whose content, once every leading "# " is removed, is a YAML key:
-# `key:`, `- key:`, or a two-letter country code such as `CA:`.
-_SETTING_RE = re.compile(r"^ *(?:- )?(?:[a-z_][a-z0-9_-]*|[A-Z]{2}):(?:\s|$)")
-_COMMENT_MARKER_RE = re.compile(r"^( *)# ?(.*)$")
 
 
 def _shipped_template() -> str:
@@ -48,83 +45,161 @@ def _shipped_template() -> str:
 def _workspace_config(*, job_search: bool) -> str:
     """The .dd-config.yaml `init` writes, with or without --job-search."""
     return render_for_plugins(
-        _shipped_template(),
-        {"job_search"} if job_search else set(),
-        builtin_providers=builtin_providers_text(),
+        _shipped_template(), {"job_search"} if job_search else set()
     )
 
 
-def _every_setting_config(*, job_search: bool) -> Config:
-    """The rendered config with every commented setting turned on."""
-    text = _every_setting_on(_workspace_config(job_search=job_search))
-    return Config.model_validate(yaml.safe_load(_uncommented(text)))
+def _config(*, job_search: bool) -> Config:
+    return Config.model_validate(
+        yaml.safe_load(_workspace_config(job_search=job_search))
+    )
 
 
-def _uncommented(text: str) -> str:
-    """Strip comments and blank lines so the result parses as plain YAML."""
-    out = []
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        # Drop trailing inline comments.
-        if " #" in line:
-            line = line.split(" #", 1)[0].rstrip()
-        out.append(line)
-    return "\n".join(out)
+def _no_settings() -> Config:
+    """The config a workspace has when it sets nothing beyond the requirements."""
+    return Config.model_validate({"tracker": {}})
+
+
+# A line whose content, once every leading "# " is removed, is a YAML key:
+# `key:`, `- key:`, or a two-letter country code such as `CA:`.
+_SETTING_RE = re.compile(r"^ *(?:- )?(?:[a-z_][a-z0-9_-]*|[A-Z]{2}):(?:\s|$)")
+_COMMENT_MARKER_RE = re.compile(r"^( *)# ?(.*)$")
 
 
 def _every_setting_on(text: str) -> str:
-    """Turn on every commented setting, however deeply commented.
+    """Turn on every commented sample, however deeply commented.
 
-    Prose comments stay comments; only lines that are settings once their
-    `# ` markers are removed get uncommented.
+    Notes stay comments; only lines that are settings once their `# ` markers
+    are removed get uncommented. A trailing note is dropped, as YAML would.
     """
     out = []
     for line in text.splitlines():
         candidate = line
         while match := _COMMENT_MARKER_RE.match(candidate):
             candidate = match.group(1) + match.group(2)
-        out.append(candidate if _SETTING_RE.match(candidate) else line)
+        if _SETTING_RE.match(candidate):
+            out.append(candidate.split(" #", 1)[0].rstrip())
+        else:
+            out.append(line)
     return "\n".join(out)
+
+
+def _every_setting_config(*, job_search: bool) -> Config:
+    """The rendered config with every commented sample turned on."""
+    text = _every_setting_on(_workspace_config(job_search=job_search))
+    return Config.model_validate(yaml.safe_load(text))
 
 
 @pytest.mark.parametrize("job_search", [False, True])
 def test_render_validates_against_config_model(job_search: bool) -> None:
-    parsed = yaml.safe_load(_uncommented(_workspace_config(job_search=job_search)))
-    assert isinstance(parsed, dict)
-    config = Config.model_validate(parsed)
+    config = _config(job_search=job_search)
     assert bool(enabled_plugins(config)) is job_search
     assert config.tracker.categories["task"].required == ["title"]
 
 
+def _shipped_scheduler() -> SchedulerConfig:
+    return SchedulerConfig.model_validate(
+        yaml.safe_load(
+            importlib.resources.files("daily_driver.resources.templates")
+            .joinpath("scheduler.default.yaml")
+            .read_text(encoding="utf-8")
+        )
+    )
+
+
+# The template writes ai.providers.claude to show which provider runs each
+# task; test_template_ai_routing_is_the_default checks it changes nothing.
+_SHOWN_NOT_DEFAULT: frozenset[str] = frozenset({"ai.providers"})
+
+# Blocks whose field default is null that the template writes anyway: the root,
+# the required tracker, and job_search, whose presence is what switches it on.
+_NULL_DEFAULT_BLOCKS_SHOWN: frozenset[str] = frozenset(
+    {"", "tracker", "plugins.job_search"}
+)
+
+
+def _non_default_paths(value: Any, default: Any, path: str) -> list[str]:
+    """Dotted paths under `value` that differ from `default`."""
+    if path in _SHOWN_NOT_DEFAULT:
+        return []
+    if path == "scheduler":
+        # Its defaults live in scheduler.default.yaml, not on the field.
+        default = _shipped_scheduler()
+    if isinstance(value, BaseModel):
+        if default is None and path not in _NULL_DEFAULT_BLOCKS_SHOWN:
+            # A block whose default is null is not the same as null: an empty
+            # `locations` block, for one, drops every job with a location.
+            return [path]
+        # model_construct fills field defaults without demanding required ones.
+        base = (
+            default
+            if isinstance(default, type(value))
+            else type(value).model_construct()
+        )
+        return [
+            found
+            for name in value.model_fields_set
+            for found in _non_default_paths(
+                getattr(value, name),
+                getattr(base, name, None),
+                f"{path}.{name}" if path else name,
+            )
+        ]
+    if isinstance(value, dict) and any(
+        isinstance(item, BaseModel) for item in value.values()
+    ):
+        defaults = default or {}
+        return [
+            found
+            for key, item in value.items()
+            for found in (
+                _non_default_paths(item, defaults[key], f"{path}.{key}")
+                if key in defaults
+                else [f"{path}.{key}"]
+            )
+        ]
+    return [] if value == default else [path]
+
+
 @pytest.mark.parametrize("job_search", [False, True])
-def test_every_setting_validates_when_turned_on(job_search: bool) -> None:
-    """Every example, including nested optional ones, is valid config."""
-    config = _every_setting_config(job_search=job_search)
-    assert provider_for(config, VOICE_UPDATE).name == "lmstudio-coder"
+def test_every_template_value_is_the_default(job_search: bool) -> None:
+    """The header promises that every value in the file is the default."""
+    differ = sorted(_non_default_paths(_config(job_search=job_search), None, ""))
+    assert not differ, "template values that are not the default: " + ", ".join(differ)
+
+
+@pytest.mark.parametrize("job_search", [False, True])
+def test_template_ai_routing_is_the_default(job_search: bool) -> None:
+    """The claude entry the template shows routes every task as no entry does."""
+    config, plain = _config(job_search=job_search), _no_settings()
+    for task in (INTERACTIVE, SUMMARY, VOICE_UPDATE):
+        assert provider_for(config, task).name == provider_for(plain, task).name
+    shown = resolved_provider(config, "claude").settings
+    assert shown.model_copy(update={"tasks": []}) == builtin_providers()["claude"]
     if job_search:
-        assert config.plugins.job_search.persona  # type: ignore[attr-defined]
         fit_notes = Task("fit_notes", "text")
         assert provider_for(config, fit_notes, plugin="job_search").name == "claude"
 
 
-def test_template_builtin_providers_match_the_shipped_file() -> None:
-    """The commented block, turned on, is exactly the built-in providers."""
-    shown = _every_setting_config(job_search=False).ai.providers
-    builtins = builtin_providers()
-    assert {name: shown[name] for name in builtins} == builtins
+@pytest.mark.parametrize("job_search", [False, True])
+def test_every_sample_validates_when_turned_on(job_search: bool) -> None:
+    config = _every_setting_config(job_search=job_search)
+    assert config.ai.providers["claude-sonnet"].parent_provider == "claude"
+    assert config.ai.providers["my-server"].base_url
+    if job_search:
+        job_search_config = config.plugins.job_search  # type: ignore[attr-defined]
+        assert job_search_config.locations is not None
+        assert job_search_config.enrichment.criteria
 
 
-def test_template_scheduler_times_match_the_defaults() -> None:
-    """The times the template shows are the ones that run when it is off."""
-    defaults = yaml.safe_load(
-        importlib.resources.files("daily_driver.resources.templates")
-        .joinpath("scheduler.default.yaml")
-        .read_text(encoding="utf-8")
-    )
-    shown = _every_setting_config(job_search=True).scheduler
-    assert shown == SchedulerConfig.model_validate(defaults)
+def test_template_claude_samples_are_the_shipped_commands() -> None:
+    """The commented claude commands, turned on, are the built-in claude.
+
+    `model` and `timeout` are samples of a change, so they are left out.
+    """
+    shown = resolved_provider(_every_setting_config(job_search=True), "claude")
+    samples = {"tasks": [], "model": None, "timeout": None}
+    assert shown.settings.model_copy(update=samples) == builtin_providers()["claude"]
 
 
 def test_config_without_job_search_has_no_job_text() -> None:
@@ -133,33 +208,20 @@ def test_config_without_job_search_has_no_job_text() -> None:
     assert match is None, f"config mentions {match.group(0)!r}"
 
 
-def test_job_search_options_are_commented_except_enabled() -> None:
-    """Only `enabled: true` is live; options stay examples, not pinned values."""
-    lines = _workspace_config(job_search=True).splitlines()
-    block = lines[lines.index("  job_search:") + 1 :]
-    live = [
-        line for line in block if line.strip() and not line.startswith(("#", "    #"))
-    ]
-    assert live == ["    enabled: true"]
-
-
 @pytest.mark.parametrize("job_search", [False, True])
 def test_workspace_config_has_no_stray_blank_lines(job_search: bool) -> None:
     assert "\n\n\n" not in _workspace_config(job_search=job_search)
 
 
-def test_render_marks_optional_blocks_commented():
-    text = _workspace_config(job_search=False)
-    assert "# schedule:" in text
-    assert "# focus:" in text
-    assert "plugins:" not in text
+def test_config_without_job_search_has_no_plugins_section() -> None:
+    assert "plugins:" not in _workspace_config(job_search=False)
 
 
 # --- Completeness: every model field appears in the template ----------------
 #
 # A setting missing from the template is invisible to anyone editing their
 # config. Each field must appear at its own dotted path once every commented
-# setting is turned on. A field left out on purpose goes in _UNTEMPLATED WITH a
+# sample is turned on. A field left out on purpose goes in _UNTEMPLATED WITH a
 # reason; anything else missing means the template needs a line for it.
 _UNTEMPLATED: frozenset[str] = frozenset(
     {
@@ -173,12 +235,7 @@ _UNTEMPLATED: frozenset[str] = frozenset(
 # only when job search is on.
 _JOB_SEARCH_ONLY: frozenset[str] = frozenset(
     {
-        "scheduler.jobs",
-        "scheduler.jobs.days",
-        "scheduler.jobs.time",
-        "scheduler.discovery",
-        "scheduler.discovery.days",
-        "scheduler.discovery.time",
+        "ai.providers.max_parallel",
     }
 )
 

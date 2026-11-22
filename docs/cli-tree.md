@@ -31,6 +31,9 @@ daily-driver/
 │   ├── [path=.]
 │   ├── -f, --force
 │   └── --job-search
+├── config
+│   └── defaults
+│       └── --plugin NAME (repeatable)
 ├── doctor
 │   ├── --fix
 │   ├── --reset
@@ -124,7 +127,7 @@ daily-driver/
 │       ├── -n, --dry-run
 │       └── -j, --json
 ├── paths
-│   ├── [kind: root|output|state|ephemeral|tracker|daily|daily-plan|daily-notes|daily-state]
+│   ├── [kind: root|state|ephemeral|tracker|daily|daily-plan|daily-notes|daily-state]
 │   ├── -d, --date YYYY-MM-DD
 │   └── -j, --json
 ├── gather
@@ -139,12 +142,12 @@ daily-driver/
 │       └── -j, --json
 ├── calendar
 │   └── sync
-├── day-start
+├── day-start (alias: start)
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
 │   ├── --model NAME
 │   └── --launch {terminal,notify}  (scheduler firing mode)
-├── day-end
+├── day-end (alias: end)
 │   ├── --session-name NAME
 │   ├── --agent NAME (default: work-planner)
 │   ├── --model NAME
@@ -179,6 +182,6 @@ daily-driver/
 │   ├── --model NAME
 │   └── --timeout SECONDS (default: provider timeout, else 180)
 └── help
-    ├── [topic: commands|statuses|categories|sources|dates]
+    ├── [topic: commands|statuses|categories|dates; sources with job search on]
     └── -j, --json
 ```

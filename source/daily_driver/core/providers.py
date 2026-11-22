@@ -4,7 +4,7 @@ A provider is data, either command templates for a program (claude, opencode)
 or an OpenAI-compatible HTTP endpoint (LM Studio, ollama). The built-in
 providers ship in ``resources/templates/providers.default.yaml``; a user entry
 with a built-in's name merges over it field by field, and any other entry can
-start from one with ``extends``. No code here branches on a provider's name.
+start from one with ``parent_provider``. No code here branches on a provider's name.
 
 Core tasks are claimed through ``ai.providers.<name>.tasks``. A plugin routes
 its own tasks with ``plugins.<name>.provider`` and ``plugins.<name>.tasks``.
@@ -150,7 +150,7 @@ class ProviderConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    extends: str | None = None
+    parent_provider: str | None = None
     tasks: list[str] = []
     run: Template | None = None
     resume: Template | None = None
@@ -205,7 +205,7 @@ class ProviderConfig(BaseModel):
     @classmethod
     def _not_blank(cls, value: str | None) -> str | None:
         if value is not None and not value.strip():
-            # `null`, not "leave it out": an entry with `extends` inherits a
+            # `null`, not "leave it out": an entry with `parent_provider` inherits a
             # model it leaves out.
             raise ValueError("cannot be blank; to set no model, use null")
         return value
@@ -227,17 +227,12 @@ class Provider:
 
 
 @functools.cache
-def builtin_providers_text() -> str:
-    return (
+def _builtin_providers() -> Mapping[str, ProviderConfig]:
+    raw = yaml.safe_load(
         importlib.resources.files("daily_driver.resources.templates")
         .joinpath("providers.default.yaml")
         .read_text(encoding="utf-8")
     )
-
-
-@functools.cache
-def _builtin_providers() -> Mapping[str, ProviderConfig]:
-    raw = yaml.safe_load(builtin_providers_text())
     return {name: ProviderConfig.model_validate(entry) for name, entry in raw.items()}
 
 
@@ -251,10 +246,10 @@ def default_provider() -> Provider:
 
 
 def _merge(base: ProviderConfig, override: ProviderConfig) -> ProviderConfig:
-    # Tasks never carry over: an entry that extends `claude` must not also
+    # Tasks never carry over: an entry whose parent is `claude` must not also
     # claim every task `claude` claims.
     data: dict[str, Any] = base.model_dump(exclude_unset=True, exclude={"tasks"})
-    data.update(override.model_dump(exclude_unset=True, exclude={"extends"}))
+    data.update(override.model_dump(exclude_unset=True, exclude={"parent_provider"}))
     return ProviderConfig.model_validate(data)
 
 
@@ -268,7 +263,9 @@ def _check_shape(name: str, entry: ProviderConfig) -> None:
         )
     if entry.base_url is None and not (entry.run or entry.agent or entry.text):
         raise ValueError(
-            f"ai.providers.{name}: needs a run, agent or text template, or a base_url"
+            f"ai.providers.{name}: needs a run, agent or text template, or a "
+            "base_url, or `parent_provider: <name>` to start from the settings "
+            "of another provider"
         )
     if entry.model_file is not None and not entry.run:
         raise ValueError(
@@ -318,27 +315,27 @@ def resolve_providers(user: Mapping[str, ProviderConfig]) -> dict[str, ProviderC
     resolved: dict[str, ProviderConfig] = {}
     for name, base in builtins.items():
         entry = user.get(name)
-        if entry is not None and entry.extends is not None:
+        if entry is not None and entry.parent_provider is not None:
             raise ValueError(
                 f"ai.providers.{name}: an entry named after a built-in provider "
-                f"merges over the built-in {name} and cannot use extends"
+                f"merges over the built-in {name} and cannot use parent_provider"
             )
         resolved[name] = base if entry is None else _merge(base, entry)
     for name, entry in user.items():
         if name in builtins:
             continue
-        target = entry.extends
+        target = entry.parent_provider
         if target is None:
             resolved[name] = entry
             continue
         if target not in builtins and target not in user:
             raise ValueError(
-                f"ai.providers.{name}: extends {target!r}, which is not a provider"
+                f"ai.providers.{name}: parent_provider {target!r} is not a provider"
             )
-        if target not in builtins and user[target].extends is not None:
+        if target not in builtins and user[target].parent_provider is not None:
             raise ValueError(
-                f"ai.providers.{name}: extends {target!r}, which itself uses "
-                "extends; extends goes one level only"
+                f"ai.providers.{name}: parent_provider {target!r} has a "
+                "parent_provider itself; a parent goes one level only"
             )
         base = resolved[target] if target in builtins else user[target]
         resolved[name] = _merge(base, entry)
@@ -473,11 +470,11 @@ def resolved_provider(config: Config, name: str) -> Provider:
 
 
 def unused_user_providers(config: Config) -> list[str]:
-    """User-defined entries that run no task and that no entry extends."""
+    """User-defined entries that run no task and that no entry names as its parent."""
     user = _user_providers(config)
     builtins = _builtin_providers()
     served = tasks_by_provider(config)
-    bases = {entry.extends for entry in user.values() if entry.extends}
+    bases = {entry.parent_provider for entry in user.values() if entry.parent_provider}
     return [
         name
         for name in user

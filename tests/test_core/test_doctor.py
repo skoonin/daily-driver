@@ -10,6 +10,7 @@ from rich.console import Console
 
 from daily_driver.core import version_stamp
 from daily_driver.core.doctor import CheckResult, fix, reset, run_checks
+from daily_driver.core.workspace import Workspace
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,15 +32,11 @@ class _FakeWorkspace:
     def ephemeral_dir(self) -> Path:
         return self.state_dir / "state"
 
-    @property
-    def output_dir(self) -> Path:
-        # No config block here; treat the root as the durable output dir.
-        return self.root
-
     @classmethod
     def make(cls, root: Path, version: str = "1.0.0") -> _FakeWorkspace:
         state_dir = root / ".daily-driver"
         state_dir.mkdir(parents=True, exist_ok=True)
+        (root / ".dd-config.yaml").touch()
         return cls(
             root=root,
             state_dir=state_dir,
@@ -220,7 +217,7 @@ def test_unused_user_provider_warns_but_unused_builtins_do_not(
         tmp_path,
         "\nai:\n  providers:\n    spare:\n      text: [spare-tool]\n"
         "    base:\n      text: [base-tool]\n"
-        "    child:\n      extends: base\n      tasks: [voice_update]\n",
+        "    child:\n      parent_provider: base\n      tasks: [voice_update]\n",
     )
 
     rows = _rows(run_checks(ws))  # type: ignore[arg-type]
@@ -484,3 +481,20 @@ def test_run_plugin_fixers_prefers_stderr_detail(caplog) -> None:
 
     assert _run_plugin_fixers(rows) == []
     assert "disk full" in caplog.text
+
+
+def test_doctor_fails_on_a_setting_the_load_ignores(tmp_path: Path) -> None:
+    workspace = Workspace.init(tmp_path)
+    cfg = tmp_path / ".dd-config.yaml"
+    cfg.write_text(
+        cfg.read_text(encoding="utf-8") + "calender: {sync_enabled: true}\n",
+        encoding="utf-8",
+    )
+    rows = [r for r in run_checks(workspace) if r.name == "setting: calender"]
+    assert [r.status for r in rows] == ["ERROR"]
+    assert "correct the spelling" in rows[0].detail
+
+
+def test_doctor_has_no_setting_rows_for_a_clean_config(tmp_path: Path) -> None:
+    results = run_checks(Workspace.init(tmp_path))
+    assert not [r for r in results if r.name.startswith("setting:")]

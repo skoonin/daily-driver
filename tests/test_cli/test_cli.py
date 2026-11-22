@@ -6,7 +6,9 @@ tests remain independent of Stream B/C landing status.
 
 from __future__ import annotations
 
+import importlib
 import logging
+import re
 
 import pytest
 
@@ -287,13 +289,204 @@ def test_removed_setting_error_shows_its_fix(tmp_path, capsys):
     Workspace.init(tmp_path)
     cfg_file = tmp_path / ".dd-config.yaml"
     cfg_file.write_text(
-        cfg_file.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
+        cfg_file.read_text(encoding="utf-8") + "daily_driver:\n  output_dir: notes\n",
         encoding="utf-8",
     )
     rc = app(["--workspace", str(tmp_path), "tracker", "list"])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "user_profile" in err
-    assert "context.md" in err
+    assert "output_dir" in err
+    assert "Move the files" in err
     assert "Extra inputs are not permitted" not in err
     assert "ConfigError" not in err
+
+
+def test_ignored_setting_warns_on_stderr_and_leaves_stdout_clean(tmp_path, capsys):
+    """Prompts read `paths` output, so a warning must not reach stdout."""
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(
+        cfg_file.read_text(encoding="utf-8") + "nope: 1\n", encoding="utf-8"
+    )
+    rc = app(["--workspace", str(tmp_path), "paths", "root"])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out.strip() == str(tmp_path.resolve())
+    assert "ignoring nope" in captured.err
+
+
+def _listed_commands(capsys, argv):
+    with pytest.raises(SystemExit):
+        app([*argv, "--help"])
+    out = capsys.readouterr().out
+    # Each listed command starts its own line with a four-space indent.
+    return re.findall(r"^    ([a-z][a-z-]*)", out, re.MULTILINE)
+
+
+def test_top_level_help_lists_commands_alphabetically(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path, ("job_search",))
+    listed = _listed_commands(capsys, ["--workspace", str(tmp_path)])
+    assert "jobs" in listed
+    assert "config" in listed
+    assert listed == sorted(listed)
+
+
+@pytest.mark.parametrize("in_workspace", [True, False])
+def test_top_level_help_leaves_out_a_plugin_that_is_off(
+    tmp_path, monkeypatch, capsys, in_workspace
+):
+    from daily_driver.core.workspace import Workspace
+
+    if in_workspace:
+        Workspace.init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        app(["--help"])
+    out = capsys.readouterr().out
+    assert "tracker" in out
+    assert "job" not in out.lower()
+
+
+@pytest.mark.parametrize("argv", [["--help"], ["jobs", "status"]])
+@pytest.mark.parametrize("broken", [b"schedule: [\n", b"\xff\xfe\x80\n"])
+def test_a_config_that_cannot_load_does_not_crash_the_parser(
+    tmp_path, capsys, argv, broken
+):
+    """The config is read before argparse; an error must still reach the
+    user as the command's own error, not as a traceback."""
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path, ("job_search",))
+    config = tmp_path / ".dd-config.yaml"
+    config.write_bytes(config.read_bytes() + broken)
+    try:
+        rc = app(["--workspace", str(tmp_path), *argv])
+    except SystemExit as exc:
+        rc = exc.code
+    assert rc in (0, 1)
+    if argv == ["jobs", "status"]:
+        assert "Error" in capsys.readouterr().err
+
+
+def test_a_config_that_cannot_load_lists_no_plugin_command(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path, ("job_search",))
+    config = tmp_path / ".dd-config.yaml"
+    config.write_text(config.read_text() + "schedule: [\n", encoding="utf-8")
+    assert "jobs" not in _listed_commands(capsys, ["--workspace", str(tmp_path)])
+    assert "jobs" not in _listed_commands(
+        capsys, ["--workspace", str(tmp_path / "missing")]
+    )
+
+
+@pytest.mark.parametrize("form", ["-w={ws}", "-w{ws}", "--workspace={ws}"])
+def test_every_workspace_flag_form_hides_a_plugin_that_is_off(
+    tmp_path, monkeypatch, capsys, form
+):
+    """The current folder has job search on, so only the flag can hide `jobs`."""
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path, ("job_search",))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    Workspace.init(ws)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        app(["jobs", "status", form.format(ws=ws)])
+    assert exc.value.code == 2
+
+
+def test_workspace_flag_scan_stops_at_double_dash():
+    from daily_driver.cli.cli import _workspace_flag
+
+    assert _workspace_flag(["--", "-w", "x"]) is None
+    assert _workspace_flag(["-w", "a", "--", "-w", "x"]) == "a"
+
+
+def test_a_yaml_error_names_the_settings_file(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    config = tmp_path / ".dd-config.yaml"
+    config.write_text(config.read_text() + "schedule: [\n", encoding="utf-8")
+    assert app(["--workspace", str(tmp_path), "status"]) == 1
+    err = " ".join(capsys.readouterr().err.split())
+    assert str(config) in err
+    assert "ParserError" not in err
+    assert "<unicode string>" not in err
+    assert "line " in err
+
+
+def test_a_config_that_is_not_utf8_names_the_settings_file(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    config = tmp_path / ".dd-config.yaml"
+    config.write_bytes(config.read_bytes() + b"\xff\xfe\n")
+    assert app(["--workspace", str(tmp_path), "status"]) == 1
+    err = " ".join(capsys.readouterr().err.split())
+    assert str(config) in err
+    assert "UnicodeDecodeError" not in err
+
+
+def test_a_control_character_in_the_config_says_what_is_wrong(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    config = tmp_path / ".dd-config.yaml"
+    original = config.read_bytes()
+    config.write_bytes(original + b"note: a\x00b\n")
+    assert app(["--workspace", str(tmp_path), "status"]) == 1
+    err = " ".join(capsys.readouterr().err.split())
+    assert str(config) in err
+    line = original.count(b"\n") + 1
+    assert f"at line {line}, column 8: special characters are not allowed" in err
+
+
+def test_a_config_that_cannot_be_read_names_the_settings_file(tmp_path, capsys):
+    from daily_driver.core.workspace import Workspace
+
+    Workspace.init(tmp_path)
+    config = tmp_path / ".dd-config.yaml"
+    config.unlink()
+    config.mkdir()
+    assert app(["--workspace", str(tmp_path), "status"]) == 1
+    err = " ".join(capsys.readouterr().err.split())
+    assert f"{config} cannot be read" in err
+    assert "IsADirectoryError" not in err
+
+
+def test_help_shows_the_aliases(capsys):
+    with pytest.raises(SystemExit):
+        app(["--help"])
+    out = capsys.readouterr().out
+    assert "day-start (start)" in out
+    assert "day-end (end)" in out
+
+
+@pytest.mark.parametrize(
+    ("alias", "module_path"),
+    [
+        ("start", "daily_driver.cli.commands.day_start"),
+        ("end", "daily_driver.cli.commands.day_end"),
+    ],
+)
+def test_alias_runs_the_same_command(monkeypatch, tmp_path, alias, module_path):
+    module = importlib.import_module(module_path)
+    calls = []
+    monkeypatch.setattr(module, "run", lambda args: calls.append(args) or 0)
+    # `run` is bound by add_parser's set_defaults and by the final dispatch.
+    assert app([alias, "--workspace", str(tmp_path)]) == 0
+    assert len(calls) == 1
+
+
+def test_alias_help_is_the_help_of_the_command(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        app(["start", "--help"])
+    assert excinfo.value.code == 0
+    assert "--session-name" in capsys.readouterr().out

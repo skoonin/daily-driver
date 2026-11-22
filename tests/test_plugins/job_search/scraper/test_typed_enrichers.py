@@ -178,18 +178,16 @@ def test_fit_notes_phase_runs_when_both_on(monkeypatch: pytest.MonkeyPatch) -> N
     assert out[0].notes == "infra"
 
 
-def test_persona_and_home_city_reach_fit_prompt(
+def test_roles_and_home_city_reach_fit_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """plugins.job_search.persona + locations.home_city land in the fit prompt.
+    """The roles to keep and locations.home_city land in the fit prompt.
 
-    Both are surfaced into the natural-language fit/notes prompt; non-default
-    values must appear verbatim so the LLM scores against the right persona and
-    base location.
+    Exclusions (`!`) are filters, not targets, so they stay out of the prompt.
     """
     plugin = JobSearchPlugin.model_validate(
         {
-            "persona": "Staff Data Engineer",
+            "roles": ["Staff Data Engineer", "Data Architect", "!Manager"],
             "locations": {"home_city": "Berlin, Germany"},
             "enrichment": {
                 "max_enrich_fit": 5,
@@ -201,8 +199,7 @@ def test_persona_and_home_city_reach_fit_prompt(
     systems: list[str] = []
 
     def fake_invoke(provider, task, prompt, **k):
-        # persona + home_city now live in the cached system prompt, not the
-        # per-job user prompt.
+        # roles + home_city live in the cached system prompt.
         systems.append(k.get("system") or "")
         return '{"fit": 6, "notes": "x"}'
 
@@ -210,7 +207,8 @@ def test_persona_and_home_city_reach_fit_prompt(
     enrich_fit_and_notes([_enriched(description_text="desc")], ctx, budget=5)
 
     assert systems
-    assert "Staff Data Engineer" in systems[0]
+    assert "targeting: Staff Data Engineer, Data Architect, based in" in systems[0]
+    assert "!Manager" not in systems[0]
     assert "Berlin, Germany" in systems[0]
 
 
@@ -223,7 +221,7 @@ def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
     defeat the cache."""
     plugin = JobSearchPlugin.model_validate(
         {
-            "persona": "Staff SRE",
+            "roles": ["Staff SRE"],
             "locations": {"home_city": "Vancouver, BC"},
             "enrichment": {
                 "max_enrich_fit": 5,

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.plugins import enabled_plugins
 
 _MINIMAL_YAML = """\
-daily_driver:
-  output_dir: .
 tracker:
   categories:
     task: {required: [title]}
@@ -29,7 +29,6 @@ def test_init_creates_marker_and_state_dir(tmp_path):
 
 def test_init_loads_valid_config(tmp_path):
     ws = Workspace.init(tmp_path)
-    assert ws.config.daily_driver.output_dir == "."
     assert "task" in ws.config.tracker.categories
 
 
@@ -168,39 +167,15 @@ def test_workspace_state_dir_resolves_correctly(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Workspace.output_dir
+# Workspace.root
 # ---------------------------------------------------------------------------
 
 
-def test_output_dir_defaults_to_workspace_root(tmp_path):
-    ws = Workspace.init(tmp_path)
-    assert ws.output_dir == tmp_path.resolve()
-
-
-def test_output_dir_relative_resolves_against_root(tmp_path):
-    (tmp_path / ".dd-config.yaml").write_text(
-        _MINIMAL_YAML.replace("output_dir: .", "output_dir: notes"),
-        encoding="utf-8",
-    )
-    ws = Workspace.discover_or_fail(override=tmp_path)
-    assert ws.output_dir == (tmp_path / "notes").resolve()
-
-
-def test_output_dir_absolute_passes_through(tmp_path):
-    absolute = tmp_path / "abs-out"
-    (tmp_path / ".dd-config.yaml").write_text(
-        _MINIMAL_YAML.replace("output_dir: .", f"output_dir: {absolute}"),
-        encoding="utf-8",
-    )
-    ws = Workspace.discover_or_fail(override=tmp_path)
-    assert ws.output_dir == absolute
-
-
-def test_output_dir_expands_home_tilde(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path))
-    (tmp_path / ".dd-config.yaml").write_text(
-        _MINIMAL_YAML.replace("output_dir: .", "output_dir: ~/dd-output"),
-        encoding="utf-8",
-    )
-    ws = Workspace.discover_or_fail(override=tmp_path)
-    assert ws.output_dir == tmp_path / "dd-output"
+def test_a_relative_workspace_path_resolves_to_an_absolute_root(tmp_path, monkeypatch):
+    """Paths handed to an AI provider must work from any folder."""
+    (tmp_path / "ws").mkdir()
+    Workspace.init(tmp_path / "ws")
+    monkeypatch.chdir(tmp_path)
+    ws = Workspace.discover_or_fail(override=Path("ws"))
+    assert ws.root == (tmp_path / "ws").resolve()
+    assert ws.root.is_absolute()

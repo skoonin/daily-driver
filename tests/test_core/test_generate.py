@@ -736,7 +736,7 @@ def test_merge_settings_backs_up_malformed_file(tmp_path: Path, caplog) -> None:
     ), "backup must be logged at WARNING with the backup path"
 
 
-def test_render_initial_config_missing_template_raises_workspace_error(
+def testdefault_config_text_missing_template_raises_workspace_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A *missing* .dd-config.yaml.j2 means a broken wheel; init must fail loudly
@@ -770,7 +770,7 @@ def test_render_initial_config_missing_template_raises_workspace_error(
     monkeypatch.setattr(ws_mod.importlib.resources, "files", fake_files)
 
     with pytest.raises(WorkspaceError, match="wheel is broken"):
-        ws_mod._render_initial_config()
+        ws_mod.default_config_text()
 
 
 # Plugin package-data extension point (W15). job_search ships no slash-commands,

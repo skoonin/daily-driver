@@ -24,7 +24,7 @@ def _init_workspace(tmp_path: Path) -> Path:
     ns = argparse.Namespace(
         path=str(ws),
         force=False,
-        job_search=False,
+        plugin_job_search=False,
         verbose=False,
         quiet=False,
         no_color=False,

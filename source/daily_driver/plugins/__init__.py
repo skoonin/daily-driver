@@ -19,11 +19,6 @@ def enabled_plugins(config: object) -> tuple[Plugin, ...]:
     return tuple(plugin for plugin in PLUGINS if _is_on(plugin, plugins_cfg))
 
 
-def off_reason(name: str) -> str:
-    """The one phrasing for a plugin's command or job refusing to run."""
-    return f"{name.replace('_', ' ')} is off in this workspace"
-
-
 def switch_on_hint(name: str, config: object) -> str:
     """How to switch plugin `name` on, given the current config.
 

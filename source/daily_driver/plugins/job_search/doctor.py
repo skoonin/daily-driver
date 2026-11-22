@@ -33,7 +33,7 @@ def _check_jobs_csv_custom_columns(workspace: Workspace) -> CheckResult | None:
         read_rows,
     )
 
-    jobs_csv = workspace.output_dir / "jobs.csv"
+    jobs_csv = workspace.root / "jobs.csv"
     if not jobs_csv.exists():
         return None
     header, _rows = read_rows(jobs_csv)
@@ -63,7 +63,7 @@ def _check_jobs_backups(workspace: Workspace) -> CheckResult | None:
     """
     from daily_driver.core.doctor import CheckResult
 
-    backups_dir = workspace.output_dir / "backups"
+    backups_dir = workspace.root / "backups"
     if not backups_dir.exists():
         return None
     baks = sorted(backups_dir.glob("jobs.csv.bak.*"))

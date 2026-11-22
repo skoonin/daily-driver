@@ -244,8 +244,6 @@ def test_status_stalled_honors_custom_terminal_status(
     from daily_driver.core.tracker import Tracker
 
     config_text = """\
-daily_driver:
-  output_dir: .
 tracker:
   terminal_statuses: [cancelled]
   categories:

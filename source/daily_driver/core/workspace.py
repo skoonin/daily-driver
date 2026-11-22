@@ -26,8 +26,6 @@ _MINIMAL_CONFIG_FALLBACK = """\
 # daily-driver workspace configuration
 # Edit this file to configure your workspace.
 # All structured settings live here; narrative prose stays in Markdown files.
-daily_driver:
-  output_dir: .
 tracker:
   default_category: task
   categories:
@@ -35,7 +33,7 @@ tracker:
 """
 
 
-def _render_initial_config(plugins: Collection[str] = ()) -> str:
+def default_config_text(plugins: Collection[str] = ()) -> str:
     """Render the initial .dd-config.yaml from the bundled Jinja2 template.
 
     `plugins` names the plugins chosen at init; their settings sections are
@@ -51,7 +49,6 @@ def _render_initial_config(plugins: Collection[str] = ()) -> str:
     """
     import jinja2
 
-    from daily_driver.core.providers import builtin_providers_text
     from daily_driver.core.templating import render_for_plugins
 
     tmpl_traversable = importlib.resources.files(
@@ -65,9 +62,7 @@ def _render_initial_config(plugins: Collection[str] = ()) -> str:
             "package; the wheel is broken -- reinstall daily-driver"
         ) from exc
     try:
-        return render_for_plugins(
-            template_text, plugins, builtin_providers=builtin_providers_text()
-        )
+        return render_for_plugins(template_text, plugins)
     except jinja2.TemplateError as exc:
         # The fallback has only the required settings and a default block for
         # each chosen plugin -- surface it on the terminal rather than only
@@ -88,14 +83,14 @@ class WorkspaceError(Exception):
     pass
 
 
-def daily_dir(output_dir: Path, day: date) -> Path:
-    """The folder holding one day's plan and notes: ``<output>/YYYY/MM``."""
-    return output_dir / f"{day.year:04d}" / f"{day.month:02d}"
+def daily_dir(root: Path, day: date) -> Path:
+    """The folder holding one day's plan and notes: ``<workspace>/YYYY/MM``."""
+    return root / f"{day.year:04d}" / f"{day.month:02d}"
 
 
-def daily_file(output_dir: Path, day: date, kind: str) -> Path:
-    """One day's ``plan`` or ``notes`` file: ``<output>/YYYY/MM/<date>-<kind>.md``."""
-    return daily_dir(output_dir, day) / f"{day.isoformat()}-{kind}.md"
+def daily_file(root: Path, day: date, kind: str) -> Path:
+    """One day's ``plan`` or ``notes`` file: ``<workspace>/YYYY/MM/<date>-<kind>.md``."""
+    return daily_dir(root, day) / f"{day.isoformat()}-{kind}.md"
 
 
 @dataclass
@@ -111,15 +106,6 @@ class Workspace:
     def ephemeral_dir(self) -> Path:
         return self.state_dir / "state"
 
-    @property
-    def output_dir(self) -> Path:
-        """Durable output directory; resolves a relative config path against the workspace root."""
-        raw = self.config.daily_driver.output_dir
-        path = Path(raw).expanduser()
-        if not path.is_absolute():
-            path = (self.root / path).resolve()
-        return path
-
     @classmethod
     def discover_or_fail(cls, override: Path | None = None) -> Workspace:
         """Walk up from CWD to find workspace root, or use override."""
@@ -129,7 +115,8 @@ class Workspace:
                 raise WorkspaceError(
                     f"no .dd-config.yaml found in specified workspace: {override}"
                 )
-            root_path = override
+            # Absolute, so every path handed to an AI provider works from any folder.
+            root_path = override.expanduser().resolve()
         else:
             current = Path.cwd()
             discovered_root: Path | None = None
@@ -168,7 +155,7 @@ class Workspace:
         if marker.exists():
             raise WorkspaceError("workspace already initialized")
 
-        marker.write_text(_render_initial_config(plugins), encoding="utf-8")
+        marker.write_text(default_config_text(plugins), encoding="utf-8")
 
         state_dir = root / _STATE_DIR
         state_dir.mkdir(exist_ok=True)

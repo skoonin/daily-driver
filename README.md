@@ -1,16 +1,16 @@
 # Daily Driver
 
-Plan your morning, check in at midday, and review in the evening. You chat with Claude, and Daily Driver remembers the rest and can summarize what you've done over time. All data is saved locally.
+Plan your morning, check in at midday, and review in the evening. You chat with an AI, and Daily Driver remembers the rest and can summarize what you've done over time. All data is saved locally.
 
 ## How you use it
 
-You use Daily Driver by chatting with Claude. Claude manages your data for you: it adds and updates items in your list and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
+You use Daily Driver by chatting with an AI. The AI manages your data for you: it adds and updates items in your list and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
 
 | When | Start the chat | What happens |
 | --- | --- | --- |
-| Morning | `daily-driver day-start` | Claude reviews your list, and your calendar if you connect it, and helps you plan the day. |
-| Midday | `daily-driver check-in` | Tell Claude what you finished or what is stuck. It updates your list and adjusts the plan. |
-| Evening | `daily-driver day-end` | Claude compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
+| Morning | `daily-driver day-start` | The AI reviews your list, and your calendar if you connect it, and helps you plan the day. |
+| Midday | `daily-driver check-in` | Tell the AI what you finished or what is stuck. It updates your list and adjusts the plan. |
+| Evening | `daily-driver day-end` | The AI compares your plan to what happened, saves notes, and carries unfinished work to tomorrow. |
 
 Things you can say in a chat:
 
@@ -25,7 +25,7 @@ If you close a chat by accident, run `daily-driver resume` to reopen the most re
 
 ## Connect your other tools
 
-With the default provider, each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, Claude can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell claude to use them or put it in `context.md`, and every chat can use them.
+With the default provider, each chat runs in Claude Code, so it can use the integrations/MCPs you already set up there. For example, with the Atlassian integration, it can read your Jira tickets. With Google integrations, it can work with Google Calendar, Drive, and Gmail. Tell the AI to use them or put it in `context.md`, and every chat can use them.
 
 ## What you need
 
@@ -78,9 +78,9 @@ The last command prints the version number if the install worked. If you have a 
    daily-driver doctor
    ```
 
-3. Open `context.md` in your workspace and describe your work, goals, and routines. Claude reads it when it plans your day. You can also ask Claude to write it for you by asking you questions.
+3. Open `context.md` in your workspace and describe your work, goals, and routines. The AI reads it when it plans your day. You can also ask the AI to write it for you by asking you questions.
 
-4. Start your first chat. Tell Claude what you work on and what is due, and ask it to add your tasks to your list:
+4. Start your first chat. Tell the AI what you work on and what is due, and ask it to add your tasks to your list:
 
    ```bash
    daily-driver day-start
@@ -92,11 +92,11 @@ Run the commands from inside your workspace folder, or add `--workspace ~/daily-
 
 - **Reminders.** Run `daily-driver scheduler install` to get a check-in reminder at 11:00 and 15:00. Click the reminder to open the chat. Clicking needs one optional tool; see the [install guide](docs/install.md).
 - **Job search.** Daily Driver can search the job sites you choose, remove duplicates, and score how well each job fits you. Turn it on with `--job-search` when you create a workspace. The [guide](docs/usage.md#jobs) also shows how to add it to an existing workspace.
-- **Other AI providers.** Run chats on opencode, or run some AI tasks on your own computer with LM Studio or ollama, instead of Claude. See [AI providers](docs/configuration.md#ai) and [Local models](docs/local-models.md).
+- **Other AI providers.** Run chats on opencode, or run some AI tasks on your own computer with LM Studio or ollama, instead of Claude Code. See [AI providers](docs/configuration.md#ai) and [Local models](docs/local-models.md).
 
 ## Commands you can run yourself
 
-Claude runs these for you in a chat. You can also run them yourself:
+The AI runs these for you in a chat. You can also run them yourself:
 
 | Command | What it does |
 | --- | --- |
@@ -113,11 +113,11 @@ Your workspace is a normal folder on your Mac. Daily Driver has no server and do
 
 | File | What it is |
 | --- | --- |
-| `context.md` | About you: your work, goals, and routines. Claude reads it. |
+| `context.md` | About you: your work, goals, and routines. The AI reads it. |
 | `voice-profile.md` | Your writing style. Daily Driver builds it from your writing samples. |
 | `.dd-config.yaml` | Your settings. |
-| `tracker.yaml` | Your list. Claude keeps it up to date, so you rarely need to open it. |
-| Folders named by year and month | Your daily plans and notes. Claude writes them. |
+| `tracker.yaml` | Your list. The AI keeps it up to date, so you rarely need to open it. |
+| Folders named by year and month | Your daily plans and notes. The AI writes them. |
 
 Daily Driver manages the `.claude` and `.daily-driver` folders. Leave them alone unless a guide tells you otherwise. [How it works](docs/concepts.md) has details.
 
@@ -150,7 +150,9 @@ Your workspace folder stays. Delete it yourself if you do not want your data. Th
 | [Daily guide](docs/usage.md) | A full walkthrough of a day with Daily Driver |
 | [How it works](docs/concepts.md) | The ideas behind the workspace, tracker, and AI chats |
 | [Commands](docs/commands.md) | Every command and option, plus a [command tree](docs/cli-tree.md) |
-| [Settings](docs/configuration.md) | Every setting in your settings file |
+| [Settings](docs/configuration.md) | Core settings in your settings file |
+| [AI providers](docs/providers.md) | Write or change an AI provider |
+| [Job search settings](docs/job-search.md) | Every job search setting |
 | [Local models](docs/local-models.md) | Run some AI tasks on your own computer with LM Studio or ollama |
 | [Troubleshooting](docs/troubleshooting.md) | Fixes for common problems |
 

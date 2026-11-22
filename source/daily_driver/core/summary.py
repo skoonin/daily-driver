@@ -41,7 +41,7 @@ def summary_files(
     day = range_start
     while day <= range_end:
         for kind in ("plan", "notes"):
-            path = daily_file(workspace.output_dir, day, kind)
+            path = daily_file(workspace.root, day, kind)
             if path.is_file():
                 files.append(path)
         day += timedelta(days=1)

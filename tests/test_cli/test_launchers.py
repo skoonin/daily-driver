@@ -218,10 +218,10 @@ def test_day_start_writes_plan_stub_and_records_session_id(
     assert rc == 0
     (argv,) = spawned
 
-    # 1. plan stub on disk under output_dir/YYYY/MM/YYYY-MM-DD-plan.md
+    # 1. plan stub on disk under <workspace>/YYYY/MM/YYYY-MM-DD-plan.md
     ws = Workspace.discover_or_fail(override=ws_root)
     plan_path = (
-        ws.output_dir
+        ws.root
         / f"{today.year:04d}"
         / f"{today.month:02d}"
         / f"{today.isoformat()}-plan.md"
@@ -283,7 +283,7 @@ def test_day_start_does_not_clobber_existing_plan(
     today = clock.today()
     ws = Workspace.discover_or_fail(override=ws_root)
     plan_path = (
-        ws.output_dir
+        ws.root
         / f"{today.year:04d}"
         / f"{today.month:02d}"
         / f"{today.isoformat()}-plan.md"

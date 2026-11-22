@@ -50,7 +50,7 @@ def test_help_is_top_level_subcommand(capsys: pytest.CaptureFixture[str]) -> Non
 def test_help_full_no_args_prints_sections(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -68,7 +68,7 @@ def test_help_full_no_args_prints_sections(
 def test_help_full_json_shape(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -116,18 +116,18 @@ def test_help_statuses_surfaces_job_lifecycle(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The job-category lifecycle statuses appear in the statuses topic."""
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "statuses", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
     for s in ("found", "applied", "interviewing", "rejected", "closed"):
-        assert s in data["statuses"]["job_recommended"]
+        assert s in data["statuses"]["by_category"]["job"]
 
 
 def test_help_statuses_job_lifecycle_in_text(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "statuses"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -150,7 +150,7 @@ def test_help_categories_uses_workspace_config(
 def test_help_sources_lists_known_scrapers(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "sources", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
@@ -176,7 +176,7 @@ def test_help_dates_lists_grammar(
 def test_help_commands_lists_top_level_subcommands(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "commands", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
@@ -188,7 +188,7 @@ def test_help_commands_lists_top_level_subcommands(
 def test_help_commands_includes_jobs_search_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    Workspace.init(tmp_path)
+    Workspace.init(tmp_path, ("job_search",))
     rc = app(["--workspace", str(tmp_path), "help", "commands", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
@@ -233,21 +233,27 @@ def test_help_commands_text_topic_is_unindented(
 
 
 def test_help_without_workspace_does_not_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """`help` is a discovery surface — must not require a workspace."""
     no_ws = tmp_path / "empty"
     no_ws.mkdir()
-    rc = app(["--workspace", str(no_ws), "help"])
+    monkeypatch.chdir(no_ws)
+    rc = app(["help"])
     assert rc == 0
 
 
 def test_help_statuses_without_workspace_recommended_only(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     no_ws = tmp_path / "empty"
     no_ws.mkdir()
-    rc = app(["--workspace", str(no_ws), "help", "statuses", "--json"])
+    monkeypatch.chdir(no_ws)
+    rc = app(["help", "statuses", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)["data"]
     assert "open" in data["statuses"]["recommended"]
@@ -255,20 +261,98 @@ def test_help_statuses_without_workspace_recommended_only(
 
 
 def test_help_categories_without_workspace_returns_empty_with_hint(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     no_ws = tmp_path / "empty"
     no_ws.mkdir()
-    rc = app(["--workspace", str(no_ws), "help", "categories"])
+    monkeypatch.chdir(no_ws)
+    rc = app(["help", "categories"])
     assert rc == 0
     out = capsys.readouterr().out
     # Hint should point users at the config file rather than crashing.
     assert "no workspace" in out.lower() or "configure" in out.lower()
 
 
+def test_help_dates_names_the_date_flags_of_a_plugin_that_is_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Workspace.init(tmp_path, ("job_search",))
+    assert app(["--workspace", str(tmp_path), "help", "dates", "--json"]) == 0
+    consumers = json.loads(capsys.readouterr().out)["data"]["dates"]["consumers"]
+    assert "jobs prune --older-than" in consumers
+
+
+@pytest.mark.parametrize("in_workspace", [True, False])
+def test_help_leaves_out_a_plugin_that_is_off(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    in_workspace: bool,
+) -> None:
+    """A plugin that is off adds no topic, status, date flag, or command."""
+    if in_workspace:
+        Workspace.init(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert app(["help", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert "sources" not in data
+    assert "job" not in data["statuses"]["by_category"]
+    assert not any("jobs" in flag for flag in data["dates"]["consumers"])
+    assert "jobs" not in {entry["name"] for entry in data["commands"]}
+
+    assert app(["help"]) == 0
+    assert "job" not in capsys.readouterr().out.lower()
+
+
+def test_help_topic_of_a_plugin_that_is_off_is_unknown(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    Workspace.init(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        app(["--workspace", str(tmp_path), "help", "sources"])
+    assert exc.value.code == 2
+    err = " ".join(capsys.readouterr().err.split())
+    assert "invalid choice: 'sources'" in err
+    assert "job" not in err
+
+
 # ---------------------------------------------------------------------------
 # Bad topic
 # ---------------------------------------------------------------------------
+
+
+def test_help_usage_names_the_core_topics(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        app(["help", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    for topic in ("commands", "statuses", "categories", "dates"):
+        assert topic in out
+
+
+def test_help_with_a_workspace_flag_that_names_no_workspace_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert app(["--workspace", str(tmp_path / "missing"), "help"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "missing" in captured.err
+    # The same one-line error as other commands, without a class name.
+    assert "WorkspaceError" not in captured.err
+
+
+@pytest.mark.parametrize("broken", [b"schedule: [\n", b"\xff\xfe\n"])
+def test_help_works_with_a_settings_file_that_cannot_load(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], broken: bytes
+) -> None:
+    Workspace.init(tmp_path)
+    config = tmp_path / ".dd-config.yaml"
+    config.write_bytes(config.read_bytes() + broken)
+    assert app(["--workspace", str(tmp_path), "help", "dates"]) == 0
+    captured = capsys.readouterr()
+    assert "today" in captured.out
+    assert "daily-driver doctor" in captured.err
 
 
 def test_help_unknown_topic_exits_2(
@@ -287,7 +371,7 @@ def test_help_works_with_removed_config_setting(
     Workspace.init(tmp_path)
     cfg = tmp_path / ".dd-config.yaml"
     cfg.write_text(
-        cfg.read_text(encoding="utf-8") + "user_profile:\n  name: A\n",
+        cfg.read_text(encoding="utf-8") + "daily_driver:\n  output_dir: notes\n",
         encoding="utf-8",
     )
     rc = app(["--workspace", str(tmp_path), "help", "dates"])

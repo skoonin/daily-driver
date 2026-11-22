@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from daily_driver.core.providers import ProviderConfig, validate_routes
+from daily_driver.core.schedule_fields import normalize_days, normalize_hhmm
 
 # PluginsConfig is assembled in the plugins package from PLUGINS metadata, not
-# here, so core need not hardcode plugin namespaces. Safe one-directional
-# import: the plugins package and its config models never import back into core.
+# here, so core need not hardcode plugin namespaces. Safe: the only core module
+# plugin config models import is core.schedule_fields, which imports no other
+# daily_driver module.
 from daily_driver.plugins.config import PluginsConfig
-
-
-class DailyDriverConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    output_dir: str = "."
 
 
 class TrackerCategoryConfig(BaseModel):
@@ -46,46 +41,6 @@ class TrackerConfig(BaseModel):
         return self
 
 
-_HHMM_RE = re.compile(r"^([0-1]?\d|2[0-3]):([0-5]\d)$")
-
-# Canonical three-letter day names, ordered to match launchd's Weekday
-# integers (0 = Sunday). `days` fields normalize to these.
-_DAY_NAMES = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
-_DAYS_SHORTCUTS = ("daily", "weekdays")
-
-
-def _normalize_days(v: Any) -> Any:
-    """Normalize a `days` cadence value.
-
-    Accepts the shortcut strings "daily" / "weekdays", or a list of day names
-    (full or abbreviated, any case) normalized to canonical three-letter
-    lowercase. An explicit empty list is rejected — use "daily" to fire every
-    day.
-    """
-    if v is None:
-        return v
-    if isinstance(v, str):
-        shortcut = v.strip().lower()
-        if shortcut in _DAYS_SHORTCUTS:
-            return shortcut
-        raise ValueError(
-            f"days must be {_DAYS_SHORTCUTS[0]!r}, {_DAYS_SHORTCUTS[1]!r},"
-            f" or a list of day names, got {v!r}"
-        )
-    if isinstance(v, list):
-        normalized: list[str] = []
-        for item in v:
-            name = str(item).strip().lower()[:3]
-            if name not in _DAY_NAMES:
-                raise ValueError(f"unknown day name: {item!r}")
-            if name not in normalized:
-                normalized.append(name)
-        if not normalized:
-            raise ValueError("days list must not be empty; use daily")
-        return normalized
-    raise ValueError(f"expected a days shortcut string or list, got {v!r}")
-
-
 class ScheduleConfig(BaseModel):
     """Single source of truth for daily-driver's scheduled times.
 
@@ -103,25 +58,18 @@ class ScheduleConfig(BaseModel):
     @field_validator("day_start", "day_end", mode="before")
     @classmethod
     def _validate_hhmm(cls, v: Any) -> Any:
-        if v is None:
-            return v
-        if isinstance(v, int):
-            hh, mm = divmod(v, 60)
-            if 0 <= hh <= 23 and 0 <= mm <= 59:
-                v = f"{hh:02d}:{mm:02d}"
-        if not isinstance(v, str) or not _HHMM_RE.match(v):
-            raise ValueError(f"expected HH:MM time string, got {v!r}")
-        return v
+        return normalize_hhmm(v)
 
     @field_validator("days", mode="before")
     @classmethod
     def _validate_days(cls, v: Any) -> Any:
-        return _normalize_days(v)
+        return normalize_days(v)
 
 
 class CheckinSchedule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    enabled: bool = True
     times: list[str] = Field(
         default_factory=list,
     )
@@ -130,43 +78,24 @@ class CheckinSchedule(BaseModel):
     @field_validator("days", mode="before")
     @classmethod
     def _validate_days(cls, v: Any) -> Any:
-        return _normalize_days(v)
-
-
-class JobSchedule(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    time: str | None = None
-    days: str | list[str] = "daily"
-
-    @field_validator("days", mode="before")
-    @classmethod
-    def _validate_days(cls, v: Any) -> Any:
-        return _normalize_days(v)
+        return normalize_days(v)
 
 
 class SchedulerConfig(BaseModel):
-    """Per-job launchd cadence for `check-in`, `jobs`, and board discovery.
+    """Launchd cadence for `check-in`.
 
     HH:MM strings, 24-hour clock; validated at `scheduler install` time by
-    `scheduler._parse_hhmm`. Each job's `days` narrows which days it fires
-    ("daily", "weekdays", or a list of day names). A line left unset takes its
-    value from resources/templates/scheduler.default.yaml, not from the field
-    default here (`scheduler._merge_scheduler_config`). `day_start` /
-    `day_end` cadence lives separately in `ScheduleConfig` (the single source
-    of truth for those two jobs).
-
-    `discovery` is its own job rather than part of `jobs`: the board universe
-    changes far more slowly than postings do, launchd takes a single command
-    (so chaining would need a wrapper), and a sweep that hangs must not block
-    the scrape.
+    `scheduler._parse_hhmm`. `days` narrows which days it fires ("daily",
+    "weekdays", or a list of day names). A line left unset takes its value from
+    resources/templates/scheduler.default.yaml, not from the field default here
+    (`scheduler._merge_scheduler_config`). `day_start` / `day_end` cadence lives
+    separately in `ScheduleConfig` (the single source of truth for those two
+    jobs). A plugin's runs live in the plugin's own settings.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     checkin: CheckinSchedule | None = None
-    jobs: JobSchedule | None = None
-    discovery: JobSchedule | None = None
 
 
 class InteractiveAIConfig(BaseModel):
@@ -251,7 +180,6 @@ class Config(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    daily_driver: DailyDriverConfig = DailyDriverConfig()
     tracker: TrackerConfig
     scheduler: SchedulerConfig | None = None
     schedule: ScheduleConfig = ScheduleConfig()

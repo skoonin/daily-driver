@@ -2,13 +2,13 @@
 
 Lives in the plugins package (not core) so the root Config can stay free of
 hardcoded plugin namespaces: each plugin contributes its own typed field via
-``Plugin.config_model``. Core imports ``PluginsConfig`` from here; the import
-runs one direction only (plugins never import core), so there is no cycle.
+``Plugin.config_model``. Core imports ``PluginsConfig`` from here. Plugin config
+models import only ``core.schedule_fields`` from core, so there is no cycle.
 
 ``extra="forbid"``: every registered plugin already gets a typed field built
 from ``PLUGINS`` below, so an unrecognized ``plugins.<name>`` key is a typo or
-an unregistered plugin and should fail loudly — matching the strict root
-(``Config`` is ``extra="forbid"``).
+an unregistered plugin. The error lets the config load find the key, warn,
+and ignore it, as for any unknown key under the strict root ``Config``.
 """
 
 from __future__ import annotations

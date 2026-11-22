@@ -1,4 +1,4 @@
-"""Provider config: built-in providers, merging, `extends`, and task routing."""
+"""Provider config: built-in providers, merging, `parent_provider`, and task routing."""
 
 from __future__ import annotations
 
@@ -100,11 +100,15 @@ def test_user_entry_overrides_one_builtin_field() -> None:
     assert settings.agent == builtin_providers()["claude"].agent
 
 
-def test_extends_inherits_fields_but_not_tasks() -> None:
+def test_a_parent_provider_gives_fields_but_not_tasks() -> None:
     config = _config(
         {
             "claude": {"tasks": ["interactive"]},
-            "claude-opus": {"extends": "claude", "model": "opus", "tasks": ["summary"]},
+            "claude-opus": {
+                "parent_provider": "claude",
+                "model": "opus",
+                "tasks": ["summary"],
+            },
         }
     )
     opus = provider_for(config, SUMMARY)
@@ -112,15 +116,15 @@ def test_extends_inherits_fields_but_not_tasks() -> None:
     assert opus.settings.model == "opus"
     assert opus.settings.agent == builtin_providers()["claude"].agent
     assert opus.settings.tasks == ["summary"]
-    assert opus.settings.extends is None
+    assert opus.settings.parent_provider is None
 
 
-def test_extends_sees_the_users_override_of_a_builtin() -> None:
+def test_a_parent_provider_includes_the_users_override_of_a_builtin() -> None:
     config = _config(
         {
             "lmstudio": {"base_url": "http://gpu-box:1234/v1"},
             "lmstudio-coder": {
-                "extends": "lmstudio",
+                "parent_provider": "lmstudio",
                 "model": "qwen3-coder",
                 "tasks": ["voice_update"],
             },
@@ -247,7 +251,7 @@ def test_templates_and_base_url_together_rejected() -> None:
 
 
 def test_entry_with_neither_templates_nor_base_url_rejected() -> None:
-    _rejects("mine", providers={"mine": {"model": "x"}})
+    _rejects("mine.*parent_provider", providers={"mine": {"model": "x"}})
 
 
 def test_http_provider_in_use_without_model_rejected() -> None:
@@ -268,22 +272,25 @@ def test_plugin_default_http_provider_without_model_rejected() -> None:
     )
 
 
-def test_extends_missing_entry_rejected() -> None:
-    _rejects("extends 'nope'", providers={"mine": {"extends": "nope", "model": "x"}})
+def test_a_missing_parent_provider_is_rejected() -> None:
+    _rejects(
+        "parent_provider 'nope'",
+        providers={"mine": {"parent_provider": "nope", "model": "x"}},
+    )
 
 
-def test_extends_chain_rejected() -> None:
+def test_a_chain_of_parent_providers_is_rejected() -> None:
     _rejects(
         "one level",
         providers={
-            "a": {"extends": "claude", "model": "opus"},
-            "b": {"extends": "a", "model": "haiku"},
+            "a": {"parent_provider": "claude", "model": "opus"},
+            "b": {"parent_provider": "a", "model": "haiku"},
         },
     )
 
 
 def test_builtin_named_entry_cannot_extend() -> None:
-    _rejects("claude", providers={"claude": {"extends": "opencode"}})
+    _rejects("claude", providers={"claude": {"parent_provider": "opencode"}})
 
 
 def test_undeclared_plugin_task_key_rejected() -> None:
@@ -325,7 +332,7 @@ def test_extending_a_user_entry_does_not_inherit_its_tasks() -> None:
     config = _config(
         providers={
             "a": {"text": ["tool-a"], "tasks": ["voice_update"]},
-            "b": {"extends": "a", "model": "m"},
+            "b": {"parent_provider": "a", "model": "m"},
         }
     )
     assert provider_for(config, VOICE_UPDATE).name == "a"

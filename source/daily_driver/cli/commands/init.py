@@ -17,6 +17,8 @@ from pathlib import Path
 from daily_driver.cli._common import add_global_flags
 from daily_driver.core.console import Console
 from daily_driver.core.workspace import Workspace, WorkspaceError
+from daily_driver.plugins import PLUGINS, switch_on_hint
+from daily_driver.plugins._base import Plugin
 
 
 def add_parser(
@@ -41,18 +43,44 @@ def add_parser(
         default=False,
         help="Overwrite existing .dd-config.yaml.",
     )
-    parser.add_argument(
-        "--job-search",
-        action="store_true",
-        default=False,
-        help=(
-            "Switch on job search: `daily-driver jobs`, its settings, and the "
-            "job sections of the Claude prompts."
-        ),
-    )
+    for plugin in PLUGINS:
+        if plugin.init_flag_help:
+            parser.add_argument(
+                _init_flag(plugin),
+                dest=_flag_dest(plugin),
+                action="store_true",
+                default=False,
+                help=plugin.init_flag_help,
+            )
     add_global_flags(parser)
     parser.set_defaults(func=run)
     return parser
+
+
+def _init_flag(plugin: Plugin) -> str:
+    return f"--{plugin.name.replace('_', '-')}"
+
+
+def _flag_dest(plugin: Plugin) -> str:
+    # Prefixed, so a plugin named like an `init` argument cannot replace it.
+    return f"plugin_{plugin.name}"
+
+
+def _title(plugin: Plugin) -> str:
+    return plugin.name.replace("_", " ").capitalize()
+
+
+def _plugins_on_in(config_path: Path) -> tuple[Plugin, ...]:
+    """The plugins on in an existing config; none if it does not load."""
+    from daily_driver.core.config import read_settings
+    from daily_driver.plugins import enabled_plugins
+
+    try:
+        config, _ = read_settings(config_path)
+    except Exception:  # noqa: BLE001
+        # `--force` is how a user replaces a config that does not load.
+        return ()
+    return enabled_plugins(config)
 
 
 def _seed_template(name: str, dest: Path, config: object) -> bool:
@@ -122,15 +150,16 @@ def _format_summary(
     created: list[str],
     skipped: list[str],
     generate_result: object,
-    job_search_off_hint: str | None,
+    plugins_on: tuple[Plugin, ...],
+    switched_off: tuple[Plugin, ...] = (),
 ) -> str:
     """Render the post-init summary block. Created/Skipped omitted if empty.
 
     `generate_result` is the return value of `core.generate.generate()`:
     None when the version-stamp fast-path skipped all work; a
     GenerationResult with `n_written` / `n_preserved` otherwise.
-    `job_search_off_hint` is None when job search is on, else how to switch
-    it on.
+    A plugin that is off is not mentioned, unless `--force` switched it off
+    (`switched_off`).
     """
     lines = [f"Initialized workspace at {root}"]
     if created:
@@ -147,10 +176,15 @@ def _format_summary(
             f"  Generated: .claude/*/daily-driver/* ({count} file"
             f"{'s' if count != 1 else ''})"
         )
-    if job_search_off_hint is None:
-        lines.append("  Job search: on")
-    else:
-        lines.append(f"  Job search: off (to switch on, {job_search_off_hint})")
+    lines.extend(
+        f"  {_title(plugin)}: on" for plugin in plugins_on if plugin.init_flag_help
+    )
+    lines.extend(
+        f"  {_title(plugin)}: off (it was on; to switch it on, "
+        f"{switch_on_hint(plugin.name, None)}, then run `daily-driver doctor --fix`)"
+        for plugin in switched_off
+        if plugin.init_flag_help
+    )
     return "\n".join(lines)
 
 
@@ -163,7 +197,14 @@ def run(args: argparse.Namespace) -> int:
 
     created: list[str] = []
     skipped: list[str] = []
-    plugins = {"job_search"} if args.job_search else set()
+    requested = [
+        plugin for plugin in PLUGINS if getattr(args, _flag_dest(plugin), False)
+    ]
+    plugins = {plugin.name for plugin in requested}
+
+    # `--force` writes a new config with only the requested plugins on; the
+    # summary says which plugins that switched off.
+    was_on = _plugins_on_in(marker) if marker_existed and args.force else ()
 
     backup: Path | None = None
     if marker_existed and args.force:
@@ -194,18 +235,17 @@ def run(args: argparse.Namespace) -> int:
         Console.error(str(exc))
         return 1
 
-    from daily_driver.plugins import enabled_plugins, switch_on_hint
+    from daily_driver.plugins import enabled_plugins
 
-    job_search_on = any(
-        plugin.name == "job_search" for plugin in enabled_plugins(workspace.config)
-    )
-    off_hint = None if job_search_on else switch_on_hint("job_search", workspace.config)
-    if marker_existed and not args.force and args.job_search and off_hint:
-        Console.warning(
-            ".dd-config.yaml already exists, so --job-search did not change it. "
-            f"To switch job search on, {off_hint}, then run "
-            "`daily-driver doctor --fix`."
-        )
+    plugins_on = enabled_plugins(workspace.config)
+    for plugin in requested:
+        if marker_existed and not args.force and plugin not in plugins_on:
+            hint = switch_on_hint(plugin.name, workspace.config)
+            Console.warning(
+                f".dd-config.yaml already exists, so {_init_flag(plugin)} did not "
+                f"change it. To switch {_title(plugin).lower()} on, {hint}, then "
+                "run `daily-driver doctor --fix`."
+            )
 
     # Seed files (rendered once, then the user's): only write when absent, even
     # under --force. Tracking the write/skip outcome lets us surface "what
@@ -259,6 +299,14 @@ def run(args: argparse.Namespace) -> int:
     # Console.success both suppress under quiet mode, so print straight to the
     # stderr log console (where the summary has always lived) to bypass the gate.
     Console.get_log_console().print(
-        _format_summary(root, created, skipped, result, off_hint), style="success"
+        _format_summary(
+            root,
+            created,
+            skipped,
+            result,
+            plugins_on,
+            tuple(plugin for plugin in was_on if plugin not in plugins_on),
+        ),
+        style="success",
     )
     return 0

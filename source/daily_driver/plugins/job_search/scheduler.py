@@ -7,9 +7,10 @@ the scheduler runs for a workspace that does not configure the jobs scrape.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from daily_driver.core.schedule_fields import ScheduledRun
     from daily_driver.core.scheduler import ScheduledJob, SchedulerContext
 
 # launchd labels owned by this plugin; core sweeps them on uninstall via
@@ -24,13 +25,12 @@ def _plist_job(
     label: str,
     log_name: str,
     action: list[str],
-    cfg: dict[str, Any],
+    schedule: ScheduledRun,
 ) -> list[ScheduledJob]:
-    """One launchd job from a ``scheduler.<name>`` block; none when unset."""
+    """One launchd job from a ``scheduler.<name>`` block; none when not enabled."""
     from daily_driver.core.scheduler import ScheduledJob
 
-    time_raw = cfg.get("time")
-    if not time_raw:
+    if not schedule.enabled:
         return []
 
     stdout, stderr = ctx.log_paths(log_name)
@@ -45,7 +45,7 @@ def _plist_job(
                 "label": label,
                 "program_arguments": args,
                 "times": ctx.calendar_entries(
-                    [ctx.parse_hhmm(time_raw)], ctx.parse_days(cfg.get("days"))
+                    [ctx.parse_hhmm(schedule.time)], ctx.parse_days(schedule.days)
                 ),
                 "stdout_path": str(stdout),
                 "stderr_path": str(stderr),
@@ -57,7 +57,7 @@ def _plist_job(
 
 
 def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
-    """Return this plugin's launchd jobs for whichever times are configured.
+    """Return this plugin's launchd jobs for whichever runs are enabled.
 
     Discovery is its own job rather than a step inside the scrape: the board
     universe turns over far more slowly than postings do, launchd takes a
@@ -66,19 +66,20 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
     the previous board list, which is what happened before discovery could be
     scheduled at all.
     """
+    schedules = ctx.plugin_config.scheduler
     return [
         *_plist_job(
             ctx,
             label=LABEL_SCRAPE_JOBS,
             log_name="jobs",
             action=["jobs", "run"],
-            cfg=ctx.merged_config.get("jobs", {}),
+            schedule=schedules.run,
         ),
         *_plist_job(
             ctx,
             label=LABEL_DISCOVER_BOARDS,
             log_name="jobs-discover",
             action=["jobs", "discover-boards"],
-            cfg=ctx.merged_config.get("discovery", {}),
+            schedule=schedules.discovery,
         ),
     ]

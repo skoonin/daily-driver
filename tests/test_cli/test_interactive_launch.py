@@ -463,14 +463,14 @@ def test_resume_without_a_resume_template_leaves_the_model_file_alone(
     assert (ws / "mytool.json").read_text() == '{"model": "other"}'
 
 
-def test_a_provider_that_extends_opencode_sets_the_model_too(
+def test_a_provider_whose_parent_is_opencode_sets_the_model_too(
     tmp_path: Path, spawned: list[list[str]]
 ) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(
         tmp_path,
-        "\nai:\n  providers:\n    oc-work:\n      extends: opencode\n"
+        "\nai:\n  providers:\n    oc-work:\n      parent_provider: opencode\n"
         "      tasks: [interactive]\n      model: work/model\n",
     )
 

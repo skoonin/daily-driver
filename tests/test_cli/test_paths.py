@@ -17,21 +17,6 @@ def _init_workspace(tmp_path: Path) -> Path:
     return ws
 
 
-def test_paths_output_prints_output_dir(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path)
-
-    rc = app(["--workspace", str(ws), "paths", "output"])
-
-    out = capsys.readouterr().out.strip()
-    assert rc == 0
-    # output_dir defaults to `.` -> resolves to the workspace root
-    assert Path(out) == ws.resolve()
-
-
 def test_paths_state_prints_state_dir(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -161,7 +146,7 @@ def test_paths_without_workspace_exits_1(
 
     monkeypatch.chdir(tmp_path)
 
-    rc = app(["--workspace", str(tmp_path / "missing"), "paths", "output"])
+    rc = app(["--workspace", str(tmp_path / "missing"), "paths", "root"])
 
     assert rc == 1
 

@@ -4,7 +4,7 @@ This page explains the parts of Daily Driver and how they fit together. Read it 
 
 ## What it does
 
-You use Daily Driver by chatting with Claude, an AI assistant. Claude manages your data for you: it adds and updates items in your list (the tracker) and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
+You use Daily Driver by chatting with an AI assistant. The AI manages your data for you: it adds and updates items in your list (the tracker) and writes your plans and notes. Each chat starts by reading them, so you do not have to explain your situation again. You rarely need to type any other command.
 
 You start a chat by typing `daily-driver day-start`, `daily-driver check-in`, or `daily-driver day-end` in the Terminal app. Daily Driver saves your data as files on your computer. All your files are in one folder that you create once. This folder is called a workspace.
 
@@ -13,8 +13,8 @@ You start a chat by typing `daily-driver day-start`, `daily-driver check-in`, or
 ```
 workspace/                 your data
 ├── .dd-config.yaml        your settings (categories, schedule, job search)
-├── context.md             your background and tasks that repeat; Claude reads it
-├── voice-profile.md       how you write; Claude uses it to draft in your style
+├── context.md             your background and tasks that repeat; the AI reads it
+├── voice-profile.md       how you write; the AI uses it to draft in your style
 ├── tracker.yaml           your list (the tracker): anything you follow up on
 ├── jobs.csv               saved job postings (only when job search is on)
 ├── 2026/05/               plan and notes files, such as 2026-05-11-plan.md (created on demand)
@@ -27,12 +27,12 @@ The workspace is an ordinary folder. Everything is saved in files that you can r
 
 | Feature | What it does | Commands |
 | --- | --- | --- |
-| **Daily sessions** | Chats with Claude for the morning, midday, and evening | `day-start`, `check-in`, `day-end`, `resume` |
-| **Your list (the tracker)** | Your tasks, errands, contacts, and anything else you follow up on. Claude keeps it up to date. | `tracker` |
+| **Daily sessions** | Chats with the AI for the morning, midday, and evening | `day-start`, `check-in`, `day-end`, `resume` |
+| **Your list (the tracker)** | Your tasks, errands, contacts, and anything else you follow up on. The AI keeps it up to date. | `tracker` |
 | **Workspace** | The folder that holds your data. Most people use one. | `init`, `doctor`, `paths` |
 | **Status** | One screen with your totals, items with no recent update, and recent activity | `status` |
 | **Focus** | Pauses scheduled check-in reminders while you work without interruptions | `focus` |
-| **Calendar and Git** | Reads your macOS Calendar events and Git commits, so Claude knows about your day | `gather` |
+| **Calendar and Git** | Reads your macOS Calendar events and Git commits, so the AI knows about your day | `gather` |
 | **Job search** (optional, `init --job-search`) | Finds job postings on the sites you choose, saves them in `jobs.csv`, and rates how well each one fits you | `jobs` |
 | **Summary** | Writes a summary of any period and copies it to your clipboard | `summary` |
 | **Voice** | Learns how you write from your own writing samples | `voice-update` |
@@ -41,8 +41,8 @@ The workspace is an ordinary folder. Everything is saved in files that you can r
 
 ## Good to know
 
-- **Claude is the front end. Daily Driver keeps your data.** Claude changes your list by running `daily-driver` commands. It writes your plan and notes files itself. A new chat starts without memory of earlier chats, so each chat begins by reading your files.
+- **The AI is the front end. Daily Driver keeps your data.** The AI changes your list by running `daily-driver` commands. It writes your plan and notes files itself. A new chat starts without memory of earlier chats, so each chat begins by reading your files.
 - **Providers run the AI.** A provider is a program (Claude Code or opencode) or a model server (LM Studio or ollama). Each feature runs on the provider you choose in `.dd-config.yaml`, and on Claude Code when you choose none. See [AI providers](configuration.md#ai).
 - **Run commands inside your workspace folder or one of its subfolders.** To run them from anywhere, add `--workspace PATH` (or `-w PATH`) to a command.
-- **Daily Driver manages some files in `.claude/`.** It updates them after an upgrade when you run `daily-driver doctor --fix`. Put your own Claude commands and agents in `.claude/commands/user/` and `.claude/agents/user/`. Daily Driver never changes those folders. See [`.claude/` ownership](configuration.md#claude-ownership).
+- **Daily Driver manages some files in `.claude/` for Claude Code.** It updates them after an upgrade when you run `daily-driver doctor --fix`. If you use Claude Code, put your own commands and agents in `.claude/commands/user/` and `.claude/agents/user/`. Daily Driver never changes those folders. See [`.claude/` ownership](configuration.md#claude-ownership).
 - **Settings do not change on their own.** If an upgrade removes or renames a setting, commands stop, name it, and say what replaces it. `CHANGELOG.md` lists the changes of each release.
