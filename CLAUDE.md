@@ -21,7 +21,7 @@ Job search is one plugin, off by default: `init --job-search` (or a `plugins.job
 ```bash
 make setup-dev  # .venv + pip install -e .[dev] + pre-commit hooks
 make test       # full tox envlist (see tox.ini); the same set CI runs
-                # needs python3.11 and python3.12 on PATH; tox fails on a missing one
+                # needs python3.11 through python3.15 on PATH; tox fails on a missing one
 ```
 
 ## Command surface
@@ -105,9 +105,7 @@ Test modules mirror source layout: `tests/test_core/`, `tests/test_cli/`,
 ## Release
 
 - **Branches:** `dev` is the integration trunk — feature branches cut off `dev` and merge back to it, and `dev` carries the `X.Y.Z-dev` working marker (`pipx install --force 'git+https://github.com/skoonin/daily-driver.git@dev'` to test). `main` holds only tagged releases. Cut a release from a `release/X.Y.Z` branch off `dev` (run `make release` there — it refuses any branch that is not `release/*`), then fast-forward `main` to the tag with `git push origin vX.Y.Z^{commit}:refs/heads/main`. An optional `release/X.Y.Z` → `main` pull request is for visibility only: do not merge it with a GitHub merge button, because a merge commit leaves `main` off the tag and a rebase or squash merge rewrites the commit hash. After the tag reaches `main`, fast-forward `dev` to the tag and bump its `-dev` marker. `main` is only ever updated by a release fast-forward, never a direct `dev` → `main` merge. Full flow in `docs/dev/releasing.md`.
-- `make release VERSION=X.Y.Z` — verify release branch + clean tree, run
-  py311+py312, run install smoke, build wheel/sdist, rewrite CHANGELOG
-  `[Unreleased]` → `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
+- `make release VERSION=X.Y.Z` — verify release branch + clean tree, run py311 to py315 (`tox -m test`), run install smoke, build wheel/sdist, rewrite CHANGELOG `[Unreleased]` → `[X.Y.Z]`, bump `__version__`, commit `release: vX.Y.Z`, tag.
 - `make release-push` — push commit + tag (separate deliberate step).
 - `release.yaml` CI fires on tag, builds and attaches artifacts to the
   GitHub Release.

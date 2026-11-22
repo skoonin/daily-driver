@@ -6,6 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
+- **Python 3.13, 3.14, and 3.15 are supported.** Daily Driver is now tested on Python 3.11 through 3.15. `python-jobspy` 1.2.0 or later is required, because 1.1.82 cannot install on Python 3.13 or later. (#284)
 - **`daily-driver config defaults` prints the settings file that `init` writes, with every default.** Compare your file with it to see what you changed. `--plugin job_search` includes the settings of a plugin. (#282)
 - **`daily-driver start` and `daily-driver end` are aliases of `day-start` and `day-end`.** (#282)
 - **Each scheduled run has an `enabled` setting.** `scheduler.checkin`, `plugins.job_search.scheduler.run`, and `plugins.job_search.scheduler.discovery` take `enabled: false`, which stops the run and keeps its settings. (#282)

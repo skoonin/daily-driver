@@ -61,8 +61,8 @@ _release:
 	@$(MAKE) --no-print-directory _require-venv
 	@echo "  OK: on $$(git rev-parse --abbrev-ref HEAD), clean tree, virtualenv, tag v$(VERSION) does not exist"
 	@echo ""
-	@echo "[2/6] Running test suite on py311 + py312..."
-	@$(TOX) -e py311,py312
+	@echo "[2/6] Running test suite on py311 to py315..."
+	@$(TOX) -m test
 	@echo ""
 	@echo "[3/6] Running install smoke test..."
 	@( set -e; smoke=$$(mktemp -d); trap 'rm -rf "$$smoke"' EXIT; \
