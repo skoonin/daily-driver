@@ -58,6 +58,16 @@ A value of the wrong type still stops every command, because Daily Driver has no
 | `ai.claude` | Delete it. Job reviews run 4 at a time; `ai.providers.<name>.max_parallel` can lower that. |
 | `ai.ollama` | Set `model` and `tasks` on `ai.providers.ollama`. The built-in `ollama` provider uses `http://localhost:11434/v1`. |
 | `plugins.job_search.enrichment.provider`, `.model`, `.fit_notes` | Set `plugins.job_search.provider` or `plugins.job_search.tasks.fit_notes` to a provider in `ai.providers`. |
+| `tracker.warn_unknown_status` | Delete it. To stop the warning for a status of your own, list the status under `tracker.extra_statuses`. |
+| `plugins.job_search.scraper.enabled` | Delete it. `jobs run` searches the sites listed under `plugins.job_search.sources`. |
+| `plugins.job_search.scraper.parallel_workers` | Use `plugins.job_search.scraper.max_parallel`. |
+| `plugins.job_search.scraper.max_pages` | Delete it. Set `plugins.job_search.scraper.max_results`, the most jobs per search. |
+| `plugins.job_search.sources.linkedin.results_wanted_per_query`, `plugins.job_search.sources.indeed.results_wanted_per_query` | Delete it. Set `plugins.job_search.scraper.max_results`, the most jobs per search on LinkedIn, Indeed, and Apple. |
+| `plugins.job_search.sources.linkedin.hours_old`, `plugins.job_search.sources.indeed.hours_old` | Delete it. Set `plugins.job_search.scraper.max_age_days`, the oldest job to keep on Hacker News jobs, LinkedIn, and Indeed. |
+| `plugins.job_search.locations.home_city` | Move it up one level, to `plugins.job_search.home_city`. |
+| `plugins.job_search.enrichment.enrich_fit`, `plugins.job_search.enrichment.enrich_notes` | Delete it. Set `plugins.job_search.enrichment.enabled`, which turns the whole job review on or off. |
+| `plugins.job_search.enrichment.enrich_is_remote` | Delete it. Every job review labels the job remote, hybrid, or onsite. |
+| `plugins.job_search.enrichment.force_recook_cooldown_hours` | Delete it. Set `plugins.job_search.enrichment.backfill_cooldown` to a duration such as `24h`, or to `0` or missing. |
 | `plugins.job_search.persona` | Keep your job titles in `roles` and your background in `context.md`. |
 | `scheduler.jobs` | Use `plugins.job_search.scheduler.run`. The run is on unless it sets `enabled: false`, so a `time: null` that kept it off now needs `enabled: false`. |
 | `scheduler.discovery` | Use `plugins.job_search.scheduler.discovery`. The run is on unless it sets `enabled: false`, so a `time: null` that kept it off now needs `enabled: false`. |
@@ -67,7 +77,7 @@ Run `daily-driver doctor` to see the warnings again.
 
 ## `jobs` is an invalid choice
 
-Job search is opt-in. While it is off, and outside a workspace, `jobs` is not a command. To switch it on, add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` also needs a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on.
+Job search is opt-in. While it is off, and outside a workspace, `jobs` is not a command. To switch it on, add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` with no site turned on under `sources` prints a warning and still reviews the jobs that wait for a review ([usage.md](usage.md#enable-it)).
 
 ## Agents still installed after you turn a run off
 

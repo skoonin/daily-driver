@@ -37,7 +37,7 @@ Options:
 - `check-in` starts a new chat each time. To continue your most recent chat instead, set `ai.interactive.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
 - If you close a chat by mistake, run `daily-driver resume` to reopen the most recent one.
 - Each command runs a command of the same name. With Claude Code, that is a slash command such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-launchers).
-- The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](configuration.md#ai).
+- The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](providers.md).
 
 See also: [Connect your other tools](../README.md#connect-your-other-tools).
 
@@ -108,7 +108,7 @@ daily-driver focus status
 daily-driver focus off
 ```
 
-`--for` sets how long focus mode lasts: `30m`, `2h`, `1h30m`, or a number of minutes. The default is 25 minutes. You can change it with `focus.default_duration` in `.dd-config.yaml`. If focus mode seems stuck, see [Troubleshooting](troubleshooting.md#focus-mode-stuck-on).
+`--for` sets how long focus mode lasts: `30m`, `2h`, `1h30m`, `1d`, or a number of minutes. The default is 25 minutes. You can change it with `focus.default_duration` in `.dd-config.yaml`. If focus mode seems stuck, see [Troubleshooting](troubleshooting.md#focus-mode-stuck-on).
 
 ## Jobs
 
@@ -189,7 +189,7 @@ daily-driver jobs verify                        # close saved jobs that are no l
 
 ### Choosing an AI provider
 
-By default, job search uses the default provider (Claude Code) to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.provider` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [AI providers](providers.md).
+By default, job search uses the default provider (Claude Code) to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.tasks.fit_notes` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [AI providers](providers.md).
 
 ## Summary
 

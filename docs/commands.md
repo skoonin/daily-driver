@@ -128,6 +128,7 @@ Prints the settings file that `init` writes, with every setting at its default. 
 
 | Case | Settings it shows |
 | --- | --- |
+| `--workspace` that is not a workspace, with no `--plugin` | An error. |
 | `--plugin job_search` | Core settings and job search. Repeat `--plugin` for more than one plugin. |
 | In a workspace, no flag | Core settings and the plugins that are on in that workspace. |
 | Outside a workspace, no flag | Core settings. |
@@ -178,7 +179,7 @@ Filtered Rich table or JSON. `--since` accepts the same grammar as `tracker prun
 
 ### `tracker follow-ups [--overdue] [--json]`
 
-Entries with a `next_action` set. Entries in a terminal status (`done`, `ruled-out`, and the job-terminal set, plus any `tracker.terminal_statuses`) are excluded. `--overdue` filters to those with a past `due` date. Primary view for starting a day.
+Entries with a `next_action` set. Entries in a terminal status (`done`, `ruled-out`, `dropped`, `rejected`, and `closed`, plus any in `tracker.terminal_statuses`) are excluded. `--overdue` filters to those with a past `due` date. Primary view for starting a day.
 
 ### `tracker stats [--json]`
 
@@ -263,7 +264,7 @@ Writes a period summary and copies it to the clipboard. Daily Driver finds the d
 
 | Flag | Notes |
 | --- | --- |
-| `--range SPEC` | Required. `today`, `yesterday`, `week`, `month`, `YYYY-MM-DD`, or `YYYY-MM-DD:YYYY-MM-DD` |
+| `--range SPEC` | Required. `today`, `yesterday`, `tomorrow`, `week`, `month`, `quarter`, `year`, a count such as `7d`, `2w`, `3m`, or `1y`, `YYYY-MM-DD`, or `YYYY-MM-DD:YYYY-MM-DD` |
 | `--detail low\|med\|high` | Verbosity |
 | `--match KW` | Repeatable keyword filter |
 | `--json` | Print the resolved range, detail level, and match filters as JSON. No AI call. |
@@ -288,7 +289,7 @@ Updates `voice-profile.md` in the workspace folder from writing samples. It runs
 
 ## Job search plugin
 
-Off by default. While job search is off, and outside a workspace, `jobs` is not a command: `--help` does not list it, and running it gives the error for an unknown command (exit 2). To switch job search on, create the workspace with `init --job-search`, or add `plugins: {job_search: {}}` to `.dd-config.yaml` (if it already has a `job_search` block with `enabled: false`, remove that line instead; a second `plugins:` key would replace the block). Run `doctor --fix` as well to add the job sections to the prompts and README. `jobs run` also needs a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on. See [job-search.md](job-search.md).
+Off by default. While job search is off, and outside a workspace, `jobs` is not a command: `--help` does not list it, and running it gives the error for an unknown command (exit 2). To switch job search on, create the workspace with `init --job-search`, or add `plugins: {job_search: {}}` to `.dd-config.yaml` (if it already has a `job_search` block with `enabled: false`, remove that line instead; a second `plugins:` key would replace the block). Run `doctor --fix` as well to add the job sections to the prompts and README. `jobs run` with no site turned on under `sources` warns and still reviews the jobs that wait for a review ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on. See [job-search.md](job-search.md).
 
 The `jobs.csv` `Status` column shares the tracker's status machinery. The recommended job set is `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, `closed`. A freshly scraped row is `found`; a deliberately blank cell stays blank. Only `found`/`pending` rows are eligible for (re-)enrichment (`jobs run`, `jobs backfill`) — once a row moves to any other status its Fit/Notes/Remote are left alone.
 

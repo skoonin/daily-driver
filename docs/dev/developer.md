@@ -12,7 +12,7 @@ The program owns the durable record (tracker entries, daily notes, job leads, fo
 daily_driver/
 ├── __init__.py              # __version__ (single source of truth)
 ├── __main__.py              # python -m daily_driver entry
-├── tasks.py                 # Task(name, mode) and the core tasks (leaf module; plugins import it)
+├── tasks.py                 # Task(name, mode, max_parallel=1) and the core tasks (leaf module; plugins import it)
 ├── cli/
 │   ├── cli.py               # static _COMMANDS table + dispatch loop
 │   ├── _common.py           # global-flag registration + post-parse configure()
@@ -83,8 +83,8 @@ A provider is data, not code. No AI-call code branches on a provider name. The b
 
 | Piece | Where | Job |
 | --- | --- | --- |
-| `Task(name, mode)`, `INTERACTIVE`, `SUMMARY`, `VOICE_UPDATE`, `CORE_TASKS` | `tasks.py` | Names the jobs. The mode is `interactive`, `agent`, or `text`. |
-| `ProviderConfig`, `resolve_providers`, `validate_routes`, `provider_for(config, task, plugin=None)` | `core/providers.py` | Loads the built-ins, merges user entries, checks routes, and returns the `Provider` that runs a task. `DEFAULT_PROVIDER` (`claude`) runs any task nobody claims. |
+| `Task(name, mode, max_parallel=1)`, `INTERACTIVE`, `SUMMARY`, `VOICE_UPDATE`, `CORE_TASKS` | `tasks.py` | Names the jobs. The mode is `interactive`, `agent`, or `text`. |
+| `ProviderConfig`, `resolve_providers`, `validate_routes`, `provider_for(config, task, plugin=None)` | `core/providers.py` | Loads the built-ins, merges user entries, checks routes, and returns the `Provider` that runs a task. `parallel_calls(provider, task)` returns how many calls of a task may run at the same time: the task's `max_parallel`, lowered to the provider's `max_parallel` when that is set. `DEFAULT_PROVIDER` (`claude`) runs any task nobody claims. |
 | `render`, `mint_session_id`, `spawn`, `invoke`, `list_models`, `available`, `AIInvocationError`, `AITimeoutError` | `integrations/provider.py` | Fills templates, runs a command or posts to an HTTP server, and normalizes every failure into one exception type. |
 | `write_prompt_file` | `core/prompt_file.py` | Writes `.daily-driver/state/prompts/<command>.md` for providers whose `run` or `resume` template uses `{prompt_file}`. |
 | `set_model`, `ModelFileError` | `core/model_file.py` | Sets one key in a JSON config before an interactive launch, for a provider with `model_file`, such as `opencode.json` for opencode. It edits the text in place, so every other byte stays. |
@@ -228,7 +228,7 @@ All YAML reads/writes and the focus lock use `core.locking.file_lock` (wrapping 
 ### Requires a fork
 
 - New core subcommand — add it to `_CORE_COMMANDS` and `_TOP_HELP` in `cli/cli.py`; no runtime discovery.
-- New config fields — Pydantic model in `core.config_models`, plus a line with its default value in `resources/templates/.dd-config.yaml.j2`, plus a test that sets the knob (`tests/test_core/test_config_behavior.py` fails for an untested knob unless it is listed in `_BEHAVIOR_UNTESTED` with a reason). `extra="forbid"` is strict.
+- New config fields — Pydantic model in `core.config_models`, plus a line with its default value in `resources/templates/.dd-config.yaml.j2`, plus a test that sets the knob. `tests/test_core/test_config_behavior.py` fails for a leaf field that no test outside the schema and template test modules (`_SCHEMA_TEST_MODULES`) names, and `tests/test_core/test_config_template.py` fails for a field missing from the template. A field left out of the template on purpose goes in `_UNTEMPLATED` or under a path in `_UNTEMPLATED_UNDER`, and a value the template shows that is not the default goes in `_SHOWN_NOT_DEFAULT`, each with a reason. `extra="forbid"` is strict.
 - New plugin — see [extending.md](extending.md) and "Plugins" below.
 
 ### Plugins

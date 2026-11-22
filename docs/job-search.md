@@ -1,6 +1,6 @@
 # `plugins.job_search`
 
-Job search finds jobs on the sites you choose, removes duplicates, and scores how well each job fits you. It is off until the `plugins.job_search` section exists. `init --job-search` writes the section. `jobs run` also needs at least one site under `sources`. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it). For the commands, see [commands.md](commands.md).
+Job search finds jobs on the sites you choose, removes duplicates, and scores how well each job fits you. It is off until the `plugins.job_search` section exists. `init --job-search` writes the section. `jobs run` with no site turned on under `sources` warns "No sites to search" and still reviews the jobs that wait for a review. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it). For the commands, see [commands.md](commands.md).
 
 `context.md` is not rewritten after `init`. Add your location preferences and what you look for in a role to it by hand. The Artificial Intelligence (AI) review reads it.
 
@@ -33,7 +33,7 @@ plugins:
 | `scraper` | see [`scraper`](#scraper) | How Daily Driver reads job sites. |
 | `enrichment` | see [`enrichment`](#enrichment) | The AI review of each new job. |
 | `verify` | see [`verify`](#verify) | When `jobs verify` checks saved jobs. |
-| `discovery` | see [`discovery`](#discovery) | How `jobs discover-boards` works. |
+| `discovery` | see [`discovery`](#discovery) | How `jobs discover-boards` works, and when `jobs run` reports Greenhouse, Ashby, or Lever as failing. |
 | `scheduler` | see [`scheduler`](#scheduler) | When `jobs run` and `jobs discover-boards` run in the background. |
 | `sources` | `{}` | The sites to search. See [`sources`](#sources). |
 
@@ -123,7 +123,7 @@ scraper:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `search_terms` | `[]` | Words to search for on LinkedIn, Indeed, and Apple, in addition to the words that come from `roles`. `roles` still decides which jobs are kept. |
+| `search_terms` | `[]` | Words to search for on LinkedIn, Indeed, and Apple, in addition to the words that come from `roles`. `roles` still decides which jobs are kept. An empty `search_terms:` with no value is an error. Write `search_terms: []` or delete the line. |
 | `max_age_days` | `7` | Skips jobs posted more than this many days ago, on Hacker News jobs (`hn_jobs`), LinkedIn, and Indeed. `0` means no limit. Company boards list only open jobs, and Who's Hiring reads only the latest thread. |
 | `max_results` | `50` | Most jobs per search on LinkedIn, Indeed, and Apple. A search that reaches it shows as saturated in the run summary. |
 | `timeout` | `30` | Seconds to wait for a site. |
@@ -198,7 +198,7 @@ verify:
 
 ## `discovery`
 
-`jobs discover-boards` finds company job boards that list jobs matching your roles. A board is a company job page on a hiring site such as Greenhouse, Ashby, or Lever. The company lists come from the job-board-aggregator project (<https://github.com/Feashliaa/job-board-aggregator>). One run is a sweep. Later sweeps check known boards again. These settings control how often, and how failures are reported. They are not in the file that `init` writes, because the defaults suit most workspaces.
+`jobs discover-boards` finds company job boards that list jobs matching your roles. A board is a company job page on a hiring site such as Greenhouse, Ashby, or Lever. The company lists come from the job-board-aggregator project (<https://github.com/Feashliaa/job-board-aggregator>). One run is a sweep. Later sweeps check known boards again. These settings control how often boards are checked, and when `jobs run` reports a hiring site as failing. They are not in the file that `init` writes, because the defaults suit most workspaces.
 
 ```yaml
 discovery:
@@ -209,7 +209,7 @@ discovery:
 | --- | --- | --- |
 | `reprobe_days` | `30` | Checks a known board again after this many days. The minimum is 1. |
 | `max_reprobe_per_sweep` | `500` | Most boards checked again per sweep. The most overdue boards go first. The minimum is 1. |
-| `degraded_failure_ratio` | `0.25` | A site is reported as failing when this share of its boards fail. `0.25` means 25%. The value must be above 0 and at most 1. |
+| `degraded_failure_ratio` | `0.25` | During `jobs run`, Greenhouse, Ashby, or Lever is reported as failing when this share of its boards, or more, fail. `0.25` means 25%. The value must be above 0 and at most 1. |
 | `dormant_after_empty_sweeps` | `2` | A board that lists no jobs this many checks in a row is checked less often. `0` turns this off. |
 | `dormant_reprobe_multiplier` | `6` | How much less often. With `6`, a 30-day check becomes a 180-day check. `1` keeps the normal timing. |
 

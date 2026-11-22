@@ -5,11 +5,11 @@
 # - A setting that starts with "# " is a sample. To use it, delete the "# ".
 # - Run `daily-driver doctor` after you edit this file.
 #
-# All settings: https://github.com/skoonin/daily-driver/blob/main/docs/configuration.md
+# All settings: https://github.com/skoonin/daily-driver/blob/dev/docs/configuration.md
 # Put notes about yourself and your recurring tasks in context.md, not here.
 
 # Which AI runs each feature. To use opencode, LM Studio, Ollama, or another
-# model, see https://github.com/skoonin/daily-driver/blob/main/docs/providers.md
+# model, see https://github.com/skoonin/daily-driver/blob/dev/docs/providers.md
 ai:
   interactive:
     resume_check_in: false  # true: check-in continues your last chat
@@ -17,6 +17,9 @@ ai:
     claude:
       # model: sonnet  # default: the Claude Code model
       # timeout: 600  # seconds; default: 180 for text tasks, 900 for agent tasks
+{% if "job_search" in plugins %}
+      # job reviews use enrichment.enrich_timeout instead
+{% endif %}
       tasks: [interactive, summary, voice_update]
     # Your own provider: move a task from the claude list to its tasks list.
     # claude-sonnet:
@@ -81,7 +84,7 @@ plugins:
 {% if "job_search" in plugins %}
 
   # Job search (`daily-driver jobs`). All settings:
-  # https://github.com/skoonin/daily-driver/blob/main/docs/job-search.md
+  # https://github.com/skoonin/daily-driver/blob/dev/docs/job-search.md
 
   job_search:
     enabled: true
@@ -104,7 +107,7 @@ plugins:
     # How job sites are read. These settings apply to every site.
     scraper:
       search_terms: []  # words to search for, added to your roles
-      max_age_days: 7  # skip jobs posted longer ago (Hacker News, LinkedIn, Indeed); 0: no limit
+      max_age_days: 7  # skip jobs posted longer ago (Hacker News jobs, LinkedIn, Indeed); 0: no limit
       max_results: 50  # most jobs per search on LinkedIn, Indeed, and Apple
       timeout: 30  # seconds to wait for a site to respond before moving on
       max_retries: 3  # retries when a site is busy

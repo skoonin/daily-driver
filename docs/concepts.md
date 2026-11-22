@@ -42,7 +42,7 @@ The workspace is an ordinary folder. Everything is saved in files that you can r
 ## Good to know
 
 - **The AI is the front end. Daily Driver keeps your data.** The AI changes your list by running `daily-driver` commands. It writes your plan and notes files itself. A new chat starts without memory of earlier chats, so each chat begins by reading your files.
-- **Providers run the AI.** A provider is a program (Claude Code or opencode) or a model server (LM Studio or ollama). Each feature runs on the provider you choose in `.dd-config.yaml`, and on Claude Code when you choose none. See [AI providers](configuration.md#ai).
+- **Providers run the AI.** A provider is a program (Claude Code or opencode) or a model server (LM Studio or ollama). Each feature runs on the provider you choose in `.dd-config.yaml`, and on Claude Code when you choose none. See [AI providers](providers.md).
 - **Run commands inside your workspace folder or one of its subfolders.** To run them from anywhere, add `--workspace PATH` (or `-w PATH`) to a command.
 - **Daily Driver manages some files in `.claude/` for Claude Code.** It updates them after an upgrade when you run `daily-driver doctor --fix`. If you use Claude Code, put your own commands and agents in `.claude/commands/user/` and `.claude/agents/user/`. Daily Driver never changes those folders. See [`.claude/` ownership](configuration.md#claude-ownership).
-- **Settings do not change on their own.** If an upgrade removes or renames a setting, commands stop, name it, and say what replaces it. `CHANGELOG.md` lists the changes of each release.
+- **Settings do not change on their own.** If an upgrade removes or renames a setting, commands ignore it and keep running. A warning names the setting and says what to do. `daily-driver doctor` reports it until you remove it. `CHANGELOG.md` lists the changes of each release.

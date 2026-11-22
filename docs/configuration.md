@@ -1,16 +1,17 @@
 # Settings
 
-Your settings live in `.dd-config.yaml` in your workspace folder. Most people change only a few of them, such as reminder times and task categories. The AI handles running daily-driver directly so your list, plans, and notes in your chats, so those need no settings.
+Your settings live in `.dd-config.yaml` in your workspace folder. Most people change only a few of them, such as reminder times and task categories. The AI keeps your list, plans, and notes during your chats, so they need no settings.
 
 How to edit the file:
 
 - Every live line in the file that `init` creates shows its default value. Change a value to change how Daily Driver works.
+- Run `daily-driver config defaults` to print the file that `init` writes, with every default. Compare it with your file to see what you changed. Add `--plugin job_search` to include the settings of job search.
 - If you remove a setting, its default applies.
-- A line that starts with `# ` is a sample. Samples cover settings that cannot show a live value: the shipped `claude` command templates, a provider of your own, and job search `locations`, `sources`, and `criteria`. Delete the `# ` to use one.
+- A line that starts with `# ` is a sample. Samples cover settings that cannot show a live value: model and timeout for the `claude` provider, providers of your own (`claude-sonnet`, `opencode`, `my-server`), the `day_start` and `day_end` reminders, and job search `home_city`, `locations`, `sources`, and `criteria`. Delete the `# ` to use one.
 - Keep the spaces at the start of each line. They show which section a setting belongs to.
 - Write times in quotes, for example `"08:30"`. Without quotes, a time such as `11:00` can be read as a number, and the setting may be rejected.
 - Use each section name once. If a name appears twice, the second section replaces the first without an error.
-- If a setting name is not known, the command stops and prints that name.
+- If a setting name is not known, Daily Driver prints a warning that names it and ignores it. The command keeps running. `daily-driver doctor` reports the setting as an error.
 - Run `daily-driver doctor` after you edit the file. It reports mistakes.
 
 For the daily flow, see [usage.md](usage.md). The AI reads `context.md` when it plans your day. Put your background there, and list tasks that repeat under `## Recurring Tasks`. Do not put them in this file.
@@ -119,7 +120,7 @@ focus:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `default_duration` | `25m` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, or a number of minutes. |
+| `default_duration` | `25m` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, `1d`, or a number of minutes. |
 
 ## `gather`
 

@@ -32,14 +32,14 @@ With the default provider, each chat runs in Claude Code, so it can use the inte
 - **A Mac.** Daily Driver is built for Macs with Apple silicon. Intel Macs probably work but are untested. Windows and Linux are not supported.
 - **Homebrew**, an app installer for macOS. See [brew.sh](https://brew.sh).
 - **pipx**, a tool that installs Python programs. It installs Daily Driver in its own folder, so Daily Driver does not change other Python programs.
-- **Claude Code**, installed and signed in. It is the default AI: every chat runs through it unless you choose another provider, such as opencode. See [AI providers](docs/configuration.md#ai).
+- **Claude Code**, installed and signed in. It is the default AI: every chat runs through it unless you choose another provider, such as opencode. See [AI providers](docs/providers.md).
 - **Optional: icalBuddy**, a small tool that lets Daily Driver read your calendar. Reading the calendar can fail in the built-in terminal of Visual Studio Code (VS Code) on recent versions of macOS. See [Troubleshooting](docs/troubleshooting.md#calendar-events-are-missing-in-vs-code).
 
 ## Install
 
-In order to install Daily-Driver, you must have [Homebrew](https://brew.sh) and pipx installed.
+To install Daily Driver, you must have [Homebrew](https://brew.sh) and pipx installed.
 
-If **Homebrew is not installed**, you can install install it by running this command in Terminal:
+If **Homebrew is not installed**, you can install it by running this command in Terminal:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -92,7 +92,7 @@ Run the commands from inside your workspace folder, or add `--workspace ~/daily-
 
 - **Reminders.** Run `daily-driver scheduler install` to get a check-in reminder at 11:00 and 15:00. Click the reminder to open the chat. Clicking needs one optional tool; see the [install guide](docs/install.md).
 - **Job search.** Daily Driver can search the job sites you choose, remove duplicates, and score how well each job fits you. Turn it on with `--job-search` when you create a workspace. The [guide](docs/usage.md#jobs) also shows how to add it to an existing workspace.
-- **Other AI providers.** Run chats on opencode, or run some AI tasks on your own computer with LM Studio or ollama, instead of Claude Code. See [AI providers](docs/configuration.md#ai) and [Local models](docs/local-models.md).
+- **Other AI providers.** Run chats on opencode, or run some AI tasks on your own computer with LM Studio or ollama, instead of Claude Code. See [AI providers](docs/providers.md) and [Local models](docs/local-models.md).
 
 ## Commands you can run yourself
 

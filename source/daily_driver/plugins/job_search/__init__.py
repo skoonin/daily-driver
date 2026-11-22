@@ -32,11 +32,11 @@ _ONE_REVIEW_SWITCH = (
 )
 _MAX_RESULTS = (
     "delete it; set plugins.job_search.scraper.max_results, the most jobs per "
-    "search on every site."
+    "search on LinkedIn, Indeed, and Apple."
 )
 _MAX_AGE = (
     "delete it; set plugins.job_search.scraper.max_age_days, the oldest job to "
-    "keep on every site."
+    "keep on Hacker News jobs, LinkedIn, and Indeed."
 )
 
 PLUGIN = Plugin(
