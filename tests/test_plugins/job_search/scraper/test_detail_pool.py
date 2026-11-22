@@ -25,7 +25,7 @@ def _ctx(delay: float) -> ScrapeContext:
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
-                "scraper": {"enabled": True, "timeout": 5, "max_retries": 0},
+                "scraper": {"timeout": 5, "max_retries": 0},
                 "enrichment": {"detail_delay_seconds": delay},
             }
         )

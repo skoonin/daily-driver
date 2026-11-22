@@ -426,7 +426,7 @@ def run_all_scrapers(
     """
     cfg = ctx.plugin.scraper
     source_cfg = ctx.plugin.sources
-    workers = cfg.parallel_workers
+    workers = cfg.max_parallel
 
     if sources_override is not None:
         override = set(sources_override)

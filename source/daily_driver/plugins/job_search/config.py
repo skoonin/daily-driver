@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_core import PydanticCustomError
 
 from daily_driver.core.schedule_fields import ScheduledRun
+from daily_driver.durations import parse_duration
 from daily_driver.plugins._base import PluginConfigBase
 
 
 class Locations(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    home_city: str | None = None
     remote: bool = False
     remote_unlisted_countries: bool = False
     countries: dict[str, list[str]] = {}
@@ -140,8 +141,6 @@ class LinkedInToggle(SourceToggle):
     ``country`` knob here.
     """
 
-    results_wanted_per_query: int = 50
-    hours_old: int = 168
     # Each city in locations.countries gets its own search per search term, so
     # a local posting competes with its own city rather than the whole
     # country. The cap counts those searches and bounds request volume: a
@@ -158,8 +157,6 @@ class IndeedToggle(SourceToggle):
     fallback used when a configured ISO country code is not in JobSpy's enum.
     """
 
-    results_wanted_per_query: int = 50
-    hours_old: int = 168
     country: str = "USA"
     max_city_queries: int = 40
 
@@ -186,11 +183,13 @@ class ScraperConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
     # Honors Retry-After, else exponential backoff (1.5s, 3s, 6s, ... up to 30s).
     max_retries: int = 3
-    # hn_jobs searches 17k+ posts of history; other sources are recent anyway.
-    max_age_days: int = 30
+    # Applies where a site can filter by posting date: hn_jobs (17k+ posts of
+    # history), LinkedIn and Indeed. Board sources list only open jobs.
+    max_age_days: int = Field(default=7, ge=0)
+    # Most jobs per search on LinkedIn, Indeed, and Apple.
+    max_results: int = Field(default=50, ge=1)
     user_agent: str = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) "
         "Gecko/20100101 Firefox/128.0"
@@ -200,12 +199,13 @@ class ScraperConfig(BaseModel):
     # Inc.`. The stored Company value never changes.
     company_noise_words: list[str] = []
     timeout: int = 30
-    search_terms: list[str] | None = None
+    # Searched in addition to the terms that come from `roles`.
+    search_terms: list[str] = []
     # Overridden per scrape phase by the orchestrator (_ctx_with_headless), so a
     # user value has no effect; deliberately left out of the config template.
     headless: bool = False
-    parallel_workers: int = 8
-    max_pages: int = 3
+    # Sites searched at the same time.
+    max_parallel: int = Field(default=4, ge=1)
     browser: Literal["firefox", "chromium", "webkit"] = "firefox"
 
 
@@ -234,6 +234,33 @@ class Criterion(BaseModel):
         return cleaned
 
 
+def check_cooldown(value: object) -> str:
+    """A `backfill_cooldown` value: a duration such as `24h`, `0`, or `missing`.
+
+    `0` skips no job; `missing` skips every job that has a review.
+    """
+    text = str(value).strip().lower()
+    if text in ("0", "missing"):
+        return text
+    try:
+        parse_duration(text)
+    except ValueError:
+        raise ValueError(
+            f"invalid backfill cooldown {value!r}: use a duration such as 24h or "
+            "30m, 0, or missing"
+        ) from None
+    return text
+
+
+def cooldown_window(value: str) -> timedelta | Literal["missing"]:
+    """How far back a checked `backfill_cooldown` value reaches."""
+    if value == "missing":
+        return "missing"
+    if value == "0":
+        return timedelta(0)
+    return parse_duration(value)
+
+
 class EnrichmentConfig(BaseModel):
     """Knobs for the post-scrape enrichment pass (comp, fit, notes).
 
@@ -243,10 +270,10 @@ class EnrichmentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # One AI call per job returns the fit score, the note, the remote label,
+    # and the criteria answers, so one switch covers all of them.
+    enabled: bool = True
     enrich_timeout: int = 30
-    enrich_fit: bool = True
-    enrich_notes: bool = True
-    enrich_is_remote: bool = True
     max_enrich_fit: int = 50
     # Pay, visa and EEO text usually sits at the end of a long posting, so a
     # low cap hides it from the criteria questions.
@@ -255,14 +282,12 @@ class EnrichmentConfig(BaseModel):
         ge=100,
     )
     # Lets an interrupted `backfill --force-update` resume where it stopped.
-    force_recook_cooldown_hours: int | Literal["missing"] = 24
+    backfill_cooldown: str = "24h"
 
-    @field_validator("force_recook_cooldown_hours")
+    @field_validator("backfill_cooldown", mode="before")
     @classmethod
-    def _cooldown_non_negative(cls, v: int | str) -> int | str:
-        if isinstance(v, int) and v < 0:
-            raise ValueError("force_recook_cooldown_hours must be >= 0 or 'missing'")
-        return v
+    def _known_cooldown(cls, value: object) -> str:
+        return check_cooldown(value)
 
     detail_delay_seconds: float = 0.5
     criteria: list[Criterion] = []
@@ -390,6 +415,8 @@ class JobSearchPlugin(PluginConfigBase):
     roles: list[str] = []
     domain_keywords: list[str] = []
     seniority_keywords: list[str] = []
+    # Only the AI review reads it; it filters nothing.
+    home_city: str | None = None
     locations: Locations | None = None
     scraper: ScraperConfig = ScraperConfig()
     enrichment: EnrichmentConfig = EnrichmentConfig()

@@ -121,10 +121,13 @@ def test_enrichment_criteria_parse_list() -> None:
 
 
 def test_prompt_base_contract_no_criteria_no_context() -> None:
-    """Base system prompt: fit/notes-only JSON, no criteria key, no tech-stack ask."""
+    """Base system prompt: fit/notes/remote JSON, no criteria key, no tech-stack ask."""
     prompt = _build_fit_notes_system("SRE", "Based in: Vancouver", "Vancouver")
     assert '"criteria"' not in prompt
-    assert '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"}' in prompt
+    assert (
+        '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>", '
+        '"remote": "remote" | "hybrid" | "onsite"}'
+    ) in prompt
     assert "Do not list the tech stack" in prompt
     # No context => fit falls back to role/company/location signal.
     assert "based on role/company/location" in prompt

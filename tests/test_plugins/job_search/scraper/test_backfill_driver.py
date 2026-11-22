@@ -66,7 +66,7 @@ def _row(
 def _plugin(max_enrich_fit: int = 50) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "scraper": {"timeout": 5, "max_retries": 1},
             "enrichment": {
                 "max_enrich_fit": max_enrich_fit,
                 "detail_delay_seconds": 0,
@@ -1090,7 +1090,7 @@ def test_backfill_dry_run_respects_disabled_toggles(
 ) -> None:
     """With either fit/notes toggle off, the fit/notes axis reports zero need.
 
-    The fit pass refuses to run unless BOTH enrich_fit and enrich_notes are on
+    The fit pass refuses to run unless enrichment.enabled is on
     (audit M3), so the dry-run count must be gated the same way -- otherwise it
     over-reports need and the start-of-run short-circuit never fires.
     """
@@ -1099,9 +1099,9 @@ def test_backfill_dry_run_respects_disabled_toggles(
 
     plugin = JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "scraper": {"timeout": 5, "max_retries": 1},
             "enrichment": {
-                "enrich_fit": False,
+                "enabled": False,
                 "detail_delay_seconds": 0,
             },
         }

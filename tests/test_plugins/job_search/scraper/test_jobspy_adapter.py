@@ -161,7 +161,6 @@ class TestMergedJobspyScraper:
             # the country codes, so every entry maps to whole-country ([]).
             "locations": {"countries": {c: [] for c in (countries or ["US"])}},
             "scraper": {
-                "enabled": True,
                 "search_terms": ["software engineer"],
             },
         }
@@ -215,31 +214,46 @@ class TestMergedJobspyScraper:
         scrape_jobspy(self._config(), sites=["linkedin"])
         assert calls["site_name"] == ["linkedin"]
 
-    def test_results_wanted_and_hours_old_knobs_reach_scrape_jobs(
+    def test_max_results_and_max_age_days_reach_scrape_jobs(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """results_wanted_per_query / hours_old propagate to the scrape_jobs call.
-
-        A single enabled site keeps the per-site toggle unambiguous.
-        """
+        """scraper.max_results / max_age_days propagate to the scrape_jobs call."""
         calls = self._install_mock(monkeypatch)
-        scrape_jobspy(
-            self._config(
-                linkedin={
-                    "enabled": True,
-                    "results_wanted_per_query": 17,
-                    "hours_old": 72,
+        cfg = ScrapeContext(
+            plugin=JobSearchPlugin.model_validate(
+                {
+                    "roles": ["SRE"],
+                    "locations": {"countries": {"US": []}},
+                    "scraper": {"max_results": 17, "max_age_days": 3},
+                    "sources": {"linkedin": True},
                 }
-            ),
-            sites=["linkedin"],
+            )
         )
+        scrape_jobspy(cfg, sites=["linkedin"])
         assert calls["results_wanted"] == 17
         assert calls["hours_old"] == 72
 
-    def test_search_terms_override_reaches_scrape_jobs(
+    def test_max_age_days_zero_sends_no_age_limit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """scraper.search_terms overrides the query term sent to scrape_jobs."""
+        calls = self._install_mock(monkeypatch)
+        cfg = ScrapeContext(
+            plugin=JobSearchPlugin.model_validate(
+                {
+                    "roles": ["SRE"],
+                    "locations": {"countries": {"US": []}},
+                    "scraper": {"max_age_days": 0},
+                    "sources": {"linkedin": True},
+                }
+            )
+        )
+        scrape_jobspy(cfg, sites=["linkedin"])
+        assert calls["hours_old"] is None
+
+    def test_search_terms_reach_scrape_jobs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """scraper.search_terms reaches scrape_jobs as a query term."""
         calls = self._install_mock(monkeypatch)
         cfg = ScrapeContext(
             plugin=JobSearchPlugin.model_validate(
@@ -247,7 +261,6 @@ class TestMergedJobspyScraper:
                     "roles": ["ignored role"],
                     "locations": {"countries": {"US": []}},
                     "scraper": {
-                        "enabled": True,
                         "search_terms": ["platform engineer"],
                     },
                     "sources": {"linkedin": True},
@@ -335,7 +348,7 @@ class TestMergedJobspyScraper:
         cfg: dict[str, object] = {
             "roles": ["software engineer"],
             "locations": {"countries": city_map},
-            "scraper": {"enabled": True, "search_terms": ["software engineer"]},
+            "scraper": {"search_terms": ["software engineer"]},
         }
         cfg["sources"] = sources or {"indeed": True}
         return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))

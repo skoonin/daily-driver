@@ -30,7 +30,6 @@ def test_remoteok_live_returns_list_with_expected_fields() -> None:
         "job_search": {
             "roles": ["software engineer"],
             "scraper": {
-                "enabled": True,
                 "search_terms": ["software"],
             },
         }
@@ -52,7 +51,7 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
     Pip pin (`python-jobspy>=1.1.82,<1.4`) + the ``TypeError`` hard-fail in
     ``scrape_jobspy`` enforce the version contract; this test exercises the
     real call path end-to-end. Asserts shape only — empty results are fine
-    (LinkedIn rate-limits, search may not match anything in `hours_old`).
+    (LinkedIn rate-limits, search may not match anything in `max_age_days`).
     """
     from daily_driver.plugins.job_search.config import JobSearchPlugin
     from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
@@ -61,13 +60,10 @@ def test_jobspy_linkedin_fetch_description_accepted() -> None:
         {
             "roles": ["software engineer"],
             "locations": {"countries": {"US": []}},
-            "scraper": {
-                "enabled": True,
-                "search_terms": ["software engineer"],
-            },
+            "scraper": {"max_results": 3},
             "sources": {
-                "linkedin": {"enabled": True, "results_wanted_per_query": 3},
-                "indeed": {"enabled": True, "results_wanted_per_query": 3},
+                "linkedin": {"enabled": True},
+                "indeed": {"enabled": True},
             },
         }
     )

@@ -123,7 +123,7 @@ def test_golden_round_trip_is_byte_stable(tmp_path: Path) -> None:
 def _backfill_plugin() -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "scraper": {"timeout": 5, "max_retries": 1},
             "enrichment": {
                 "max_enrich_fit": 0,
                 "detail_delay_seconds": 0,

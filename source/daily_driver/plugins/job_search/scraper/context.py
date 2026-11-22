@@ -191,10 +191,9 @@ def source_toggle(plugin: JobSearchPlugin, key: str, toggle_type: type[_T]) -> _
     return toggle if isinstance(toggle, toggle_type) else toggle_type()
 
 
-def home_city(plugin: JobSearchPlugin) -> str:
-    """Return the configured home city from the locations block."""
-    loc = plugin.locations
-    return (loc.home_city if loc and loc.home_city else None) or "Vancouver, BC"
+def home_city(plugin: JobSearchPlugin) -> str | None:
+    """The configured home city, or None when it is not set."""
+    return (plugin.home_city or "").strip() or None
 
 
 def countries_list(plugin: JobSearchPlugin) -> list[str]:

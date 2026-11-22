@@ -102,7 +102,7 @@ daily-driver/
 │   │   ├── -n, --dry-run
 │   │   ├── --limit N
 │   │   ├── --force-update
-│   │   ├── --cooldown-hours N|missing
+│   │   ├── --cooldown DURATION|missing
 │   │   ├── -sd, --skip-descriptions
 │   │   └── -j, --json
 │   ├── promote

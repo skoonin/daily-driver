@@ -47,7 +47,6 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
 def _us_remote_plugin() -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "roles": ["Engineer"],
             "locations": {"countries": {"US": []}, "remote": True},
         }
@@ -272,7 +271,6 @@ def test_append_source_location_filters_and_drops_urlless(tmp_path: Path) -> Non
 def runner_us_only_plugin() -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "roles": ["Engineer"],
             "locations": {"countries": {"US": []}, "remote": False},
         }
@@ -446,7 +444,6 @@ def test_dry_run_appends_nothing_per_source(
 def _enrich_plugin(budget: int = 50) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
                 "max_enrich_fit": budget,
                 "enrich_timeout": 5,
@@ -552,7 +549,6 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
     )
     plugin = JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,
@@ -603,7 +599,6 @@ def test_run_interrupt_mid_enrichment_flushes_partial(
 def _overlap_plugin(budget: int) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
                 "max_enrich_fit": budget,
                 "enrich_timeout": 5,
@@ -1027,10 +1022,8 @@ def test_disabled_passes_render_no_bars(
     )
     plugin = JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
-                "enrich_fit": False,
-                "enrich_notes": False,
+                "enabled": False,
                 "enrich_timeout": 5,
             },
         }
@@ -1147,7 +1140,6 @@ def test_manifest_records_interrupted_on_keyboard_interrupt(
     )
     plugin = JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,
@@ -1220,7 +1212,6 @@ def _enrich_plugin_serial() -> JobSearchPlugin:
     # The serial fit pass applies results incrementally (one per call).
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
             "enrichment": {
                 "max_enrich_fit": 50,
                 "enrich_timeout": 5,

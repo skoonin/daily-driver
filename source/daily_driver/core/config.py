@@ -57,8 +57,12 @@ _REMOVED_SETTINGS = {
         "that runs interactive under ai.providers."
     ),
     "ai.claude": (
-        "delete it and the indented lines under it; set "
-        "ai.providers.claude.max_parallel instead."
+        "delete it and the indented lines under it; job reviews run 4 at a "
+        "time, and ai.providers.<name>.max_parallel can lower that."
+    ),
+    "tracker.warn_unknown_status": (
+        "delete it; to stop the warning for a status of your own, list the "
+        "status under tracker.extra_statuses."
     ),
     "ai.ollama": (
         "delete it and the indented lines under it; ollama is a built-in "

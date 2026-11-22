@@ -35,7 +35,6 @@ def _config(roles: list[str] | None = None) -> ScrapeContext:
             {
                 "roles": roles or ["SRE"],
                 "scraper": {
-                    "enabled": True,
                     "timeout": 1,
                     "max_retries": 0,
                 },

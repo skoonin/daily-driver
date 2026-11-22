@@ -22,7 +22,7 @@ def ctx_on() -> ScrapeContext:
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
-                "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+                "scraper": {"timeout": 5, "max_retries": 1},
                 "enrichment": {"detail_delay_seconds": 0},
             }
         )

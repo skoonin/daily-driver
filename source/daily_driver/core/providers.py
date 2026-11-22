@@ -162,7 +162,7 @@ class ProviderConfig(BaseModel):
     model: str | None = None
     model_file: ModelFile | None = None
     timeout: int | None = Field(default=None, ge=1)
-    max_parallel: int = Field(default=4, ge=1)
+    max_parallel: int | None = Field(default=None, ge=1)
 
     @field_validator("tasks")
     @classmethod
@@ -398,6 +398,16 @@ def provider_for(config: Config, task: Task, plugin: str | None = None) -> Provi
     providers = resolve_providers(_user_providers(config))
     name = _route(config, providers, task, plugin)
     return Provider(name, providers[name])
+
+
+def parallel_calls(provider: Provider, task: Task) -> int:
+    """How many calls of `task` to run on `provider` at the same time.
+
+    The task sets the number; a provider's `max_parallel` lowers it, for a
+    model server that answers fewer requests at once.
+    """
+    cap = provider.settings.max_parallel
+    return task.max_parallel if cap is None else min(task.max_parallel, cap)
 
 
 def _user_providers(config: Config) -> Mapping[str, ProviderConfig]:

@@ -3,7 +3,7 @@ truncated -- coverage is incomplete and the run must say so, not look clean.
 
 Plan phase 2. Detection lives inside the sources (the runner only sees the
 flat merged list): jobspy flags a (term x country) query whose PRE-role-filter
-row count hits ``results_wanted_per_query`` ("cap"), and LinkedIn's ~100-row
+row count hits ``scraper.max_results`` ("cap"), and LinkedIn's ~100-row
 per-IP wall when a larger request plateaus ("plateau"). Records land on
 ``ScrapeContext.saturation``; the runner renders a Scraping-section line and a
 ``saturated_queries`` manifest key. Detection only -- no scrape behavior
@@ -50,9 +50,8 @@ def _ctx(results_wanted: int, sites: dict[str, Any] | None = None) -> ScrapeCont
     cfg: dict[str, Any] = {
         "roles": ["sre"],
         "locations": {"countries": {"US": []}},
-        "scraper": {"enabled": True, "search_terms": ["sre"]},
-        "sources": sites
-        or {"linkedin": {"enabled": True, "results_wanted_per_query": results_wanted}},
+        "scraper": {"search_terms": ["sre"], "max_results": results_wanted},
+        "sources": sites or {"linkedin": {"enabled": True}},
     }
     return ScrapeContext(plugin=JobSearchPlugin.model_validate(cfg))
 
@@ -111,7 +110,7 @@ def test_merged_call_attributes_per_site(monkeypatch: pytest.MonkeyPatch) -> Non
     ctx = _ctx(
         results_wanted=10,
         sites={
-            "linkedin": {"enabled": True, "results_wanted_per_query": 10},
+            "linkedin": {"enabled": True},
             "indeed": {"enabled": True},
         },
     )
@@ -157,7 +156,6 @@ def test_workday_page_ceiling_records_saturation(
         plugin=JobSearchPlugin.model_validate(
             {
                 "roles": ["sre"],
-                "scraper": {"enabled": True},
                 "sources": {
                     "workday": {
                         "enabled": True,

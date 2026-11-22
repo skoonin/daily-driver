@@ -287,8 +287,8 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
     ``site`` field via ``normalize_jobspy_row``, so a multi-site call still yields
     rows labeled "linkedin" / "indeed" individually.
 
-    Query knobs (``results_wanted_per_query`` / ``hours_old``) are read from each
-    site's own toggle; the indeed-only ``country`` knob backs JobSpy's
+    The result cap and age limit come from ``scraper.max_results`` and
+    ``scraper.max_age_days``; the indeed-only ``country`` knob backs JobSpy's
     ``country_indeed`` fallback. python-jobspy is the implementation detail
     behind these site sources; it is not part of the user surface.
 
@@ -335,14 +335,16 @@ def scrape_jobspy(ctx: ScrapeContext, *, sites: list[str] | None = None) -> list
         log.debug("[linkedin/indeed] no sites enabled; skipping")
         return []
 
-    # Query knobs come from whichever site is in play. The runner always hands a
-    # single-site list, so the one site's toggle is the obvious source. A direct
-    # multi-site test call reads linkedin's knobs when present (else indeed's).
+    # max_city_queries comes from whichever site is in play. The runner always
+    # hands a single-site list, so the one site's toggle is the obvious source. A
+    # direct multi-site test call reads linkedin's when present (else indeed's).
     knob_toggle: LinkedInToggle | IndeedToggle = (
         linkedin_toggle if "linkedin" in enabled_sites else indeed_toggle
     )
-    results_wanted = knob_toggle.results_wanted_per_query
-    hours_old = knob_toggle.hours_old
+    results_wanted = ctx.plugin.scraper.max_results
+    # JobSpy takes hours, and None for no limit.
+    age_days = ctx.plugin.scraper.max_age_days
+    hours_old = age_days * 24 if age_days > 0 else None
     # country_indeed only affects Indeed; the fallback for unknown ISO codes.
     default_country_indeed = indeed_toggle.country
 

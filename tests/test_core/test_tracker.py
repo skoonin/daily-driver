@@ -489,8 +489,19 @@ def test_add_unknown_status_emits_warning(
         tracker.add(category="task", title="weird", status="foobar")
     text = caplog.text
     assert "foobar" in text
-    # The hint should reference the config knob so users know how to silence.
-    assert "warn_unknown_status" in text
+    # The hint names the setting that silences it.
+    assert "tracker.extra_statuses" in text
+
+
+def test_job_status_warning_has_no_extra_statuses_hint(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """extra_statuses does not apply to job entries, so it is not offered."""
+    tracker = Tracker(workspace)
+    with caplog.at_level(logging.WARNING, logger="daily_driver.tracker"):
+        tracker.add(category="job", title="Some Role", status="foobar")
+    assert "foobar" in caplog.text
+    assert "extra_statuses" not in caplog.text
 
 
 def test_add_recommended_status_no_warning(
@@ -560,13 +571,13 @@ def test_job_category_accepts_job_statuses(
     assert not _tracker_warnings(caplog)
 
 
-def test_warn_silenced_by_config_flag(
+def test_warn_silenced_by_extra_statuses(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Setting tracker.warn_unknown_status: false silences the warning."""
+    """A status listed in tracker.extra_statuses does not warn."""
     config_text = """\
 tracker:
-  warn_unknown_status: false
+  extra_statuses: [weird]
   categories:
     task: {required: [title]}
 """

@@ -158,7 +158,7 @@ def test_plugin_with_tasks_and_config_base_passes() -> None:
 def test_job_search_declares_fit_notes() -> None:
     from daily_driver.plugins.job_search import PLUGIN
 
-    assert Task("fit_notes", "text") in PLUGIN.tasks
+    assert Task("fit_notes", "text", max_parallel=4) in PLUGIN.tasks
 
 
 def test_plugin_redefining_reserved_field_rejected() -> None:

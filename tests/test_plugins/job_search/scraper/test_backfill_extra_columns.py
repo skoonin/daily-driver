@@ -22,7 +22,7 @@ from daily_driver.plugins.job_search.scraper.csv_io import CANONICAL_HEADER
 def _plugin() -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True, "timeout": 5, "max_retries": 1},
+            "scraper": {"timeout": 5, "max_retries": 1},
             "enrichment": {
                 "max_enrich_fit": 0,
                 "detail_delay_seconds": 0,

@@ -55,7 +55,7 @@ A value of the wrong type still stops every command, because Daily Driver has no
 | `claude.resume_check_in` | Use `ai.interactive.resume_check_in`. |
 | `ai.provider`, `ai.summary`, `ai.voice_update` | List the task under `tasks` of a provider in `ai.providers`. |
 | `ai.model`, `ai.interactive.model` | Set `model` on a provider in `ai.providers`. |
-| `ai.claude` | Set `ai.providers.claude.max_parallel`. |
+| `ai.claude` | Delete it. Job reviews run 4 at a time; `ai.providers.<name>.max_parallel` can lower that. |
 | `ai.ollama` | Set `model` and `tasks` on `ai.providers.ollama`. The built-in `ollama` provider uses `http://localhost:11434/v1`. |
 | `plugins.job_search.enrichment.provider`, `.model`, `.fit_notes` | Set `plugins.job_search.provider` or `plugins.job_search.tasks.fit_notes` to a provider in `ai.providers`. |
 | `plugins.job_search.persona` | Keep your job titles in `roles` and your background in `context.md`. |
@@ -67,7 +67,7 @@ Run `daily-driver doctor` to see the warnings again.
 
 ## `jobs` is an invalid choice
 
-Job search is opt-in. While it is off, and outside a workspace, `jobs` is not a command. To switch it on, add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` also needs `scraper.enabled: true` and a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on.
+Job search is opt-in. While it is off, and outside a workspace, `jobs` is not a command. To switch it on, add `plugins: {job_search: {}}` to `.dd-config.yaml`, or, if a `job_search` block already sets `enabled: false`, remove that line. Run `daily-driver doctor --fix` to add the job sections to the prompts and README. For a new workspace, use `daily-driver init --job-search`. `jobs run` also needs a source ([usage.md](usage.md#enable-it)); the other `jobs` actions need only job search on.
 
 ## Agents still installed after you turn a run off
 

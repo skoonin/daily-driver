@@ -13,26 +13,26 @@ from daily_driver.cli._common import add_global_flags, resolve_workspace
 from daily_driver.core.console import Console
 from daily_driver.core.locking import file_lock
 from daily_driver.core.workspace import Workspace
+from daily_driver.durations import parse_duration
 
 
 def _parse_duration(value: str) -> int:
     """Parse a duration string to total minutes.
 
-    Accepts: 30m, 2h, 1h30m, or bare integer (minutes).
+    Accepts: 30m, 2h, 1h30m, 1d, or bare integer (minutes).
     Raises argparse.ArgumentTypeError on invalid input.
     """
     value = value.strip()
     if re.fullmatch(r"\d+", value):
         return int(value)
-    match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?", value)
-    if match and (match.group(1) or match.group(2)):
-        hours = int(match.group(1) or 0)
-        minutes = int(match.group(2) or 0)
-        total = hours * 60 + minutes
-        if total > 0:
-            return total
+    try:
+        total = int(parse_duration(value).total_seconds()) // 60
+    except ValueError:
+        total = 0
+    if total > 0:
+        return total
     raise argparse.ArgumentTypeError(
-        f"invalid duration {value!r}: use 30m, 2h, 1h30m, or bare minutes"
+        f"invalid duration {value!r}: use 30m, 2h, 1h30m, 1d, or bare minutes"
     )
 
 
@@ -56,7 +56,7 @@ def add_parser(
         metavar="DURATION",
         type=_parse_duration,
         help=(
-            "Duration: 30m, 2h, 1h30m, or bare minutes "
+            "Duration: 30m, 2h, 1h30m, 1d, or bare minutes "
             "(default: focus.default_duration in .dd-config.yaml, fallback 25m)"
         ),
     )

@@ -79,7 +79,7 @@ def test_no_enrich_appends_rows_with_zero_enricher_calls(
     monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom_concurrent)
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=True,
@@ -109,7 +109,7 @@ def test_no_enrich_manifest_records_zero_enrichment_counters(
     monkeypatch.setattr(enrichment_pkg, "enrich_fit_and_notes", boom)
 
     runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=True,
@@ -141,7 +141,7 @@ def test_no_enrich_summary_notes_skip(
     )
 
     runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=True,
@@ -199,7 +199,7 @@ def test_default_path_still_enriches(
     monkeypatch.setattr(detail_mod, "enrich_job_details", fake_detail)
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=False,
@@ -245,7 +245,7 @@ def test_run_threads_discovery_matched_cache_onto_ctx(
     )
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         state_dir,
         no_enrich=True,

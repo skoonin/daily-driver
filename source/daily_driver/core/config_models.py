@@ -25,7 +25,6 @@ class TrackerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_category: str = "task"
-    warn_unknown_status: bool = True
     extra_statuses: list[str] = []
     terminal_statuses: list[str] = []
     categories: dict[str, TrackerCategoryConfig] = {

@@ -3,7 +3,7 @@ from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.tasks import Task
 
 # Fit score, note, remote label and criteria answers for each job.
-FIT_NOTES = Task("fit_notes", "text")
+FIT_NOTES = Task("fit_notes", "text", max_parallel=4)
 
 # One vocabulary for jobs.csv rows and `job`-category tracker entries, so a
 # promoted row keeps its status. Both share the status machinery in core.statuses.
@@ -24,6 +24,19 @@ _ROUTE_THROUGH_PROVIDERS = (
     "delete it and the indented lines under it; set "
     "plugins.job_search.provider, or plugins.job_search.tasks.fit_notes, "
     "to a provider under ai.providers."
+)
+
+_ONE_REVIEW_SWITCH = (
+    "delete it; set plugins.job_search.enrichment.enabled, which turns the "
+    "whole job review on or off."
+)
+_MAX_RESULTS = (
+    "delete it; set plugins.job_search.scraper.max_results, the most jobs per "
+    "search on every site."
+)
+_MAX_AGE = (
+    "delete it; set plugins.job_search.scraper.max_age_days, the oldest job to "
+    "keep on every site."
 )
 
 PLUGIN = Plugin(
@@ -67,6 +80,34 @@ PLUGIN = Plugin(
             "delete it and the indented lines under it; set "
             "plugins.job_search.scheduler.run instead, where `enabled: false` "
             "turns the run off."
+        ),
+        "plugins.job_search.scraper.enabled": (
+            "delete it; `jobs run` searches the sites listed under "
+            "plugins.job_search.sources."
+        ),
+        "plugins.job_search.scraper.parallel_workers": (
+            "rename it to plugins.job_search.scraper.max_parallel."
+        ),
+        "plugins.job_search.scraper.max_pages": (
+            "delete it; set plugins.job_search.scraper.max_results, the most "
+            "jobs per search."
+        ),
+        "plugins.job_search.sources.linkedin.results_wanted_per_query": _MAX_RESULTS,
+        "plugins.job_search.sources.indeed.results_wanted_per_query": _MAX_RESULTS,
+        "plugins.job_search.sources.linkedin.hours_old": _MAX_AGE,
+        "plugins.job_search.sources.indeed.hours_old": _MAX_AGE,
+        "plugins.job_search.locations.home_city": (
+            "move it up one level, to plugins.job_search.home_city."
+        ),
+        "plugins.job_search.enrichment.enrich_fit": _ONE_REVIEW_SWITCH,
+        "plugins.job_search.enrichment.enrich_notes": _ONE_REVIEW_SWITCH,
+        "plugins.job_search.enrichment.enrich_is_remote": (
+            "delete it; every job review now labels the job remote, hybrid, or "
+            "onsite."
+        ),
+        "plugins.job_search.enrichment.force_recook_cooldown_hours": (
+            "delete it; set plugins.job_search.enrichment.backfill_cooldown to a "
+            "duration such as 24h, or to 0 or missing."
         ),
         "scheduler.discovery": (
             "delete it and the indented lines under it; set "

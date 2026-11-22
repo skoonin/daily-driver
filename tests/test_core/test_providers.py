@@ -10,8 +10,10 @@ from pydantic import ValidationError
 from daily_driver.core.config_models import Config
 from daily_driver.core.providers import (
     DEFAULT_PROVIDER,
+    Provider,
     ProviderConfig,
     builtin_providers,
+    parallel_calls,
     provider_for,
     resolved_provider,
 )
@@ -477,3 +479,31 @@ def test_resume_check_in_needs_a_resume_template() -> None:
                 },
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Calls at the same time
+# ---------------------------------------------------------------------------
+
+_BATCH = Task("batch", "text", max_parallel=4)
+
+
+def test_no_builtin_provider_caps_parallel_calls():
+    assert all(entry.max_parallel is None for entry in builtin_providers().values())
+
+
+@pytest.mark.parametrize(("cap", "expected"), [(None, 4), (2, 2), (8, 4)])
+def test_parallel_calls_is_the_task_number_lowered_by_the_provider_cap(cap, expected):
+    provider = Provider(
+        "server", ProviderConfig(base_url="http://x/v1", max_parallel=cap)
+    )
+    assert parallel_calls(provider, _BATCH) == expected
+
+
+def test_a_task_runs_one_call_at_a_time_unless_it_says_otherwise():
+    assert Task("one", "text").max_parallel == 1
+
+
+def test_a_task_needs_at_least_one_call_at_a_time():
+    with pytest.raises(ValueError, match="at least 1"):
+        Task("none", "text", max_parallel=0)

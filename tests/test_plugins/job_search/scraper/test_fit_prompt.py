@@ -115,3 +115,31 @@ def test_max_description_words_accepts_the_floor() -> None:
 def test_max_description_words_rejects_below_floor() -> None:
     with pytest.raises(ValidationError):
         EnrichmentConfig.model_validate({"max_description_words": 99})
+
+
+# --- No home city ------------------------------------------------------------
+
+
+def test_system_prompt_without_a_home_city_names_no_city() -> None:
+    prompt = _build_fit_notes_system("SRE", "loc", None, (), _CONTEXT)
+    assert "based in" not in prompt
+    assert "roles located in" not in prompt
+    assert "The candidate is targeting: SRE.\n" in prompt
+    assert "(3) location fit vs. the preferences above; (4)" in prompt
+
+
+def test_system_prompt_without_roles_or_home_city_has_no_candidate_line() -> None:
+    prompt = _build_fit_notes_system("", "loc", None)
+    assert "The candidate is" not in prompt
+
+
+def test_location_summary_without_a_home_city_names_no_city() -> None:
+    from daily_driver.plugins.job_search.config import JobSearchPlugin
+    from daily_driver.plugins.job_search.scraper.enrichment.llm import (
+        _location_summary,
+    )
+    from daily_driver.plugins.job_search.scraper.runner import ScrapeContext
+
+    summary = _location_summary(ScrapeContext(plugin=JobSearchPlugin()))
+    assert "Based in" not in summary
+    assert "Vancouver" not in summary

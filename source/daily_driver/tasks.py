@@ -19,8 +19,19 @@ Mode = Literal["interactive", "agent", "text"]
 
 @dataclass(frozen=True)
 class Task:
+    """A kind of AI call.
+
+    `max_parallel` is how many calls of this task the program runs at the same
+    time when it has a batch; a provider's own `max_parallel` can lower it.
+    """
+
     name: str
     mode: Mode
+    max_parallel: int = 1
+
+    def __post_init__(self) -> None:
+        if self.max_parallel < 1:
+            raise ValueError(f"task {self.name!r}: max_parallel must be at least 1")
 
 
 INTERACTIVE = Task("interactive", "interactive")

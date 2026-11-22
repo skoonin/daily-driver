@@ -329,6 +329,7 @@ from daily_driver.plugins.reminders.config import RemindersPlugin
 from daily_driver.tasks import Task
 
 # mode: "text" (prompt in, text out), "agent" (reads workspace files), or "interactive"
+# max_parallel: calls run at the same time in a batch (default 1)
 PHRASE = Task("phrase", "text")
 
 PLUGIN = Plugin(
@@ -382,7 +383,7 @@ except ai.AIInvocationError as exc:
 | `provider_for(config, task, plugin=None)` | Returns the `Provider` for a task. For a plugin task: `plugins.<name>.tasks.<task>`, then `plugins.<name>.provider`, then `claude`. For a core task: the provider that lists it under `tasks`, else `claude`. |
 | `ai.invoke(provider, task, prompt, *, workspace=None, system=None, model=None, timeout=None)` | Runs a text or agent task and returns the answer. A command provider gets the prompt on stdin. An HTTP provider gets a chat completion request. A text task runs in an empty temporary directory, so put all data in the prompt. |
 | `ai.AIInvocationError`, `ai.AITimeoutError` | The only exceptions to catch, whichever provider ran. |
-| `provider.settings.max_parallel` | Calls to run at the same time, for batch work. |
+| `parallel_calls(provider, task)` | How many calls of a task to run at the same time, for batch work: the task's `max_parallel`, lowered to the provider's `max_parallel` when that is set. |
 
 Rules:
 
@@ -406,7 +407,7 @@ This recipe applies to the `job_search` plugin. Each scraper lives in its own mo
 scrape_<name>(ctx: ScrapeContext) → list[dict]
     ↓
 run_all_scrapers:
-    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 8)
+    phase 1 — headless sources in ThreadPoolExecutor (scraper.max_parallel, default 4)
     phase 2 — Playwright sources serial (memory + bot-detection)
     ↓ as each source finishes
 _JobSink.append_source: dedup (URL + company+role key) → location filter → lift to EnrichedJob → append_jobs_typed (flock-guarded)

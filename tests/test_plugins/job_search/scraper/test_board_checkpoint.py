@@ -39,7 +39,7 @@ def _plugin(sources: dict[str, Any]) -> JobSearchPlugin:
     return JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "scraper": {"timeout": 1, "max_retries": 0},
             "sources": sources,
         }
     )
@@ -447,7 +447,7 @@ def test_crash_after_first_board_keeps_its_rows_in_csv(
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "scraper": {"timeout": 1, "max_retries": 0},
             "locations": {"countries": {"US": []}, "remote": True},
             "sources": {"greenhouse": {"greenhouse_boards": ["one", "two"]}},
         }
@@ -491,7 +491,7 @@ def test_degraded_checkpointed_source_rows_appear_exactly_once(
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "scraper": {"timeout": 1, "max_retries": 0},
             "locations": {"countries": {"US": []}, "remote": True},
             "sources": {"greenhouse": {"greenhouse_boards": ["ok", "down"]}},
         }

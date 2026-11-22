@@ -29,7 +29,7 @@ from daily_driver.core.logging import (
 )
 from daily_driver.core.progress import Group, Item, Phase, RunProgress
 from daily_driver.core.providers import Provider, default_provider
-from daily_driver.plugins.job_search.config import JobSearchPlugin
+from daily_driver.plugins.job_search.config import JobSearchPlugin, cooldown_window
 from daily_driver.plugins.job_search.jobs_lock import (
     LOCK_GIVEUP_MESSAGE,
     LOCK_WAIT_TIMEOUT_SECONDS,
@@ -72,18 +72,14 @@ log = get_logger(__name__)
 # Per-source because each has its own limit knob; workday's page ceiling is a
 # code constant, not config.
 _SATURATION_HINTS: dict[tuple[str, str], str] = {
-    ("linkedin", "cap"): (
-        "results capped; raise results_wanted_per_query or split terms"
-    ),
-    ("indeed", "cap"): (
-        "results capped; raise results_wanted_per_query or split terms"
-    ),
+    ("linkedin", "cap"): ("results capped; raise scraper.max_results or split terms"),
+    ("indeed", "cap"): ("results capped; raise scraper.max_results or split terms"),
     ("linkedin", "plateau"): (
         "stopped early at/past the ~100/IP rate-limit zone; "
         "deeper coverage needs proxies"
     ),
     ("workday", "cap"): "page ceiling hit; some postings unfetched",
-    ("apple", "cap"): "scroll cap hit; raise scraper.max_pages",
+    ("apple", "cap"): "results capped; raise scraper.max_results",
 }
 
 
@@ -110,7 +106,7 @@ def _llm_enrichment_requested(plugin: JobSearchPlugin) -> bool:
     warranted only when it is on.
     """
     cfg = plugin.enrichment
-    return cfg.enrich_fit or cfg.enrich_notes
+    return cfg.enabled
 
 
 def _http_enrichment_preflight(provider: Provider) -> bool:
@@ -164,10 +160,10 @@ def _backfill_needs(
       since one fit/notes call fills both Fit and Notes. There is no separate
       notes count (a single call covers it), so the dry-run report and the
       nothing-to-do short-circuit speak in those terms. The count is gated on
-      BOTH ``enrich_fit`` and ``enrich_notes``: the fit pass refuses to run
-      unless both are on, so a disabled axis reports zero need rather than
-      over-reporting work the pass would never do. Under ``force`` every active
-      row counts (the enricher re-enriches and overwrites all of them).
+      ``enrichment.enabled``: with the review off the fit pass never runs, so
+      it reports zero need rather than over-reporting work it would never do.
+      Under ``force`` every active row counts (the enricher re-enriches and
+      overwrites all of them).
     - ``comp`` counts rows whose cached description parses to a comp value the
       row doesn't already hold (all no-comp rows; comp-holding rows only under
       ``force``). Mirrors the detail phase's comp-from-text pre-pass, so a run
@@ -201,7 +197,7 @@ def _backfill_needs(
             for j in active
             if _fit_notes_eligible(j, force=force, cooldown_cutoff=cooldown_cutoff)
         )
-        if (cfg.enrich_fit and cfg.enrich_notes)
+        if cfg.enabled
         else 0
     )
     comp = sum(1 for j in active if comp_recompute_value(j, force=force))
@@ -228,7 +224,7 @@ def run_backfill(
     dry_run: bool = False,
     limit: int | None = None,
     force: bool = False,
-    cooldown_hours: int | str | None = None,
+    cooldown: str | None = None,
     emit_json: bool = False,
     fetch_descriptions: bool = True,
 ) -> dict[str, Any]:
@@ -299,24 +295,25 @@ def run_backfill(
     lock_path = jobs_lock_path(ephemeral_dir)
 
     # Force-update cooldown: skip rows enriched within the window so an
-    # interrupted force-update resumes instead of restarting. CLI --cooldown-hours
+    # interrupted force-update resumes instead of restarting. CLI --cooldown
     # overrides the config default; the cutoff is only meaningful under force.
     # `0` disables it (re-enrich every active row); `missing` re-enriches only
     # rows with no enrichment timestamp yet -- modelled as a cutoff before any
     # real timestamp, so every already-enriched row falls "within cooldown".
-    resolved_cooldown: int | str = (
-        cooldown_hours
-        if cooldown_hours is not None
-        else plugin.enrichment.force_recook_cooldown_hours
+    window = cooldown_window(
+        cooldown if cooldown is not None else plugin.enrichment.backfill_cooldown
     )
     cooldown_cutoff: datetime | None
     if not force:
         cooldown_cutoff = None
-    elif resolved_cooldown == "missing":
+    elif window == "missing":
         cooldown_cutoff = datetime.min.replace(tzinfo=timezone.utc)
-    elif isinstance(resolved_cooldown, int) and resolved_cooldown > 0:
-        cooldown_cutoff = backfill_started_at - timedelta(hours=resolved_cooldown)
-    else:  # 0 (or unexpected) -> cooldown disabled
+    elif window > backfill_started_at - datetime.min.replace(tzinfo=timezone.utc):
+        # Reaches back past every timestamp: the same as `missing`.
+        cooldown_cutoff = datetime.min.replace(tzinfo=timezone.utc)
+    elif window > timedelta(0):
+        cooldown_cutoff = backfill_started_at - window
+    else:
         cooldown_cutoff = None
 
     # Dry-run reads outside the lock: it never writes, so a concurrent run can't
@@ -558,7 +555,7 @@ def run_backfill(
                 # actually rendered.
                 enrich_cfg = plugin.enrichment
                 phase_rows = 1
-                if enrich_cfg.enrich_fit and enrich_cfg.enrich_notes:
+                if enrich_cfg.enabled:
                     phase_rows += 1
                 rp.reserve(2 + phase_rows)
                 enrich_group = rp.group("Enriching jobs")
@@ -840,7 +837,7 @@ def _enrich_wave(
     # A disabled pass renders NO bar: pinning one with a placeholder total for
     # work that will never run reads as a stuck/ignored toggle.
     enrich_cfg = plugin.enrichment
-    fit_enabled = enrich_cfg.enrich_fit and enrich_cfg.enrich_notes
+    fit_enabled = enrich_cfg.enabled
     fit_phase: Phase | None = None
     if fit_enabled:
         fit_phase = enrich_group.phase(f"Fit and notes{wave_label}", total=total)
@@ -1175,12 +1172,13 @@ def _run_impl(
     csv_path = output_dir / "jobs.csv"
     lock_path = jobs_lock_path(ephemeral_dir)
 
-    if not plugin.scraper.enabled:
+    if sources_override is None and not any(
+        toggle.enabled for toggle in plugin.sources.values()
+    ):
         Console.warning(
-            "Scraper disabled. Set plugins.job_search.scraper.enabled: true "
-            "in .dd-config.yaml"
+            "No sites to search. List them under plugins.job_search.sources "
+            "in .dd-config.yaml."
         )
-        return 0
 
     from daily_driver.plugins.job_search.jobs_archive import load_archive_dedup
 
