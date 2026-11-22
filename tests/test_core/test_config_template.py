@@ -107,9 +107,12 @@ def _shipped_scheduler() -> SchedulerConfig:
     )
 
 
-# The template writes ai.providers.claude to show which provider runs each
-# task; test_template_ai_routing_is_the_default checks it changes nothing.
-_SHOWN_NOT_DEFAULT: frozenset[str] = frozenset({"ai.providers"})
+# The template writes ai.providers.claude and plugins.job_search.tasks to show
+# which provider runs each task; test_template_ai_routing_is_the_default checks
+# they change nothing.
+_SHOWN_NOT_DEFAULT: frozenset[str] = frozenset(
+    {"ai.providers", "plugins.job_search.tasks"}
+)
 
 # Blocks whose field default is null that the template writes anyway: the root,
 # the required tracker, and job_search, whose presence is what switches it on.
@@ -192,16 +195,6 @@ def test_every_sample_validates_when_turned_on(job_search: bool) -> None:
         assert job_search_config.enrichment.criteria
 
 
-def test_template_claude_samples_are_the_shipped_commands() -> None:
-    """The commented claude commands, turned on, are the built-in claude.
-
-    `model` and `timeout` are samples of a change, so they are left out.
-    """
-    shown = resolved_provider(_every_setting_config(job_search=True), "claude")
-    samples = {"tasks": [], "model": None, "timeout": None}
-    assert shown.settings.model_copy(update=samples) == builtin_providers()["claude"]
-
-
 def test_config_without_job_search_has_no_job_text() -> None:
     text = _workspace_config(job_search=False)
     match = JOB_TEXT.search(text)
@@ -228,16 +221,37 @@ _UNTEMPLATED: frozenset[str] = frozenset(
         # Overridden per scrape phase by the orchestrator (_ctx_with_headless);
         # a user value has no effect.
         "plugins.job_search.scraper.headless",
+        # A cap for a model server that answers fewer requests at once; each
+        # task sets its own number, so most users never need it.
+        "ai.providers.max_parallel",
+        # How the scraper presents itself to job sites, and the browser engine
+        # for the one site that needs a browser; neither is a user choice.
+        "plugins.job_search.scraper.user_agent",
+        "plugins.job_search.scraper.browser",
+        # A provider's command templates. The built-in ones ship in
+        # providers.default.yaml; a sample here would freeze them against
+        # updates once turned on. docs/providers.md documents them.
+        "ai.providers.run",
+        "ai.providers.resume",
+        "ai.providers.agent",
+        "ai.providers.text",
+        "ai.providers.session_id",
+        # Job search has one task, so the template routes it with
+        # tasks.fit_notes; provider would say the same thing twice.
+        "plugins.job_search.provider",
     }
 )
 
-# Core settings that only matter to job search, so the template writes them
-# only when job search is on.
-_JOB_SEARCH_ONLY: frozenset[str] = frozenset(
-    {
-        "ai.providers.max_parallel",
-    }
-)
+# Blocks left out with every field under them. Discovery tuning only changes
+# how often known boards are checked again; its defaults suit every workspace.
+_UNTEMPLATED_UNDER: frozenset[str] = frozenset({"plugins.job_search.discovery"})
+
+
+def _untemplated(dotted: str) -> bool:
+    return dotted in _UNTEMPLATED or any(
+        dotted == block or dotted.startswith(f"{block}.")
+        for block in _UNTEMPLATED_UNDER
+    )
 
 
 def _is_model_type(annotation: Any) -> bool:
@@ -322,7 +336,9 @@ def _set_paths(value: Any, prefix: str) -> set[str]:
 
 
 def _expected_paths() -> set[str]:
-    return {dotted for dotted, _key in _walk_fields(Config, "")} - _UNTEMPLATED
+    return {
+        dotted for dotted, _key in _walk_fields(Config, "") if not _untemplated(dotted)
+    }
 
 
 def _is_plugin_path(dotted: str) -> bool:
@@ -345,7 +361,7 @@ def test_job_search_settings_appear_only_with_job_search():
     set_paths = _set_paths(_every_setting_config(job_search=False), "")
     expected = _expected_paths()
     missing = expected - set_paths
-    job_only = {path for path in expected if _is_plugin_path(path)} | _JOB_SEARCH_ONLY
+    job_only = {path for path in expected if _is_plugin_path(path)}
     assert missing == job_only, (
         f"leaked into the plain config: {sorted(job_only - missing)}; "
         f"missing from it: {sorted(missing - job_only)}"
@@ -362,7 +378,7 @@ def test_template_sets_every_setting_of_every_job_source():
     """Each source shows all of its own settings.
 
     _set_paths merges sources that share a setting name (linkedin and indeed
-    both have hours_old), so this checks each source on its own.
+    both have max_city_queries), so this checks each source on its own.
     """
     config = _every_setting_config(job_search=True)
     sources = config.plugins.job_search.sources  # type: ignore[attr-defined]
@@ -388,3 +404,9 @@ def test_untemplated_exclusions_are_actually_skipped():
         assert (
             excluded not in set_paths
         ), f"_UNTEMPLATED path {excluded!r} now appears; drop it from the exclusion list"
+    for block in _UNTEMPLATED_UNDER:
+        assert block in all_paths, f"_UNTEMPLATED_UNDER {block!r} is not a real field"
+        shown = sorted(
+            path for path in set_paths if path == block or path.startswith(f"{block}.")
+        )
+        assert not shown, f"_UNTEMPLATED_UNDER {block!r} now appears: {shown}"

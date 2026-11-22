@@ -232,7 +232,7 @@ def build_scheduled_jobs(ctx: SchedulerContext) -> list[ScheduledJob]:
 OPTIONAL `config.py` — the `config_model`.
 A Pydantic `BaseModel` with `extra="forbid"`; it becomes the typed `plugins.reminders` block (the assembled `PluginsConfig` is `extra="forbid"`, so the config load warns about an unknown key and ignores it).
 
-A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists. `init` writes a plugin's block only for plugins it is told to switch on: `cli/commands/init.py` builds `plugins = {"job_search"} if args.job_search else set()`, so a new plugin needs its own flag there, or users add the block by hand. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and write `enabled: true` as the one live line of the plugin's block in `.dd-config.yaml.j2`; `plugins.enabled_plugins(config)` reads it, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
+A config model also makes the plugin opt-in per workspace: it is on only when its `plugins.reminders` block exists. `init` writes a plugin's block only for plugins it is told to switch on. `cli/commands/init.py` adds an `init --<name>` option (underscores become hyphens) for each plugin that sets `Plugin.init_flag_help`, so set `init_flag_help` and do not edit `init.py`. Without it, users add the block by hand. A plugin with no config model is always on. Add `enabled: bool = True` to let users switch the plugin off without deleting its settings, and show `enabled: true` as a live line of the plugin's block in `.dd-config.yaml.j2`. Show every other setting at its default as a live line or a `# ` sample, unless `_UNTEMPLATED` in `tests/test_core/test_config_template.py` lists it with a reason. `plugins.enabled_plugins(config)` reads `enabled`, and every hook (CLI command, scheduler, doctor, package data, prompt sections) is gated on that answer.
 
 ```python
 from __future__ import annotations
@@ -313,7 +313,7 @@ Core stays import-light: it imports `PLUGINS` lazily inside the functions that i
 - [ ] (AI tasks) `tasks` on the descriptor, `config_model` subclasses `PluginConfigBase`, calls go through `provider_for` and `ai.invoke`
 - [ ] Plugin-specific text in shipped prompts sits inside `{% if "<name>" in plugins %}` blocks
 - [ ] Its settings are in `.dd-config.yaml.j2` inside a `{% if "<name>" in plugins %}` block, with any core setting only this plugin uses. `tests/test_core/test_config_template.py` checks the gating for job search only; extend it for the new plugin
-- [ ] (Optional) an `init` flag in `cli/commands/init.py` that adds the plugin to the `plugins` set passed to `Workspace.init`
+- [ ] (Optional) `init_flag_help` on the descriptor, which adds the `init --<name>` option; no edit to `cli/commands/init.py`
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`
 
 ### AI tasks in a plugin
@@ -329,6 +329,7 @@ from daily_driver.plugins.reminders.config import RemindersPlugin
 from daily_driver.tasks import Task
 
 # mode: "text" (prompt in, text out), "agent" (reads workspace files), or "interactive"
+# max_parallel: calls run at the same time in a batch (default 1)
 PHRASE = Task("phrase", "text")
 
 PLUGIN = Plugin(
@@ -382,7 +383,7 @@ except ai.AIInvocationError as exc:
 | `provider_for(config, task, plugin=None)` | Returns the `Provider` for a task. For a plugin task: `plugins.<name>.tasks.<task>`, then `plugins.<name>.provider`, then `claude`. For a core task: the provider that lists it under `tasks`, else `claude`. |
 | `ai.invoke(provider, task, prompt, *, workspace=None, system=None, model=None, timeout=None)` | Runs a text or agent task and returns the answer. A command provider gets the prompt on stdin. An HTTP provider gets a chat completion request. A text task runs in an empty temporary directory, so put all data in the prompt. |
 | `ai.AIInvocationError`, `ai.AITimeoutError` | The only exceptions to catch, whichever provider ran. |
-| `provider.settings.max_parallel` | Calls to run at the same time, for batch work. |
+| `parallel_calls(provider, task)` | How many calls of a task to run at the same time, for batch work: the task's `max_parallel`, lowered to the provider's `max_parallel` when that is set. |
 
 Rules:
 
@@ -390,7 +391,7 @@ Rules:
 - The time limit of a call is the `timeout` argument, then the provider's `timeout`, then the default of the mode. Pass your own limit only when the plugin has a setting for it, as `job_search` does with `enrich_timeout`.
 - Check an HTTP provider before a batch with `ai.list_models(provider, timeout=...)`. `job_search` does this once per run and skips the AI step when the server is down.
 - Doctor lists the plugin tasks on the `ai:<provider>` row as `<plugin>.<task>`. The `job_search` task is `job_search.fit_notes`.
-- Add the `provider` and `tasks` keys to the plugin block of `.dd-config.yaml.j2`.
+- Add the `tasks` key to the plugin block of `.dd-config.yaml.j2`. Leave out `provider`: it would repeat `tasks`, and `plugins.job_search.provider` is in `_UNTEMPLATED` in `tests/test_core/test_config_template.py`.
 
 ### Plugin or tracker category?
 
@@ -406,7 +407,7 @@ This recipe applies to the `job_search` plugin. Each scraper lives in its own mo
 scrape_<name>(ctx: ScrapeContext) → list[dict]
     ↓
 run_all_scrapers:
-    phase 1 — headless sources in ThreadPoolExecutor (parallel_workers, default 8)
+    phase 1 — headless sources in ThreadPoolExecutor (scraper.max_parallel, default 4)
     phase 2 — Playwright sources serial (memory + bot-detection)
     ↓ as each source finishes
 _JobSink.append_source: dedup (URL + company+role key) → location filter → lift to EnrichedJob → append_jobs_typed (flock-guarded)
@@ -473,6 +474,6 @@ Do not write CSS-selector scrapers against rendered pages unless the API and JSO
 - [ ] No live network (grep for `requests.get`, `sync_playwright` in test output)
 - [ ] `SCRAPERS` and `SOURCE_CAPABILITIES` updated (`sources/__init__.py`)
 - [ ] Source and its options added to `.dd-config.yaml.j2` under `plugins.job_search.sources`
-- [ ] Source entry in `docs/commands.md` or `docs/configuration.md` (whichever is nearer to user usage)
+- [ ] Source entry in the `sources` table of `docs/job-search.md` and the Sources table of `docs/usage.md#sources`
 - [ ] Playwright / API-key needs noted in `docs/troubleshooting.md` if any
 - [ ] `[Unreleased]` entry in `CHANGELOG.md`

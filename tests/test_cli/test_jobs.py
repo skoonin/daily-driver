@@ -15,12 +15,12 @@ import pytest
 
 
 def _init_workspace(
-    tmp_path: Path, *, scraper_enabled: bool | None = None, job_search: bool = True
+    tmp_path: Path, *, minimal: bool = False, job_search: bool = True
 ) -> Path:
     """Create a workspace with job search on (unless job_search=False).
 
-    If scraper_enabled is set, the config is replaced by one whose
-    plugins.job_search block sets scraper.enabled.
+    With minimal, the config is replaced by one with an empty
+    plugins.job_search block: no sites to search.
     """
     from daily_driver.core.workspace import Workspace
     from tests.workspaces import enable_job_search
@@ -28,10 +28,9 @@ def _init_workspace(
     ws_root = tmp_path / "ws"
     ws_root.mkdir(parents=True, exist_ok=True)
     Workspace.init(ws_root)
-    if job_search and scraper_enabled is None:
+    if job_search and not minimal:
         enable_job_search(ws_root)
-    if scraper_enabled is not None:
-        enabled_str = "true" if scraper_enabled else "false"
+    if minimal:
         (ws_root / ".dd-config.yaml").write_text(
             "tracker:\n"
             "  default_category: task\n"
@@ -39,9 +38,7 @@ def _init_workspace(
             "    task:\n"
             "      required: [title]\n"
             "plugins:\n"
-            "  job_search:\n"
-            "    scraper:\n"
-            f"      enabled: {enabled_str}\n"
+            "  job_search: {}\n"
         )
     return ws_root
 
@@ -192,24 +189,24 @@ def test_the_last_workspace_flag_wins_as_in_argparse(
     _assert_unknown_command(capsys, ["-w", str(on), "jobs", "status", "-w", str(off)])
 
 
-def test_jobs_run_scraper_disabled_returns_zero(
+def test_jobs_run_without_sites_says_so_and_returns_zero(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=False)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     rc = app(["--workspace", str(ws), "jobs", "run"])
 
     captured = capsys.readouterr()
     assert rc == 0
-    assert "Scraper disabled" in captured.err
+    assert "No sites to search" in captured.err
 
 
 def test_jobs_backfill_dispatches(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill"])
@@ -224,7 +221,7 @@ def test_jobs_run_rejects_backfill_flag(
     """`jobs run --backfill` is deleted; argparse rejects the unknown flag."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with pytest.raises(SystemExit) as exc:
         app(["--workspace", str(ws), "jobs", "run", "--backfill"])
@@ -241,7 +238,7 @@ def test_jobs_backfill_json_emits_summary_envelope(
     passes emit_json through to the runner."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     summary = {
         "dry_run": False,
         "rows": 3,
@@ -268,7 +265,7 @@ def test_jobs_backfill_dry_run_passes_flag(tmp_path: Path) -> None:
     """`-n/--dry-run` propagates as dry_run=True to run_backfill."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill", "--dry-run"])
@@ -281,7 +278,7 @@ def test_jobs_backfill_limit_passes_through(tmp_path: Path) -> None:
     """`--limit N` propagates as limit=N to run_backfill."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill", "--limit", "7"])
@@ -294,7 +291,7 @@ def test_jobs_backfill_limit_defaults_none(tmp_path: Path) -> None:
     """Without --limit, run_backfill receives limit=None (use config caps)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill"])
@@ -307,7 +304,7 @@ def test_jobs_backfill_force_update_passes_through(tmp_path: Path) -> None:
     """`--force-update` propagates as force=True to run_backfill."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill", "--force-update"])
@@ -320,7 +317,7 @@ def test_jobs_backfill_force_update_defaults_false(tmp_path: Path) -> None:
     """Without --force-update, run_backfill receives force=False (fill-missing-only)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
         rc = app(["--workspace", str(ws), "jobs", "backfill"])
@@ -335,7 +332,7 @@ def test_jobs_backfill_limit_zero_rejected(
     """--limit 0 would mean full spend (budget<=0 sentinel); reject it (exit 2)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with pytest.raises(SystemExit) as exc:
         app(["--workspace", str(ws), "jobs", "backfill", "--limit", "0"])
@@ -350,7 +347,7 @@ def test_jobs_backfill_limit_negative_rejected(
     """A negative --limit is rejected at the parser (exit 2)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with pytest.raises(SystemExit) as exc:
         app(["--workspace", str(ws), "jobs", "backfill", "--limit", "-5"])
@@ -381,7 +378,7 @@ def test_jobs_backfill_help_states_limit_minimum(
 def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -398,7 +395,7 @@ def test_jobs_run_no_enrich_passes_flag(tmp_path: Path) -> None:
     """`--no-enrich` propagates as no_enrich=True to scraper.run."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -415,7 +412,7 @@ def test_jobs_run_no_enrich_defaults_false(tmp_path: Path) -> None:
     """Without the flag, no_enrich is False on the default path."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -431,7 +428,7 @@ def test_jobs_run_skip_descriptions_passes_flag(tmp_path: Path) -> None:
     """`-sd` propagates as fetch_descriptions=False to scraper.run."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -447,7 +444,7 @@ def test_jobs_run_fetch_descriptions_defaults_true(tmp_path: Path) -> None:
     """Without --skip-descriptions, fetch_descriptions is True."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -464,7 +461,7 @@ def test_jobs_backfill_skip_descriptions_passes_flag(tmp_path: Path) -> None:
     run_backfill; without it the default is True."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     (ws / "jobs.csv").write_text("Status,Company\n", encoding="utf-8")
 
     with patch(
@@ -492,7 +489,7 @@ def test_jobs_run_no_enrich_with_dry_run_composes(tmp_path: Path) -> None:
     """`--no-enrich --dry-run` is accepted (redundant, not an error)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -511,7 +508,7 @@ def test_jobs_prune_rejects_no_enrich(
     """`--no-enrich` is a run-only flag; prune must reject it."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with pytest.raises(SystemExit) as exc:
         app(
@@ -536,7 +533,7 @@ def test_jobs_run_list_sources_prints_registry(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), "jobs", "run", "--list-sources"])
 
     assert rc == 0
@@ -555,7 +552,7 @@ def test_jobs_run_empty_sources_exits_2(
     """`--sources ',,, '` parses to [] and must hard-fail rather than silently run zero."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), "jobs", "run", "--sources", ",,, ,"])
 
     assert rc == 2
@@ -568,7 +565,7 @@ def test_jobs_run_unknown_source_exits_2(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), "jobs", "run", "--sources", "no_such_source"])
 
     assert rc == 2
@@ -580,7 +577,7 @@ def test_jobs_run_sources_override_passes_to_scrape(tmp_path: Path) -> None:
     """`--sources remoteok` propagates as sources_override to scraper.run."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -608,7 +605,7 @@ def test_jobs_run_site_named_selector_accepted(tmp_path: Path) -> None:
     """`-S linkedin` is a valid selector and propagates as sources_override."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -626,7 +623,7 @@ def test_jobs_run_retired_jobspy_selector_rejected(
     """The retired `jobspy` aggregator id is no longer a valid selector."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), "jobs", "run", "--sources", "jobspy"])
 
     assert rc == 2
@@ -640,7 +637,7 @@ def test_jobs_run_json_suppresses_live_and_emits_manifest(
     """`jobs run --json` forces suppress_live and prints jobs-last-run.json to stdout."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     manifest = {
         "started_at": "2026-06-10T00:00:00+00:00",
         "sources_ok": ["remoteok"],
@@ -673,7 +670,7 @@ def test_jobs_run_without_json_does_not_suppress_live(tmp_path: Path) -> None:
     """Default run leaves suppress_live False so the live block renders on a TTY."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with patch(
         "daily_driver.plugins.job_search.scraper.run", return_value=0
@@ -712,7 +709,7 @@ def test_jobs_run_json_with_dry_run_rejected(
     contract. argparse must reject it (exit 2) before any run."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     with pytest.raises(SystemExit) as exc:
         app(["--workspace", str(ws), "jobs", "run", "--json", "--dry-run"])
@@ -729,7 +726,7 @@ def test_jobs_run_json_interrupt_emits_manifest_and_exits_130(
     re-raising) is re-emitted to stdout, and the exit code stays 130."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     manifest = {
         "started_at": "2026-06-11T00:00:00+00:00",
         "sources_ok": [],
@@ -763,7 +760,7 @@ def test_jobs_run_json_emits_manifest_on_non_interrupt_crash(
     (previously only the Ctrl-C arm re-emitted, so a crash left stdout empty)."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     manifest = {
         "started_at": "2026-06-11T00:00:00+00:00",
         "sources_ok": [],
@@ -796,7 +793,7 @@ def test_jobs_run_json_list_sources_emits_json_array(
     source names, so a --json consumer never gets plain text."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), "jobs", "run", "--json", "--list-sources"])
 
     assert rc == 0
@@ -818,7 +815,7 @@ def test_jobs_status_no_run_yet(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     rc = app(["--workspace", str(ws), "jobs", "status"])
 
@@ -833,7 +830,7 @@ def test_jobs_status_missing_jobs_csv_after_a_run_exits_1(
     """Run history plus no jobs.csv is a lost file, not a workspace with no jobs."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     (ws / "jobs-last-run.json").write_text(
         json.dumps({"started_at": "2026-06-10T00:00:00+00:00", "new_jobs": 12}),
         encoding="utf-8",
@@ -854,7 +851,7 @@ def test_jobs_status_reports_unprobed_slugs(
 
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     discovery_dir = ws / ".daily-driver" / "state" / "discovery"
     discovery_dir.mkdir(parents=True, exist_ok=True)
     (discovery_dir / "sweep-ashby.json").write_text(
@@ -881,7 +878,7 @@ def test_jobs_status_json_no_run(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     rc = app(["--workspace", str(ws), "jobs", "status", "--json"])
 
@@ -900,7 +897,7 @@ def test_jobs_status_json_stays_parseable_with_verbosity_flags(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     rc = app(["--workspace", str(ws), verbosity_flag, "jobs", "status", "--json"])
 
     assert rc == 0
@@ -914,7 +911,7 @@ def test_jobs_status_json_with_last_run(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     last_run = {
         "started_at": "2026-04-22T08:00:00+00:00",
@@ -986,7 +983,7 @@ def test_prune_missing_jobs_csv_exits_1(
     """An absent jobs.csv must not read as "no rows match prune criteria"."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     rc = app(["--workspace", str(ws), "jobs", "prune"])
 
@@ -1000,7 +997,7 @@ def test_verify_missing_jobs_csv_exits_1(
     """An absent jobs.csv must not read as "no rows due for verification"."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     rc = app(["--workspace", str(ws), "jobs", "verify"])
 
@@ -1013,7 +1010,7 @@ def test_prune_dry_run_lists_candidates_without_writing(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     csv_path = _seed_jobs_csv(
         ws,
         [
@@ -1061,7 +1058,7 @@ def test_jobs_prune_json_emits_envelope(
     envelope instead of a Rich table."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1106,7 +1103,7 @@ def test_jobs_prune_json_emits_envelope(
 def test_prune_moves_rows_to_archive(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1148,7 +1145,7 @@ def test_prune_moves_rows_to_archive(tmp_path: Path) -> None:
 def test_prune_status_filter(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1228,7 +1225,7 @@ def test_prune_min_fit_archives_only_low_scoring_untriaged_rows(
     """
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, _min_fit_rows())
 
     rc = app(
@@ -1259,7 +1256,7 @@ def test_prune_min_fit_treats_blank_status_as_untriaged(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1298,7 +1295,7 @@ def test_prune_min_fit_still_respects_older_than(
     """Age gates both selection channels: a low-fit row seen recently stays."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1340,7 +1337,7 @@ def test_prune_archives_a_triaged_row_a_scrape_re_sighted_today(
     posted, so every run re-stamps Date Verified and the old anchor never aged."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1382,7 +1379,7 @@ def test_prune_default_older_than_is_fourteen_days(
     from daily_driver.cli.cli import app
 
     today = dt.date.today()
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1417,7 +1414,7 @@ def test_prune_min_fit_keeps_the_status_channel(
     """--min-fit adds a selection channel, it does not replace the status one."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(
         ws,
         [
@@ -1457,7 +1454,7 @@ def test_prune_min_fit_json_envelope_carries_candidates(
 
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, _min_fit_rows())
 
     rc = app(
@@ -1487,7 +1484,7 @@ def test_prune_min_fit_below_one_exits_2(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, [])
 
     # argparse rejects the value itself, so this exits rather than returning.
@@ -1505,7 +1502,7 @@ def test_prune_min_fit_above_the_fit_scale_exits_2(
     """
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, [])
 
     with pytest.raises(SystemExit) as excinfo:
@@ -1519,7 +1516,7 @@ def test_prune_invalid_spec_exits_2(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, [])
 
     rc = app(
@@ -1547,7 +1544,7 @@ def test_jobs_run_keyboard_interrupt_exits_130(
     """Ctrl-C during a run prints a clean message to stderr and returns 130."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
@@ -1570,7 +1567,7 @@ def test_jobs_run_keyboard_interrupt_no_traceback_with_verbose(
     """Even with -v, Ctrl-C should not surface a traceback."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
@@ -1590,7 +1587,7 @@ def test_jobs_backfill_keyboard_interrupt_exits_130(
     """Ctrl-C during backfill should return 130 and print a clean message."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     def boom(*_a, **_kw):  # type: ignore[no-untyped-def]
         raise KeyboardInterrupt
@@ -1610,7 +1607,7 @@ def test_archive_dedup_loaded_at_scrape_start(tmp_path: Path) -> None:
     """load_archive_dedup unions URLs/keys from jobs.archive.csv."""
     from daily_driver.plugins.job_search.jobs_archive import load_archive_dedup
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     csv_path = ws / "jobs.csv"
     archive = ws / "jobs.archive.csv"
 
@@ -1644,7 +1641,7 @@ def test_jobs_backfill_passes_routed_provider_to_run_backfill(tmp_path: Path) ->
     """
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     (ws / ".dd-config.yaml").write_text(
         "tracker:\n"
         "  default_category: task\n"
@@ -1677,7 +1674,7 @@ def test_jobs_run_scrape_passes_routed_provider_to_run(tmp_path: Path) -> None:
     """Same regression for the live scrape path, routed by a per-task override."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     (ws / ".dd-config.yaml").write_text(
         "tracker:\n"
         "  default_category: task\n"
@@ -1716,7 +1713,7 @@ def test_jobs_run_sigint_exits_130(tmp_path: Path) -> None:
     """A Ctrl-C (KeyboardInterrupt, no SIGTERM recorded) exits 130."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     def boom(*_a: object, **_kw: object) -> int:
         raise KeyboardInterrupt
@@ -1738,7 +1735,7 @@ def test_jobs_run_sigterm_exits_143(tmp_path: Path) -> None:
 
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
 
     def deliver_sigterm(*_a: object, **_kw: object) -> int:
         # The CLI installed the run-scoped SIGTERM handler before calling run();
@@ -1760,7 +1757,7 @@ def test_jobs_status_shows_recovery_line_when_interrupted(
     """jobs status prints the backfill recovery line for an interrupted run."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     _seed_jobs_csv(ws, [])
     (ws / "jobs-last-run.json").write_text(
         json.dumps(
@@ -2009,7 +2006,7 @@ def test_discover_boards_success_prints_summary(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     with patch(
         "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
         return_value=_discover_summary(),
@@ -2073,7 +2070,7 @@ def test_discover_boards_marks_every_platform_finished(
     from daily_driver.core.console import Console
     from daily_driver.core.progress import Phase
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     finished: list[str] = []
     monkeypatch.setattr(
         Console, "live_progress_enabled", classmethod(lambda cls, **_kw: True)
@@ -2103,7 +2100,7 @@ def test_discover_boards_stays_quiet_without_live_bars(
     """
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     with patch(
         "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
         side_effect=_sweep_driving_progress,
@@ -2121,7 +2118,7 @@ def test_discover_boards_reports_failures_as_actionable(
     """A rate-limited platform must say what to do, not just show a count."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     summary = _discover_summary()
     summary["platforms"]["greenhouse"]["transient"] = 1959
     with patch(
@@ -2147,7 +2144,7 @@ def test_discover_boards_flags_a_cached_slug_universe(
     """A cached universe means the upstream fetch failed -- say so."""
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     summary = _discover_summary()
     summary["platforms"]["greenhouse"]["universe_source"] = "cache"
     with patch(
@@ -2166,7 +2163,7 @@ def test_discover_boards_json_emits_envelope(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     with patch(
         "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
         return_value=_discover_summary(),
@@ -2185,7 +2182,7 @@ def test_discover_boards_discovery_error_exits_1(
     from daily_driver.cli.cli import app
     from daily_driver.plugins.job_search.scraper.discovery import DiscoveryError
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     with patch(
         "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
         side_effect=DiscoveryError("no slug list for greenhouse"),
@@ -2201,7 +2198,7 @@ def test_discover_boards_lock_contention_exits_1(
 ) -> None:
     from daily_driver.cli.cli import app
 
-    ws = _init_workspace(tmp_path, scraper_enabled=True)
+    ws = _init_workspace(tmp_path, minimal=True)
     with patch(
         "daily_driver.plugins.job_search.scraper.discovery.run_discovery",
         side_effect=TimeoutError,

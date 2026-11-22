@@ -30,8 +30,8 @@ tracker:
     task: {required: [title]}
 plugins:
   job_search:
+    home_city: "Vancouver, BC"
     locations:
-      home_city: "Vancouver, BC"
       remote: true
       countries: {CA: [], US: []}
 """,
@@ -194,6 +194,105 @@ def test_load_warns_about_a_removed_setting_and_ignores_it(
 
 
 @pytest.mark.parametrize(
+    ("config_text", "dotted", "fix"),
+    [
+        (
+            "tracker:\n  warn_unknown_status: false\n"
+            "  categories:\n    task: {required: [title]}\n",
+            "tracker.warn_unknown_status",
+            "tracker.extra_statuses",
+        ),
+        (
+            _TRACKER + "plugins:\n  job_search:\n    scraper:\n      enabled: true\n",
+            "plugins.job_search.scraper.enabled",
+            "plugins.job_search.sources",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    scraper:\n      parallel_workers: 2\n",
+            "plugins.job_search.scraper.parallel_workers",
+            "plugins.job_search.scraper.max_parallel",
+        ),
+        (
+            _TRACKER + "plugins:\n  job_search:\n    scraper:\n      max_pages: 2\n",
+            "plugins.job_search.scraper.max_pages",
+            "plugins.job_search.scraper.max_results",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    sources:\n      linkedin:\n"
+            + "        results_wanted_per_query: 10\n",
+            "plugins.job_search.sources.linkedin.results_wanted_per_query",
+            "plugins.job_search.scraper.max_results",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    sources:\n      indeed:\n"
+            + "        hours_old: 24\n",
+            "plugins.job_search.sources.indeed.hours_old",
+            "plugins.job_search.scraper.max_age_days",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    enrichment:\n      enrich_notes: false\n",
+            "plugins.job_search.enrichment.enrich_notes",
+            "plugins.job_search.enrichment.enabled",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    enrichment:\n"
+            + "      enrich_is_remote: false\n",
+            "plugins.job_search.enrichment.enrich_is_remote",
+            "remote, hybrid, or onsite",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    enrichment:\n"
+            + "      force_recook_cooldown_hours: 12\n",
+            "plugins.job_search.enrichment.force_recook_cooldown_hours",
+            "plugins.job_search.enrichment.backfill_cooldown",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    locations:\n"
+            + "      home_city: Lisbon\n",
+            "plugins.job_search.locations.home_city",
+            "plugins.job_search.home_city",
+        ),
+        (
+            _TRACKER + "ai:\n  claude:\n    max_parallel: 2\n",
+            "ai.claude",
+            "ai.providers.<name>.max_parallel",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    sources:\n      indeed:\n"
+            + "        results_wanted_per_query: 10\n",
+            "plugins.job_search.sources.indeed.results_wanted_per_query",
+            "plugins.job_search.scraper.max_results",
+        ),
+        (
+            _TRACKER
+            + "plugins:\n  job_search:\n    sources:\n      linkedin:\n"
+            + "        hours_old: 24\n",
+            "plugins.job_search.sources.linkedin.hours_old",
+            "plugins.job_search.scraper.max_age_days",
+        ),
+    ],
+)
+def test_load_warns_about_a_removed_value_and_ignores_it(
+    tmp_path, capsys, config_text, dotted, fix
+):
+    cfg_file = tmp_path / ".dd-config.yaml"
+    cfg_file.write_text(config_text, encoding="utf-8")
+    config = load(cfg_file)
+    assert config.tracker.default_category == "task"
+    err = " ".join(capsys.readouterr().err.split())
+    assert f"ignoring {dotted}" in err
+    assert fix in err
+
+
+@pytest.mark.parametrize(
     ("block", "dotted"),
     [
         ("calender:\n  sync_enabled: true\n", "calender"),
@@ -286,13 +385,15 @@ def test_load_still_stops_on_a_wrong_value_inside_a_source(tmp_path):
     cfg_file.write_text(
         _TRACKER
         + "plugins:\n  job_search:\n    sources:\n      linkedin:\n"
-        + "        hours_old: soon\n",
+        + "        max_city_queries: soon\n",
         encoding="utf-8",
     )
     with pytest.raises(ValidationError) as excinfo:
         load(cfg_file)
     locs = [error["loc"] for error in excinfo.value.errors()]
-    assert locs == [("plugins", "job_search", "sources", "linkedin", "hours_old")]
+    assert locs == [
+        ("plugins", "job_search", "sources", "linkedin", "max_city_queries")
+    ]
 
 
 def test_load_keeps_the_valid_settings_beside_an_unknown_one(tmp_path):

@@ -53,7 +53,6 @@ def fake_config() -> ScrapeContext:
     return ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
-                "scraper": {"enabled": True},
                 "enrichment": {"max_enrich_fit": 0},
             }
         )
@@ -139,24 +138,15 @@ def _fit_ctx(**enrichment: object) -> ScrapeContext:
     )
 
 
-@pytest.mark.parametrize(
-    "toggles",
-    [
-        {"enrich_fit": False, "enrich_notes": True},
-        {"enrich_fit": True, "enrich_notes": False},
-        {"enrich_fit": False, "enrich_notes": False},
-    ],
-)
-def test_fit_notes_phase_skipped_when_either_toggle_off(
-    monkeypatch: pytest.MonkeyPatch, toggles: dict[str, bool]
+def test_fit_notes_phase_skipped_when_review_off(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """enrich_fit or enrich_notes off => the whole fit/notes wave is skipped.
+    """enrichment.enabled off => the whole fit/notes wave is skipped.
 
-    The combined call serves both fields, so the wave runs only when BOTH are
-    on. With either off, no provider call fires and neither fit nor notes is
-    written (they keep their input values).
+    No provider call fires and neither fit nor notes is written (they keep
+    their input values).
     """
-    ctx = _fit_ctx(**toggles)
+    ctx = _fit_ctx(enabled=False)
 
     def fake_invoke(*a: object, **k: object) -> str:
         raise AssertionError("no fit/notes call expected when a toggle is off")
@@ -168,9 +158,9 @@ def test_fit_notes_phase_skipped_when_either_toggle_off(
     assert out[0].notes == "orig"  # unchanged
 
 
-def test_fit_notes_phase_runs_when_both_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Both toggles on (the default) lets the fit/notes wave write both cells."""
-    ctx = _fit_ctx(enrich_fit=True, enrich_notes=True)
+def test_fit_notes_phase_runs_when_review_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review on (the default) lets the fit/notes wave write both cells."""
+    ctx = _fit_ctx()
     monkeypatch.setattr(ai, "invoke", lambda *a, **k: '{"fit": 8, "notes": "infra"}')
     j = _enriched(description_text="Platform role")
     out, _stats = enrich_fit_and_notes([j], ctx, budget=5)
@@ -181,14 +171,14 @@ def test_fit_notes_phase_runs_when_both_on(monkeypatch: pytest.MonkeyPatch) -> N
 def test_roles_and_home_city_reach_fit_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The roles to keep and locations.home_city land in the fit prompt.
+    """The roles to keep and home_city land in the fit prompt.
 
     Exclusions (`!`) are filters, not targets, so they stay out of the prompt.
     """
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Staff Data Engineer", "Data Architect", "!Manager"],
-            "locations": {"home_city": "Berlin, Germany"},
+            "home_city": "Berlin, Germany",
             "enrichment": {
                 "max_enrich_fit": 5,
                 "enrich_timeout": 5,
@@ -222,7 +212,7 @@ def test_system_prompt_is_stable_across_jobs_and_user_carries_the_job(
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Staff SRE"],
-            "locations": {"home_city": "Vancouver, BC"},
+            "home_city": "Vancouver, BC",
             "enrichment": {
                 "max_enrich_fit": 5,
                 "enrich_timeout": 5,
@@ -424,7 +414,6 @@ def test_location_summary_states_listed_countries_are_acceptable() -> None:
         plugin=JobSearchPlugin.model_validate(
             {
                 "locations": {
-                    "home_city": "Vancouver, BC",
                     "remote": True,
                     "countries": {"ES": [], "CA": []},
                 },
@@ -483,7 +472,6 @@ def test_location_summary_states_city_narrowing() -> None:
         plugin=JobSearchPlugin.model_validate(
             {
                 "locations": {
-                    "home_city": "Vancouver, BC",
                     "remote": True,
                     "countries": {"CA": ["Vancouver", "Victoria"], "US": []},
                 },

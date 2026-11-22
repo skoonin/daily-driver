@@ -1,6 +1,6 @@
 # `plugins.job_search`
 
-Job search finds jobs on the sites you choose, removes duplicates, and scores how well each job fits you. It is off until the `plugins.job_search` section exists. `init --job-search` writes the section. `jobs run` also needs `scraper.enabled: true` and at least one entry under `sources`. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it). For the commands, see [commands.md](commands.md).
+Job search finds jobs on the sites you choose, removes duplicates, and scores how well each job fits you. It is off until the `plugins.job_search` section exists. `init --job-search` writes the section. `jobs run` with no site turned on under `sources` warns "No sites to search" and still reviews the jobs that wait for a review. To switch job search on or off in an existing workspace, see [Enable it](usage.md#enable-it). For the commands, see [commands.md](commands.md).
 
 `context.md` is not rewritten after `init`. Add your location preferences and what you look for in a role to it by hand. The Artificial Intelligence (AI) review reads it.
 
@@ -10,12 +10,10 @@ Search for project coordinator jobs, remote or in two cities:
 plugins:
   job_search:
     roles: ["Project Coordinator", "Program Coordinator", "!Intern"]
+    home_city: Vancouver, BC
     locations:
-      home_city: Vancouver, BC
       remote: true
       countries: {CA: [Vancouver, Victoria]}
-    scraper:
-      enabled: true
     sources:
       greenhouse:
         enabled: true
@@ -28,17 +26,16 @@ plugins:
 | `roles` | `[]` | Job titles to keep. `*` matches any text. A leading `!` removes titles. See [Which jobs are kept](#which-jobs-are-kept). |
 | `domain_keywords` | `[]` (built-in list is used) | Words for your field. See [Which jobs are kept](#which-jobs-are-kept). |
 | `seniority_keywords` | `[]` (built-in list is used) | Words for your level, such as `senior`. See [Which jobs are kept](#which-jobs-are-kept). |
+| `home_city` | none | Your city, such as `Portland, OR`. The AI review scores jobs in it higher. It keeps or drops no jobs. |
 | `locations` | none (keeps every place) | Which places to keep. See [`locations`](#locations). |
-| `provider` | none (`claude`) | AI for job review. The name of a provider under `ai.providers`. |
-| `tasks` | `{}` | AI for one task of job search. `fit_notes` is the only one. It names a provider and wins over `provider`. |
+| `provider` | none (`claude`) | AI for every job search task. The name of a provider under `ai.providers`. Not in the file that `init` writes, because `tasks` names the provider of the one task. |
+| `tasks` | `{}` (the file that `init` writes shows `{fit_notes: claude}`) | AI for one task of job search. `fit_notes`, the job review, is the only one. It names a provider and wins over `provider`. |
 | `scraper` | see [`scraper`](#scraper) | How Daily Driver reads job sites. |
 | `enrichment` | see [`enrichment`](#enrichment) | The AI review of each new job. |
 | `verify` | see [`verify`](#verify) | When `jobs verify` checks saved jobs. |
-| `discovery` | see [`discovery`](#discovery) | How `jobs discover-boards` works. |
+| `discovery` | see [`discovery`](#discovery) | How `jobs discover-boards` works, and when `jobs run` reports Greenhouse, Ashby, or Lever as failing. |
 | `scheduler` | see [`scheduler`](#scheduler) | When `jobs run` and `jobs discover-boards` run in the background. |
 | `sources` | `{}` | The sites to search. See [`sources`](#sources). |
-
-One other setting matters only when job search is on: `max_parallel` on a provider. See [Providers](providers.md).
 
 ## AI for job review
 
@@ -53,7 +50,8 @@ ai:
       model: qwen3-coder
 plugins:
   job_search:
-    provider: lmstudio
+    tasks:
+      fit_notes: lmstudio
 ```
 
 The provider is the first of these that is set:
@@ -63,7 +61,7 @@ The provider is the first of these that is set:
 3. `claude`
 
 - Each one names a provider under `ai.providers`, or a built-in provider. Daily Driver reports a name that is not defined, and a task name that job search does not have, when it reads the config.
-- The number of reviews that run at once is the `max_parallel` of the provider.
+- Reviews run 4 at a time. The `max_parallel` of the provider can lower that. See [Providers](providers.md).
 
 ## Which jobs are kept
 
@@ -88,14 +86,12 @@ Keep remote jobs, all of the US, and two Canadian cities:
 
 ```yaml
 locations:
-  home_city: Vancouver, BC
   remote: true
   countries: {CA: [Vancouver, Victoria], US: []}
 ```
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `home_city` | none (the AI uses `Vancouver, BC`) | Your city. The AI uses it to score each job. Set it to your own city. |
 | `remote` | `false` | `true` keeps remote jobs. |
 | `remote_unlisted_countries` | `false` | `true` keeps remote jobs from any country, not only those in `countries`. |
 | `countries` | `{}` | The countries to keep. Each is a two-letter country code with a list of cities. |
@@ -118,25 +114,23 @@ Rules for remote jobs:
 
 How Daily Driver reads job sites. These settings apply to every source.
 
-Turn on `jobs run` and search for your own words:
+Search for words of your own, in addition to your roles:
 
 ```yaml
 scraper:
-  enabled: true
   search_terms: ["platform engineer", "site reliability engineer"]
 ```
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `enabled` | `false` | Turns on `jobs run`. While `false`, `jobs run` finds nothing and prints `Scraper disabled`. |
-| `search_terms` | none (uses `roles`) | Search words for LinkedIn, Indeed, and Apple. Left out, they come from `roles`. |
-| `max_age_days` | `30` | Skips Hacker News job posts (`hn_jobs`) older than this many days. `0` means no limit. |
-| `max_pages` | `3` | Result pages read for each Apple search. |
+| `search_terms` | `[]` | Words to search for on LinkedIn, Indeed, and Apple, in addition to the words that come from `roles`. `roles` still decides which jobs are kept. An empty `search_terms:` with no value is an error. Write `search_terms: []` or delete the line. |
+| `max_age_days` | `7` | Skips jobs posted more than this many days ago, on Hacker News jobs (`hn_jobs`), LinkedIn, and Indeed. `0` means no limit. Company boards list only open jobs, and Who's Hiring reads only the latest thread. |
+| `max_results` | `50` | Most jobs per search on LinkedIn, Indeed, and Apple. A search that reaches it shows as saturated in the run summary. |
 | `timeout` | `30` | Seconds to wait for a site. |
 | `max_retries` | `3` | Retries when a site is busy. `0` means no retries. |
-| `parallel_workers` | `8` | Sites searched at the same time. |
-| `browser` | `firefox` | Browser for the Apple source: `firefox`, `chromium`, or `webkit`. `doctor` checks that it is installed, and `daily-driver doctor --fix` installs it. |
-| `user_agent` | a Firefox 128 name | How Daily Driver names itself to job sites. |
+| `max_parallel` | `4` | Sites searched at the same time. |
+| `browser` | `firefox` | Not in the file that `init` writes. Browser engine for the Apple source: `firefox`, `chromium`, or `webkit`. `doctor` checks that it is installed, and `daily-driver doctor --fix` installs it. |
+| `user_agent` | a Firefox 128 name | Not in the file that `init` writes. How Daily Driver names itself to job sites. Change it only if a site blocks the default. |
 | `company_noise_words` | `[]` (built-in list is used) | Words ignored when Daily Driver decides that two jobs come from the same company, such as `inc`, `ltd`, and `labs`. |
 
 - If you list `company_noise_words`, your list replaces the built-in list.
@@ -156,14 +150,12 @@ enrichment:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `enrich_fit` | `true` | Scores each job from 1 to 10 for fit. `false` turns off the whole job review, including the note, the remote label, and `criteria`. |
-| `enrich_notes` | `true` | Adds a one-line note that explains the score: the main match or mismatch, and the location fit. `false` turns off the whole job review, the same as `enrich_fit`. |
-| `enrich_is_remote` | `true` | Labels each job `remote`, `hybrid`, or `onsite`. It uses the same AI call. |
+| `enabled` | `true` | The job review. One AI call per job gives a fit score from 1 to 10, a one-line note that explains the score, a `remote`, `hybrid`, or `onsite` label, and the answers to your `criteria`. `false` turns off the whole review. |
 | `max_enrich_fit` | `50` | Most jobs reviewed per run. |
 | `enrich_timeout` | `30` | Seconds before one review gives up. The `timeout` of a provider does not apply to job reviews. |
 | `detail_delay_seconds` | `0.5` | Seconds to pause between job page downloads. |
 | `max_description_words` | `2000` | Words of each posting that the AI reads. The minimum is 100. Pay and visa details are often near the end, so a low number can miss them. |
-| `force_recook_cooldown_hours` | `24` | With `jobs backfill --force-update`, skips jobs reviewed within this many hours, so an interrupted run can continue. `0` reviews all jobs again. `missing` reviews only jobs with no review yet. `--cooldown-hours` overrides it for one run. |
+| `backfill_cooldown` | `24h` | With `jobs backfill --force-update`, skips jobs reviewed within this time, so an interrupted run can continue. Write a duration such as `24h`, `30m`, `1d`, or `1h30m`. `0` reviews all jobs again. `missing` reviews only jobs with no review yet. `--cooldown` overrides it for one run. |
 | `criteria` | `[]` | Your own questions about each job. See [`criteria`](#criteria). |
 
 The provider that runs the review is set by `plugins.job_search.provider` and `plugins.job_search.tasks.fit_notes`, not here. See [AI for job review](#ai-for-job-review).
@@ -206,7 +198,7 @@ verify:
 
 ## `discovery`
 
-`jobs discover-boards` finds company job boards that list jobs matching your roles. A board is a company job page on a hiring site such as Greenhouse, Ashby, or Lever. One run is a sweep. Later sweeps check known boards again. These settings control how often, and how failures are reported.
+`jobs discover-boards` finds company job boards that list jobs matching your roles. A board is a company job page on a hiring site such as Greenhouse, Ashby, or Lever. The company lists come from the job-board-aggregator project (<https://github.com/Feashliaa/job-board-aggregator>). One run is a sweep. Later sweeps check known boards again. These settings control how often boards are checked, and when `jobs run` reports a hiring site as failing. They are not in the file that `init` writes, because the defaults suit most workspaces.
 
 ```yaml
 discovery:
@@ -217,7 +209,7 @@ discovery:
 | --- | --- | --- |
 | `reprobe_days` | `30` | Checks a known board again after this many days. The minimum is 1. |
 | `max_reprobe_per_sweep` | `500` | Most boards checked again per sweep. The most overdue boards go first. The minimum is 1. |
-| `degraded_failure_ratio` | `0.25` | A site is reported as failing when this share of its boards fail. `0.25` means 25%. The value must be above 0 and at most 1. |
+| `degraded_failure_ratio` | `0.25` | During `jobs run`, Greenhouse, Ashby, or Lever is reported as failing when this share of its boards, or more, fail. `0.25` means 25%. The value must be above 0 and at most 1. |
 | `dormant_after_empty_sweeps` | `2` | A board that lists no jobs this many checks in a row is checked less often. `0` turns this off. |
 | `dormant_reprobe_multiplier` | `6` | How much less often. With `6`, a 30-day check becomes a 180-day check. `1` keeps the normal timing. |
 
@@ -283,8 +275,8 @@ sources:
 | `workable` | `workable_accounts` | `[]` |
 | `workday` | `workday_boards` | `[]` |
 | `hn_who_is_hiring`, `hn_jobs` | `hn_max_posts` | `500` |
-| `linkedin` | `results_wanted_per_query`, `hours_old`, `max_city_queries` | `50`, `168`, `40` |
-| `indeed` | `results_wanted_per_query`, `hours_old`, `max_city_queries`, `country` | `50`, `168`, `40`, `USA` |
+| `linkedin` | `max_city_queries` | `40` |
+| `indeed` | `max_city_queries`, `country` | `40`, `USA` |
 | `apple` | none | On or off only. It needs the browser set in `scraper.browser`. |
 
 Board sources:
@@ -296,12 +288,10 @@ Board sources:
 - A `workday_boards` entry names the three parts of a Workday link such as `companyh.wd5.myworkdayjobs.com/companyhcareers`: `tenant` (`companyh`), `host` (`wd5`), and `site` (`companyhcareers`). `company` is an optional display name. Left out, it is the tenant name in title case.
 - `wwr_categories` entries are the category names in WeWorkRemotely feed links such as `weworkremotely.com/categories/remote-<category>-jobs`.
 
-LinkedIn and Indeed:
+LinkedIn and Indeed also use `scraper.max_results` and `scraper.max_age_days`.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `results_wanted_per_query` | `50` | Results per search. |
-| `hours_old` | `168` | Skips jobs older than this many hours. `168` is 7 days. |
 | `max_city_queries` | `40` | Most city-by-city searches per run, for LinkedIn and for Indeed separately. |
 | `country` | `USA` | Indeed only. The Indeed site to use when one of your countries has no Indeed site. LinkedIn has no `country` setting. |
 
@@ -331,12 +321,10 @@ plugins:
     scheduler:
       run: {time: "06:30"}
     roles: ["Project Coordinator", "Program Coordinator", "!Intern"]
+    home_city: Vancouver, BC
     locations:
-      home_city: Vancouver, BC
       remote: true
       countries: {US: [], CA: [Vancouver, Victoria]}
-    scraper:
-      enabled: true
     enrichment:
       criteria:
         - label: Sponsorship

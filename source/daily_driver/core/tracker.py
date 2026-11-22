@@ -22,7 +22,7 @@ _logger = get_logger("tracker")
 # Convention, not enforcement — `tracker add/update` accepts any string but
 # emits a one-line stderr nudge when the resolved status is outside the set
 # applicable to its category (and not already in use by another entry).
-# Silenced by `tracker.warn_unknown_status: false` in .dd-config.yaml.
+# `tracker.extra_statuses` adds to that set for every category but `job`.
 RECOMMENDED_STATUSES: tuple[str, ...] = (
     "open",
     "in-progress",
@@ -149,14 +149,11 @@ class Tracker:
 
         The recommended set is category-aware — `job` entries warn against
         anything outside the JobStatus lifecycle; other categories use the
-        generic tuple. Suppressed when (a) the workspace config sets
-        warn_unknown_status=False, (b) the status is in the category's
-        recommended set, or (c) another entry in the same workspace already
+        generic tuple plus `tracker.extra_statuses`. Suppressed when the
+        status is in that set, or another entry in the same workspace already
         uses the same custom status.
         """
         tracker_cfg = self._workspace.config.tracker
-        if not tracker_cfg.warn_unknown_status:
-            return
         recommended_set = _recommended_for_category(category)
         if category != "job":
             recommended_set = recommended_set + tuple(tracker_cfg.extra_statuses)
@@ -175,7 +172,9 @@ class Tracker:
             offending=[status],
             recommended=recommended_set,
             hint=(
-                "Set tracker.warn_unknown_status: false in .dd-config.yaml "
+                None
+                if category == "job"
+                else "List it under tracker.extra_statuses in .dd-config.yaml "
                 "to silence"
             ),
         )

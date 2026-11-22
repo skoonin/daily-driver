@@ -21,7 +21,7 @@ def _config(boards: list[str]) -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "roles": ["Engineer"],
-                "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+                "scraper": {"timeout": 1, "max_retries": 0},
                 "sources": {"ashby": {"ashby_boards": boards}},
             }
         )
@@ -246,7 +246,7 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "scraper": {"timeout": 1, "max_retries": 0},
             "sources": {
                 "ashby": {"ashby_boards": ["company-d"], "exclude_boards": ["noisy-co"]}
             },

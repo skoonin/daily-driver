@@ -205,11 +205,12 @@ def _compress_search_terms(roles: list[str]) -> list[str]:
 
 
 def _search_terms(plugin: JobSearchPlugin) -> list[str]:
-    """Return URL search query strings, compressed to base role types.
-
-    Override by setting job_search.scraper.search_terms in config.
-    """
-    explicit = plugin.scraper.search_terms
-    if explicit:
-        return list(explicit)
-    return _compress_search_terms(list(plugin.roles))
+    """Search queries: the roles compressed to base role types, then
+    `scraper.search_terms`, without case-insensitive duplicates."""
+    terms = _compress_search_terms(list(plugin.roles))
+    seen = {term.lower() for term in terms}
+    for term in plugin.scraper.search_terms:
+        if term.lower() not in seen:
+            seen.add(term.lower())
+            terms.append(term)
+    return terms

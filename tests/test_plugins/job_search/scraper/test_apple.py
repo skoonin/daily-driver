@@ -35,11 +35,9 @@ def _config(roles: list[str] | None = None) -> ScrapeContext:
             {
                 "roles": roles if roles is not None else ["Engineer", "SRE"],
                 "scraper": {
-                    "enabled": True,
                     "timeout": 5,
                     "max_retries": 0,
                     "headless": True,
-                    "max_pages": 1,
                 },
                 "locations": {
                     "countries": {"US": []},
@@ -302,7 +300,8 @@ def test_search_response_fallback_emits_aggregate_warning(
     ), f"expected one aggregate fallback message, got {warnings}"
     msg = next(iter(warnings))
     assert "site may have changed" in msg
-    assert "on 2/2 attempts" in msg  # both Enter waits fell back, counted once
+    # Per term: the Enter wait, then one scroll that adds no rows.
+    assert "on 4/4 attempts" in msg
 
 
 def test_skips_items_without_position_id(monkeypatch: Any) -> None:
@@ -327,3 +326,32 @@ def test_skips_items_without_position_id(monkeypatch: Any) -> None:
 
     jobs = apple_module.scrape_apple(_config())
     assert jobs == []
+
+
+def test_max_results_stops_the_scroll_and_flags_the_cap(monkeypatch: Any) -> None:
+    """A first page at or past max_results is not scrolled further, is cut to
+    max_results rows, and is reported as capped."""
+    payload = json.loads(_FIXTURE.read_text())
+    page = _make_fake_page(payload)
+    monkeypatch.setattr(
+        apple_module, "_playwright_browser", lambda cfg: _fake_browser(page)
+    )
+    ctx = ScrapeContext(
+        plugin=JobSearchPlugin.model_validate(
+            {
+                # One search term, since the fake page answers only the first
+                # search; it matches every title in the fixture.
+                "roles": ["Engineer"],
+                "scraper": {"headless": True, "max_results": 1},
+                "locations": {"countries": {"US": []}},
+            }
+        )
+    )
+
+    jobs = apple_module.scrape_apple(ctx)
+
+    page.evaluate.assert_not_called()
+    assert len(jobs) == 1
+    assert [(r.source, r.kind, r.requested) for r in ctx.saturation] == [
+        ("apple", "cap", 1)
+    ]

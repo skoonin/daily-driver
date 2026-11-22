@@ -20,7 +20,7 @@ def _config(
 ) -> ScrapeContext:
     payload: dict[str, Any] = {
         "roles": ["Engineer"],
-        "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+        "scraper": {"timeout": 1, "max_retries": 0},
         "sources": {"greenhouse": {"greenhouse_boards": boards}},
     }
     if degraded_failure_ratio is not None:
@@ -181,7 +181,7 @@ def test_discovered_boards_unioned_with_pins(monkeypatch: Any) -> None:
     plugin = JobSearchPlugin.model_validate(
         {
             "roles": ["Engineer"],
-            "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+            "scraper": {"timeout": 1, "max_retries": 0},
             "sources": {
                 "greenhouse": {
                     "greenhouse_boards": ["company-a"],

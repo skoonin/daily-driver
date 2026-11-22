@@ -64,8 +64,8 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
     the API response to get structured JSON (title, location, team, date).
 
     Scrolls down after the initial search to trigger additional API pages
-    (the SPA fires more /api/v1/search POSTs on scroll). max_pages controls
-    how many scroll passes per search term.
+    (the SPA fires more /api/v1/search POSTs on scroll) until
+    ``scraper.max_results`` rows are in or a scroll adds none.
 
     Iterates each configured country's locale x search term.
     """
@@ -78,7 +78,7 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
     cfg = ctx.plugin.scraper
     terms = _search_terms(ctx.plugin)
     timeout_ms = cfg.timeout * 1000
-    max_pages = cfg.max_pages
+    max_results = cfg.max_results
     jobs: list[dict] = []
     seen_positions: set[str] = set()
     known_urls = ctx.known_urls
@@ -183,7 +183,7 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                         # Scroll to trigger additional API pages; each scroll
                         # fires another search POST, so wait on the response
                         # instead of a fixed 2s sleep.
-                        for _ in range(max_pages - 1):
+                        while len(api_results) < max_results:
                             prev_count = len(api_results)
                             wait_attempts += 1
                             if _await_search_response(
@@ -196,18 +196,16 @@ def scrape_apple(ctx: ScrapeContext) -> list[dict]:
                             if len(api_results) == prev_count:
                                 break
                         else:
-                            # Every scroll produced new rows and we stopped at
-                            # the page ceiling -- more likely existed. With
-                            # max_pages == 1 no scroll happened, so exhaustion
-                            # vs truncation is unknowable; don't flag.
-                            if max_pages > 1:
-                                ctx.record_saturation(
-                                    source="apple",
-                                    query=f"{term} x {country}",
-                                    returned=len(api_results),
-                                    requested=len(api_results),
-                                    kind="cap",
-                                )
+                            # Reached the cap, on the first page or while
+                            # scrolls kept adding rows: more likely existed.
+                            ctx.record_saturation(
+                                source="apple",
+                                query=f"{term} x {country}",
+                                returned=len(api_results),
+                                requested=max_results,
+                                kind="cap",
+                            )
+                        del api_results[max_results:]
                     except Exception as exc:
                         log.warning(
                             "[apple] search failed for %r (%s): %s", term, country, exc

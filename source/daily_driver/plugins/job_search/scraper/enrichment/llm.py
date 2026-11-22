@@ -87,11 +87,12 @@ def _location_summary(ctx: ScrapeContext) -> str:
 
     loc_cfg = ctx.plugin.locations
     # Spell out the SEMANTICS, not just the data: a bare "Countries: ..." list
-    # next to "Based in: Vancouver" reads as candidate metadata, and models then
+    # next to "Based in: <home city>" reads as candidate metadata, and models then
     # score any non-home-country job as a location mismatch (observed live with
     # a Spain role despite ES being configured). Say explicitly that a job in a
     # listed country IS acceptable.
-    parts = [f"Based in: {home_city(ctx.plugin)}"]
+    city = home_city(ctx.plugin)
+    parts = [f"Based in: {city}"] if city else []
     if loc_cfg is None:
         parts.append("remote roles are acceptable")
         return "; ".join(parts)
@@ -167,30 +168,35 @@ def _fold_criteria_values(
 def _build_fit_notes_system(
     target_roles: str,
     loc_summary: str,
-    hc: str,
+    hc: str | None,
     criteria: Sequence[Criterion] = (),
     context: str = "",
-    include_remote: bool = False,
 ) -> str:
     """Build the STATIC fit/notes instruction block (the system prompt).
 
     Depends only on run-level constants (roles, locations, criteria, the
-    candidate's context.md, the remote toggle) -- never on the job -- so it is
+    candidate's context.md) -- never on the job -- so it is
     byte-identical for every job in a run. Passed as the provider's system
     prompt, which Claude Code prompt-caches server-side: the candidate's full
     context.md is reprocessed once per run, then read from cache on every
     subsequent job instead of riding each per-job prompt. The per-job posting is
     supplied separately by :func:`_build_fit_notes_user`.
     """
-    # The JSON shape gains a "remote" field (when enabled) and a "criteria"
-    # object (when criteria are configured), each only when asked for.
-    shape = '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>"'
-    if include_remote:
-        shape += ', "remote": "remote" | "hybrid" | "onsite"'
+    # The JSON shape gains a "criteria" object only when criteria are configured.
+    shape = (
+        '{"fit": <integer 1-10>, "notes": "<one line, max 20 words>", '
+        '"remote": "remote" | "hybrid" | "onsite"'
+    )
     if criteria:
         shape += ', "criteria": {<one entry per criterion below, keyed by its label>}'
     shape += "}"
 
+    home_rule = (
+        f" -- except for roles located in {hc}, where location fit outweighs "
+        "compensation"
+        if hc
+        else ""
+    )
     if context:
         fit_instr = (
             "fit: score 1-10, weighting (1) experience match -- how well the "
@@ -200,8 +206,7 @@ def _build_fit_notes_system(
             "from their level and track); (2) compensation -- when the posting "
             "or job line states pay, weigh how well it serves the candidate; "
             "never penalize a job for not stating pay; (3) location fit vs. the "
-            f"preferences above -- except for roles located in {hc}, where "
-            "location fit outweighs compensation; (4) seniority and track match. "
+            f"preferences above{home_rule}; (4) seniority and track match. "
             "If the description is too thin to judge experience match, return 5.\n"
         )
     else:
@@ -211,12 +216,15 @@ def _build_fit_notes_system(
             "assess, return 5.\n"
         )
 
-    targeting = f"targeting: {target_roles}, " if target_roles else ""
+    about = [f"targeting: {target_roles}"] if target_roles else []
+    if hc:
+        about.append(f"based in {hc}")
+    candidate = f"The candidate is {', '.join(about)}.\n" if about else ""
     prompt = (
         "You are evaluating how well a specific candidate fits a job. Be honest "
         "and calibrated -- most jobs are average fits. Reserve 8-10 for genuinely "
         "strong matches, 1-3 for clear mismatches.\n"
-        f"The candidate is {targeting}based in {hc}.\n"
+        f"{candidate}"
         f"Location preferences: {loc_summary}\n"
     )
     # The candidate's full context.md is injected when the workspace has one;
@@ -238,12 +246,11 @@ def _build_fit_notes_system(
         "mismatch and the location fit. Do not list the tech stack.\n"
     )
 
-    if include_remote:
-        prompt += (
-            'remote: one of "remote" (fully remote), "hybrid" (some office days), '
-            'or "onsite" (in-office), judged from the description. Omit the field '
-            "if the description is too thin to tell.\n"
-        )
+    prompt += (
+        'remote: one of "remote" (fully remote), "hybrid" (some office days), '
+        'or "onsite" (in-office), judged from the description. Omit the field '
+        "if the description is too thin to tell.\n"
+    )
 
     if criteria:
         criteria_lines = "\n".join(f"- {c.label}: {c.assess}" for c in criteria)
@@ -382,13 +389,12 @@ def _fetch_fit_notes_for_job(
     ctx: ScrapeContext,
     timeout: int,
     criteria: Sequence[Criterion] = (),
-    include_remote: bool = False,
 ) -> tuple[int | None, str, str, bool]:
     """Worker: fetch fit/notes (and remote) for one job.
 
     ``system_prompt`` is the prebuilt static instruction block (the same for
     every job in the run, so it caches); only the per-job posting is built here.
-    ``criteria`` / ``include_remote`` are kept for PARSING the response, not for
+    ``criteria`` is kept for PARSING the response, not for
     building the prompt. Returns ``(fit, notes, remote, failed)``. ``fit`` is a
     validated 1-10 integer (clamped from out-of-range values) or ``None`` when
     the call failed; ``remote`` is a canonical value or "" when not judged.
@@ -473,11 +479,7 @@ def _fetch_fit_notes_for_job(
 
     score = _clamp_fit(fit_val, company, role)
     notes_str = notes_val if isinstance(notes_val, str) else ""
-    remote = (
-        _parse_remote(parsed.get("remote"), company=company, role=role)
-        if include_remote
-        else ""
-    )
+    remote = _parse_remote(parsed.get("remote"), company=company, role=role)
     if criteria:
         criteria_obj = parsed.get("criteria")
         if isinstance(criteria_obj, dict):
@@ -606,8 +608,8 @@ def _build_fit_plan(
         )
         return None
 
-    if not cfg.enrich_fit or not cfg.enrich_notes:
-        log.debug("[enrich-fit-notes] fit or notes disabled via config")
+    if not cfg.enabled:
+        log.debug("[enrich-fit-notes] job review disabled via config")
         return None
 
     # None means "use the config cap"; an explicit 0 means NO calls: a wave-2
@@ -621,13 +623,12 @@ def _build_fit_plan(
     crit_list = list(cfg.criteria)
     context_text = ctx.context_text
     timeout = cfg.enrich_timeout
-    include_remote = cfg.enrich_is_remote
     # Build the static instruction block (incl. context.md) ONCE per run: it is
     # identical for every job, so passing it as the provider system prompt lets
     # a provider with prompt caching (Claude Code caches it server-side) process
     # it once and read it from cache on every subsequent job.
     system_prompt = _build_fit_notes_system(
-        target_roles, loc_summary, hc, crit_list, context_text, include_remote
+        target_roles, loc_summary, hc, crit_list, context_text
     )
     # The per-job user prompt is logged per call in _fetch_fit_notes_for_job; log
     # the (identical) system block ONCE here so a -vv trace is complete without
@@ -799,7 +800,6 @@ def _build_fit_plan(
             ctx,
             timeout,
             crit_list,
-            include_remote,
         )
         return fit, notes_str, remote, failed, False
 
@@ -854,7 +854,7 @@ def enrich_fit_and_notes(
     A row with no ``description_text`` makes no provider call at all -- there is
     nothing to assess -- and is left with blank Fit and Notes, counted under the
     ``no_description`` stat rather than guessed at. Fans out through
-    ``ThreadPoolExecutor`` when ``max_parallel > 1``; ``pool_size == 1`` runs
+    ``ThreadPoolExecutor`` when ``pool_size > 1``; ``pool_size == 1`` runs
     serially on the main thread.
 
     ``flush`` (with ``flush_every``) is the resilience hook: composed onto the
@@ -977,7 +977,7 @@ def enrich_fit_and_notes(
         # scrape/enrich overlap this serial loop runs on the wave-1 background
         # thread, which never receives the KeyboardInterrupt -- ctx.stop_event is
         # its only stop signal. Without this check a
-        # max_parallel=1 run would keep issuing per-job LLM calls for the full
+        # serial run would keep issuing per-job LLM calls for the full
         # remaining budget after the user pressed Ctrl-C. Results applied so far
         # stay in plan.out for the caller's flush.
         if ctx.stop_event.is_set():

@@ -174,7 +174,7 @@ def test_run_uses_shared_jobs_lock_path(
     )
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         dry_run=True,
@@ -254,7 +254,7 @@ def test_run_emits_contention_notice_to_stderr(
     monkeypatch.setattr(runner, "workspace_busy_notice", _release_on_notice)
     try:
         rc = runner.run(
-            JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            JobSearchPlugin.model_validate({}),
             tmp_path,
             tmp_path,
             dry_run=True,

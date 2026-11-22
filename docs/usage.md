@@ -37,7 +37,7 @@ Options:
 - `check-in` starts a new chat each time. To continue your most recent chat instead, set `ai.interactive.resume_check_in: true` in `.dd-config.yaml`. With that setting on, add `--no-resume` to start a new chat.
 - If you close a chat by mistake, run `daily-driver resume` to reopen the most recent one.
 - Each command runs a command of the same name. With Claude Code, that is a slash command such as `/daily-driver:day-start`. For more options, see [Commands](commands.md#interactive-launchers).
-- The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](configuration.md#ai).
+- The chats run on Claude Code. To run them on another program, such as opencode, see [AI providers](providers.md).
 
 See also: [Connect your other tools](../README.md#connect-your-other-tools).
 
@@ -80,7 +80,7 @@ Each item has a status. These are the suggested statuses:
 | `done` | Finished |
 | `ruled-out` | You decided not to do it |
 
-You can use other statuses. Daily Driver shows a one-line notice when you use a new one. To turn the notice off, set `tracker.warn_unknown_status: false`. Run `daily-driver help statuses` to see the suggested statuses and the ones you use. Items from `jobs promote` use these statuses: `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, and `closed`.
+You can use other statuses. Daily Driver shows a one-line notice when you use a new one. To stop the notice for a status of your own, list it under `tracker.extra_statuses`. Run `daily-driver help statuses` to see the suggested statuses and the ones you use. Items from `jobs promote` use these statuses: `found`, `pending`, `skipped`, `applied`, `interviewing`, `rejected`, `dropped`, and `closed`.
 
 ### Date words
 
@@ -108,7 +108,7 @@ daily-driver focus status
 daily-driver focus off
 ```
 
-`--for` sets how long focus mode lasts: `30m`, `2h`, `1h30m`, or a number of minutes. The default is 25 minutes. You can change it with `focus.default_duration` in `.dd-config.yaml`. If focus mode seems stuck, see [Troubleshooting](troubleshooting.md#focus-mode-stuck-on).
+`--for` sets how long focus mode lasts: `30m`, `2h`, `1h30m`, `1d`, or a number of minutes. The default is 25 minutes. You can change it with `focus.default_duration` in `.dd-config.yaml`. If focus mode seems stuck, see [Troubleshooting](troubleshooting.md#focus-mode-stuck-on).
 
 ## Jobs
 
@@ -116,13 +116,13 @@ Job search is optional. It looks for new job postings on the sites you choose an
 
 ### Enable it
 
-Job search is off by default. Until you switch it on, every `jobs` command prints a message and stops.
+Job search is off by default. Until you switch it on, `jobs` is not a command.
 
 1. For a new workspace, run `daily-driver init --job-search PATH`.
 2. For an existing workspace, add `plugins: {job_search: {}}` to `.dd-config.yaml`. Then run `daily-driver doctor --fix`. This adds job search to the prompts the AI reads.
 3. Open `context.md`. Add the places you want to work and the roles you want. Daily Driver does not add these for you.
 4. If you use the scheduler, run `daily-driver scheduler install`. This adds the job search tasks.
-5. Add `scraper.enabled: true` and your sources to `.dd-config.yaml`, as in the example below. Do not add a second `plugins:` line. Add these lines under the one that exists.
+5. Add your sources to `.dd-config.yaml`, as in the example below. Do not add a second `plugins:` line. Add these lines under the one that exists.
 
 ```yaml
 plugins:
@@ -130,13 +130,11 @@ plugins:
     roles: [project coordinator, project manager]
     domain_keywords: [project, program, operations]
     seniority_keywords: [senior, lead]
+    home_city: Vancouver, BC
     locations:
-      home_city: Vancouver, BC
       remote: true
       # Country code. [] means the whole country. A list of cities means only those cities.
       countries: {US: [], CA: [Vancouver, Victoria]}
-    scraper:
-      enabled: true
     sources:
       greenhouse:
         enabled: true
@@ -191,7 +189,7 @@ daily-driver jobs verify                        # close saved jobs that are no l
 
 ### Choosing an AI provider
 
-By default, job search uses the default provider (Claude Code) to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.provider` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [AI providers](providers.md).
+By default, job search uses the default provider (Claude Code) to fill in job details. You can use an AI model on your own computer instead, served by LM Studio or ollama. This suits large runs of `jobs backfill`. Set `plugins.job_search.tasks.fit_notes` to the provider. For setup, see [Local models](local-models.md). Every provider setting is in [AI providers](providers.md).
 
 ## Summary
 

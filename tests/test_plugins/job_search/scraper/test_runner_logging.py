@@ -28,8 +28,7 @@ def _cfg_with_sources(enabled_ids: list[str], *, workers: int = 4) -> ScrapeCont
         plugin=JobSearchPlugin.model_validate(
             {
                 "scraper": {
-                    "enabled": True,
-                    "parallel_workers": workers,
+                    "max_parallel": workers,
                 },
                 "sources": {sid: {"enabled": True} for sid in enabled_ids},
             }
@@ -54,11 +53,11 @@ def test_run_one_logs_starting_at_info(caplog) -> None:
     assert all(r.levelno == logging.INFO for r in starting)
 
 
-def test_parallel_workers_knob_drives_phase1_pool_size(caplog, monkeypatch) -> None:
-    """scraper.parallel_workers sets the phase-1 worker count (in the summary).
+def test_max_parallel_drives_phase1_pool_size(caplog, monkeypatch) -> None:
+    """scraper.max_parallel sets the phase-1 worker count (in the summary).
 
     The phase-1 summary reports the worker count it sizes the ThreadPoolExecutor
-    with, so a non-default `parallel_workers: 3` surfaces there.
+    with, so a non-default `max_parallel: 3` surfaces there.
     """
     from daily_driver.plugins.job_search.scraper import runner
 
@@ -99,7 +98,7 @@ def test_disabled_source_is_skipped(caplog, monkeypatch) -> None:
     ctx = ScrapeContext(
         plugin=JobSearchPlugin.model_validate(
             {
-                "scraper": {"enabled": True, "parallel_workers": 2},
+                "scraper": {"max_parallel": 2},
                 "sources": {
                     "remoteok": {"enabled": True},
                     "greenhouse": {"enabled": False},
@@ -456,7 +455,7 @@ def test_run_dry_run_non_tty_plain_output(tmp_path, monkeypatch, capsys) -> None
     monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         dry_run=True,
@@ -520,7 +519,7 @@ def test_run_failed_source_returns_exit_code_1(tmp_path, monkeypatch, capsys) ->
     monkeypatch.setattr(runner, "location_matches", lambda _j, _p: True)
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         dry_run=True,
@@ -587,7 +586,7 @@ def test_run_keyboard_interrupt_propagates_and_stops_live(
 
     with pytest.raises(KeyboardInterrupt):
         runner.run(
-            JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+            JobSearchPlugin.model_validate({}),
             tmp_path,
             tmp_path,
             dry_run=False,

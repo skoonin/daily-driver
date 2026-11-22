@@ -1,7 +1,7 @@
 """LLM remote tier: the fit/notes call also judges remote-ness (task #6).
 
 The existing fit/notes provider call gains a "remote" field in the JSON it
-requests, gated by ``enrich_is_remote``. This adds ZERO extra LLM calls — it
+requests on every review. This adds ZERO extra LLM calls — it
 piggybacks the one fit/notes call per job. Parsing is tolerant (unknown ->
 leave existing) and hand-entered / heuristic values are never clobbered by a
 blank or unknown LLM answer.
@@ -44,7 +44,7 @@ def _ctx(**enrichment: object) -> ScrapeContext:
 
 
 class TestRemotePromptGating:
-    def test_remote_requested_in_prompt_when_toggle_on(self, monkeypatch) -> None:
+    def test_remote_requested_in_prompt(self, monkeypatch) -> None:
         # The remote instruction lives in the (cached) system prompt now.
         systems: list[str] = []
 
@@ -54,26 +54,11 @@ class TestRemotePromptGating:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(description_text="Hybrid SRE role")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        out, _stats = enrich_fit_and_notes([j], _ctx(), budget=5)
         assert systems and '"remote"' in systems[0]
         assert out[0].remote == "hybrid"
 
-    def test_remote_not_requested_or_written_when_toggle_off(self, monkeypatch) -> None:
-        systems: list[str] = []
-
-        def fake(provider, task, prompt, **k):
-            systems.append(k.get("system") or "")
-            # The model returns remote anyway; with the toggle off it is ignored.
-            return '{"fit": 7, "notes": "k8s", "remote": "remote"}'
-
-        monkeypatch.setattr(ai, "invoke", fake)
-        j = _enriched(description_text="desc")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=False), budget=5)
-        # The system prompt must not request a remote field, and nothing is written.
-        assert systems and '"remote"' not in systems[0]
-        assert out[0].remote == ""
-
-    def test_zero_extra_calls_with_toggle_on(self, monkeypatch) -> None:
+    def test_zero_extra_calls(self, monkeypatch) -> None:
         call_count = [0]
 
         def fake(provider, task, prompt, **k):
@@ -82,7 +67,7 @@ class TestRemotePromptGating:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(description_text="desc")
-        enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        enrich_fit_and_notes([j], _ctx(), budget=5)
         # Exactly one call (fit/notes); remote piggybacks it, no second call.
         assert call_count[0] == 1
 
@@ -94,7 +79,7 @@ class TestRemoteHandEnteredPreserved:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(remote="onsite", description_text="desc")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        out, _stats = enrich_fit_and_notes([j], _ctx(), budget=5)
         assert out[0].remote == "onsite"  # hand-entered value wins
 
     def test_unknown_llm_answer_leaves_existing(self, monkeypatch) -> None:
@@ -103,7 +88,7 @@ class TestRemoteHandEnteredPreserved:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(remote="remote", description_text="desc")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        out, _stats = enrich_fit_and_notes([j], _ctx(), budget=5)
         assert out[0].remote == "remote"  # unrecognized -> leave existing
 
     def test_llm_fills_blank_remote(self, monkeypatch) -> None:
@@ -112,7 +97,7 @@ class TestRemoteHandEnteredPreserved:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(remote="", description_text="desc")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        out, _stats = enrich_fit_and_notes([j], _ctx(), budget=5)
         assert out[0].remote == "onsite"  # LLM fills a blank
 
     def test_llm_refines_heuristic_remote_to_hybrid(self, monkeypatch) -> None:
@@ -122,7 +107,7 @@ class TestRemoteHandEnteredPreserved:
 
         monkeypatch.setattr(ai, "invoke", fake)
         j = _enriched(remote="remote", description_text="desc")
-        out, _stats = enrich_fit_and_notes([j], _ctx(enrich_is_remote=True), budget=5)
+        out, _stats = enrich_fit_and_notes([j], _ctx(), budget=5)
         assert out[0].remote == "hybrid"
 
 

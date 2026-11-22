@@ -8,7 +8,7 @@ Daily Driver runs on Macs with Apple silicon (M1 or newer). Intel Macs probably 
 |-------------|-------|
 | pipx and Python 3.11 or newer | pipx installs Daily Driver in its own folder, so it does not change other Python programs. It uses its own default Python (for the Homebrew pipx, the newest Homebrew Python), and the install stops with an error if that Python is older than 3.11. See [Install](#install-1). |
 | Claude Code (the `claude` command) | The default AI. It runs `day-start`, `day-end`, `check-in`, `summary`, and `voice-update` until you choose another provider. Install it and sign in. See the [Anthropic install guide](https://code.claude.com/docs/en/install). |
-| A different AI program or model server | Optional. opencode, LM Studio, or ollama can run some or all features instead of Claude Code. Claude Code is then not needed for those features. See [AI providers](configuration.md#ai) and [Local models](local-models.md). |
+| A different AI program or model server | Optional. opencode, LM Studio, or ollama can run some or all features instead of Claude Code. Claude Code is then not needed for those features. See [AI providers](providers.md) and [Local models](local-models.md). |
 | `icalBuddy` | Optional. Lets Daily Driver read your macOS Calendar. See [Calendar access](#calendar-access-optional). |
 | `terminal-notifier` | Optional. Makes the scheduled reminders clickable. Install it with `brew install terminal-notifier`. |
 | Playwright browser | Optional. Only the Apple source of job search needs it. See [Playwright browser install](#playwright-browser-install-optional). |

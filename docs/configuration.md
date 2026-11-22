@@ -1,16 +1,17 @@
 # Settings
 
-Your settings live in `.dd-config.yaml` in your workspace folder. Most people change only a few of them, such as reminder times and task categories. The AI handles running daily-driver directly so your list, plans, and notes in your chats, so those need no settings.
+Your settings live in `.dd-config.yaml` in your workspace folder. Most people change only a few of them, such as reminder times and task categories. The AI keeps your list, plans, and notes during your chats, so they need no settings.
 
 How to edit the file:
 
 - Every live line in the file that `init` creates shows its default value. Change a value to change how Daily Driver works.
+- Run `daily-driver config defaults` to print the file that `init` writes, with every default. Compare it with your file to see what you changed. Add `--plugin job_search` to include the settings of job search.
 - If you remove a setting, its default applies.
-- A line that starts with `# ` is a sample. Samples cover settings that cannot show a live value: the shipped `claude` command templates, a provider of your own, and job search `locations`, `sources`, and `criteria`. Delete the `# ` to use one.
+- A line that starts with `# ` is a sample. Samples cover settings that cannot show a live value: model and timeout for the `claude` provider, providers of your own (`claude-sonnet`, `opencode`, `my-server`), the `day_start` and `day_end` reminders, and job search `home_city`, `locations`, `sources`, and `criteria`. Delete the `# ` to use one.
 - Keep the spaces at the start of each line. They show which section a setting belongs to.
 - Write times in quotes, for example `"08:30"`. Without quotes, a time such as `11:00` can be read as a number, and the setting may be rejected.
 - Use each section name once. If a name appears twice, the second section replaces the first without an error.
-- If a setting name is not known, the command stops and prints that name.
+- If a setting name is not known, Daily Driver prints a warning that names it and ignores it. The command keeps running. `daily-driver doctor` reports the setting as an error.
 - Run `daily-driver doctor` after you edit the file. It reports mistakes.
 
 For the daily flow, see [usage.md](usage.md). The AI reads `context.md` when it plans your day. Put your background there, and list tasks that repeat under `## Recurring Tasks`. Do not put them in this file.
@@ -50,12 +51,12 @@ ai:
 
 | Provider | Kind | Default tasks | Notes |
 | --- | --- | --- | --- |
-| `claude` | Program: Claude Code | `interactive`, `summary`, `voice_update` | Runs every task that no provider claims. Runs up to 4 job reviews at the same time. |
+| `claude` | Program: Claude Code | `interactive`, `summary`, `voice_update` | Runs every task that no provider claims. |
 | `opencode` | Program: opencode | none | Runs no task until you give it `tasks`. |
 | `lmstudio` | Model server at `http://localhost:1234/v1` | none | Text tasks only. Has no `model`. |
 | `ollama` | Model server at `http://localhost:11434/v1` | none | Text tasks only. Has no `model`. |
 
-The file that `init` creates shows a live `claude` entry with `model`, `timeout`, and `tasks`, and also `max_parallel` when job search is on. Its command templates are `# ` samples. The shipped settings of every built-in are in [`providers.default.yaml`](../source/daily_driver/resources/templates/providers.default.yaml).
+The file that `init` creates shows a live `claude` entry with `tasks`, and `model` and `timeout` as `# ` samples. The shipped settings of every built-in are in [`providers.default.yaml`](../source/daily_driver/resources/templates/providers.default.yaml).
 
 ### Choose a provider for a task
 
@@ -119,7 +120,7 @@ focus:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `default_duration` | `25m` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, or a number of minutes. |
+| `default_duration` | `25m` | Length of focus mode when `focus on` has no `--for` option. Examples: `30m`, `2h`, `1h30m`, `1d`, or a number of minutes. |
 
 ## `gather`
 
@@ -197,8 +198,7 @@ tracker:
 | --- | --- | --- |
 | `default_category` | `task` | The category that `daily-driver help categories` shows as the default. It must be one of your `categories`. |
 | `categories` | `{task: {required: [title]}}` | Your categories. Each one lists the fields that a new entry must have. See [Custom tracker categories](#custom-tracker-categories). |
-| `warn_unknown_status` | `true` | Shows a one-line warning when you set an unusual status. `false` turns the warning off. |
-| `extra_statuses` | `[]` | Your own statuses. They never cause the warning. They do not apply to `job` entries. |
+| `extra_statuses` | `[]` | Your own statuses. A status that is not built in and not listed here shows a one-line warning the first time you use it. They do not apply to `job` entries. |
 | `terminal_statuses` | `[]` | Your own statuses that close an entry. They add to the built-in closing statuses. |
 
 Fields that a category's `required` list can name:

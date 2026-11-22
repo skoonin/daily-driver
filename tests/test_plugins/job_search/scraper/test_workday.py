@@ -22,7 +22,7 @@ def _config(boards: list[dict[str, Any]]) -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "roles": ["Engineer"],
-                "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+                "scraper": {"timeout": 1, "max_retries": 0},
                 "sources": {"workday": {"workday_boards": boards}},
             }
         )

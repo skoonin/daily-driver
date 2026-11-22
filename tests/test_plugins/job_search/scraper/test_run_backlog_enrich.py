@@ -205,7 +205,7 @@ def test_no_enrich_leaves_backlog_untouched(
     monkeypatch.setattr(runner, "run_all_scrapers", _fake_scrape_returning([]))
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=True,
@@ -434,7 +434,7 @@ def test_no_enrich_run_persists_scraped_descriptions(
     monkeypatch.setattr(runner, "run_all_scrapers", _fake_scrape_returning(new))
 
     rc = runner.run(
-        JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        JobSearchPlugin.model_validate({}),
         tmp_path,
         tmp_path,
         no_enrich=True,
@@ -453,7 +453,7 @@ def test_folded_update_preserves_concurrent_hand_edit(tmp_path: Path) -> None:
         header=list(CANONICAL_HEADER),
         known_urls=set(),
         known_keys=set(),
-        plugin=JobSearchPlugin.model_validate({"scraper": {"enabled": True}}),
+        plugin=JobSearchPlugin.model_validate({}),
     )
     enriched = make_enriched(company="Acme", url="https://old/1", fit=8, notes="scored")
     sink.folded_rows = [enriched]

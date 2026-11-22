@@ -60,23 +60,6 @@ def test_tracker_category_config_defaults():
     assert m.required == []
 
 
-def test_tracker_config_warn_unknown_status_default_true():
-    m = TrackerConfig(
-        default_category="task",
-        categories={"task": TrackerCategoryConfig(required=["title"])},
-    )
-    assert m.warn_unknown_status is True
-
-
-def test_tracker_config_warn_unknown_status_can_be_disabled():
-    m = TrackerConfig(
-        default_category="task",
-        categories={"task": TrackerCategoryConfig(required=["title"])},
-        warn_unknown_status=False,
-    )
-    assert m.warn_unknown_status is False
-
-
 # ---------------------------------------------------------------------------
 # Locations
 # ---------------------------------------------------------------------------
@@ -115,12 +98,11 @@ def test_job_search_plugin_full():
         roles=["Senior SRE", "Staff Platform Engineer"],
         domain_keywords=["kubernetes", "terraform"],
         seniority_keywords=["staff", "senior"],
-        scraper=ScraperConfig(enabled=True, timeout=60, parallel_workers=2),
+        scraper=ScraperConfig(timeout=60, max_parallel=2),
     )
     assert m.roles == ["Senior SRE", "Staff Platform Engineer"]
-    assert m.scraper.enabled is True
     assert m.scraper.timeout == 60
-    assert m.scraper.parallel_workers == 2
+    assert m.scraper.max_parallel == 2
 
 
 def test_job_search_plugin_rejects_extra():
@@ -135,14 +117,13 @@ def test_job_search_plugin_rejects_extra():
 
 def test_scraper_config_defaults():
     m = ScraperConfig()
-    assert m.enabled is False
     assert m.max_retries == 3
-    assert m.max_age_days == 30
+    assert m.max_age_days == 7
+    assert m.max_results == 50
     assert m.timeout == 30
-    assert m.search_terms is None
+    assert m.search_terms == []
     assert m.headless is False
-    assert m.parallel_workers == 8
-    assert m.max_pages == 3
+    assert m.max_parallel == 4
     assert m.browser == "firefox"
 
 
@@ -181,8 +162,7 @@ def test_scraper_config_rejects_moved_sources_field():
 def test_enrichment_config_defaults():
     m = EnrichmentConfig()
     assert m.enrich_timeout == 30
-    assert m.enrich_fit is True
-    assert m.enrich_notes is True
+    assert m.enabled is True
     assert m.max_enrich_fit == 50
     assert m.detail_delay_seconds == 0.5
 
@@ -267,8 +247,7 @@ def test_linkedin_toggle_defaults():
     toggle = m.sources["linkedin"]
     assert isinstance(toggle, LinkedInToggle)
     assert toggle.enabled is True
-    assert toggle.results_wanted_per_query == 50
-    assert toggle.hours_old == 168
+    assert toggle.max_city_queries == 40
     # LinkedIn takes no country param (scrape_jobs has no linkedin country knob).
     assert not hasattr(toggle, "country")
 
@@ -281,8 +260,7 @@ def test_indeed_toggle_defaults():
     toggle = m.sources["indeed"]
     assert isinstance(toggle, IndeedToggle)
     assert toggle.enabled is True
-    assert toggle.results_wanted_per_query == 50
-    assert toggle.hours_old == 168
+    assert toggle.max_city_queries == 40
     assert toggle.country == "USA"
 
 
@@ -293,16 +271,14 @@ def test_indeed_toggle_custom_knobs():
         sources={
             "indeed": {
                 "enabled": True,
-                "results_wanted_per_query": 100,
-                "hours_old": 72,
+                "max_city_queries": 10,
                 "country": "CA",
             }
         }
     )
     toggle = m.sources["indeed"]
     assert isinstance(toggle, IndeedToggle)
-    assert toggle.results_wanted_per_query == 100
-    assert toggle.hours_old == 72
+    assert toggle.max_city_queries == 10
     assert toggle.country == "CA"
 
 

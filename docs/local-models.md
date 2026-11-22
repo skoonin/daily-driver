@@ -52,11 +52,12 @@ ai:
   providers:
     lmstudio:
       model: qwen3-coder
-      # How many job reviews run at the same time. The default is 4.
-      # max_parallel: 4
+      # Job reviews run 4 at a time. A lower number here lowers that.
+      # max_parallel: 2
 plugins:
   job_search:
-    provider: lmstudio
+    tasks:
+      fit_notes: lmstudio  # the file that init writes says claude here
     enrichment:
       # Seconds before one review gives up. The default is 30.
       enrich_timeout: 120
@@ -75,7 +76,7 @@ ai:
 To use ollama, change `lmstudio` to `ollama` and use an ollama model name, such as `qwen2.5:14b`.
 
 - The time limit of a job review is `enrich_timeout`. The `timeout` of the provider does not apply to job reviews.
-- Leave out `plugins.job_search.provider` to keep job review on the default provider.
+- Set `fit_notes` back to `claude` to run job reviews on Claude Code again. `plugins.job_search.provider` does not change a task that `tasks` names.
 - To use a second model on the same server, add an entry with `parent_provider`. See [AI providers](providers.md#change-or-add-a-provider).
 - For every provider setting, see [AI providers](providers.md).
 
@@ -124,7 +125,7 @@ These settings belong to the ollama server, not to Daily Driver.
 
 | Setting | What it does | Suggested value |
 | --- | --- | --- |
-| `OLLAMA_NUM_PARALLEL` | Number of requests the model answers at the same time. More requests use more memory. The default is 1. | `4`. Match `max_parallel` on the provider. |
+| `OLLAMA_NUM_PARALLEL` | Number of requests the model answers at the same time. More requests use more memory. The default is 1. | `4`, the number of job reviews that run at the same time. |
 | `OLLAMA_KEEP_ALIVE` | How long the model stays in memory after a request. The default is 5 minutes. | `30m` |
 | `OLLAMA_FLASH_ATTENTION` and `OLLAMA_KV_CACHE_TYPE` | Together they cut the memory that each request holds while it runs by about half, with little loss in quality. | `1` and `q8_0` |
 

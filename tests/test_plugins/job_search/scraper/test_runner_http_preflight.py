@@ -59,7 +59,7 @@ def _stub_scrapers(monkeypatch: pytest.MonkeyPatch, jobs: list[dict[str, Any]]) 
 
 def _enrich_plugin() -> JobSearchPlugin:
     """A plugin with the LLM toggles on (the default)."""
-    return JobSearchPlugin.model_validate({"scraper": {"enabled": True}})
+    return JobSearchPlugin.model_validate({})
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -281,9 +281,7 @@ def test_preflight_uses_short_fixed_timeout(
     )
 
     # A long per-call enrich_timeout must NOT bleed into the preflight ping.
-    plugin = JobSearchPlugin.model_validate(
-        {"scraper": {"enabled": True}, "enrichment": {"enrich_timeout": 120}}
-    )
+    plugin = JobSearchPlugin.model_validate({"enrichment": {"enrich_timeout": 120}})
 
     runner.run(plugin, tmp_path, tmp_path, provider=ollama_provider(), no_enrich=False)
 
@@ -372,8 +370,7 @@ def test_no_preflight_ping_when_llm_toggles_off(
 
     plugin = JobSearchPlugin.model_validate(
         {
-            "scraper": {"enabled": True},
-            "enrichment": {"enrich_fit": False, "enrich_notes": False},
+            "enrichment": {"enabled": False},
         }
     )
     runner.run(plugin, tmp_path, tmp_path, provider=ollama_provider(), no_enrich=False)

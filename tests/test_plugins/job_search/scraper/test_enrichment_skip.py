@@ -28,7 +28,6 @@ def fake_config() -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "scraper": {
-                    "enabled": True,
                     "timeout": 5,
                     "max_retries": 1,
                 },

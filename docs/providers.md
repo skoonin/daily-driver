@@ -31,7 +31,7 @@ ai:
 | `model` | none | Model name. A server that runs a task needs it. The `--model` option on a command wins. |
 | `model_file` | none | Programs only. For a program that reads the model of an interactive session from its own JavaScript Object Notation (JSON) config file. `path` is the file, relative to the workspace. `key` is the setting in it. See [Sessions](#sessions). `null` turns it off. |
 | `timeout` | none (180 s for text tasks, 900 s for agent tasks) | Seconds before an agent or text call gives up. A positive whole number. See [Time limits](#time-limits). |
-| `max_parallel` | `4` | Text tasks only. Job reviews that run at the same time. `1` runs one at a time. It changes speed only. It does not change how many jobs are reviewed (`max_enrich_fit`) or the time limit of one call. |
+| `max_parallel` | none (no limit) | The most calls that this provider runs at the same time. A feature that sends many calls sets its own number: job reviews run 4 at a time. A lower `max_parallel` lowers that number. Set it for a model server that answers fewer requests at once. It changes speed only. It does not change how many jobs are reviewed (`max_enrich_fit`) or the time limit of one call. |
 
 The shipped settings of every built-in provider are in [`providers.default.yaml`](../source/daily_driver/resources/templates/providers.default.yaml).
 
@@ -42,7 +42,7 @@ The shipped settings of every built-in provider are in [`providers.default.yaml`
 - `parent_provider` does not copy `tasks`. Each entry lists its own.
 - An entry named after a built-in provider cannot set `parent_provider`.
 
-The file that `init` creates has a live `claude` entry with `model`, `timeout`, and `tasks`, and also `max_parallel` when job search is on. It also has the shipped `claude` command templates as `# ` samples. To change a template, delete its `# ` and edit it. A template that you turn on no longer gets the changes of later versions. The file also has a sample of a provider of your own.
+The file that `init` creates has a live `claude` entry with `tasks`, and `model` and `timeout` as `# ` samples. It also has samples of a provider of your own, opencode, and a model server. To change a command template of a built-in provider, copy it from [`providers.default.yaml`](../source/daily_driver/resources/templates/providers.default.yaml) into its entry and edit it. A template that you set no longer gets the changes of later versions.
 
 Run `summary` on a second `claude` entry, and `voice_update` on LM Studio:
 

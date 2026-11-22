@@ -13,12 +13,15 @@ if TYPE_CHECKING:
 
 
 def _enrich_pool_size(ctx: ScrapeContext) -> int:
-    """Worker count for enrichment from the provider's max_parallel; 1 = serial.
+    """Worker count for enrichment; 1 = serial.
 
     Parallelism only raises throughput: the max_enrich_* budget still caps how
     many jobs are enriched, and the per-call timeout is unchanged.
     """
-    return max(1, ctx.provider.settings.max_parallel)
+    from daily_driver.core.providers import parallel_calls
+    from daily_driver.plugins.job_search import FIT_NOTES
+
+    return parallel_calls(ctx.provider, FIT_NOTES)
 
 
 def _enrich_tag(prefix: str) -> str:

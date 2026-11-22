@@ -36,26 +36,18 @@ def _int_in_range(minimum: int, maximum: int, flag: str) -> Callable[[str], int]
 _positive_limit = int_at_least(1, "--limit")
 
 
-def _cooldown_hours(value: str) -> int | str:
-    """--cooldown-hours: a non-negative int (hours), or the literal ``missing``.
+def _cooldown(value: str) -> str:
+    """--cooldown: a duration such as ``24h``, ``0``, or ``missing``.
 
     ``0`` disables the cooldown (re-enrich every active row); ``missing``
     re-enriches only rows with no enrichment timestamp yet.
     """
-    if value.strip().lower() == "missing":
-        return "missing"
+    from daily_driver.plugins.job_search.config import check_cooldown
+
     try:
-        n = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            "--cooldown-hours must be a non-negative integer or 'missing' "
-            f"(got {value!r})"
-        ) from None
-    if n < 0:
-        raise argparse.ArgumentTypeError(
-            f"--cooldown-hours must be >= 0 or 'missing' (got {n})"
-        )
-    return n
+        return check_cooldown(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def add_parser(
@@ -170,20 +162,20 @@ def add_parser(
             "Re-enrich every active row and OVERWRITE its Fit, Notes, and Remote, "
             "and re-derive Comp from the cached description when it parses to a "
             "different value (default: fill missing cells only). Still bounded by "
-            "--limit and the --cooldown-hours cooldown"
+            "--limit and --cooldown"
         ),
     )
     p_backfill.add_argument(
-        "--cooldown-hours",
-        type=_cooldown_hours,
+        "--cooldown",
+        type=_cooldown,
         default=None,
-        metavar="N|missing",
+        metavar="DURATION|missing",
         help=(
             "Only with --force-update (no effect otherwise): skip rows enriched "
-            "within the last N hours, so an interrupted force-update resumes "
-            "instead of restarting; 'missing' re-enriches only rows with no "
-            "enrichment timestamp yet (default: config force_recook_cooldown_hours, "
-            "normally 24; 0 disables)"
+            "within this long, such as 24h or 30m, so an interrupted force-update "
+            "resumes instead of restarting; 'missing' re-enriches only rows with "
+            "no enrichment timestamp yet (default: config backfill_cooldown, "
+            "normally 24h; 0 disables)"
         ),
     )
     p_backfill.add_argument(
@@ -574,7 +566,7 @@ def _run_backfill(args: argparse.Namespace, workspace) -> int:  # type: ignore[n
             dry_run=args.dry_run,
             limit=args.limit,
             force=args.force_update,
-            cooldown_hours=args.cooldown_hours,
+            cooldown=args.cooldown,
             emit_json=emit_json,
             fetch_descriptions=not args.skip_descriptions,
         )

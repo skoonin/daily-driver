@@ -29,7 +29,7 @@ _FRESH = "2026-07-03"
 
 
 def _plugin() -> JobSearchPlugin:
-    return JobSearchPlugin.model_validate({"scraper": {"enabled": True}})
+    return JobSearchPlugin.model_validate({})
 
 
 def _row(url: str, source: str, status: str = "found", **cells: str) -> dict[str, str]:
@@ -397,9 +397,7 @@ def test_row_with_no_parseable_dates_is_never_age_closed(
 def test_age_threshold_from_config_with_flag_override(
     tmp_path: Path, monkeypatch
 ) -> None:
-    plugin = JobSearchPlugin.model_validate(
-        {"scraper": {"enabled": True}, "verify": {"unverified_age_days": 60}}
-    )
+    plugin = JobSearchPlugin.model_validate({"verify": {"unverified_age_days": 60}})
     csv_path = tmp_path / "jobs.csv"
     # Found 33 days ago: not due under the configured 60...
     _write_csv(csv_path, [_row("https://indeed.com/viewjob?jk=1", "indeed")])
@@ -555,9 +553,7 @@ def test_below_suspect_threshold_all_closed_still_applies(
 def test_config_reverify_days_used_when_flag_absent(
     tmp_path: Path, monkeypatch
 ) -> None:
-    plugin = JobSearchPlugin.model_validate(
-        {"scraper": {"enabled": True}, "verify": {"reverify_days": 60}}
-    )
+    plugin = JobSearchPlugin.model_validate({"verify": {"reverify_days": 60}})
     csv_path = tmp_path / "jobs.csv"
     # Verified 33 days ago: due under the default 7, NOT due under 60.
     _write_csv(

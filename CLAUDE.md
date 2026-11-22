@@ -38,10 +38,7 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver resume` — reattach to the workspace's most recent session through the provider's `resume` template (`claude --resume <id>` for claude) when a launcher tab is closed or lost. It refuses a session that another provider started.
 - `daily-driver summary --range SPEC` — period summary from the provider that has the `summary` task (an agent task: the program lists the files, the provider reads them); prints to stdout and copies to clipboard.
 - `daily-driver voice-update --from PATH` — rewrite of `voice-profile.md` from writing samples, run by the provider that has the `voice_update` task (a text task).
-- `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` —
-  search the configured job boards, re-enrich empty fields on existing rows,
-  promote a row into the tracker, show last-run metadata, archive stale rows, or
-  URL-check row liveness in `jobs.csv`. Not a command while job search is off.
+- `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` — search the configured job sites, re-enrich empty fields on existing rows, promote a row into the tracker, sweep Greenhouse, Ashby, and Lever for company boards with in-scope roles (cached for `jobs run`), show last-run metadata, archive stale rows, or URL-check row liveness in `jobs.csv`. Not a command while job search is off.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths
   (root, state, tracker, daily plan/notes).
 - `daily-driver gather {calendar,git} [--json]` — read
@@ -97,7 +94,7 @@ Key conventions:
 - `make test-quick` — py311 only, fast inner loop.
 - `make test-unit` / `test-cli` / `test-e2e` — scoped suites.
 - `make lint` / `make format` / `make type` — black + isort + flake8 + mypy.
-- pre-commit runs black, isort, flake8, pyupgrade, autoflake, and the pre-commit-hooks hygiene checks (whitespace, end of file, YAML and TOML syntax, debug statements).
+- pre-commit runs black, isort, flake8, pyupgrade, autoflake, and the pre-commit-hooks hygiene checks (trailing whitespace, end of file, line endings, YAML, TOML, and JSON syntax, docstring placement, debug statements, large added files, merge conflict markers, and file name case conflicts).
 - CI runs black, isort, flake8, mypy, and pytest (which includes tests that validate the shipped config template). pyupgrade and autoflake have no CI counterpart; mypy has no pre-commit hook.
 - Tests marked `smoke` hit live job-board URLs. pytest `addopts` excludes them and nothing runs them on a schedule; run `pytest -m smoke tests/test_plugins/job_search/scraper/test_e2e_smoke.py` by hand.
 

@@ -16,7 +16,6 @@ def _config(
     data: dict[str, Any] = {
         "roles": roles if roles is not None else ["Engineer", "SRE"],
         "scraper": {
-            "enabled": True,
             "timeout": 1,
             "max_retries": 0,
         },

@@ -13,6 +13,29 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
+- **BREAKING: several job search settings are renamed, merged, or removed.** A settings file that still has an old setting shows a warning that names the new one, and the old setting is ignored (#283):
+
+  | Old | New |
+  | --- | --- |
+  | `locations.home_city` | `home_city`, one level up |
+  | `scraper.enabled` | none: `jobs run` searches the sites under `sources` |
+  | `scraper.parallel_workers` | `scraper.max_parallel`, default 4 (was 8) |
+  | `scraper.max_pages`, `sources.linkedin.results_wanted_per_query`, `sources.indeed.results_wanted_per_query` | `scraper.max_results`, the most jobs per search on LinkedIn, Indeed, and Apple |
+  | `sources.linkedin.hours_old`, `sources.indeed.hours_old` | `scraper.max_age_days` |
+  | `enrichment.enrich_fit`, `enrichment.enrich_notes` | `enrichment.enabled`, which turns the whole job review on or off |
+  | `enrichment.enrich_is_remote` | none: every review labels the job remote, hybrid, or onsite |
+  | `enrichment.force_recook_cooldown_hours` | `enrichment.backfill_cooldown`, a duration such as `24h` or `30m`, or `0` or `missing` |
+
+- **BREAKING: `jobs backfill --cooldown-hours N` is now `--cooldown DURATION`,** such as `--cooldown 12h`. `0` and `missing` work as before. (#283)
+- **`scraper.search_terms` adds to the search words that come from `roles`.** Before, it replaced them. An empty `search_terms:` with no list is now an error; write `search_terms: []` or delete the line. (#283)
+- **`scraper.max_age_days` now applies to LinkedIn and Indeed as well as Hacker News jobs, and its default is 7 days.** Before, LinkedIn and Indeed used their own `hours_old` (7 days), and Hacker News jobs used 30 days. (#283)
+- **Job reviews no longer assume that you live in Vancouver, BC.** With no `home_city`, the review prompt names no city. Before, the AI was told that every workspace without one was based in Vancouver. (#283)
+- **Job reviews run 4 at a time on every provider.** `ai.providers.<name>.max_parallel` now has no default and can only lower that number, for a model server that answers fewer requests at once. (#283)
+- **`jobs run` with no site under `sources` says so.** It still reviews the jobs that are waiting for a review. (#283)
+- **BREAKING: `tracker.warn_unknown_status` is removed.** To stop the warning for a status of your own, list it under `tracker.extra_statuses`. (#283)
+- **`focus on --for` also accepts days, such as `1d`, and upper-case units, such as `2H`.** (#283)
+- **The settings file that `init` writes is shorter.** It routes the job review with `tasks: {fit_notes: claude}` and leaves out the `claude` command templates, `plugins.job_search.provider`, the `discovery` settings, `scraper.user_agent`, and `scraper.browser`. Their defaults apply, and the docs describe them. (#283)
+
 - **The settings file that `init` writes shows each setting with its default value.** Change a value to change it. Settings that cannot be shown as a default, such as the shipped `claude` commands, job search `locations`, and job sites, are samples that start with `# `. The settings docs are now [Settings](docs/configuration.md), [Providers](docs/providers.md), and [Job search](docs/job-search.md), and each settings table shows its defaults. Existing workspaces keep their settings file. (#282)
 
 - **BREAKING: the `daily_driver.output_dir` setting is removed.** The tracker, daily plans and notes, and job search files are always in the workspace folder. A `daily_driver` section now shows a warning and is ignored, unless `output_dir` is another folder. That case stops with a message: move the files from that folder into the workspace folder, then delete the section. `daily-driver paths output` and the `output_dir` key of `paths --json` are removed too; use `paths root`. (#282)

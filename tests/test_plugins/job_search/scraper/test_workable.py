@@ -22,7 +22,7 @@ def _config(accounts: list[str]) -> ScrapeContext:
         plugin=JobSearchPlugin.model_validate(
             {
                 "roles": ["Engineer"],
-                "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+                "scraper": {"timeout": 1, "max_retries": 0},
                 "sources": {"workable": {"workable_accounts": accounts}},
             }
         )

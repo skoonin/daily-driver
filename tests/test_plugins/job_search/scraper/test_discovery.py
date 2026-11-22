@@ -35,7 +35,7 @@ def _ctx(
 ) -> ScrapeContext:
     payload: dict[str, Any] = {
         "roles": roles or ["SRE"],
-        "scraper": {"enabled": True, "timeout": 1, "max_retries": 0},
+        "scraper": {"timeout": 1, "max_retries": 0},
     }
     discovery_cfg = {
         key: value

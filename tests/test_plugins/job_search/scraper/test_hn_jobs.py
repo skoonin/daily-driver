@@ -22,7 +22,6 @@ def _config(
             {
                 "roles": roles or ["SRE", "Engineer"],
                 "scraper": {
-                    "enabled": True,
                     "timeout": 1,
                     "max_retries": 0,
                     "max_age_days": max_age_days,

@@ -26,8 +26,8 @@ def test_both_enabled_split_into_two_rows() -> None:
 
 def test_both_enabled_split_regardless_of_knobs() -> None:
     plugin = _plugin(
-        linkedin={"enabled": True, "results_wanted_per_query": 50},
-        indeed={"enabled": True, "results_wanted_per_query": 25},
+        linkedin={"enabled": True, "max_city_queries": 50},
+        indeed={"enabled": True, "max_city_queries": 25},
     )
     plan = _jobspy_scrape_plan(["linkedin", "indeed"], plugin)
     assert plan == [("linkedin", ["linkedin"]), ("indeed", ["indeed"])]
