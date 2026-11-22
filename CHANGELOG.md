@@ -13,7 +13,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
-- **BREAKING: several job search settings are renamed, merged, or removed.** A settings file that still has an old setting shows a warning that names the new one, and the old setting is ignored:
+- **BREAKING: several job search settings are renamed, merged, or removed.** A settings file that still has an old setting shows a warning that names the new one, and the old setting is ignored (#283):
 
   | Old | New |
   | --- | --- |
@@ -26,15 +26,15 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   | `enrichment.enrich_is_remote` | none: every review labels the job remote, hybrid, or onsite |
   | `enrichment.force_recook_cooldown_hours` | `enrichment.backfill_cooldown`, a duration such as `24h` or `30m`, or `0` or `missing` |
 
-- **BREAKING: `jobs backfill --cooldown-hours N` is now `--cooldown DURATION`,** such as `--cooldown 12h`. `0` and `missing` work as before.
-- **`scraper.search_terms` adds to the search words that come from `roles`.** Before, it replaced them. An empty `search_terms:` with no list is now an error; write `search_terms: []` or delete the line.
-- **`scraper.max_age_days` now applies to LinkedIn and Indeed as well as Hacker News jobs, and its default is 7 days.** Before, LinkedIn and Indeed used their own `hours_old` (7 days), and Hacker News jobs used 30 days.
-- **Job reviews no longer assume that you live in Vancouver, BC.** With no `home_city`, the review prompt names no city. Before, the AI was told that every workspace without one was based in Vancouver.
-- **Job reviews run 4 at a time on every provider.** `ai.providers.<name>.max_parallel` now has no default and can only lower that number, for a model server that answers fewer requests at once.
-- **`jobs run` with no site under `sources` says so.** It still reviews the jobs that are waiting for a review.
-- **BREAKING: `tracker.warn_unknown_status` is removed.** To stop the warning for a status of your own, list it under `tracker.extra_statuses`.
-- **`focus on --for` also accepts days, such as `1d`, and upper-case units, such as `2H`.**
-- **The settings file that `init` writes is shorter.** It routes the job review with `tasks: {fit_notes: claude}` and leaves out the `claude` command templates, `plugins.job_search.provider`, the `discovery` settings, `scraper.user_agent`, and `scraper.browser`. Their defaults apply, and the docs describe them.
+- **BREAKING: `jobs backfill --cooldown-hours N` is now `--cooldown DURATION`,** such as `--cooldown 12h`. `0` and `missing` work as before. (#283)
+- **`scraper.search_terms` adds to the search words that come from `roles`.** Before, it replaced them. An empty `search_terms:` with no list is now an error; write `search_terms: []` or delete the line. (#283)
+- **`scraper.max_age_days` now applies to LinkedIn and Indeed as well as Hacker News jobs, and its default is 7 days.** Before, LinkedIn and Indeed used their own `hours_old` (7 days), and Hacker News jobs used 30 days. (#283)
+- **Job reviews no longer assume that you live in Vancouver, BC.** With no `home_city`, the review prompt names no city. Before, the AI was told that every workspace without one was based in Vancouver. (#283)
+- **Job reviews run 4 at a time on every provider.** `ai.providers.<name>.max_parallel` now has no default and can only lower that number, for a model server that answers fewer requests at once. (#283)
+- **`jobs run` with no site under `sources` says so.** It still reviews the jobs that are waiting for a review. (#283)
+- **BREAKING: `tracker.warn_unknown_status` is removed.** To stop the warning for a status of your own, list it under `tracker.extra_statuses`. (#283)
+- **`focus on --for` also accepts days, such as `1d`, and upper-case units, such as `2H`.** (#283)
+- **The settings file that `init` writes is shorter.** It routes the job review with `tasks: {fit_notes: claude}` and leaves out the `claude` command templates, `plugins.job_search.provider`, the `discovery` settings, `scraper.user_agent`, and `scraper.browser`. Their defaults apply, and the docs describe them. (#283)
 
 - **The settings file that `init` writes shows each setting with its default value.** Change a value to change it. Settings that cannot be shown as a default, such as the shipped `claude` commands, job search `locations`, and job sites, are samples that start with `# `. The settings docs are now [Settings](docs/configuration.md), [Providers](docs/providers.md), and [Job search](docs/job-search.md), and each settings table shows its defaults. Existing workspaces keep their settings file. (#282)
 
