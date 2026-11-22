@@ -40,7 +40,7 @@ All configured in `pyproject.toml`. black, isort, and flake8 run in pre-commit a
 
 | Tool | Config |
 |------|--------|
-| black | line-length 88, target-version py311 |
+| black | line-length 88; target versions read from `requires-python` |
 | isort | profile black, line-length 88 |
 | flake8 | max-line-length 88, ignores E203/E501/W503 |
 | mypy | strict, `source/` on path, pydantic plugin enabled |
