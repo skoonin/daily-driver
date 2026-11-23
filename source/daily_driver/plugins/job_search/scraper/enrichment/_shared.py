@@ -37,6 +37,12 @@ def _enrich_tag(prefix: str) -> str:
     return f"[{prefix}]"
 
 
+# The active job review's stop flag, while one runs on the main thread. The
+# SIGTERM handler sets it instead of raising, for the same lock-leak reason the
+# SIGINT notifier does. A list so the signal handler reads it without a global.
+_review_interrupt_flag: list[threading.Event] = []
+
+
 def _install_interrupt_notifier(
     futures: dict[Any, Any], timeout_s: int, item: str, interrupted: threading.Event
 ) -> Any:
@@ -88,6 +94,7 @@ def _install_interrupt_notifier(
         os.kill(os.getpid(), signal.SIGINT)
 
     signal.signal(signal.SIGINT, handler)
+    _review_interrupt_flag[:] = [interrupted]
     return previous
 
 
@@ -101,6 +108,7 @@ def _restore_interrupt_handler(previous: Any) -> None:
     if threading.current_thread() is not threading.main_thread():
         return
     signal.signal(signal.SIGINT, previous)
+    _review_interrupt_flag.clear()
 
 
 # Records the signal that triggered a graceful stop so the CLI can pick the
@@ -120,6 +128,8 @@ def install_sigterm_handler() -> Any:
     record loses any in-flight work. This handler raises ``KeyboardInterrupt`` so
     SIGTERM unwinds through the exact same drain/flush machinery as Ctrl-C, and
     records ``signal.SIGTERM`` so the CLI can exit 143 (128 + 15) rather than 130.
+    During a parallel job review it sets the review's stop flag instead of
+    raising, like the first Ctrl-C (see :func:`_install_interrupt_notifier`).
 
     ``signal.signal`` is main-thread-only, so an off-main-thread caller gets no
     handler (returns ``None``); pair the return with
@@ -133,6 +143,9 @@ def install_sigterm_handler() -> Any:
 
     def handler(_signum: int, _frame: Any) -> None:
         _received_signal.append(signal.SIGTERM)
+        if _review_interrupt_flag:
+            _review_interrupt_flag[0].set()
+            return
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, handler)
