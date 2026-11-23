@@ -16,6 +16,7 @@ from daily_driver.core.console import Console
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.gathers import calendar as gather_calendar
 from daily_driver.gathers import git as gather_git
+from daily_driver.integrations.git import GitCommandError
 
 
 def add_parser(
@@ -111,6 +112,12 @@ def _run_calendar(args: argparse.Namespace, workspace: Workspace) -> int:
     return 0
 
 
+def _git_reason(exc: GitCommandError) -> str:
+    """Git's own first line of stderr, or the exit code when git printed none."""
+    lines = exc.stderr.strip().splitlines()
+    return lines[0] if lines else str(exc)
+
+
 def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
     try:
         since_d = _parse_date(args.since, today() - timedelta(days=1))
@@ -143,8 +150,19 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
             repos = [Path.cwd()]
 
     seen: dict[str, gather_git.GitCommit] = {}
+    read: list[Path] = []
     for repo in repos:
-        for c in gather_git.gather_commits(repo, since_dt, until_dt):
+        try:
+            repo_commits = gather_git.gather_commits(repo, since_dt, until_dt)
+        except GitCommandError as exc:
+            if args.repo is not None:
+                Console.error(f"{repo}: {_git_reason(exc)}")
+                return 1
+            # One unreadable discovered repo must not hide the commits of the others.
+            Console.warning(f"skipping {repo}: {_git_reason(exc)}")
+            continue
+        read.append(repo)
+        for c in repo_commits:
             seen.setdefault(c.sha, c)
     commits = sorted(seen.values(), key=lambda c: c.timestamp)
 
@@ -152,12 +170,15 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
         payload = {
             "commits": [c.model_dump(mode="json") for c in commits],
             "count": len(commits),
-            "repos": [str(r) for r in repos],
+            "repos": [str(r) for r in read],
         }
         Console.emit_json(payload)
     else:
+        if not read:
+            print("(no git repo could be read)")
+            return 0
         if not commits:
-            scanned = ", ".join(str(r) for r in repos)
+            scanned = ", ".join(str(r) for r in read)
             print(f"(no commits in {scanned})")
             return 0
         for c in commits:

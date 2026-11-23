@@ -24,7 +24,7 @@ class GitCommit(BaseModel):
 def gather_commits(
     repo_root: Path, since: datetime, until: datetime | None = None
 ) -> list[GitCommit]:
-    """Return commits in [since, until or HEAD). Empty list if not a git repo."""
+    """Return commits in [since, until or HEAD). Empty for no repo or no commits."""
     log_query_window(
         log, f"git ({repo_root})", since, until if until is not None else now()
     )
