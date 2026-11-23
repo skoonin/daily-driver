@@ -42,9 +42,7 @@ from daily_driver.plugins.job_search.scraper.csv_io import (
     format_canonicalized_notice,
 )
 from daily_driver.plugins.job_search.scraper.csv_io import read_rows as _read_rows
-from daily_driver.plugins.job_search.scraper.csv_io import (
-    warn_unknown_job_statuses,
-)
+from daily_driver.plugins.job_search.scraper.csv_io import warn_unknown_job_statuses
 from daily_driver.plugins.job_search.scraper.descriptions import gc_descriptions
 from daily_driver.plugins.job_search.scraper.models import parse_fit_cell
 
