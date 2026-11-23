@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
@@ -905,8 +906,9 @@ def enrich_fit_and_notes(
             # mapping that reflects what's been submitted (a bulk replace would
             # leave a window where the handler reads {} and reports "0").
             futures: dict[Any, int] = {}
+            interrupted = threading.Event()
             previous_handler = _install_interrupt_notifier(
-                futures, plan.timeout, "jobs"
+                futures, plan.timeout, "jobs", interrupted
             )
             for idx in plan.target_idx:
                 futures[pool.submit(plan.fetch, idx)] = idx
@@ -931,7 +933,7 @@ def enrich_fit_and_notes(
                 # yield -- and so never re-check the event -- until the next
                 # completion.
                 pending: set[Future[Any]] = set(futures)
-                while pending:
+                while pending and not interrupted.is_set():
                     # Cooperative stop: an interrupt during the scrape/enrich
                     # overlap sets ctx.stop_event on the MAIN thread. A child
                     # thread never receives the KeyboardInterrupt, so without this
@@ -943,6 +945,8 @@ def enrich_fit_and_notes(
                     # as_completed loop would.
                     if ctx.stop_event.is_set():
                         _drain_settled()
+                        if interrupted.is_set():
+                            raise KeyboardInterrupt
                         return plan.out, plan.stats
                     done, pending = wait(
                         pending,
@@ -953,6 +957,8 @@ def enrich_fit_and_notes(
                         _guarded_consume(
                             plan.consume, fut, futures[fut], "job", plan.stats
                         )
+                if interrupted.is_set():
+                    raise KeyboardInterrupt
             except KeyboardInterrupt:
                 _drain_settled()
                 raise

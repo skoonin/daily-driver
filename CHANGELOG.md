@@ -99,6 +99,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
   The old `summary` route to ollama gave the model no data. `summary` now needs a program that reads files, so move `summary` to `claude` or `opencode`, and keep `ollama` for `voice_update` and job reviews.
 
+### Fixed
+
+- **Ctrl-C during job reviews can no longer freeze `jobs run` on Python 3.11 and 3.12.** When the interrupt arrived while the program was writing a log message, the parallel job reviews stopped forever and the run never ended. Ctrl-C now stops the reviews, keeps the finished results, and exits. (#284)
+
 ## [1.4.1] — 2026-10-21
 
 ### Changed

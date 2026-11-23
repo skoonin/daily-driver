@@ -38,9 +38,15 @@ def _enrich_tag(prefix: str) -> str:
 
 
 def _install_interrupt_notifier(
-    futures: dict[Any, Any], timeout_s: int, item: str
+    futures: dict[Any, Any], timeout_s: int, item: str, interrupted: threading.Event
 ) -> Any:
     """Install a SIGINT handler that prints a user-voice ack on first Ctrl-C.
+
+    The first Ctrl-C sets ``interrupted`` instead of raising: the caller polls it
+    and raises ``KeyboardInterrupt`` at a safe point. An exception raised from the
+    handler lands at an arbitrary bytecode in the main thread, and on Python < 3.13
+    that can fall between a logging handler's ``acquire()`` and its ``try``,
+    leaking the lock so every worker thread that logs next blocks forever.
 
     Second Ctrl-C restores the OS default handler and re-sends SIGINT so the
     process exits the way it would have without us. Returns the previous
@@ -70,7 +76,8 @@ def _install_interrupt_notifier(
                 file=sys.stderr,
                 flush=True,
             )
-            raise KeyboardInterrupt
+            interrupted.set()
+            return
         # Second press: hand control back to whatever handler the parent had
         # before we installed ours, then re-raise the signal. Falls back to
         # SIG_DFL if `previous` isn't installable (e.g. a non-callable token).
