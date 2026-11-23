@@ -132,11 +132,13 @@ def test_interrupt_mid_pass_drains_and_reraises_once(
                     break
             time.sleep(0.01)
         os.kill(os.getpid(), signal.SIGINT)
+        # Release the in-flight calls the drain waits on, once the interrupt is in.
+        time.sleep(0.2)
+        block.set()
 
     threading.Thread(target=trip_sigint, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):
         enrich_fit_and_notes(jobs, _ctx(max_parallel=4))
-    block.set()
 
     fits = [j for j in jobs if j.fit == 7]
     assert fits, "expected at least one fit applied after interrupt"
@@ -310,11 +312,13 @@ def test_interrupt_with_failing_drain_still_reraises(
     def trip_sigint() -> None:
         if four_done.wait(timeout=10.0):
             os.kill(os.getpid(), signal.SIGINT)
+            # Release the in-flight calls the drain waits on, once the interrupt is in.
+            time.sleep(0.2)
+            block.set()
 
     threading.Thread(target=trip_sigint, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):
         enrich_fit_and_notes(jobs, _ctx(max_parallel=4))
-    block.set()
 
 
 def test_interrupt_after_last_result_still_reraises(

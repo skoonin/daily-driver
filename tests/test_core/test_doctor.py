@@ -51,40 +51,21 @@ class _FakeWorkspace:
 # ---------------------------------------------------------------------------
 
 
-def test_run_checks_none_returns_list() -> None:
+def test_run_checks_without_a_workspace() -> None:
     results = run_checks(None)
     assert isinstance(results, list)
-    assert len(results) > 0
+    assert results
     assert all(isinstance(r, CheckResult) for r in results)
-
-
-def test_run_checks_none_contains_python_version() -> None:
-    results = run_checks(None)
     names = [r.name for r in results]
     assert "Python version" in names
-
-
-def test_run_checks_none_contains_required_deps() -> None:
-    results = run_checks(None)
-    names = [r.name for r in results]
+    assert "Workspace drift" not in names
     for pkg in ["pydantic", "pyyaml", "rich", "jinja2"]:
         assert f"dep:{pkg}" in names, f"expected dep:{pkg} in results"
-
-
-def test_run_checks_none_deps_ok_in_test_env() -> None:
-    """All required deps are installed in the test venv."""
-    results = run_checks(None)
     for r in results:
         if r.name.startswith("dep:"):
             assert (
                 r.status == "OK"
             ), f"{r.name} should be OK in test env, got {r.status}: {r.detail}"
-
-
-def test_run_checks_none_no_workspace_drift_check() -> None:
-    results = run_checks(None)
-    names = [r.name for r in results]
-    assert "Workspace drift" not in names
 
 
 # ---------------------------------------------------------------------------

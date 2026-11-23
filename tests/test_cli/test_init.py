@@ -31,25 +31,56 @@ def _args(
 # ---------------------------------------------------------------------------
 
 
-def test_init_creates_expected_artifacts(tmp_path: Path) -> None:
-    result = run(_args(str(tmp_path)))
-
-    assert result == 0
-    assert (tmp_path / ".dd-config.yaml").exists(), ".dd-config.yaml must be written"
-    assert (tmp_path / ".daily-driver").is_dir(), ".daily-driver state dir must exist"
-    assert (tmp_path / ".claude").is_dir(), ".claude dir must be created"
-    assert (tmp_path / "context.md").exists(), "context.md must be seeded"
-    assert (tmp_path / "voice-profile.md").exists(), "voice-profile.md must be seeded"
-
-
-def test_init_seeds_workspace_files_without_job_text(tmp_path: Path) -> None:
+def test_init_scaffolds_a_complete_workspace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import daily_driver
     from tests.test_core.test_generate import JOB_TEXT
 
-    run(_args(str(tmp_path)))
+    target = tmp_path / "new-workspace"
+    assert not target.exists()
+
+    assert run(_args(str(target))) == 0
+
+    for name in (".dd-config.yaml", "context.md", "voice-profile.md", "README.md"):
+        assert (target / name).exists(), f"{name} must be written"
+    for directory in (
+        ".daily-driver",
+        ".claude/commands/user",
+        ".claude/agents/user",
+    ):
+        assert (target / directory).is_dir(), f"{directory} must be created"
 
     for name in ("context.md", "voice-profile.md", "README.md"):
-        match = JOB_TEXT.search((tmp_path / name).read_text(encoding="utf-8"))
+        match = JOB_TEXT.search((target / name).read_text(encoding="utf-8"))
         assert match is None, f"{name} mentions {match.group(0)!r}"
+
+    assert "task" in load(target / ".dd-config.yaml").tracker.categories
+
+    gitignore = (target / ".gitignore").read_text(encoding="utf-8")
+    for entry in (
+        ".claude/commands/daily-driver/",
+        ".claude/agents/daily-driver/",
+        ".claude/settings.local.json",
+    ):
+        assert entry in gitignore
+
+    settings = json.loads(
+        (target / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+    )
+    assert settings["metadata"]["daily_driver_version"] == daily_driver.__version__
+    hook = target / ".claude" / "hooks" / "hook-current-time.sh"
+    assert "additionalContext" in hook.read_text(encoding="utf-8")
+    user_prompt_hooks = settings.get("hooks", {}).get("UserPromptSubmit", [])
+    assert user_prompt_hooks, "UserPromptSubmit hook must be wired"
+    command = user_prompt_hooks[0]["hooks"][0]["command"]
+    assert "hook-current-time.sh" in command
+    # Workspace path is quoted so paths with spaces (e.g. iCloud Drive) work.
+    assert command.count('"') >= 2
+
+    summary = capsys.readouterr().err
+    assert "Created" in summary
+    assert ".dd-config.yaml" in summary
 
 
 def test_init_job_search_flag_switches_job_search_on(tmp_path: Path) -> None:
@@ -223,55 +254,6 @@ def test_init_force_with_job_search_rewrites_config_on(tmp_path: Path) -> None:
     assert enabled_plugins(load(tmp_path / ".dd-config.yaml"))
 
 
-def test_init_creates_nonexistent_target(tmp_path: Path) -> None:
-    target = tmp_path / "new-workspace"
-    assert not target.exists()
-    result = run(_args(str(target)))
-    assert result == 0
-    assert target.is_dir()
-    assert (target / ".dd-config.yaml").exists()
-
-
-def test_init_settings_json_is_valid_json(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    settings = tmp_path / ".claude" / "settings.local.json"
-    assert settings.exists(), "settings.local.json must be rendered by generate"
-    parsed = json.loads(settings.read_text(encoding="utf-8"))
-    assert isinstance(parsed, dict)
-
-
-def test_init_settings_json_contains_version(tmp_path: Path) -> None:
-    import daily_driver
-
-    run(_args(str(tmp_path)))
-    settings = tmp_path / ".claude" / "settings.local.json"
-    parsed = json.loads(settings.read_text(encoding="utf-8"))
-    assert parsed["metadata"]["daily_driver_version"] == daily_driver.__version__
-
-
-def test_init_scaffolds_time_hook(tmp_path: Path) -> None:
-    """init must drop hook-current-time.sh into .claude/hooks/ and wire it in settings."""
-    run(_args(str(tmp_path)))
-    hook = tmp_path / ".claude" / "hooks" / "hook-current-time.sh"
-    assert hook.exists(), "hook-current-time.sh must be generated"
-    assert "additionalContext" in hook.read_text(encoding="utf-8")
-
-    settings = tmp_path / ".claude" / "settings.local.json"
-    parsed = json.loads(settings.read_text(encoding="utf-8"))
-    user_prompt_hooks = parsed.get("hooks", {}).get("UserPromptSubmit", [])
-    assert user_prompt_hooks, "UserPromptSubmit hook must be wired"
-    cmd = user_prompt_hooks[0]["hooks"][0]["command"]
-    assert "hook-current-time.sh" in cmd
-    # Workspace path is quoted so paths with spaces (e.g. iCloud Drive) work.
-    assert cmd.count('"') >= 2
-
-
-def test_init_config_parses_via_load(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    config = load(tmp_path / ".dd-config.yaml")
-    assert "task" in config.tracker.categories
-
-
 # ---------------------------------------------------------------------------
 # Double-init guards
 # ---------------------------------------------------------------------------
@@ -284,10 +266,20 @@ def test_second_init_is_idempotent_and_exits_zero(tmp_path: Path) -> None:
     assert result == 0
 
 
-def test_second_init_with_force_succeeds(tmp_path: Path) -> None:
+def test_force_keeps_user_edited_files(tmp_path: Path) -> None:
     run(_args(str(tmp_path)))
-    result = run(_args(str(tmp_path), force=True))
-    assert result == 0
+    custom = {
+        "context.md": "my custom context",
+        "voice-profile.md": "my custom voice profile",
+        ".gitignore": "# my custom gitignore\n*.pyc\n",
+    }
+    for name, text in custom.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+
+    assert run(_args(str(tmp_path), force=True)) == 0
+
+    for name, text in custom.items():
+        assert (tmp_path / name).read_text(encoding="utf-8") == text, name
 
 
 def test_second_init_summary_lists_skipped_artifacts(
@@ -303,16 +295,6 @@ def test_second_init_summary_lists_skipped_artifacts(
     # Summary terminology: Created / Skipped sections must both appear
     # so the user can audit what changed.
     assert "Skipped" in out
-    assert ".dd-config.yaml" in out
-
-
-def test_first_init_summary_lists_created_artifacts(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    rc = run(_args(str(tmp_path)))
-    assert rc == 0
-    out = capsys.readouterr().err
-    assert "Created" in out
     assert ".dd-config.yaml" in out
 
 
@@ -352,71 +334,6 @@ def test_partial_reinit_creates_missing_files(
     # Summary should now show context.md as Created (this run) while
     # .dd-config.yaml shows as Skipped.
     assert "Created" in out and "context.md" in out
-
-
-# ---------------------------------------------------------------------------
-# Static files not clobbered under --force
-# ---------------------------------------------------------------------------
-
-
-def test_force_does_not_overwrite_existing_context_md(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    custom = "my custom context"
-    (tmp_path / "context.md").write_text(custom, encoding="utf-8")
-
-    run(_args(str(tmp_path), force=True))
-
-    assert (tmp_path / "context.md").read_text(encoding="utf-8") == custom
-
-
-def test_force_does_not_overwrite_existing_voice_profile(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    custom = "my custom voice profile"
-    (tmp_path / "voice-profile.md").write_text(custom, encoding="utf-8")
-
-    run(_args(str(tmp_path), force=True))
-
-    assert (tmp_path / "voice-profile.md").read_text(encoding="utf-8") == custom
-
-
-# ---------------------------------------------------------------------------
-# User-territory directories
-# ---------------------------------------------------------------------------
-
-
-def test_init_creates_user_command_dir(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    assert (tmp_path / ".claude" / "commands" / "user").is_dir()
-
-
-def test_init_creates_user_agent_dir(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    assert (tmp_path / ".claude" / "agents" / "user").is_dir()
-
-
-# ---------------------------------------------------------------------------
-# .gitignore scaffolding
-# ---------------------------------------------------------------------------
-
-
-def test_init_creates_gitignore(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    gitignore = tmp_path / ".gitignore"
-    assert gitignore.exists(), ".gitignore must be written on init"
-    content = gitignore.read_text(encoding="utf-8")
-    assert ".claude/commands/daily-driver/" in content
-    assert ".claude/agents/daily-driver/" in content
-    assert ".claude/settings.local.json" in content
-
-
-def test_init_gitignore_not_overwritten_on_force(tmp_path: Path) -> None:
-    run(_args(str(tmp_path)))
-    custom = "# my custom gitignore\n*.pyc\n"
-    (tmp_path / ".gitignore").write_text(custom, encoding="utf-8")
-
-    run(_args(str(tmp_path), force=True))
-
-    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == custom
 
 
 def test_init_skips_inner_generate_on_second_run(

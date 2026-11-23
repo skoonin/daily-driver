@@ -14,47 +14,37 @@ _START = date(2026, 5, 1)
 _END = date(2026, 5, 24)
 
 
-def test_render_prompt_includes_range_dates() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END)
-    assert "2026-05-01" in out
-    assert "2026-05-24" in out
+def test_render_prompt_defaults() -> None:
+    for out in (
+        summary.render_prompt(range_start=_START, range_end=_END),
+        summary.render_prompt(range_start=_START, range_end=_END, match=None),
+    ):
+        assert "2026-05-01" in out
+        assert "2026-05-24" in out
+        # The med branch is the template's else clause: "balanced summary".
+        assert "balanced summary" in out
+        assert "brief bullet-point" not in out
+        assert "comprehensive narrative" not in out
+        assert "Focus on items matching" not in out
 
 
-def test_render_prompt_defaults_to_med_detail() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END)
-    # The med branch is the template's else clause: "balanced summary".
-    assert "balanced summary" in out
-    assert "brief bullet-point" not in out
-    assert "comprehensive narrative" not in out
+def test_render_prompt_detail_selects_its_branch() -> None:
+    low = summary.render_prompt(range_start=_START, range_end=_END, detail="low")
+    assert "brief bullet-point" in low
+    assert "balanced summary" not in low
+
+    high = summary.render_prompt(range_start=_START, range_end=_END, detail="high")
+    assert "comprehensive narrative" in high
+    assert "balanced summary" not in high
 
 
-def test_render_prompt_low_detail_selects_brief_branch() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END, detail="low")
-    assert "brief bullet-point" in out
-    assert "balanced summary" not in out
-
-
-def test_render_prompt_high_detail_selects_narrative_branch() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END, detail="high")
-    assert "comprehensive narrative" in out
-    assert "balanced summary" not in out
-
-
-def test_render_prompt_match_terms_joined() -> None:
+def test_render_prompt_lists_match_terms_and_files(tmp_path) -> None:
+    notes = tmp_path / "2026-05-02-notes.md"
     out = summary.render_prompt(
-        range_start=_START, range_end=_END, match=["infra", "oncall"]
+        range_start=_START, range_end=_END, match=["infra", "oncall"], files=[notes]
     )
     assert "infra, oncall" in out
-
-
-def test_render_prompt_no_match_omits_focus_clause() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END)
-    assert "Focus on items matching" not in out
-
-
-def test_render_prompt_none_match_treated_as_empty() -> None:
-    out = summary.render_prompt(range_start=_START, range_end=_END, match=None)
-    assert "Focus on items matching" not in out
+    assert f"- {notes}" in out
 
 
 def test_build_json_bundle_schema_and_range() -> None:
@@ -79,12 +69,6 @@ def test_build_json_bundle_carries_detail_and_match() -> None:
 def test_build_json_bundle_none_match_serializes_as_empty_list() -> None:
     bundle = summary.build_json_bundle(range_start=_START, range_end=_END, match=None)
     assert bundle["data"]["match"] == []
-
-
-def test_render_prompt_lists_files_to_read(tmp_path) -> None:
-    notes = tmp_path / "2026-05-02-notes.md"
-    out = summary.render_prompt(range_start=_START, range_end=_END, files=[notes])
-    assert f"- {notes}" in out
 
 
 def test_summary_files_picks_existing_daily_files_in_range(tmp_path) -> None:
