@@ -48,29 +48,31 @@ def _init_workspace(
 # ---------------------------------------------------------------------------
 
 
-def test_jobs_help_exits_0(tmp_path: Path) -> None:
+def test_jobs_help_lists_core_actions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     from daily_driver.cli.cli import app
 
     with pytest.raises(SystemExit) as exc:
         app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "--help"])
 
     assert exc.value.code == 0
-
-
-def test_jobs_help_lists_core_actions(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    from daily_driver.cli.cli import app
-
-    with pytest.raises(SystemExit):
-        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "--help"])
-
     captured = capsys.readouterr()
     combined = (captured.out + captured.err).lower()
     assert "run" in combined
     assert "status" in combined
     assert "prune" in combined
     assert "backfill" in combined
+
+
+def test_jobs_action_help_exits_0(tmp_path: Path) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+    for action in ("run", "status", "promote"):
+        with pytest.raises(SystemExit) as exc:
+            app(["--workspace", str(ws), "jobs", action, "--help"])
+        assert exc.value.code == 0, action
 
 
 def test_jobs_no_action_exits_2(
@@ -83,24 +85,6 @@ def test_jobs_no_action_exits_2(
     rc = app(["--workspace", str(ws), "jobs"])
 
     assert rc == 2
-
-
-def test_jobs_run_help_exits_0(tmp_path: Path) -> None:
-    from daily_driver.cli.cli import app
-
-    with pytest.raises(SystemExit) as exc:
-        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "run", "--help"])
-
-    assert exc.value.code == 0
-
-
-def test_jobs_status_help_exits_0(tmp_path: Path) -> None:
-    from daily_driver.cli.cli import app
-
-    with pytest.raises(SystemExit) as exc:
-        app(["--workspace", str(_init_workspace(tmp_path)), "jobs", "status", "--help"])
-
-    assert exc.value.code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -203,16 +187,38 @@ def test_jobs_run_without_sites_says_so_and_returns_zero(
     assert "No sites to search" in captured.err
 
 
-def test_jobs_backfill_dispatches(tmp_path: Path) -> None:
+def test_jobs_backfill_passes_flags_to_the_runner(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, minimal=True)
+    (ws / "jobs.csv").write_text("Status,Company\n", encoding="utf-8")
+    defaults = {
+        "dry_run": False,
+        "limit": None,
+        "force": False,
+        "fetch_descriptions": True,
+    }
+    cases: list[tuple[list[str], dict[str, object]]] = [
+        ([], defaults),
+        (["--dry-run"], {"dry_run": True}),
+        (["--limit", "7"], {"limit": 7}),
+        (["--force-update"], {"force": True}),
+        (["--skip-descriptions", "-n"], {"fetch_descriptions": False}),
+    ]
+    for flags, expected in cases:
+        with patch(
+            "daily_driver.plugins.job_search.scraper.run_backfill",
+            return_value={"dry_run": True},
+        ) as mock_backfill:
+            rc = app(["--workspace", str(ws), "jobs", "backfill", *flags])
 
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill"])
-
-    assert rc == 0
-    assert mock_backfill.called
+        assert rc == 0, flags
+        _, kwargs = mock_backfill.call_args
+        for name, value in expected.items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                assert kwargs.get(name) == value, (flags, name)
+            else:
+                assert kwargs.get(name) is value, (flags, name)
 
 
 def test_jobs_run_rejects_backfill_flag(
@@ -259,71 +265,6 @@ def test_jobs_backfill_json_emits_summary_envelope(
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == 1
     assert payload["data"] == summary
-
-
-def test_jobs_backfill_dry_run_passes_flag(tmp_path: Path) -> None:
-    """`-n/--dry-run` propagates as dry_run=True to run_backfill."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill", "--dry-run"])
-
-    assert rc == 0
-    assert mock_backfill.call_args.kwargs.get("dry_run") is True
-
-
-def test_jobs_backfill_limit_passes_through(tmp_path: Path) -> None:
-    """`--limit N` propagates as limit=N to run_backfill."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill", "--limit", "7"])
-
-    assert rc == 0
-    assert mock_backfill.call_args.kwargs.get("limit") == 7
-
-
-def test_jobs_backfill_limit_defaults_none(tmp_path: Path) -> None:
-    """Without --limit, run_backfill receives limit=None (use config caps)."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill"])
-
-    assert rc == 0
-    assert mock_backfill.call_args.kwargs.get("limit") is None
-
-
-def test_jobs_backfill_force_update_passes_through(tmp_path: Path) -> None:
-    """`--force-update` propagates as force=True to run_backfill."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill", "--force-update"])
-
-    assert rc == 0
-    assert mock_backfill.call_args.kwargs.get("force") is True
-
-
-def test_jobs_backfill_force_update_defaults_false(tmp_path: Path) -> None:
-    """Without --force-update, run_backfill receives force=False (fill-missing-only)."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch("daily_driver.plugins.job_search.scraper.run_backfill") as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill"])
-
-    assert rc == 0
-    assert mock_backfill.call_args.kwargs.get("force") is False
 
 
 def test_jobs_backfill_limit_zero_rejected(
@@ -375,131 +316,32 @@ def test_jobs_backfill_help_states_limit_minimum(
     assert "minimum 1" in capsys.readouterr().out
 
 
-def test_jobs_run_dry_run_passes_flag(tmp_path: Path) -> None:
+def test_jobs_run_passes_flags_to_the_runner(tmp_path: Path) -> None:
     from daily_driver.cli.cli import app
 
     ws = _init_workspace(tmp_path, minimal=True)
+    defaults = {
+        "dry_run": True,
+        "no_enrich": False,
+        "fetch_descriptions": True,
+        "suppress_live": False,
+    }
+    cases: list[tuple[list[str], dict[str, object]]] = [
+        (["--dry-run"], defaults),
+        (["--no-enrich"], {"no_enrich": True}),
+        (["-sd", "--dry-run"], {"fetch_descriptions": False}),
+        (["--no-enrich", "--dry-run"], {"no_enrich": True, "dry_run": True}),
+    ]
+    for flags, expected in cases:
+        with patch(
+            "daily_driver.plugins.job_search.scraper.run", return_value=0
+        ) as mock_run:
+            rc = app(["--workspace", str(ws), "jobs", "run", *flags])
 
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
-
-    assert rc == 0
-    assert mock_run.called
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("dry_run") is True
-
-
-def test_jobs_run_no_enrich_passes_flag(tmp_path: Path) -> None:
-    """`--no-enrich` propagates as no_enrich=True to scraper.run."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--no-enrich"])
-
-    assert rc == 0
-    assert mock_run.called
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("no_enrich") is True
-
-
-def test_jobs_run_no_enrich_defaults_false(tmp_path: Path) -> None:
-    """Without the flag, no_enrich is False on the default path."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
-
-    assert rc == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("no_enrich") is False
-
-
-def test_jobs_run_skip_descriptions_passes_flag(tmp_path: Path) -> None:
-    """`-sd` propagates as fetch_descriptions=False to scraper.run."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "-sd", "--dry-run"])
-
-    assert rc == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("fetch_descriptions") is False
-
-
-def test_jobs_run_fetch_descriptions_defaults_true(tmp_path: Path) -> None:
-    """Without --skip-descriptions, fetch_descriptions is True."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
-
-    assert rc == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("fetch_descriptions") is True
-
-
-def test_jobs_backfill_skip_descriptions_passes_flag(tmp_path: Path) -> None:
-    """`--skip-descriptions` propagates as fetch_descriptions=False to
-    run_backfill; without it the default is True."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-    (ws / "jobs.csv").write_text("Status,Company\n", encoding="utf-8")
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run_backfill",
-        return_value={"dry_run": True},
-    ) as mock_backfill:
-        rc = app(
-            ["--workspace", str(ws), "jobs", "backfill", "--skip-descriptions", "-n"]
-        )
-    assert rc == 0
-    _, kwargs = mock_backfill.call_args
-    assert kwargs.get("fetch_descriptions") is False
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run_backfill",
-        return_value={"dry_run": True},
-    ) as mock_backfill:
-        rc = app(["--workspace", str(ws), "jobs", "backfill", "-n"])
-    assert rc == 0
-    _, kwargs = mock_backfill.call_args
-    assert kwargs.get("fetch_descriptions") is True
-
-
-def test_jobs_run_no_enrich_with_dry_run_composes(tmp_path: Path) -> None:
-    """`--no-enrich --dry-run` is accepted (redundant, not an error)."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--no-enrich", "--dry-run"])
-
-    assert rc == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("no_enrich") is True
-    assert kwargs.get("dry_run") is True
+        assert rc == 0, flags
+        _, kwargs = mock_run.call_args
+        for name, value in expected.items():
+            assert kwargs.get(name) is value, (flags, name)
 
 
 def test_jobs_prune_rejects_no_enrich(
@@ -664,22 +506,6 @@ def test_jobs_run_json_suppresses_live_and_emits_manifest(
     assert payload["schema"] == 1
     assert payload["data"]["new_jobs"] == 4
     assert payload["data"]["phase_reached"] == "complete"
-
-
-def test_jobs_run_without_json_does_not_suppress_live(tmp_path: Path) -> None:
-    """Default run leaves suppress_live False so the live block renders on a TTY."""
-    from daily_driver.cli.cli import app
-
-    ws = _init_workspace(tmp_path, minimal=True)
-
-    with patch(
-        "daily_driver.plugins.job_search.scraper.run", return_value=0
-    ) as mock_run:
-        rc = app(["--workspace", str(ws), "jobs", "run", "--dry-run"])
-
-    assert rc == 0
-    _, kwargs = mock_run.call_args
-    assert kwargs.get("suppress_live") is False
 
 
 def test_emit_run_manifest_unreadable_warns_and_prints_empty(
@@ -1799,16 +1625,6 @@ def _seed_promote_csv(ws_root: Path) -> Path:
             }
         ],
     )
-
-
-def test_jobs_promote_help_exits_0(tmp_path: Path) -> None:
-    from daily_driver.cli.cli import app
-
-    with pytest.raises(SystemExit) as exc:
-        app(
-            ["--workspace", str(_init_workspace(tmp_path)), "jobs", "promote", "--help"]
-        )
-    assert exc.value.code == 0
 
 
 def test_jobs_promote_creates_entry(

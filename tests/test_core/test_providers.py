@@ -36,44 +36,31 @@ def _config(
 # --- Built-in providers ----------------------------------------------------
 
 
-def test_builtin_providers_are_the_four_shipped() -> None:
-    assert set(builtin_providers()) == {"claude", "opencode", "lmstudio", "ollama"}
-
-
-def test_builtin_providers_claim_no_tasks() -> None:
-    assert all(not entry.tasks for entry in builtin_providers().values())
-
-
-def test_http_builtins_ship_without_model() -> None:
+def test_shipped_builtin_providers() -> None:
     builtins = builtin_providers()
+    assert set(builtins) == {"claude", "opencode", "lmstudio", "ollama"}
+    assert all(not entry.tasks for entry in builtins.values())
+    assert all(entry.max_parallel is None for entry in builtins.values())
+
     assert builtins["lmstudio"].base_url == "http://localhost:1234/v1"
     assert builtins["ollama"].base_url == "http://localhost:11434/v1"
     assert builtins["lmstudio"].model is None
     assert builtins["ollama"].model is None
 
+    for name in ("claude", "opencode"):
+        entry = builtins[name]
+        assert entry.run and entry.resume and entry.agent and entry.text, name
 
-@pytest.mark.parametrize("name", ["claude", "opencode"])
-def test_launched_builtins_cover_every_mode(name: str) -> None:
-    entry = builtin_providers()[name]
-    assert entry.run and entry.resume and entry.agent and entry.text
-
-
-def test_opencode_builtin_sets_its_model_through_opencode_json() -> None:
-    model_file = builtin_providers()["opencode"].model_file
-    assert model_file is not None
-    assert (model_file.path, model_file.key) == ("opencode.json", "model")
-
-
-def test_only_opencode_builtin_has_a_model_file() -> None:
-    builtins = builtin_providers()
     assert [name for name, entry in builtins.items() if entry.model_file] == [
         "opencode"
     ]
-
-
-def test_opencode_builtin_never_auto_approves() -> None:
-    entry = builtin_providers()["opencode"]
-    templates = [entry.run, entry.resume, entry.agent, entry.text]
+    opencode = builtins["opencode"]
+    assert opencode.model_file is not None
+    assert (opencode.model_file.path, opencode.model_file.key) == (
+        "opencode.json",
+        "model",
+    )
+    templates = [opencode.run, opencode.resume, opencode.agent, opencode.text]
     assert all("--auto" not in str(template) for template in templates)
 
 
@@ -486,10 +473,6 @@ def test_resume_check_in_needs_a_resume_template() -> None:
 # ---------------------------------------------------------------------------
 
 _BATCH = Task("batch", "text", max_parallel=4)
-
-
-def test_no_builtin_provider_caps_parallel_calls():
-    assert all(entry.max_parallel is None for entry in builtin_providers().values())
 
 
 @pytest.mark.parametrize(("cap", "expected"), [(None, 4), (2, 2), (8, 4)])

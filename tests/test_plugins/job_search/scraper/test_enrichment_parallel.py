@@ -229,8 +229,7 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
     count_lock = threading.Lock()
 
     def fake_invoke(provider: Any, task: Any, prompt: str, **kwargs: Any) -> str:
-        # Slow first 3 calls so the main thread can interrupt; 4th+ blocks
-        # forever (the test is over before this matters).
+        # First 3 calls return at once; 4th+ block until the interrupt lands.
         with count_lock:
             invocation_count[0] += 1
             n = invocation_count[0]
@@ -250,11 +249,13 @@ def test_ollama_keyboard_interrupt_preserves_partial_results(
                     break
             time.sleep(0.01)
         os.kill(os.getpid(), signal.SIGINT)
+        # Release the in-flight calls the drain waits on, once the interrupt is in.
+        time.sleep(0.2)
+        completed_event.set()
 
     threading.Thread(target=trip_sigint, daemon=True).start()
     with pytest.raises(KeyboardInterrupt):
         enrichment.enrich_fit_and_notes(jobs, _ollama_config(max_parallel=4))
-    completed_event.set()
 
     enriched = [j for j in jobs if j.fit == 7]
     assert len(enriched) >= 1, f"expected partial results applied, got: {jobs}"
