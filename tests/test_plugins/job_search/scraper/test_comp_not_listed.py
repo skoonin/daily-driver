@@ -298,9 +298,7 @@ def test_backfill_summary_reports_comp_not_listed(
     greenhouse row whose checked description states no pay gets marked by the
     real detail pass, reported in the returned dict, and written to disk."""
     from daily_driver.plugins.job_search.scraper import enrichment as enrichment_pkg
-    from daily_driver.plugins.job_search.scraper import (
-        runner,
-    )
+    from daily_driver.plugins.job_search.scraper import runner
     from daily_driver.plugins.job_search.scraper.csv_io import read_rows
     from daily_driver.plugins.job_search.scraper.descriptions import (
         atomic_write_descriptions,
