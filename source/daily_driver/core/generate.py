@@ -7,6 +7,8 @@ the stamp stale, ensuring the next invocation retries — idempotent by construc
 File ownership boundaries — the full package-managed set generate() writes:
   - .claude/commands/daily-driver/*.md and .claude/agents/daily-driver/*.md
     (SHA-256 manifest-guarded)
+  - .opencode/commands/daily-driver/*.md, the same commands for opencode
+    (SHA-256 manifest-guarded)
   - .claude/settings.local.json (merged, not manifest-guarded: package keys
     refreshed, user-added top-level keys preserved)
   - the rendered contract root templates (ENTRIES, e.g. README.md) — manifest-guarded
@@ -30,6 +32,7 @@ from daily_driver.core import version_stamp
 from daily_driver.core.contract import ENTRIES
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
+from daily_driver.core.prompt_file import opencode_command
 from daily_driver.core.templating import render_text
 from daily_driver.core.workspace import Workspace
 from daily_driver.plugins._base import PackageDataDir
@@ -43,6 +46,12 @@ _CORE_PACKAGE_DATA: tuple[PackageDataDir, ...] = (
     PackageDataDir("daily_driver.resources.slash_commands", "commands/daily-driver"),
     PackageDataDir("daily_driver.resources.agents", "agents/daily-driver"),
 )
+
+
+# opencode reads commands from .opencode/commands/, not .claude/commands/, so
+# each commands dir is also written there in opencode's format.
+_OPENCODE_ROOT = ".opencode"
+_COMMANDS_DEST = "commands"
 
 
 def _package_data_dirs(config: object) -> list[PackageDataDir]:
@@ -90,11 +99,13 @@ def _render_package_md(
     state_dir: Path,
     force_overwrite: bool,
     config: object,
+    opencode: bool,
 ) -> tuple[int, list[Path], list[str]]:
     """Render *.md files from pkg_traversable into dest_dir.
 
     Each file is a Jinja template (see core.templating) rendered against the
     workspace config, so plugin sections appear only when the plugin is on.
+    With opencode=True each file is written as an opencode command instead.
     Returns (count_written, written_paths, skipped_names).
     Skips files where the user has made edits (detected via SHA-256 manifest)
     unless force_overwrite=True.
@@ -127,10 +138,14 @@ def _render_package_md(
             skipped.append(rel)
             continue
 
-        # These files are read by Claude Code only, so Claude-only lines stay in.
-        content = render_text(
-            entry.read_text(encoding="utf-8"), config, claude_code=True
-        )
+        source = entry.read_text(encoding="utf-8")
+        if opencode:
+            content = opencode_command(
+                config, name=entry.name.removesuffix(".md"), text=source
+            )
+        else:
+            # Read by Claude Code only, so Claude-only lines stay in.
+            content = render_text(source, config, claude_code=True)
         _atomic_write_text(dest_file, content)
         written.append(dest_file)
         count += 1
@@ -230,19 +245,22 @@ def generate(
         # source package's traversable using the dest's leaf name. Two sources may
         # map to the same dest; the per-dest passes below dedupe so a later source
         # does not erase files an earlier one wrote.
-        resolved: list[tuple[importlib.resources.abc.Traversable, Path]] = []
+        resolved: list[tuple[importlib.resources.abc.Traversable, Path, bool]] = []
         for data_dir in _package_data_dirs(workspace.config):
             dest_path = Path(data_dir.dest)
             pkg_traversable = importlib.resources.files(
                 data_dir.source_package
             ).joinpath(dest_path.name)
-            resolved.append((pkg_traversable, claude_root / dest_path))
+            resolved.append((pkg_traversable, claude_root / dest_path, False))
+            if dest_path.parts[0] == _COMMANDS_DEST:
+                opencode_dir = workspace.root / _OPENCODE_ROOT / dest_path
+                resolved.append((pkg_traversable, opencode_dir, True))
 
         # Union of valid .md names per dest, so a dest fed by two sources keeps
         # files from both during stale removal rather than treating the other
         # source's files as stale.
         names_by_dest: dict[Path, set[str]] = {}
-        for pkg_traversable, dest_dir in resolved:
+        for pkg_traversable, dest_dir, _ in resolved:
             names_by_dest.setdefault(dest_dir, set()).update(
                 _package_md_names(pkg_traversable)
             )
@@ -266,7 +284,7 @@ def generate(
         n_copied = 0
         n_preserved = 0
         all_written: list[Path] = []
-        for pkg_traversable, dest_dir in resolved:
+        for pkg_traversable, dest_dir, opencode in resolved:
             count, paths, skipped = _render_package_md(
                 pkg_traversable,
                 dest_dir,
@@ -274,6 +292,7 @@ def generate(
                 state_dir=workspace.state_dir,
                 force_overwrite=force_overwrite,
                 config=workspace.config,
+                opencode=opencode,
             )
             n_copied += count
             n_preserved += len(skipped)

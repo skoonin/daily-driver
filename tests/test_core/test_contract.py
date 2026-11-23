@@ -39,16 +39,19 @@ def _scaffold_valid_workspace(root: Path) -> None:
     (state / "manifest.json").write_text(
         json.dumps({"version": 1, "files": {}}), encoding="utf-8"
     )
-    commands_dd = root / ".claude" / "commands" / "daily-driver"
-    commands_dd.mkdir(parents=True)
-    for name in [
-        "day-start.md",
-        "day-end.md",
-        "check-in.md",
-        "summary.md",
-        "voice-update.md",
-    ]:
-        (commands_dd / name).write_text(f"# {name}", encoding="utf-8")
+    for commands_dd in (
+        root / ".claude" / "commands" / "daily-driver",
+        root / ".opencode" / "commands" / "daily-driver",
+    ):
+        commands_dd.mkdir(parents=True)
+        for name in [
+            "day-start.md",
+            "day-end.md",
+            "check-in.md",
+            "summary.md",
+            "voice-update.md",
+        ]:
+            (commands_dd / name).write_text(f"# {name}", encoding="utf-8")
     agents_dd = root / ".claude" / "agents" / "daily-driver"
     agents_dd.mkdir(parents=True)
     (agents_dd / "work-planner.md").write_text("# work-planner", encoding="utf-8")

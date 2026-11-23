@@ -114,7 +114,7 @@ def check(workspace_root: Path) -> list[ContractViolation]:
         if not (workspace_root / entry.dst).is_file():
             v.append(ContractViolation(entry.dst, "missing file"))
 
-    # Package-managed Claude trees — count_gte on bundled .md files.
+    # Package-managed command and agent trees — count_gte on bundled .md files.
     _count_check(
         v,
         workspace_root / ".claude" / "commands" / "daily-driver",
@@ -128,6 +128,13 @@ def check(workspace_root: Path) -> list[ContractViolation]:
         ".claude/agents/daily-driver",
         "*.md",
         MIN_AGENTS,
+    )
+    _count_check(
+        v,
+        workspace_root / ".opencode" / "commands" / "daily-driver",
+        ".opencode/commands/daily-driver",
+        "*.md",
+        MIN_COMMANDS,
     )
 
     # .claude/commands/user and .claude/agents/user are user territory:
