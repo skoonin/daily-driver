@@ -1,7 +1,7 @@
 ##@ Testing & Quality
 
 .PHONY: test
-test: ## Run the full tox envlist: lint + type + py311 + py312 + coverage, the same set CI runs
+test: ## Run the full tox envlist: lint + type + py311 to py315 + coverage, the same set CI runs
 	@$(TOX)
 
 .PHONY: test-quick

@@ -317,6 +317,27 @@ def test_interrupt_with_failing_drain_still_reraises(
     block.set()
 
 
+def test_interrupt_after_last_result_still_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Ctrl-C that arrives as the last result is applied must still re-raise
+    once the loop has nothing pending, with every result kept."""
+    monkeypatch.setattr(ai, "invoke", lambda provider, task, prompt, **k: _FIT_JSON)
+    jobs = _jobs(4)
+    applied = [0]
+
+    def progress(advance: int, _description: str | None) -> None:
+        applied[0] += advance
+        if applied[0] == len(jobs):
+            handler = signal.getsignal(signal.SIGINT)
+            assert callable(handler)
+            handler(signal.SIGINT, None)
+
+    with pytest.raises(KeyboardInterrupt):
+        enrich_fit_and_notes(jobs, _ctx(max_parallel=4), progress=progress)
+    assert all(job.fit == 7 for job in jobs)
+
+
 # ── Cross-wave exclusion + attempted-identity out-param ──────────────────────
 
 

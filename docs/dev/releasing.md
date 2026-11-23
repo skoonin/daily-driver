@@ -28,7 +28,7 @@ One GitHub ruleset, "Protect Main/Dev", covers `main`, `dev`, and `release/**`:
 - **Deletion** of these branches is blocked.
 - **Pull request required.** No approvals are needed, but review threads must be resolved. Allowed merge methods are merge commit and rebase.
 - **Code scanning.** CodeQL must pass: the rule blocks on high-or-higher security alerts and on error-level alerts. CodeQL runs on pushes to `main` and `dev` and on pull requests that target them. It does not run on pushes to `release/**` branches.
-- **Five status checks must pass:** `Lint & type check`, `Test (py3.11 on macos-latest)`, `Test (py3.12 on macos-latest)`, and the two `pip install from source` legs (py3.11, py3.12) from `install-smoke.yaml`. GitHub matches a status check by the job's `name:`, so renaming a CI job requires updating the ruleset in the same PR.
+- **Eleven status checks must pass:** `Lint & type check`, the five `Test (py3.X on macos-latest)` legs, and the five `pip install from source (py3.X)` legs from `install-smoke.yaml`, for Python 3.11 through 3.15. GitHub matches a status check by the job's `name:`, so renaming a CI job requires updating the ruleset in the same PR.
 - **Bypass.** The Admin role can bypass the ruleset at any time. An admin merge skips the checks above, and the direct pushes to `main` (step 4 of "Cutting a release") and to `dev` (step 5) work only through this bypass. Use it knowingly.
 
 ## Version source of truth
@@ -61,7 +61,7 @@ make release VERSION=X.Y.Z
 Runs six sequential steps; any failure stops the process:
 
 1. Verify the branch is a `release/*` branch, the working tree is clean, the tag does not already exist, and the Python in use is a virtualenv (`make setup` creates one)
-2. `tox -e py311,py312` (full suite, both interpreters)
+2. `tox -m test` (full suite on Python 3.11 through 3.15)
 3. Install smoke test in a temporary venv (entry point + import)
 4. Build sdist + wheel into `dist/`
 5. Prompt for confirmation before permanent changes
@@ -83,7 +83,7 @@ Identical to `make release` but skips step 5's confirmation prompt, for automate
 make release-push
 ```
 
-Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push on macOS-latest. It asserts that `__version__` in the tagged commit equals the tag (a tag on a commit that was not bumped fails the run), runs `tox -e py311,py312`, builds wheel + sdist, smoke-installs the wheel, and attaches the artifacts to a GitHub Release with auto-generated notes. Releases are marked pre-release automatically when the tag contains `dev`, `rc`, `alpha`, or `beta`.
+Pushes commit + tag to origin. `release.yaml` CI fires on `v*` tag push on macOS-latest. It asserts that `__version__` in the tagged commit equals the tag (a tag on a commit that was not bumped fails the run), runs `tox -m test`, builds wheel + sdist, smoke-installs the wheel, and attaches the artifacts to a GitHub Release with auto-generated notes. Releases are marked pre-release automatically when the tag contains `dev`, `rc`, `alpha`, or `beta`.
 
 ### GitHub Actions must be running
 

@@ -6,6 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
+- **Python 3.13, 3.14, and 3.15 are supported.** Daily Driver is now tested on Python 3.11 through 3.15. `python-jobspy` 1.2.0 or later is required, because 1.1.82 cannot install on Python 3.13 or later. (#284)
 - **`daily-driver config defaults` prints the settings file that `init` writes, with every default.** Compare your file with it to see what you changed. `--plugin job_search` includes the settings of a plugin. (#282)
 - **`daily-driver start` and `daily-driver end` are aliases of `day-start` and `day-end`.** (#282)
 - **Each scheduled run has an `enabled` setting.** `scheduler.checkin`, `plugins.job_search.scheduler.run`, and `plugins.job_search.scheduler.discovery` take `enabled: false`, which stops the run and keeps its settings. (#282)
@@ -97,6 +98,10 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   ```
 
   The old `summary` route to ollama gave the model no data. `summary` now needs a program that reads files, so move `summary` to `claude` or `opencode`, and keep `ollama` for `voice_update` and job reviews.
+
+### Fixed
+
+- **Ctrl-C during job reviews can no longer freeze `jobs run` on Python 3.11 and 3.12.** When the interrupt arrived while the program was writing a log message, the parallel job reviews stopped forever and the run never ended. Ctrl-C now stops the reviews, keeps the finished results, and exits. (#284)
 
 ## [1.4.1] — 2026-10-21
 

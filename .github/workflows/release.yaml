@@ -12,6 +12,7 @@ jobs:
   build-and-release:
     name: Build and attach to GitHub Release
     runs-on: macos-latest
+    timeout-minutes: 30
     # action-gh-release names the release after github.ref_name, so a dispatch
     # from a branch would publish a release called "main" or "dev".
     if: github.ref_type == 'tag'
@@ -29,16 +30,19 @@ jobs:
             exit 1
           fi
           echo "__version__ $actual matches tag $GITHUB_REF_NAME"
+      # The last listed version becomes the default python for the steps below.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.11"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
+          python-version: |
+            3.11
+            3.12
+            3.13
+            3.14
+            3.15
       - name: Run test suite before release build
         run: |
           pip install -e '.[dev]'
-          tox -e py311,py312
+          tox -m test
       - name: Install build tooling
         run: pip install build
       - name: Build sdist and wheel

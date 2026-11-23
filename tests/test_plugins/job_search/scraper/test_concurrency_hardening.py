@@ -25,7 +25,7 @@ def test_install_notifier_off_main_thread_is_noop() -> None:
 
     def worker() -> None:
         try:
-            prev = _install_interrupt_notifier({}, 5, "items")
+            prev = _install_interrupt_notifier({}, 5, "items", threading.Event())
             result.append(prev)
             # Restore must also be a safe no-op off the main thread.
             _restore_interrupt_handler(prev)
@@ -43,11 +43,26 @@ def test_install_notifier_off_main_thread_is_noop() -> None:
 def test_install_notifier_on_main_thread_installs_and_restores() -> None:
     """On the main thread the notifier installs and restores cleanly."""
     before = signal.getsignal(signal.SIGINT)
-    prev = _install_interrupt_notifier({}, 5, "items")
+    prev = _install_interrupt_notifier({}, 5, "items", threading.Event())
     assert prev is before
     assert signal.getsignal(signal.SIGINT) is not before  # our handler is live
     _restore_interrupt_handler(prev)
     assert signal.getsignal(signal.SIGINT) is before
+
+
+def test_notifier_first_press_sets_flag_without_raising() -> None:
+    """The first Ctrl-C only sets the flag. An exception raised from the handler
+    can land between a logging handler's acquire() and its try (Python < 3.13),
+    leaking the lock so every worker thread that logs next blocks forever."""
+    interrupted = threading.Event()
+    prev = _install_interrupt_notifier({}, 5, "items", interrupted)
+    try:
+        handler = signal.getsignal(signal.SIGINT)
+        assert callable(handler)
+        handler(signal.SIGINT, None)
+    finally:
+        _restore_interrupt_handler(prev)
+    assert interrupted.is_set()
 
 
 def test_matcher_cache_returns_stable_instance_across_threads() -> None:

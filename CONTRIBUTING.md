@@ -11,7 +11,7 @@ make setup-dev
 make test
 ```
 
-`make setup-dev` creates `.venv`, installs the package in editable mode with dev extras, and installs the pre-commit hooks (`make setup` does only the first two). `make test` runs the full tox envlist and needs `python3.11` and `python3.12` on PATH; `make test-quick` needs only `python3.11`.
+`make setup-dev` creates `.venv`, installs the package in editable mode with dev extras, and installs the pre-commit hooks (`make setup` does only the first two). `make test` runs the full tox envlist and needs `python3.11` through `python3.15` on PATH; `make test-quick` needs only `python3.11`.
 
 With job search on and the Apple source enabled, the scraper needs a Playwright browser (Firefox by default; set `plugins.job_search.scraper.browser` to change it). Run `daily-driver doctor --fix`; for a manual install, see [docs/install.md](docs/install.md#playwright-browser-install-optional).
 
@@ -40,7 +40,7 @@ All configured in `pyproject.toml`. black, isort, and flake8 run in pre-commit a
 
 | Tool | Config |
 |------|--------|
-| black | line-length 88, target-version py311 |
+| black | line-length 88; target versions read from `requires-python` |
 | isort | profile black, line-length 88 |
 | flake8 | max-line-length 88, ignores E203/E501/W503 |
 | mypy | strict, `source/` on path, pydantic plugin enabled |
