@@ -102,6 +102,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 ### Fixed
 
 - **Ctrl-C during job reviews can no longer freeze `jobs run` on Python 3.11 and 3.12.** When the interrupt arrived while the program was writing a log message, the parallel job reviews stopped forever and the run never ended. Ctrl-C now stops the reviews, keeps the finished results, and exits. (#284)
+- **A scheduled `jobs run` stopped during job reviews can no longer freeze on Python 3.11 and 3.12.** launchd stops a run with SIGTERM, which had the same problem as Ctrl-C. SIGTERM now stops the reviews the same way, keeps the finished results, and exits with code 143. (#285)
 
 ## [1.4.1] — 2026-10-21
 

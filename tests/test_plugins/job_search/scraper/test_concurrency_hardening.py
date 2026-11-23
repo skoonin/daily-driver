@@ -10,10 +10,15 @@ from __future__ import annotations
 import signal
 import threading
 
+import pytest
+
 from daily_driver.plugins.job_search.config import JobSearchPlugin
 from daily_driver.plugins.job_search.scraper.enrichment._shared import (
     _install_interrupt_notifier,
     _restore_interrupt_handler,
+    install_sigterm_handler,
+    interrupted_by_sigterm,
+    restore_sigterm_handler,
 )
 from daily_driver.plugins.job_search.scraper.roles import _matcher_for
 
@@ -63,6 +68,43 @@ def test_notifier_first_press_sets_flag_without_raising() -> None:
     finally:
         _restore_interrupt_handler(prev)
     assert interrupted.is_set()
+
+
+def test_sigterm_during_job_review_sets_flag_without_raising() -> None:
+    """While the job-review notifier is active, SIGTERM stops the review through
+    the same flag as Ctrl-C, and is still recorded so the CLI exits 143."""
+    sigterm_previous = install_sigterm_handler()
+    interrupted = threading.Event()
+    sigint_previous = _install_interrupt_notifier({}, 5, "items", interrupted)
+    try:
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        try:
+            handler(signal.SIGTERM, None)
+        except KeyboardInterrupt:
+            pytest.fail(
+                "SIGTERM raised during a job review instead of setting the flag"
+            )
+    finally:
+        _restore_interrupt_handler(sigint_previous)
+        restore_sigterm_handler(sigterm_previous)
+    assert interrupted.is_set()
+    assert interrupted_by_sigterm()
+
+
+def test_sigterm_after_job_review_raises_again() -> None:
+    """Once the notifier is restored, SIGTERM goes back to raising
+    KeyboardInterrupt for the run-wide graceful stop."""
+    sigterm_previous = install_sigterm_handler()
+    try:
+        sigint_previous = _install_interrupt_notifier({}, 5, "items", threading.Event())
+        _restore_interrupt_handler(sigint_previous)
+        handler = signal.getsignal(signal.SIGTERM)
+        assert callable(handler)
+        with pytest.raises(KeyboardInterrupt):
+            handler(signal.SIGTERM, None)
+    finally:
+        restore_sigterm_handler(sigterm_previous)
 
 
 def test_matcher_cache_returns_stable_instance_across_threads() -> None:
