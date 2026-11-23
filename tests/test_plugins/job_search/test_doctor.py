@@ -115,14 +115,21 @@ def test_playwright_check_skipped_when_no_playwright_source(monkeypatch):
     assert doctor._check_playwright_browser(ws) is None
 
 
-def _patch_probe(monkeypatch, *, installed, error=None, seen=None):
+def _patch_probe(
+    monkeypatch, *, installed, error=None, seen=None, build=None, other_builds=()
+):
     """Stub the browser probe. ``seen`` collects the engines it was asked about."""
     from daily_driver.integrations.playwright import BrowserProbe
 
     def _probe(engine: str) -> BrowserProbe:
         if seen is not None:
             seen.append(engine)
-        return BrowserProbe(installed=installed, playwright_error=error)
+        return BrowserProbe(
+            installed=installed,
+            playwright_error=error,
+            build=build,
+            other_builds=other_builds,
+        )
 
     monkeypatch.setattr("daily_driver.integrations.playwright.probe_browser", _probe)
 
@@ -219,6 +226,27 @@ def test_playwright_check_webkit_display_casing(monkeypatch):
     assert row is not None
     # Canonical casing "WebKit", not .capitalize()'s "Webkit".
     assert "WebKit browser not installed" in row.detail
+
+
+def test_playwright_warning_explains_an_upgraded_build(monkeypatch):
+    """Another build in the cache means Playwright changed version since the
+    last download; the warning says so instead of reading as a broken install."""
+    monkeypatch.setattr(doctor.sys, "platform", "darwin")
+    _patch_probe(
+        monkeypatch,
+        installed=False,
+        build="firefox-1572",
+        other_builds=("firefox-1555",),
+    )
+    ws = _ws_with_sources(apple=True)
+
+    row = doctor._check_playwright_browser(ws)
+
+    assert row is not None
+    assert "different Playwright version" in row.detail
+    assert "firefox-1572" in row.detail
+    assert "firefox-1555" in row.detail
+    assert row.plugin_fixer is not None
 
 
 # ── Board sources have boards ────────────────────────────────────────────────

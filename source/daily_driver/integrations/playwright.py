@@ -61,6 +61,11 @@ class BrowserProbe:
 
     installed: bool
     playwright_error: str | None = None
+    # The build this playwright wants (e.g. "firefox-1572") and any other
+    # builds of the same engine in the cache. Another build with the wanted
+    # one missing means playwright changed version since the last download.
+    build: str | None = None
+    other_builds: tuple[str, ...] = ()
 
 
 def _summary_line(*candidates: str) -> str:
@@ -105,7 +110,18 @@ def probe_browser(engine: str = DEFAULT_ENGINE) -> BrowserProbe:
         # "<engine>-" prefix avoids matching siblings like
         # chromium_headless_shell when engine is "chromium".
         if location.name.lower().startswith(f"{engine}-"):
-            return BrowserProbe(installed=location.exists())
+            others = tuple(
+                sorted(
+                    sibling.name
+                    for sibling in location.parent.glob(f"{engine}-*")
+                    if sibling.name != location.name
+                )
+            )
+            return BrowserProbe(
+                installed=location.exists(),
+                build=location.name,
+                other_builds=others,
+            )
     # Exited 0 but named no path for the engine: playwright answered in a shape
     # this parser does not understand, which is a broken probe, not a verdict.
     return BrowserProbe(

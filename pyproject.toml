@@ -32,7 +32,9 @@ dependencies = [
     "enlighten>=1.12.0",
     "jinja2>=3.1.0",
     "python-jobspy>=1.2.0,<1.4",
-    "playwright>=1.40.0",
+    # Exact pin: each Playwright release needs its own browser download, so
+    # the version moves only through a reviewed bump (then: doctor --fix).
+    "playwright==1.65.2",
     "requests>=2.31.0,<3",
     "beautifulsoup4>=4.12.2,<5",
 ]

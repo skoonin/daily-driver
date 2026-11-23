@@ -28,6 +28,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
   | `enrichment.force_recook_cooldown_hours` | `enrichment.backfill_cooldown`, a duration such as `24h` or `30m`, or `0` or `missing` |
 
 - **BREAKING: `jobs backfill --cooldown-hours N` is now `--cooldown DURATION`,** such as `--cooldown 12h`. `0` and `missing` work as before. (#283)
+- **Playwright is pinned to one version (1.65.2).** Each Playwright version needs its own browser download, so a reinstall no longer brings a new one. After an upgrade that changes the pin, run `daily-driver doctor --fix` once. When the browser build is missing but another build is in the cache, the `doctor` warning names both builds. (#290)
 - **`scraper.search_terms` adds to the search words that come from `roles`.** Before, it replaced them. An empty `search_terms:` with no list is now an error; write `search_terms: []` or delete the line. (#283)
 - **`scraper.max_age_days` now applies to LinkedIn and Indeed as well as Hacker News jobs, and its default is 7 days.** Before, LinkedIn and Indeed used their own `hours_old` (7 days), and Hacker News jobs used 30 days. (#283)
 - **Job reviews no longer assume that you live in Vancouver, BC.** With no `home_city`, the review prompt names no city. Before, the AI was told that every workspace without one was based in Vancouver. (#283)
