@@ -12,6 +12,7 @@ jobs:
   build-and-release:
     name: Build and attach to GitHub Release
     runs-on: macos-latest
+    timeout-minutes: 30
     # action-gh-release names the release after github.ref_name, so a dispatch
     # from a branch would publish a release called "main" or "dev".
     if: github.ref_type == 'tag'

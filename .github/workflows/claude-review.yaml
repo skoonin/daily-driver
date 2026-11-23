@@ -21,6 +21,7 @@ jobs:
       github.event.label.name == 'pr-review' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Re-labelling while a review is running supersedes it: the newer run
     # reviews the newer commits, so cancelling the old one saves the cost.
     concurrency:

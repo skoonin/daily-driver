@@ -12,6 +12,7 @@ jobs:
   smoke:
     name: pip install from source (py${{ matrix.python-version }})
     runs-on: macos-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
