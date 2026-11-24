@@ -174,13 +174,18 @@ def _check_playwright_browser(workspace: Workspace) -> CheckResult | None:
                 "--force-reinstall playwright)"
             ),
         )
+    if probe.other_builds:
+        missing = (
+            f"{display} build {probe.build} not downloaded for {sys.executable} "
+            f"(the cache has only {', '.join(probe.other_builds)}, "
+            "from a different Playwright version)"
+        )
+    else:
+        missing = f"{display} browser not installed for {sys.executable}"
     return CheckResult(
         name="Playwright browser",
         status="WARNING",
-        detail=(
-            f"{display} browser not installed for {sys.executable}; "
-            f"source(s) {sources} will fail at launch"
-        ),
+        detail=f"{missing}; source(s) {sources} will fail at launch",
         fix_hint=(
             "Run: daily-driver doctor --fix "
             f"(or: {sys.executable} -m playwright install {engine})"

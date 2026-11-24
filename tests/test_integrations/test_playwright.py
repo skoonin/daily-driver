@@ -207,3 +207,25 @@ def test_probe_matches_the_engine_specific_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", _run_stub(stdout=stdout))
 
     assert probe_browser("chromium").installed is True
+
+
+def test_probe_names_the_wanted_build_and_older_cached_builds(monkeypatch, tmp_path):
+    """A Playwright upgrade leaves the previous build in the cache; the probe
+    names both so the warning can say why the browser is missing."""
+    (tmp_path / "firefox-1555").mkdir()
+    (tmp_path / "chromium-1234").mkdir()
+    wanted = tmp_path / "firefox-1572"
+    monkeypatch.setattr(subprocess, "run", _run_stub(stdout=_dry_run_stdout(wanted)))
+
+    probe = probe_browser()
+
+    assert probe.installed is False
+    assert probe.build == "firefox-1572"
+    assert probe.other_builds == ("firefox-1555",)
+
+
+def test_probe_reports_no_other_builds_on_an_empty_cache(monkeypatch, tmp_path):
+    wanted = tmp_path / "firefox-1572"
+    monkeypatch.setattr(subprocess, "run", _run_stub(stdout=_dry_run_stdout(wanted)))
+
+    assert probe_browser().other_builds == ()
