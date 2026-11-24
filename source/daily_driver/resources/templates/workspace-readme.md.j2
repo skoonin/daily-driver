@@ -60,10 +60,10 @@ Edit `.dd-config.yaml` in this directory to configure categories, {% if "job_sea
 
 ## Files Daily Driver supplies
 
-Daily Driver supplies the files in `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.claude/hooks/`. After you upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`. Run `daily-driver doctor --fix` to update them:
+Daily Driver supplies the files in `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.opencode/commands/daily-driver/`, and `.claude/hooks/`. After you upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`. Run `daily-driver doctor --fix` to update them:
 
 - It keeps your edits to these files.
-- It deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Put your own commands in `.claude/commands/user/`.
+- It deletes `.md` files you added to `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, or `.opencode/commands/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Put your own commands in `.claude/commands/user/`.
 - It replaces the allow rules saved in `.claude/settings.local.json`.
 
 `daily-driver doctor --reset` replaces all of these files with fresh copies. Your edits to them, and files you added to them, are lost.

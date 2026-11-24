@@ -125,6 +125,8 @@ Each interactive session gets an ID in the `session_id` format of the provider. 
 
 For Claude Code, the instructions for each launcher come from the `.claude/` files in the workspace. Daily Driver writes those files for every workspace. Other providers do not read `.claude/`. For a provider whose `run` template has `{prompt_file}`, Daily Driver writes the instructions to `.daily-driver/state/prompts/<command>.md` before each launch.
 
+Daily Driver also writes each command for opencode to `.opencode/commands/daily-driver/`. In an opencode session, type `/daily-driver/check-in` or another command name. The `day-start`, `day-end`, and `check-in` commands also hold the instructions of the `work-planner` agent, because a session that you start yourself loads no agent.
+
 ### Model of an opencode session
 
 The opencode session screen has no model option. It reads the model from `opencode.json` in the workspace. Before each opencode session, Daily Driver sets `model` in that file to the model of the session: the `--model` option, else `ai.providers.opencode.model`. The shipped `model_file` setting of `opencode` does this. A provider of your own can use `model_file` for another program.

@@ -23,7 +23,7 @@ If a script that consumes Daily Driver output starts misbehaving, run it without
 
 ## `doctor` reports ERROR
 
-Run `doctor --fix` first — it regenerates the drifted managed files (`.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`), restores managed files you may have deleted, and resolves most "missing file" errors. If an error row names a missing Python package (`dep:pydantic`, `dep:pyyaml`, `dep:rich`, `dep:jinja2`), install it and re-run. A provider whose program is missing, or whose model server does not answer, shows as an `ai:<provider>` WARNING.
+Run `doctor --fix` first — it regenerates the drifted managed files (`.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.opencode/commands/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`), restores managed files you may have deleted, and resolves most "missing file" errors. If an error row names a missing Python package (`dep:pydantic`, `dep:pyyaml`, `dep:rich`, `dep:jinja2`), install it and re-run. A provider whose program is missing, or whose model server does not answer, shows as an `ai:<provider>` WARNING.
 
 ```bash
 daily-driver doctor
@@ -37,7 +37,7 @@ daily-driver doctor --reset     # overwrite all managed files, including your ed
 
 The managed files were generated for a different package version, or for a different set of plugins. A plugin switch reads `plugins changed (none -> job_search)`. Run `daily-driver doctor --fix`. After a plugin switch, also run `scheduler install` if you use the scheduler.
 
-`doctor --fix` keeps your edits to shipped files. It deletes `.md` files you added to `.claude/commands/daily-driver/` or `.claude/agents/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. It also replaces the allow rules saved in `.claude/settings.local.json`. Keep your own commands in `.claude/commands/user/`. See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
+`doctor --fix` keeps your edits to shipped files. It deletes `.md` files you added to `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, or `.opencode/commands/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. It also replaces the allow rules saved in `.claude/settings.local.json`. Keep your own commands in `.claude/commands/user/`. See [`.claude/` ownership](configuration.md#claude-ownership) for what `init` and `doctor` keep, overwrite, and delete.
 
 ## Warning: "ignoring" a setting
 
@@ -209,7 +209,7 @@ For model server problems, see [Local models](local-models.md#troubleshooting).
 To start clean without losing tracker data:
 
 ```bash
-cd <workspace> && test -f .dd-config.yaml && rm -rf .claude/commands/daily-driver .claude/agents/daily-driver .claude/hooks .daily-driver && daily-driver init .
+cd <workspace> && test -f .dd-config.yaml && rm -rf .claude/commands/daily-driver .claude/agents/daily-driver .opencode/commands/daily-driver .claude/hooks .daily-driver && daily-driver init .
 ```
 
 Replace `<workspace>` with the full path to your workspace. The line stops at the first step that fails, so it deletes nothing outside a workspace. `tracker.yaml` is not touched.

@@ -365,8 +365,8 @@ def test_concurrent_invocations_only_one_wipe(tmp_path: Path) -> None:
     Both processes see a stale stamp before entering the lock. After the
     first process generates and writes the stamp, the second re-checks drift
     inside the lock and short-circuits. On the force_overwrite path
-    _wipe_and_recreate must be called exactly three times total (commands +
-    agents + hooks from one process, not six).
+    _wipe_and_recreate must be called exactly four times total (claude
+    commands + opencode commands + agents + hooks from one process, not eight).
     """
     state_dir = tmp_path / ".daily-driver"
     state_dir.mkdir()
@@ -390,11 +390,12 @@ def test_concurrent_invocations_only_one_wipe(tmp_path: Path) -> None:
     outcomes = [results.get_nowait() for _ in range(2)]
     assert outcomes == ["ok", "ok"], f"unexpected outcomes: {outcomes}"
 
-    # _wipe_and_recreate runs once each for commands/, agents/, and hooks/.
-    # If the double-check fails, both processes would wipe (total 6 calls).
+    # _wipe_and_recreate runs once each for .claude/commands/, .opencode/commands/,
+    # agents/, and hooks/. If the double-check fails, both processes would wipe
+    # (total 8 calls).
     total_wipes = len(wipe_calls)
-    assert total_wipes == 3, (
-        f"expected 3 wipe calls (one process), got {total_wipes} — "
+    assert total_wipes == 4, (
+        f"expected 4 wipe calls (one process), got {total_wipes} — "
         "double-checked locking may be missing or broken"
     )
 
