@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -126,3 +127,39 @@ def test_gather_commits_handles_subject_with_special_chars(monkeypatch):
 
     assert len(commits) == 1
     assert commits[0].subject == subject
+
+
+_needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+
+
+@_needs_git
+def test_gather_commits_returns_empty_for_repo_with_no_commits(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+
+    assert gather_commits(tmp_path, _SINCE) == []
+
+
+@_needs_git
+def test_gather_commits_reads_no_commits_under_a_translated_locale(
+    tmp_path, monkeypatch
+):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    probe = subprocess.run(
+        ["git", "-C", str(tmp_path), "log"], capture_output=True, text=True
+    )
+    if "does not have any commits yet" in probe.stderr:
+        pytest.skip("git prints English under de_DE here; the locale is missing")
+
+    assert gather_commits(tmp_path, _SINCE) == []
+
+
+@_needs_git
+def test_gather_commits_raises_on_a_broken_gitfile(tmp_path):
+    (tmp_path / ".git").write_text("")
+
+    with pytest.raises(GitCommandError) as excinfo:
+        gather_commits(tmp_path, _SINCE)
+
+    assert "gitfile" in excinfo.value.stderr

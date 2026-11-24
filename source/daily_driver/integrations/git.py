@@ -7,6 +7,7 @@ and own all parsing; they never import `subprocess`.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -18,9 +19,14 @@ log = get_logger(__name__)
 
 _git_warned = False
 
+# English messages, so the stderr matches below hold under any user locale.
+_ENV_C_LOCALE = {"LC_ALL": "C"}
+_NO_REPO = "not a git repository"
+_NO_COMMITS = "does not have any commits yet"
+
 
 class GitCommandError(RuntimeError):
-    """`git` exited non-zero for a reason other than "not a git repository".
+    """`git` exited non-zero for a reason other than no repository or no commits.
 
     Mirrors the `returncode` / `stderr` fields callers used to read off
     `subprocess.CalledProcessError`, so the gather layer can surface the
@@ -53,6 +59,7 @@ def log_commits(
     Returns ``None`` when there is nothing usable to parse:
       - `git` is not on PATH,
       - `repo_root` is not a git repository,
+      - the repository has no commits yet,
       - the command times out (30s bound).
 
     Raises ``GitCommandError`` on any other non-zero exit so genuine git
@@ -74,7 +81,12 @@ def log_commits(
     ]
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, check=False, timeout=30
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+            env={**os.environ, **_ENV_C_LOCALE},
         )
     except subprocess.TimeoutExpired:
         log.warning(
@@ -84,7 +96,7 @@ def log_commits(
         return None
 
     if result.returncode != 0:
-        if "not a git repository" in result.stderr:
+        if _NO_REPO in result.stderr or _NO_COMMITS in result.stderr:
             return None
         raise GitCommandError(result.returncode, cmd, result.stderr)
 
