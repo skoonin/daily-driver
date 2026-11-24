@@ -6,6 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
+- **Daily Driver's commands now work in opencode.** opencode does not read `.claude/commands/`, so typing `/` in an opencode session showed no Daily Driver commands. `init` and `doctor --fix` now also write them to `.opencode/commands/daily-driver/`: type `/daily-driver/day-start`, `/daily-driver/check-in`, and so on. `day-start`, `day-end`, and `check-in` include the `work-planner` agent's instructions. If your workspace is a git repository, add `.opencode/commands/daily-driver/` to its `.gitignore`; new workspaces have it. (#292)
 - **Python 3.13, 3.14, and 3.15 are supported.** Daily Driver is now tested on Python 3.11 through 3.15. `python-jobspy` 1.2.0 or later is required, because 1.1.82 cannot install on Python 3.13 or later. (#284)
 - **`daily-driver config defaults` prints the settings file that `init` writes, with every default.** Compare your file with it to see what you changed. `--plugin job_search` includes the settings of a plugin. (#282)
 - **`daily-driver start` and `daily-driver end` are aliases of `day-start` and `day-end`.** (#282)
@@ -102,6 +103,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Fixed
 
+- **`gather git` no longer fails on a repository with no commits or a broken `.git` file.** A repository with no commits now has no commits to show. A repository under `gather.git.search_paths` that git cannot read, such as the leftover folder of a removed worktree, shows a warning with git's message, and the other repositories are still read. Before, either one stopped `gather git`, so day-start, day-end, and check-in had no commits. This also works when your system language is not English. A `--repo` that git cannot read still stops `gather git`, now with git's message. (#291)
 - **Ctrl-C during job reviews can no longer freeze `jobs run` on Python 3.11 and 3.12.** When the interrupt arrived while the program was writing a log message, the parallel job reviews stopped forever and the run never ended. Ctrl-C now stops the reviews, keeps the finished results, and exits. (#284)
 - **A scheduled `jobs run` stopped during job reviews can no longer freeze on Python 3.11 and 3.12.** launchd stops a run with SIGTERM, which had the same problem as Ctrl-C. SIGTERM now stops the reviews the same way, keeps the finished results, and exits with code 143. (#285)
 

@@ -268,7 +268,7 @@ Fields that you add with `tracker add --extra key=value` are saved with the entr
 
 ### Custom Claude Code commands and agents
 
-These are Claude Code features. Daily Driver gives other providers, such as opencode, their launcher instructions in a prompt file instead. See [Sessions](providers.md#sessions).
+These are Claude Code features. Daily Driver gives other providers, such as opencode, their launcher instructions in a prompt file instead. It also writes its own commands for opencode to `.opencode/commands/daily-driver/`. See [Sessions](providers.md#sessions).
 
 - Commands: put a markdown file at `.claude/commands/my-command.md`. Start a chat with `claude --add-dir <workspace>`, then type `/my-command`.
 - Agents: put a markdown file at `.claude/agents/my-reviewer.md`. Start it with `claude --agent my-reviewer`.
@@ -277,17 +277,17 @@ Keep your own files outside the `daily-driver` folders. See [`.claude/` ownershi
 
 ### Change a shipped command
 
-`daily-driver day-start` runs the command in `.claude/commands/daily-driver/day-start.md`. To change what `day-start` does, edit that file. `doctor --fix` keeps your edit. `doctor --reset` and `init --force` replace the file, so keep a copy outside the workspace.
+`daily-driver day-start` runs the command in `.claude/commands/daily-driver/day-start.md`. To change what `day-start` does, edit that file. `doctor --fix` keeps your edit. `doctor --reset` and `init --force` replace the file, so keep a copy outside the workspace. The opencode command `/daily-driver/day-start` is in `.opencode/commands/daily-driver/day-start.md`, with the same rules.
 
 A file with the same name one level up, `.claude/commands/day-start.md`, does not change `day-start`. It is a separate command that you start by hand with `/day-start`.
 
 ### `.claude/` ownership
 
-Daily Driver manages five paths in your workspace: the `daily-driver` folders in `.claude/commands/` and `.claude/agents/`, `.claude/hooks/`, `README.md`, and `.claude/settings.local.json`. `doctor --fix` and `init` rewrite them after an upgrade and after you switch job search on or off. `doctor --fix` also rewrites them when a managed file is missing or invalid. `doctor --reset` and `init --force` always rewrite them. Everything else is yours.
+Daily Driver manages six paths in your workspace: the `daily-driver` folders in `.claude/commands/`, `.claude/agents/`, and `.opencode/commands/`, `.claude/hooks/`, `README.md`, and `.claude/settings.local.json`. `doctor --fix` and `init` rewrite them after an upgrade and after you switch job search on or off. `doctor --fix` also rewrites them when a managed file is missing or invalid. `doctor --reset` and `init --force` always rewrite them. Everything else is yours.
 
 | Path | `doctor --fix` and `init`, when they rewrite | `doctor --reset` and `init --force` |
 | --- | --- | --- |
-| `.claude/commands/daily-driver/` and `.claude/agents/daily-driver/` | Keep your edits to shipped files. Delete `.md` files you added. Delete a file that an older version shipped, unless you edited it. | Wipe the folders and write them again. You lose your edits and every file you added. |
+| `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.opencode/commands/daily-driver/` | Keep your edits to shipped files. Delete `.md` files you added. Delete a file that an older version shipped, unless you edited it. | Wipe the folders and write them again. You lose your edits and every file you added. |
 | `.claude/hooks/` | The same rules, with `.sh` files in place of `.md` files. | Wipe the folder and write it again. You lose your edits and every file you added. |
 | `README.md` in the workspace folder | Keeps your edits. | Overwrites the file. |
 | `.claude/settings.local.json` | Keeps top-level settings you added. Replaces the shipped `$schema`, `permissions`, `hooks`, and `metadata` blocks, which removes allow rules that Claude Code saved. | The same. |

@@ -72,7 +72,7 @@ Key conventions:
   `docs/dev/developer.md` and `docs/dev/extending.md`.
 - **Workspace writes are flock-guarded.** `core.locking.file_lock` wraps
   `fcntl.flock` for YAML reads + writes and the focus lock.
-- **These paths are package-managed:** `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.claude/hooks/`, and the workspace `README.md`. Generated from wheel package-data on `init` and on version drift. `doctor --fix` preserves user-edited managed files (SHA-256 manifest) but deletes `.md` files you add to the commands and agents directories and `.sh` files you add to hooks. `doctor --reset` wipes and rewrites those directories and overwrites the workspace `README.md`. Top-level `.claude/commands/` and `.claude/agents/` are user territory. Full rule: `docs/configuration.md` (`.claude/` ownership).
+- **These paths are package-managed:** `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, `.opencode/commands/daily-driver/` (the same commands in opencode's format), `.claude/hooks/`, and the workspace `README.md`. Generated from wheel package-data on `init` and on version drift. `doctor --fix` preserves user-edited managed files (SHA-256 manifest) but deletes `.md` files you add to the commands and agents directories and `.sh` files you add to hooks. `doctor --reset` wipes and rewrites those directories and overwrites the workspace `README.md`. Top-level `.claude/commands/` and `.claude/agents/` are user territory. Full rule: `docs/configuration.md` (`.claude/` ownership).
 - **Plugins are a real boundary.** Each plugin lives under
   `source/daily_driver/plugins/<name>/` and exposes a `PLUGIN` (`plugins/_base.py`
   `Plugin` dataclass) registered in the static `plugins.PLUGINS` tuple — no runtime

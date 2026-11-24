@@ -9,9 +9,11 @@ generate(force=True) call.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
 from rich.console import Console
 
 from daily_driver.core import generate
@@ -122,3 +124,52 @@ def test_workspace_readme_written_on_init(tmp_path: Path) -> None:
     assert "daily-driver" in readme.read_text(
         encoding="utf-8"
     ), "README.md must contain 'daily-driver'"
+
+
+# opencode runs `!`cmd`` blocks, swaps `$ARGUMENTS` and `$1`.., and inlines
+# `@path` files, so a shipped command must use none of them by accident.
+_OPENCODE_SPECIAL = re.compile(r"!`|\$ARGUMENTS|\$\d|(?:^|\s)@[\w./~-]")
+
+
+def test_generate_writes_each_command_for_opencode(tmp_path: Path) -> None:
+    ws = _FakeWorkspace.make(tmp_path)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+
+    claude_dir = tmp_path / ".claude" / "commands" / "daily-driver"
+    opencode_dir = tmp_path / ".opencode" / "commands" / "daily-driver"
+    assert {f.name for f in opencode_dir.glob("*.md")} == {
+        f.name for f in claude_dir.glob("*.md")
+    }
+
+    for path in opencode_dir.glob("*.md"):
+        text = path.read_text(encoding="utf-8")
+        frontmatter, body = text.removeprefix("---\n").split("\n---\n", 1)
+        assert set(yaml.safe_load(frontmatter)) == {"description"}, path.name
+        for token in ("{%", "{{", "/daily-driver:", "~/.claude", "Claude Read tool"):
+            assert token not in body, f"{path.name} has {token!r}"
+        assert not _OPENCODE_SPECIAL.search(body), path.name
+
+
+def test_generate_gives_opencode_session_commands_the_persona(tmp_path: Path) -> None:
+    ws = _FakeWorkspace.make(tmp_path)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+
+    opencode_dir = tmp_path / ".opencode" / "commands" / "daily-driver"
+    for name in ("day-start", "day-end", "check-in"):
+        text = (opencode_dir / f"{name}.md").read_text(encoding="utf-8")
+        assert "# Role: work-planner" in text, name
+    summary = (opencode_dir / "summary.md").read_text(encoding="utf-8")
+    assert "# Role:" not in summary
+
+
+def test_contract_needs_the_opencode_commands(tmp_path: Path) -> None:
+    from daily_driver.core import contract
+
+    ws = _FakeWorkspace.make(tmp_path)
+    generate.generate(ws, ignore_drift=True, force_overwrite=True)
+    for path in (tmp_path / ".opencode" / "commands" / "daily-driver").glob("*.md"):
+        path.unlink()
+
+    violations = contract.check(tmp_path)
+
+    assert ".opencode/commands/daily-driver" in {v.rel_path for v in violations}
