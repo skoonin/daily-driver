@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
@@ -318,3 +320,131 @@ def test_gather_calendar_unused_dates_default_to_today(
     assert rc == 0
     # Defaults to [today, today+1day)
     assert captured_args["since"].date() == date.today()
+
+
+def _search_paths_workspace(tmp_path: Path, root: Path) -> Path:
+    ws = _init_workspace(tmp_path)
+    config_path = ws / ".dd-config.yaml"
+    text = config_path.read_text()
+    text += f"\ngather:\n  git:\n    search_paths:\n      - {root}\n"
+    config_path.write_text(text)
+    return ws
+
+
+def test_gather_git_skips_a_repo_git_cannot_read_and_keeps_the_others(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+    from daily_driver.integrations.git import GitCommandError
+
+    root = tmp_path / "repos"
+    for name in ("broken", "good"):
+        (root / name / ".git").mkdir(parents=True)
+    ws = _search_paths_workspace(tmp_path, root)
+
+    def fake_gather(repo, since, until):
+        if repo.name == "broken":
+            raise GitCommandError(
+                128, ["git"], "fatal: invalid gitfile format: x/.git\n"
+            )
+        return [
+            GitCommit(
+                sha="abc1234",
+                timestamp=datetime(2026, 4, 20, 14, 30),
+                author="x",
+                subject="in good",
+            )
+        ]
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "in good" in captured.out
+    assert "broken" in captured.err
+    assert "invalid gitfile format" in captured.err
+
+    rc = app(["--workspace", str(ws), "gather", "git", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)["data"]
+    assert rc == 0
+    assert payload["repos"] == [str((root / "good").resolve())]
+
+
+def test_gather_git_fails_when_the_repo_named_by_repo_cannot_be_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+    from daily_driver.integrations.git import GitCommandError
+
+    ws = _init_workspace(tmp_path)
+
+    def fake_gather(repo, since, until):
+        raise GitCommandError(128, ["git"], "fatal: cannot change to 'x'\n")
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+
+    rc = app(["--workspace", str(ws), "gather", "git", "--repo", str(tmp_path)])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "cannot change to" in captured.err
+    assert captured.out == ""
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_gather_git_reads_empty_and_broken_repos_without_failing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+
+    root = tmp_path / "repos"
+    no_commits = root / "no-commits"
+    no_commits.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(no_commits)], check=True)
+    broken = root / "broken"
+    broken.mkdir()
+    (broken / ".git").write_text("")
+    (root / "empty-dir").mkdir()
+    ws = _search_paths_workspace(tmp_path, root)
+
+    rc = app(["--workspace", str(ws), "gather", "git", "--json"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    payload = json.loads(captured.out)["data"]
+    assert payload["commits"] == []
+    assert "broken" in captured.err
+
+
+def test_gather_git_says_so_when_no_repo_could_be_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import git
+    from daily_driver.integrations.git import GitCommandError
+
+    root = tmp_path / "repos"
+    (root / "broken" / ".git").mkdir(parents=True)
+    ws = _search_paths_workspace(tmp_path, root)
+
+    def fake_gather(repo, since, until):
+        raise GitCommandError(128, ["git"], "fatal: invalid gitfile format\n")
+
+    monkeypatch.setattr(git, "gather_commits", fake_gather)
+
+    rc = app(["--workspace", str(ws), "gather", "git"])
+
+    assert rc == 0
+    assert "(no git repo could be read)" in capsys.readouterr().out
