@@ -71,18 +71,25 @@ def _bridge_caplog_to_dd_logger(request):
         dd_logger.setLevel(prev_level)
 
 
-# Real AI programs a provider template can name. Tests launch fake programs by
-# absolute path; reaching one of these means a test forgot to stub the provider
-# layer and would spend real model calls.
+# Real AI programs a provider template can name, plus the opencode session
+# reader (refused whether or not opencode is installed). Tests launch fake
+# programs by absolute path; reaching one of these means a test forgot to stub
+# the provider layer and would spend real model calls or read real sessions.
 _REAL_AI_PROGRAMS = frozenset({"claude", "opencode"})
 
 
 @pytest.fixture(autouse=True)
 def _no_real_ai_programs(monkeypatch):
-    from daily_driver.integrations import provider
+    from daily_driver.integrations import opencode, provider
 
     real_run = provider._run
     real_cleanup = provider._cleanup
+
+    def refuse_opencode_sessions(query: str) -> str | None:
+        raise AssertionError(
+            "test tried to run the real opencode; stub "
+            "daily_driver.integrations.opencode.list_sessions instead"
+        )
 
     def _refuse(argv0: str) -> None:
         if Path(argv0).name in _REAL_AI_PROGRAMS:
@@ -102,6 +109,7 @@ def _no_real_ai_programs(monkeypatch):
 
     monkeypatch.setattr(provider, "_run", guarded_run)
     monkeypatch.setattr(provider, "_cleanup", guarded_cleanup)
+    monkeypatch.setattr(opencode, "list_sessions", refuse_opencode_sessions)
 
 
 @pytest.fixture(autouse=True)

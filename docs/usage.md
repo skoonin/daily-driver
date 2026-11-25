@@ -239,6 +239,7 @@ The AI runs many of these for you in a chat. You can also run them yourself:
 | `paths daily-plan` | Prints the path of today's plan file. Use `daily-notes` for the notes file. |
 | `gather calendar` | Shows your macOS Calendar events |
 | `gather git` | Shows recent Git commits from your projects |
+| `gather sessions` | Lists your recent Claude Code and opencode sessions |
 | `calendar sync` | Copies today's plan time blocks to a macOS Calendar. Off until you set `calendar.sync_enabled: true`. The calendar named in `calendar.plan_calendar_name` (default `Daily Plan`) must exist. `day-start` runs it for you. |
 | `help` | Shows lists of valid values: `help commands`, `help statuses`, `help categories`, `help dates`, and `help sources` with job search on |
 

@@ -81,6 +81,7 @@ Reserved (do not redefine): `-h` (argparse help), `-n` (`--dry-run`), `-f` (`--f
 | `paths` | `--json` | `-j` |
 | `gather calendar` | `--json` | `-j` |
 | `gather git` | `--json` | `-j` |
+| `gather sessions` | `--json` | `-j` |
 | `scheduler status` | `--json` | `-j` |
 | `summary` | `--range` | `-r` |
 | `summary` | `--json` | `-j` |
@@ -458,9 +459,21 @@ Writes today's plan time blocks into a local macOS Calendar so the day's agenda 
 
 Prints a resolved workspace path. Kinds: `root` (the workspace folder), `state`, `ephemeral`, `tracker`, `daily`, `daily-plan`, `daily-notes`, `daily-state`. `--json` emits all paths at once, including the `tracker` key (`tracker.yaml`).
 
-### `gather {calendar,git} [--since|--until|--json]`
+### `gather {calendar,git,sessions} [--since|--until|--json]`
 
 Structured external state readers. `gather git` also accepts `--repo PATH`; without it, repos are discovered under `gather.git.search_paths` from `.dd-config.yaml` (falling back to the current working directory).
+
+`gather sessions` lists the AI sessions that overlap the window. A session counts when it started before `--until` and was last active on or after `--since`. The default window runs from the start of yesterday to the start of tomorrow, the same as `gather git`. `--since` and `--until` take the dates that `daily-driver help dates` lists.
+
+| Source | Where it reads | Notes |
+|---|---|---|
+| Claude Code | `~/.claude/projects/*/*.jsonl`, or `$CLAUDE_CONFIG_DIR/projects` when that variable is set | The title is the custom title of the session, else the AI-generated title. |
+| opencode | `opencode api GET /api/session?parentID=null` | Returns the top-level sessions of every opencode project. Skipped without a message when opencode is not installed. If the call fails, a warning is logged and the Claude Code rows still show. |
+
+- The command lists every session from every project. No setting limits it.
+- Text output has one line per session, newest activity first: time span, tool, folder, and title (`(untitled)` when the session has none). `(no sessions)` shows when the list is empty.
+- `--json` prints `{"schema": 1, "data": {"sessions": [...], "count": N}}`. Each session has `tool`, `id`, `started`, `updated`, `directory`, `title`, and `path`. `path` is the Claude Code transcript file, and `null` for opencode.
+- `day-start` runs it with the default window. `day-end` and `check-in` run it with `--since today`.
 
 ## See also
 

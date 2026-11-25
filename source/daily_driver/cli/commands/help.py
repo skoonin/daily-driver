@@ -65,6 +65,7 @@ _DATE_CONSUMERS = (
     "tracker prune --older-than",
     "gather calendar --since/--until",
     "gather git --since/--until",
+    "gather sessions --since/--until",
     "summary --range",
 )
 

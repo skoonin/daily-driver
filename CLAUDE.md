@@ -41,8 +41,8 @@ End-user reference: `docs/commands.md`. Short list:
 - `daily-driver jobs {run,backfill,promote,discover-boards,status,prune,verify}` — search the configured job sites, re-enrich empty fields on existing rows, promote a row into the tracker, sweep Greenhouse, Ashby, and Lever for company boards with in-scope roles (cached for `jobs run`), show last-run metadata, archive stale rows, or URL-check row liveness in `jobs.csv`. Not a command while job search is off.
 - `daily-driver paths <kind> [--json]` — print workspace-resolved paths
   (root, state, tracker, daily plan/notes).
-- `daily-driver gather {calendar,git} [--json]` — read
-  external state for downstream commands.
+- `daily-driver gather {calendar,git,sessions} [--json]` — read
+  external state for downstream commands (`sessions` lists Claude Code and opencode sessions).
 - `daily-driver scheduler {install,uninstall,status}` — macOS launchd
   plist install / remove / inspection.
 - `daily-driver calendar sync` — write today's plan time blocks to a local macOS Calendar (needs `calendar.sync_enabled: true`).

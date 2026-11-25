@@ -135,8 +135,12 @@ daily-driver/
 │   │   ├── --since SPEC
 │   │   ├── --until SPEC
 │   │   └── -j, --json
-│   └── git
-│       ├── --repo PATH
+│   ├── git
+│   │   ├── --repo PATH
+│   │   ├── --since SPEC
+│   │   ├── --until SPEC
+│   │   └── -j, --json
+│   └── sessions
 │       ├── --since SPEC
 │       ├── --until SPEC
 │       └── -j, --json

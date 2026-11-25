@@ -1,4 +1,4 @@
-"""Tests for ``daily-driver gather {calendar,git}``."""
+"""Tests for ``daily-driver gather {calendar,git,sessions}``."""
 
 from __future__ import annotations
 
@@ -448,3 +448,147 @@ def test_gather_git_says_so_when_no_repo_could_be_read(
 
     assert rc == 0
     assert "(no git repo could be read)" in capsys.readouterr().out
+
+
+def _session(**overrides):
+    from daily_driver.gathers.sessions import Session
+
+    fields = {
+        "tool": "claude",
+        "id": "abc",
+        "started": datetime(2026, 4, 21, 9, 0).astimezone(),
+        "updated": datetime(2026, 4, 21, 11, 30).astimezone(),
+        "directory": "/Users/me/git/proj",
+        "title": "Plan the release",
+        "path": "/Users/me/.claude/projects/x/abc.jsonl",
+    }
+    fields.update(overrides)
+    return Session(**fields)
+
+
+def test_gather_sessions_text_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import sessions
+
+    ws = _init_workspace(tmp_path)
+    rows = [
+        _session(),
+        _session(
+            tool="opencode",
+            id="ses_1",
+            title=None,
+            directory=None,
+            path=None,
+            started=datetime(2026, 4, 20, 22, 0).astimezone(),
+            updated=datetime(2026, 4, 21, 1, 0).astimezone(),
+        ),
+    ]
+    monkeypatch.setattr(sessions, "gather_sessions", lambda since, until: rows)
+
+    rc = app(["--workspace", str(ws), "gather", "sessions"])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert rc == 0
+    assert len(lines) == 2
+    assert "2026-04-21 09:00-11:30" in lines[0]
+    assert "claude" in lines[0]
+    assert "/Users/me/git/proj" in lines[0]
+    assert "Plan the release" in lines[0]
+    # A session that crosses midnight shows the full end date.
+    assert "2026-04-20 22:00-2026-04-21 01:00" in lines[1]
+    assert "opencode" in lines[1]
+    assert "(untitled)" in lines[1]
+
+
+def test_gather_sessions_json_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import sessions
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.setattr(sessions, "gather_sessions", lambda since, until: [_session()])
+
+    rc = app(["--workspace", str(ws), "gather", "sessions", "--json"])
+
+    assert rc == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert parsed["schema"] == 1
+    assert parsed["data"]["count"] == 1
+    row = parsed["data"]["sessions"][0]
+    assert row["tool"] == "claude"
+    assert row["id"] == "abc"
+    assert row["title"] == "Plan the release"
+    assert row["path"] == "/Users/me/.claude/projects/x/abc.jsonl"
+
+
+def test_gather_sessions_empty_prints_placeholder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.gathers import sessions
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.setattr(sessions, "gather_sessions", lambda since, until: [])
+
+    rc = app(["--workspace", str(ws), "gather", "sessions"])
+
+    assert rc == 0
+    assert "(no sessions)" in capsys.readouterr().out
+
+
+def test_gather_sessions_window_matches_gather_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from daily_driver.cli.cli import app
+    from daily_driver.core import clock
+    from daily_driver.gathers import sessions
+
+    ws = _init_workspace(tmp_path)
+    monkeypatch.setattr(clock, "FROZEN_TIME", datetime(2026, 4, 21, 15, 0).astimezone())
+    seen: list[tuple[datetime, datetime]] = []
+
+    def fake(since, until):
+        seen.append((since, until))
+        return []
+
+    monkeypatch.setattr(sessions, "gather_sessions", fake)
+
+    assert app(["--workspace", str(ws), "gather", "sessions"]) == 0
+    assert app(["--workspace", str(ws), "gather", "sessions", "--since", "today"]) == 0
+
+    assert seen[0] == (datetime(2026, 4, 20), datetime(2026, 4, 22))
+    assert seen[1] == (datetime(2026, 4, 21), datetime(2026, 4, 22))
+
+
+def test_gather_sessions_invalid_date_returns_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    rc = app(["--workspace", str(ws), "gather", "sessions", "--since", "nope"])
+
+    assert rc == 2
+    assert "invalid date" in capsys.readouterr().err
+
+
+def test_gather_usage_lists_sessions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from daily_driver.cli.cli import app
+
+    ws = _init_workspace(tmp_path)
+
+    assert app(["--workspace", str(ws), "gather"]) == 2
+    assert "what: calendar, git, sessions" in capsys.readouterr().err

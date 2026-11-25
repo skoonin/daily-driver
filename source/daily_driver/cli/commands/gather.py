@@ -1,4 +1,4 @@
-"""gather subcommand: read external state (calendar, git).
+"""gather subcommand: read external state (calendar, git, sessions).
 
 Thin CLI wrapper over ``daily_driver.gathers.*`` that emits plain-text or
 JSON suitable for piping into a Claude prompt.
@@ -16,6 +16,7 @@ from daily_driver.core.console import Console
 from daily_driver.core.workspace import Workspace, WorkspaceError
 from daily_driver.gathers import calendar as gather_calendar
 from daily_driver.gathers import git as gather_git
+from daily_driver.gathers import sessions as gather_sessions_mod
 from daily_driver.integrations.git import GitCommandError
 
 
@@ -26,7 +27,7 @@ def add_parser(
     parser = subparsers.add_parser(
         "gather",
         parents=parents,
-        help="Pull data from calendar or git",
+        help="Pull data from calendar, git, or AI sessions",
     )
     nested = parser.add_subparsers(dest="gather_what", metavar="<what>")
 
@@ -59,6 +60,19 @@ def add_parser(
     p_git.add_argument("-j", "--json", action="store_true", help="Emit JSON")
     add_global_flags(p_git)
     p_git.set_defaults(func=_run_git)
+
+    p_sessions = nested.add_parser(
+        "sessions", parents=parents, help="List Claude Code and opencode sessions"
+    )
+    p_sessions.add_argument(
+        "--since", default=None, help="ISO date (default: start of yesterday)"
+    )
+    p_sessions.add_argument(
+        "--until", default=None, help="ISO date (default: start of tomorrow)"
+    )
+    p_sessions.add_argument("-j", "--json", action="store_true", help="Emit JSON")
+    add_global_flags(p_sessions)
+    p_sessions.set_defaults(func=_run_sessions)
 
     parser.set_defaults(func=run)
     return parser
@@ -186,10 +200,47 @@ def _run_git(args: argparse.Namespace, workspace: Workspace) -> int:
     return 0
 
 
+def _session_span(session: gather_sessions_mod.Session) -> str:
+    started = session.started.astimezone()
+    updated = session.updated.astimezone()
+    # A same-day session drops the repeated date; one crossing midnight needs it.
+    end_format = "%H:%M" if updated.date() == started.date() else "%Y-%m-%d %H:%M"
+    return f"{started.strftime('%Y-%m-%d %H:%M')}-{updated.strftime(end_format)}"
+
+
+def _run_sessions(args: argparse.Namespace, workspace: Workspace) -> int:
+    del workspace
+    try:
+        since_d = _parse_date(args.since, today() - timedelta(days=1))
+        until_d = _parse_date(args.until, today() + timedelta(days=1))
+    except ValueError as exc:
+        Console.error(f"invalid date: {exc}")
+        return 2
+
+    rows = gather_sessions_mod.gather_sessions(_as_dt(since_d), _as_dt(until_d))
+
+    if args.json:
+        Console.emit_json(
+            {
+                "sessions": [row.model_dump(mode="json") for row in rows],
+                "count": len(rows),
+            }
+        )
+    elif not rows:
+        print("(no sessions)")
+    else:
+        for row in rows:
+            print(
+                f"{_session_span(row)}  {row.tool}  "
+                f"{row.directory or '-'}  {row.title or '(untitled)'}"
+            )
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
     if not hasattr(args, "func") or args.func is run:
         Console.error("usage: daily-driver gather <what> ...")
-        Console.error("what: calendar, git")
+        Console.error("what: calendar, git, sessions")
         return 2
 
     try:

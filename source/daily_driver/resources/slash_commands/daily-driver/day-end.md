@@ -21,17 +21,13 @@ Read the file at the printed path. Parse the YAML frontmatter for `plan_items` a
 
 ## 2. Gather Session Activity
 
-{% if claude_code %}
-For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
+List today's AI sessions from every tool:
 
 ```bash
-ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
+daily-driver gather sessions --since today
 ```
 
-Read the most recent few whose mtimes fall in today's window. Skim for cwd + first user prompt to identify what was worked on.
-{% else %}
-No session logs are available here; rely on the git activity in the next step.
-{% endif %}
+Each row shows the tool, the time span, the folder, and the session title. Use them to see what was worked on today.
 
 ## 3. Gather Git Activity
 

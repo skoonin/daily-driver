@@ -8,8 +8,7 @@ came from another provider, it starts a fresh one; if the recorded session can
 no longer be resumed, the provider reports it and check-in exits with its code.
 The `--no-resume` flag forces a fresh session regardless of config.
 
-After the session exits 0, `last_check_in_at` is recorded so the next /daily-driver:check-in
-can bound `gather sessions` / `gather git` since the prior check-in (#35).
+After the session exits 0, `last_check_in_at` records when the check-in ran (#35).
 """
 
 from __future__ import annotations
