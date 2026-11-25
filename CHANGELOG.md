@@ -6,7 +6,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Added
 
-- **`daily-driver gather sessions` lists your Claude Code and opencode sessions.** `day-start`, `day-end`, and `check-in` now use it instead of listing Claude Code transcript files, so opencode sessions show up too. (#PR)
+- **`daily-driver gather sessions` lists your Claude Code and opencode sessions.** `day-start`, `day-end`, and `check-in` now use it instead of listing Claude Code transcript files, so opencode sessions show up too. (#293)
 - **Daily Driver's commands now work in opencode.** opencode does not read `.claude/commands/`, so typing `/` in an opencode session showed no Daily Driver commands. `init` and `doctor --fix` now also write them to `.opencode/commands/daily-driver/`: type `/daily-driver/day-start`, `/daily-driver/check-in`, and so on. `day-start`, `day-end`, and `check-in` include the `work-planner` agent's instructions. If your workspace is a git repository, add `.opencode/commands/daily-driver/` to its `.gitignore`; new workspaces have it. (#292)
 - **Python 3.13, 3.14, and 3.15 are supported.** Daily Driver is now tested on Python 3.11 through 3.15. `python-jobspy` 1.2.0 or later is required, because 1.1.82 cannot install on Python 3.13 or later. (#284)
 - **`daily-driver config defaults` prints the settings file that `init` writes, with every default.** Compare your file with it to see what you changed. `--plugin job_search` includes the settings of a plugin. (#282)
