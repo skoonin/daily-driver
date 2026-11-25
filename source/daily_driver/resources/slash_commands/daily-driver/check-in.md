@@ -55,17 +55,11 @@ daily-driver gather calendar
 daily-driver gather git
 ```
 
-{% if claude_code %}
-For Claude Code sessions, list recent JSONL files directly rather than scanning the full project tree:
-
 ```bash
-ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
+daily-driver gather sessions --since today
 ```
 
-Read the most recent few whose mtimes fall in today's window. Use them together with git commits to infer what was actually worked on since the morning plan.
-{% else %}
-Use the git commits to infer what was actually worked on since the morning plan.
-{% endif %}
+Use the sessions together with the git commits to infer what was actually worked on since the morning plan.
 
 ## 3. Review Tracker
 
@@ -84,11 +78,7 @@ daily-driver tracker list
 Using the gathered data, present:
 
 1. **Current Time vs Remaining Blocks** — Using `current_time` from step 0, show what was planned for this window, what blocks are done/past, and what remains today
-{% if claude_code %}
-2. **Sessions + Commits Since Last Check-in** — Claude Code sessions and git commits since the session start; use these together to infer what was actually worked on
-{% else %}
-2. **Commits Since Last Check-in** — git commits since the session start; use them to infer what was actually worked on
-{% endif %}
+2. **Sessions + Commits Since Last Check-in** — AI sessions and git commits since the session start; use these together to infer what was actually worked on
 3. **Tracker Status** — Active entries, any responses received, follow-ups due{% if "job_search" in plugins %}; for `job` entries, active applications by stage{% endif +%}
 
 ## 5. Interactive Review

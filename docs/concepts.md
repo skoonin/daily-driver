@@ -32,7 +32,7 @@ The workspace is an ordinary folder. Everything is saved in files that you can r
 | **Workspace** | The folder that holds your data. Most people use one. | `init`, `doctor`, `paths` |
 | **Status** | One screen with your totals, items with no recent update, and recent activity | `status` |
 | **Focus** | Pauses scheduled check-in reminders while you work without interruptions | `focus` |
-| **Calendar and Git** | Reads your macOS Calendar events and Git commits, so the AI knows about your day | `gather` |
+| **Calendar, Git, and sessions** | Reads your macOS Calendar events, Git commits, and Claude Code and opencode sessions, so the AI knows about your day | `gather` |
 | **Job search** (optional, `init --job-search`) | Finds job postings on the sites you choose, saves them in `jobs.csv`, and rates how well each one fits you | `jobs` |
 | **Summary** | Writes a summary of any period and copies it to your clipboard | `summary` |
 | **Voice** | Learns how you write from your own writing samples | `voice-update` |

@@ -76,7 +76,7 @@ _TOP_HELP = {
     "status": "Show workspace status and tracker summary",
     "focus": "Manage focus mode (on / off / status)",
     "paths": "Print resolved workspace paths (root, state, daily plan/notes)",
-    "gather": "Pull data from calendar or git",
+    "gather": "Pull data from calendar, git, or AI sessions",
     "day-start": "Interactive morning planning session",
     "day-end": "Interactive end-of-day review session",
     "check-in": "Interactive mid-day check-in session",

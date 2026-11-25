@@ -39,26 +39,18 @@ Read `<root>/context.md` and `<root>/voice-profile.md`. If either file is missin
 
 ## 2. Gather Calendar and Activity
 
-{% if claude_code %}
-Collect today's calendar events, recent Claude Code sessions, and git activity:
-{% else %}
-Collect today's calendar events and git activity:
-{% endif %}
+Collect today's calendar events, recent AI sessions, and git activity:
 
 ```bash
 daily-driver gather calendar
 ```
 
-{% if claude_code %}
-For Claude Code sessions, list recent JSONL files directly (avoid context-heavy CLI scans):
-
 ```bash
-ls -t ~/.claude/projects/*/*.jsonl 2>/dev/null | head -20
+daily-driver gather sessions
 ```
 
-Read the most recent few that match today's window. Skim for cwd + first user prompt to identify what was worked on.
+Each row shows the tool, the time span, the folder, and the session title. Use them to see what was worked on since yesterday.
 
-{% endif %}
 ```bash
 daily-driver gather git
 ```

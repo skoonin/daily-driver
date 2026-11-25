@@ -37,7 +37,6 @@ BANNED_TOKENS = (
     "scrape-jobs",
     "daily-driver read",
     "ensure-daily-dir",
-    "gather sessions",
     "gather notes",
 )
 
