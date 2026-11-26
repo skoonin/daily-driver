@@ -218,7 +218,7 @@ Replace `<workspace>` with the full path to your workspace. The line stops at th
 - Lost:
   - every file in the three deleted directories, including your edits to shipped files and the files you added
   - your edits to `README.md`, because the manifest that detects edits is deleted
-  - anything you added inside the `permissions`, `hooks`, and `metadata` blocks of `.claude/settings.local.json`, such as saved allow rules
+  - your `agent` value in `.claude/settings.local.json`, and anything you added inside its `permissions`, `hooks`, and `metadata` blocks, such as saved allow rules
 - Cleared: the focus lock, the daily state, the `resume` session pointer, the scheduler logs, and the board discovery cache in `.daily-driver/`. If you use the scheduler, run `daily-driver scheduler install` afterwards.
 
 If `init` fails, fix the error it names and run `daily-driver init .` again. To regenerate only the managed files, run `daily-driver doctor --reset`.

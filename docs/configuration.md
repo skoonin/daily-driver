@@ -290,7 +290,7 @@ Daily Driver manages six paths in your workspace: the `daily-driver` folders in 
 | `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, and `.opencode/commands/daily-driver/` | Keep your edits to shipped files. Delete `.md` files you added. Delete a file that an older version shipped, unless you edited it. | Wipe the folders and write them again. You lose your edits and every file you added. |
 | `.claude/hooks/` | The same rules, with `.sh` files in place of `.md` files. | Wipe the folder and write it again. You lose your edits and every file you added. |
 | `README.md` in the workspace folder | Keeps your edits. | Overwrites the file. |
-| `.claude/settings.local.json` | Keeps top-level settings you added. Replaces the shipped `$schema`, `permissions`, `hooks`, and `metadata` blocks, which removes allow rules that Claude Code saved. | The same. |
+| `.claude/settings.local.json` | Keeps top-level settings you added. Replaces the shipped `$schema`, `agent`, `permissions`, `hooks`, and `metadata` settings, which removes allow rules that Claude Code saved. | The same. |
 | `.claude/commands/user/`, `.claude/agents/user/`, top-level `.claude/commands/*.md` and `.claude/agents/*.md`, and everything else | Never changed. | Never changed. |
 
 If `settings.local.json` has a format error, Daily Driver saves it as `settings.local.json.invalid` and writes a new file.

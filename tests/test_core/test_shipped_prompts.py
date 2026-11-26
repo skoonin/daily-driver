@@ -4,6 +4,9 @@ Catches stale references that survive renames or deletions: command names
 removed in W-prompt-sync, schema fields obsoleted by W9, scheduler renames
 from W8, jobs rename from W2. The list grows when historical churn leaves
 landmines that grep can detect mechanically.
+
+Also checks that Claude Code and every other harness get the same steps from
+each shipped prompt.
 """
 
 from __future__ import annotations
@@ -11,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
+from daily_driver.core.templating import render_for_plugins
 
 _PROMPT_ROOTS = (
     Path(__file__).resolve().parents[2]
@@ -96,3 +101,26 @@ def test_shipped_prompt_has_no_banned_token(path: Path, token: str) -> None:
         f"banned token {token!r} found in {path.name}; "
         "rename/remove the reference to match current CLI surface"
     )
+
+
+# day-end's last step saves memories in Claude Code's project memory folder,
+# which no other harness has.
+_CLAUDE_ONLY_SECTIONS = {"day-end.md": "## 10. Learn"}
+
+
+@pytest.mark.parametrize("plugins", [set(), {"job_search"}], ids=["core", "job_search"])
+@pytest.mark.parametrize("path", _FILES, ids=lambda p: p.name)
+def test_every_harness_gets_the_same_steps(path: Path, plugins: set[str]) -> None:
+    source = path.read_text(encoding="utf-8")
+
+    claude = render_for_plugins(source, plugins, claude_code=True)
+    other = render_for_plugins(source, plugins, claude_code=False)
+
+    section = _CLAUDE_ONLY_SECTIONS.get(path.name)
+    if section is not None:
+        assert section in claude
+        assert section not in other
+        claude, claude_only = claude.split(section, 1)
+        # The split drops what follows the section, so it must stay the last one.
+        assert "\n## " not in claude_only
+    assert claude.rstrip() == other.rstrip()

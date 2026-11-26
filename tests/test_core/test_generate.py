@@ -217,6 +217,21 @@ def test_generate_renders_settings_json(tmp_path: Path) -> None:
     assert "permissions" in data
 
 
+def test_settings_start_claude_code_sessions_as_the_shipped_agent(
+    tmp_path: Path,
+) -> None:
+    """A Claude Code session opened by hand gets the agent the launchers load."""
+    ws = _FakeWorkspace.make(tmp_path, version="1.2.3")
+
+    generate.generate(ws)
+
+    settings = json.loads(
+        (tmp_path / ".claude" / "settings.local.json").read_text(encoding="utf-8")
+    )
+    agent = tmp_path / ".claude" / "agents" / "daily-driver" / f"{settings['agent']}.md"
+    assert f"\nname: {settings['agent']}\n" in agent.read_text(encoding="utf-8")
+
+
 def test_generate_drops_commands_removed_from_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

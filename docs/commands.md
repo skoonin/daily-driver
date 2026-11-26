@@ -202,7 +202,7 @@ daily-driver focus off
 
 The three launchers start an interactive session on the provider that runs the `interactive` task. The default provider is Claude Code (`claude`). To use another provider, see [`ai`](configuration.md#ai).
 
-With the default provider, each launcher runs `claude` with the `work-planner` agent, the workspace as `--add-dir`, and a timestamped session name. Each one starts a slash command:
+With the default provider, each launcher runs `claude` with the `work-planner` agent, the workspace as `--add-dir`, and a timestamped session name. A Claude Code session that you start yourself in the workspace also runs as `work-planner`, because `.claude/settings.local.json` sets it as `agent`. Each launcher starts a slash command:
 
 | Command | Slash command |
 | --- | --- |

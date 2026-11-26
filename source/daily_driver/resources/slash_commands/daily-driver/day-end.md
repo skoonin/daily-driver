@@ -7,11 +7,7 @@ End-of-day review session. Follow these steps in order.
 
 ## 1. Read Today's Plan
 
-{% if claude_code %}
-Resolve today's plan path and Read it with the Claude Read tool:
-{% else %}
-Resolve today's plan path and read it:
-{% endif %}
+Resolve today's plan path and read it with the Read tool:
 
 ```bash
 daily-driver paths daily-plan
@@ -57,11 +53,7 @@ Resolve the workspace root and Read `context.md` from it:
 daily-driver paths root
 ```
 
-{% if claude_code %}
-Read `<root>/context.md` with the Claude Read tool. If it is missing, note it and proceed.
-{% else %}
-Read `<root>/context.md`. If it is missing, note it and proceed.
-{% endif %}
+Read `<root>/context.md` with the Read tool. If it is missing, note it and proceed.
 
 ## 6. Review the Day
 

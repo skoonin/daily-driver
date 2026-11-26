@@ -32,7 +32,7 @@ from daily_driver.core import version_stamp
 from daily_driver.core.contract import ENTRIES
 from daily_driver.core.locking import file_lock
 from daily_driver.core.logging import get_logger
-from daily_driver.core.prompt_file import opencode_command
+from daily_driver.core.prompt_file import SESSION_AGENT, opencode_command
 from daily_driver.core.templating import render_text
 from daily_driver.core.workspace import Workspace
 from daily_driver.plugins._base import PackageDataDir
@@ -547,7 +547,9 @@ def _render_settings(workspace: Workspace) -> None:
         from jinja2 import Environment, StrictUndefined
 
         env = Environment(undefined=StrictUndefined)
-        rendered = env.from_string(template_text).render(workspace=workspace)
+        rendered = env.from_string(template_text).render(
+            workspace=workspace, agent=SESSION_AGENT
+        )
     except (jinja2.TemplateError, OSError) as exc:
         _logger.warning(
             "Failed to render settings.local.json.j2 for %s: %s — skipping",
