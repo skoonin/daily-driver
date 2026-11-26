@@ -88,7 +88,10 @@ def test_interactive_launcher_invokes_claude_with_slash_command(
     (argv,) = spawned
     assert argv[0] == "claude"
     assert argv[-3] == slash
-    assert _flag_value(argv, "--agent") == "work-planner"
+    from daily_driver.core.prompt_file import SESSION_AGENT
+
+    # The same agent that the workspace settings name for sessions opened by hand.
+    assert _flag_value(argv, "--agent") == SESSION_AGENT
     assert argv[-2:] == ["--add-dir", str(ws)]
     assert _flag_value(argv, "-n").startswith(f"{session_prefix}-")
 

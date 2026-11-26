@@ -41,7 +41,7 @@ CLI module stays presentation-only. Non-trivial logic goes in `core/ping.py`. Th
 
 ### Interactive launcher
 
-Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace). Put any step that only Claude Code can do inside `{% if claude_code %}`. A provider without `.claude/` gets the file as a prompt file with `claude_code` false.
+Create the shipped slash-command file at `source/daily_driver/resources/slash_commands/daily-driver/review.md` (package data, generated into the workspace). Put any step that only Claude Code can do inside `{% if claude_code %}`, and add its heading to `_CLAUDE_ONLY_SECTIONS` in `tests/test_core/test_shipped_prompts.py`. That test fails when Claude Code and another harness get different steps. A provider without `.claude/` gets the file as a prompt file with `claude_code` false.
 
 Create `source/daily_driver/cli/commands/review.py`. Wire the parser by hand. Get the provider with `interactive_provider`, and call `launch_fresh_and_record` from `_session`. It mints a session ID in the provider's `session_id` format and records the ID and the provider name as the workspace's most-recent session, so `resume` can reattach later (see `day_end.py` for the canonical shape):
 

@@ -16,7 +16,8 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
-- **`day-start`, `day-end`, and `check-in` give Claude Code and opencode the same steps.** Only Claude Code saves memories at the end of `day-end`, because opencode has no memory folder. When today has no plan, `check-in` now tells you to run `daily-driver day-start`, which records the start of your day. (#PR)
+- **`day-start`, `day-end`, and `check-in` give Claude Code and opencode the same steps.** Only Claude Code saves memories at the end of `day-end`, because opencode has no memory folder. When `daily-driver day-start` has not run today, `check-in` now names that command in Claude Code too, not `/daily-driver:day-start`. Only `daily-driver day-start` records the start of your day. (#294)
+- **A Claude Code session that you start yourself in the workspace now runs as the `work-planner` agent,** like a session that `day-start`, `day-end`, or `check-in` starts. Before, `/daily-driver:day-end` typed in such a session ran without the agent. `daily-driver summary` also runs as `work-planner` now. Daily Driver sets this with `agent` in `.claude/settings.local.json`; the `--agent` option of a launcher still wins. Run `daily-driver doctor --fix` to add it to a workspace. `doctor --fix` also replaces an `agent` value that you set there. (#294)
 - **BREAKING: several job search settings are renamed, merged, or removed.** A settings file that still has an old setting shows a warning that names the new one, and the old setting is ignored (#283):
 
   | Old | New |

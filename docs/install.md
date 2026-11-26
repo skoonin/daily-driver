@@ -94,7 +94,7 @@ After an upgrade, `daily-driver doctor` shows a WARNING named `Workspace drift`.
 
 - Kept: your edits to the Daily Driver files that came with the program.
 - Deleted: `.md` files you added to `.claude/commands/daily-driver/`, `.claude/agents/daily-driver/`, or `.opencode/commands/daily-driver/`, and `.sh` files you added to `.claude/hooks/`. Put your own files in `.claude/commands/user/` and `.claude/agents/user/`.
-- Replaced: the `permissions`, `hooks`, and `metadata` sections of `.claude/settings.local.json`. This includes permission rules that Claude Code saved when you chose not to be asked again.
+- Replaced: the `agent`, `permissions`, `hooks`, and `metadata` sections of `.claude/settings.local.json`. This includes permission rules that Claude Code saved when you chose not to be asked again.
 
 For the full list of what `init` and `doctor` keep, replace, and delete, see [`.claude/` ownership](configuration.md#claude-ownership).
 

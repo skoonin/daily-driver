@@ -27,9 +27,10 @@ _COMMANDS_PACKAGE = "daily_driver.resources.slash_commands"
 _AGENTS_PACKAGE = "daily_driver.resources.agents"
 _SHIPPED_DIR = "daily-driver"
 
-# The agent the session launchers load by default (`--agent`).
-_SESSION_AGENT = "work-planner"
-# Commands that a launcher starts as a session under _SESSION_AGENT. Claude Code
+# The agent of a daily-driver session: the launchers load it by default
+# (`--agent`), and the workspace Claude Code settings name it as `agent`.
+SESSION_AGENT = "work-planner"
+# Commands that a launcher starts as a session under SESSION_AGENT. Claude Code
 # loads that agent with `--agent`; an opencode command carries it inline.
 _SESSION_COMMANDS = frozenset({"day-start", "day-end", "check-in"})
 
@@ -87,13 +88,13 @@ def opencode_command(config: object, *, name: str, text: str) -> str:
 
     opencode reads only `description` from the frontmatter (`name` would be an
     unknown field), and runs the body as the prompt. A session command carries
-    the _SESSION_AGENT persona, because an opencode session opened by hand has
+    the SESSION_AGENT persona, because an opencode session opened by hand has
     no agent loaded.
     """
     frontmatter, _ = _split_frontmatter(text)
     meta = yaml.safe_load(frontmatter) if frontmatter else None
     description = meta.get("description") if isinstance(meta, dict) else None
-    agent = _SESSION_AGENT if name in _SESSION_COMMANDS else None
+    agent = SESSION_AGENT if name in _SESSION_COMMANDS else None
     body = _render_prompt(config, name=name, instructions=text, agent=agent)
     if description is None:
         return body
