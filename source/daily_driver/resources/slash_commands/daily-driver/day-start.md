@@ -25,11 +25,7 @@ Read the YAML at that path. If the file is missing or `late_day` is unset, treat
 
 ## 1. Gather Context
 
-{% if claude_code %}
-Resolve the workspace root, then Read `context.md` and `voice-profile.md` from it using the Claude Read tool:
-{% else %}
-Resolve the workspace root, then read `context.md` and `voice-profile.md` from it:
-{% endif %}
+Resolve the workspace root, then read `context.md` and `voice-profile.md` from it with the Read tool:
 
 ```bash
 daily-driver paths root
@@ -63,11 +59,7 @@ Resolve yesterday's notes path and Read it:
 daily-driver paths daily-notes --date $(date -v-1d +%Y-%m-%d)
 ```
 
-{% if claude_code %}
-Read the file at the printed path with the Claude Read tool. If it does not exist, there is no carry-forward — proceed.
-{% else %}
-Read the file at the printed path. If it does not exist, there is no carry-forward — proceed.
-{% endif %}
+Read the file at the printed path with the Read tool. If it does not exist, there is no carry-forward — proceed.
 
 Extract structured carry-forward items from the notes file. Items labeled `BLOCKED`, `STALE`, or `CARRY-OVER` should be surfaced:
 

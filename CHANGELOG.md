@@ -16,6 +16,7 @@ User-visible changes per release, newest first; each entry links its PR. Granula
 
 ### Changed
 
+- **`day-start`, `day-end`, and `check-in` give Claude Code and opencode the same steps.** Only Claude Code saves memories at the end of `day-end`, because opencode has no memory folder. When today has no plan, `check-in` now tells you to run `daily-driver day-start`, which records the start of your day. (#PR)
 - **BREAKING: several job search settings are renamed, merged, or removed.** A settings file that still has an old setting shows a warning that names the new one, and the old setting is ignored (#283):
 
   | Old | New |

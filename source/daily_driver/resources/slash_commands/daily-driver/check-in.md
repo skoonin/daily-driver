@@ -13,11 +13,7 @@ description: Mid-day check-in - review progress against plan and update status
 >
 > > Note: no day-start plan recorded for today. Continuing without a plan baseline.
 >
-{% if claude_code %}
-> Then proceed normally — the user decides whether to abort and run /daily-driver:day-start.
-{% else %}
 > Then proceed normally — the user decides whether to abort and run `daily-driver day-start`.
-{% endif %}
 
 Mid-day check-in session. Follow these steps in order.
 
@@ -31,11 +27,7 @@ Use `current_time` throughout this check-in to determine which plan blocks are p
 
 ## 1. Read Today's Plan
 
-{% if claude_code %}
-Resolve today's plan path and Read it with the Claude Read tool:
-{% else %}
-Resolve today's plan path and read it:
-{% endif %}
+Resolve today's plan path and read it with the Read tool:
 
 ```bash
 daily-driver paths daily-plan
